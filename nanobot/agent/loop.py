@@ -19,6 +19,7 @@ from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from nanobot.agent.tools.gui import DesktopActTool, DesktopObserveTool, GuiRunTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
@@ -64,9 +65,11 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        gui_config: "GuiConfig | None" = None,
+        gui_provider: LLMProvider | None = None,
+        gui_model: str | None = None,
     ):
-        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
-
+        from nanobot.config.schema import ExecToolConfig, GuiConfig, WebSearchConfig
         self.bus = bus
         self.channels_config = channels_config
         self.provider = provider
@@ -79,8 +82,11 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.gui_config = gui_config or GuiConfig()
+        self.gui_provider = gui_provider or provider
+        self.gui_model = gui_model or self.model
 
-        self.context = ContextBuilder(workspace)
+        self.context = ContextBuilder(workspace, gui_enabled=self.gui_config.enabled)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -102,6 +108,7 @@ class AgentLoop:
         self._active_tasks: dict[str, list[asyncio.Task]] = {}  # session_key -> tasks
         self._background_tasks: list[asyncio.Task] = []
         self._processing_lock = asyncio.Lock()
+        self._gui_lock = asyncio.Lock()
         self.memory_consolidator = MemoryConsolidator(
             workspace=workspace,
             provider=provider,
@@ -115,6 +122,9 @@ class AgentLoop:
 
     def _register_default_tools(self) -> None:
         """Register the default set of tools."""
+        from nanobot.gui.backend import DryRunDesktopBackend, LocalDesktopBackend
+        from nanobot.gui.runtime import GuiRuntime
+
         allowed_dir = self.workspace if self.restrict_to_workspace else None
         extra_read = [BUILTIN_SKILLS_DIR] if allowed_dir else None
         self.tools.register(ReadFileTool(workspace=self.workspace, allowed_dir=allowed_dir, extra_allowed_dirs=extra_read))
@@ -132,6 +142,45 @@ class AgentLoop:
         self.tools.register(SpawnTool(manager=self.subagents))
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
+        if self.gui_config.enabled:
+            artifacts_root = (
+                Path(self.gui_config.artifacts_dir).expanduser()
+                if Path(self.gui_config.artifacts_dir).expanduser().is_absolute()
+                else (self.workspace / self.gui_config.artifacts_dir).resolve()
+            )
+            backend = (
+                DryRunDesktopBackend()
+                if self.gui_config.backend == "dry-run"
+                else LocalDesktopBackend()
+            )
+            runtime = GuiRuntime(
+                provider=self.gui_provider,
+                model=self.gui_model,
+                backend=backend,
+                artifacts_root=artifacts_root,
+                max_steps=self.gui_config.max_steps,
+                step_timeout_seconds=self.gui_config.step_timeout_seconds,
+            )
+            self.tools.register(GuiRunTool(
+                runtime=runtime,
+                backend=backend,
+                artifacts_root=artifacts_root,
+                cli_only=self.gui_config.cli_only,
+                step_timeout_seconds=self.gui_config.step_timeout_seconds,
+                gui_lock=self._gui_lock,
+            ))
+            self.tools.register(DesktopObserveTool(
+                backend=backend,
+                artifacts_root=artifacts_root,
+                cli_only=self.gui_config.cli_only,
+                step_timeout_seconds=self.gui_config.step_timeout_seconds,
+            ))
+            self.tools.register(DesktopActTool(
+                backend=backend,
+                artifacts_root=artifacts_root,
+                cli_only=self.gui_config.cli_only,
+                step_timeout_seconds=self.gui_config.step_timeout_seconds,
+            ))
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
@@ -155,12 +204,25 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
-        """Update context for all tools that need routing info."""
-        for name in ("message", "spawn", "cron"):
-            if tool := self.tools.get(name):
-                if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id, *([message_id] if name == "message" else []))
+    def _set_tool_context(
+        self,
+        channel: str,
+        chat_id: str,
+        message_id: str | None = None,
+        progress_callback: Callable[[str], Awaitable[None]] | None = None,
+    ) -> None:
+        """Update context for tools that need routing info."""
+        context_args: dict[str, tuple] = {
+            "message": (channel, chat_id, message_id),
+            "spawn": (channel, chat_id),
+            "cron": (channel, chat_id),
+            "gui_run": (channel, chat_id, message_id, progress_callback),
+            "desktop_observe": (channel, chat_id, message_id),
+            "desktop_act": (channel, chat_id, message_id),
+        }
+        for name, args in context_args.items():
+            if (tool := self.tools.get(name)) and hasattr(tool, "set_context"):
+                tool.set_context(*args)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -358,6 +420,8 @@ class AgentLoop:
         msg: InboundMessage,
         session_key: str | None = None,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
+        tool_progress_callback: Callable[[str], Awaitable[None]] | None = None,
+        use_bus_gui_progress: bool = True,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         # System messages: parse origin from chat_id ("channel:chat_id")
@@ -368,7 +432,7 @@ class AgentLoop:
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
             await self.memory_consolidator.maybe_consolidate_by_tokens(session)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"), None)
             history = session.get_history(max_messages=0)
             # Subagent results should be assistant role, other system messages use user role
             current_role = "assistant" if msg.sender_id == "subagent" else "user"
@@ -416,7 +480,26 @@ class AgentLoop:
             )
         await self.memory_consolidator.maybe_consolidate_by_tokens(session)
 
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
+            meta = dict(msg.metadata or {})
+            meta["_progress"] = True
+            meta["_tool_hint"] = tool_hint
+            await self.bus.publish_outbound(OutboundMessage(
+                channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
+            ))
+
+        # `tool_progress_callback` is reserved as an override hook for callers
+        # that want GUI progress routed somewhere other than the default bus.
+        gui_progress = tool_progress_callback or on_progress
+        if gui_progress is None and use_bus_gui_progress:
+            gui_progress = _bus_progress
+
+        self._set_tool_context(
+            msg.channel,
+            msg.chat_id,
+            msg.metadata.get("message_id"),
+            gui_progress,
+        )
         if message_tool := self.tools.get("message"):
             if isinstance(message_tool, MessageTool):
                 message_tool.start_turn()
@@ -428,14 +511,6 @@ class AgentLoop:
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
-
-        async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
-            meta = dict(msg.metadata or {})
-            meta["_progress"] = True
-            meta["_tool_hint"] = tool_hint
-            await self.bus.publish_outbound(OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
-            ))
 
         final_content, _, all_msgs = await self._run_agent_loop(
             initial_messages, on_progress=on_progress or _bus_progress,
@@ -506,5 +581,11 @@ class AgentLoop:
         """Process a message directly (for CLI or cron usage)."""
         await self._connect_mcp()
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
-        response = await self._process_message(msg, session_key=session_key, on_progress=on_progress)
+        response = await self._process_message(
+            msg,
+            session_key=session_key,
+            on_progress=on_progress,
+            tool_progress_callback=None,
+            use_bus_gui_progress=False,
+        )
         return response.content if response else ""
