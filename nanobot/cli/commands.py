@@ -420,53 +420,6 @@ def _make_provider(config: Config):
     return provider
 
 
-def _make_gui_provider(config: Config, provider):
-    """Create the GUI provider/model pair, reusing the main provider by default."""
-    from nanobot.providers.registry import find_by_name
-
-    gui = config.tools.gui
-    gui_model = gui.model or config.agents.defaults.model
-
-    if gui.model is None and gui.provider is None:
-        return provider, gui_model
-
-    if gui.provider is not None and gui.model is None:
-        main_provider = config.agents.defaults.provider
-        explicit_prefix = gui_model.split("/", 1)[0] if "/" in gui_model else ""
-        prefix_is_provider = bool(explicit_prefix and find_by_name(explicit_prefix))
-
-        # When provider is "auto" and model has no provider prefix, try to
-        # resolve the model via keyword matching.  If it resolves to a known
-        # provider that differs from gui.provider, warn early.
-        keyword_conflict = False
-        if main_provider == "auto" and not prefix_is_provider:
-            from nanobot.providers.registry import find_by_model
-
-            resolved = find_by_model(gui_model)
-            if resolved is not None and resolved.name != gui.provider:
-                keyword_conflict = True
-
-        if (
-            (main_provider != "auto" and main_provider != gui.provider)
-            or (prefix_is_provider and explicit_prefix != gui.provider)
-            or keyword_conflict
-        ):
-            console.print(
-                "[red]Error: tools.gui.provider overrides the provider but tools.gui.model is unset.[/red]"
-            )
-            console.print(
-                "Set tools.gui.model to a model name supported by the GUI provider."
-            )
-            raise typer.Exit(1)
-
-    gui_config = config.model_copy(deep=True)
-    gui_config.agents.defaults.model = gui_model
-    if gui.provider is not None:
-        gui_config.agents.defaults.provider = gui.provider
-
-    return _make_provider(gui_config), gui_model
-
-
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
     """Load config and optionally override the active workspace."""
     from nanobot.config.loader import load_config, set_config_path
@@ -530,7 +483,6 @@ def gateway(
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(config)
-    gui_provider, gui_model = _make_gui_provider(config, provider)
     session_manager = SessionManager(config.workspace_path)
 
     # Create cron service first (callback set after agent creation)
@@ -553,9 +505,6 @@ def gateway(
         session_manager=session_manager,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
-        gui_config=config.tools.gui,
-        gui_provider=gui_provider,
-        gui_model=gui_model,
     )
 
     # Set cron callback (needs agent)
@@ -723,7 +672,6 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
-    gui_provider, gui_model = _make_gui_provider(config, provider)
 
     # Create cron service for tool usage (no callback needed for CLI unless running)
     cron_store_path = get_cron_dir() / "jobs.json"
@@ -748,9 +696,6 @@ def agent(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
-        gui_config=config.tools.gui,
-        gui_provider=gui_provider,
-        gui_model=gui_model,
     )
 
     # Shared reference for progress callbacks

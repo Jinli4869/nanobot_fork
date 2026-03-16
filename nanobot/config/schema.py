@@ -141,25 +141,11 @@ class MCPServerConfig(Base):
     tool_timeout: int = 30  # seconds before a tool call is cancelled
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names; ["*"] = all tools; [] = no tools
 
-class GuiConfig(Base):
-    """GUI automation tool configuration."""
-
-    enabled: bool = False
-    backend: Literal["local", "dry-run"] = "local"
-    cli_only: bool = True
-    max_steps: int = 15
-    step_timeout_seconds: int = 20
-    artifacts_dir: str = ".nanobot/gui_runs"
-    model: str | None = None
-    provider: str | None = None
-
-
 class ToolsConfig(Base):
     """Tools configuration."""
 
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
-    gui: GuiConfig = Field(default_factory=GuiConfig)
     restrict_to_workspace: bool = False  # If true, restrict all tool access to workspace directory
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 

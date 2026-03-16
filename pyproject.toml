@@ -50,10 +50,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gui_macos = [
-    "pyautogui>=0.9.54",
-    "pyperclip>=1.9.0",
-]
 wecom = [
     "wecom-aibot-sdk-python>=0.1.5",
 ]
