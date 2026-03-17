@@ -25,6 +25,8 @@ license-files = [
 dependencies = [
     "typer>=0.20.0,<1.0.0",
     "anthropic>=0.45.0,<1.0.0",
+    "faiss-cpu>=1.9.0",
+    "numpy>=1.26.0",
     "pydantic>=2.12.0,<3.0.0",
     "pydantic-settings>=2.12.0,<3.0.0",
     "websockets>=16.0,<17.0",
@@ -165,6 +167,7 @@ allow-direct-references = true
 [tool.hatch.build]
 include = [
     "nanobot/**/*.py",
+    "opengui/**/*.py",
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
@@ -178,14 +181,17 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["nanobot"]
+packages = ["nanobot", "opengui"]
 
 [tool.hatch.build.targets.wheel.sources]
 "nanobot" = "nanobot"
+"opengui" = "opengui"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
+    "opengui/",
+    "bridge/",
     "nanobot/web/dist/",
     "hatch_build.py",
     "README.md",
