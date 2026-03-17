@@ -46,10 +46,13 @@ Plans:
   3. Every agent run produces a JSONL trajectory file with one entry per step (screenshot path + action + model output)
   4. The main-agent TaskPlanner decomposes a task into an AND/OR/ATOM tree with capability-typed ATOMs (gui/tool/mcp)
   5. The integration test with DryRunBackend + mock LLM + pre-seeded memory and skill library runs to completion without errors
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] TBD
+- [ ] 02-01-PLAN.md — Data model extensions (SkillStep fixed fields, Skill confidence) + MemoryStore markdown migration
+- [ ] 02-02-PLAN.md — Wire memory, skill, trajectory into GuiAgent.run() + update P0 tests
+- [ ] 02-03-PLAN.md — TaskPlanner (AND/OR/ATOM tree) + TreeRouter (capability dispatch) at nanobot level
+- [ ] 02-04-PLAN.md — Integration tests: full agent loop + planner/router dispatch
 
 ### Phase 3: Nanobot Subagent
 **Goal**: The main nanobot agent can spawn a GUI subagent to complete device tasks, receive a structured result, and optionally extract new skills from the recorded trajectory
