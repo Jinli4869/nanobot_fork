@@ -48,7 +48,7 @@
 ### Testing
 
 - [x] **TEST-01**: P0 regression tests (8 tests passing)
-- [ ] **TEST-02**: Unit tests for memory module (store, retrieval, types)
+- [x] **TEST-02**: Unit tests for memory module (store, retrieval, types)
 - [ ] **TEST-03**: Unit tests for skills module (library CRUD, search, dedup, executor, extractor)
 - [ ] **TEST-04**: Unit tests for trajectory module (recorder events, summarizer)
 - [ ] **TEST-05**: Integration test: full agent loop with DryRunBackend + mock LLM + memory + skills
