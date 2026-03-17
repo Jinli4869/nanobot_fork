@@ -29,12 +29,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. SkillLibrary CRUD, hybrid search, deduplication, SkillExecutor per-step valid_state, and SkillExtractor parsing are each exercised by at least one test
   3. TrajectoryRecorder event sequencing and TrajectorySummarizer output format are verified by at least one test each
   4. No test requires a live device, real LLM call, or network access (all external I/O is mocked)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 01-01: Memory module tests (MemoryStore, MemoryRetriever, MemoryEntry types)
-- [ ] 01-02: Skills module tests (SkillLibrary, SkillExecutor, SkillExtractor)
-- [ ] 01-03: Trajectory module tests (TrajectoryRecorder, TrajectorySummarizer)
+- [ ] 01-01-PLAN.md — Add faiss-cpu/numpy deps + memory module tests (TEST-02)
+- [ ] 01-02-PLAN.md — Skills module tests: library CRUD, search, dedup, executor, extractor (TEST-03)
+- [ ] 01-03-PLAN.md — Trajectory module tests: recorder events, summarizer output (TEST-04)
 
 ### Phase 2: Agent Loop Integration
 **Goal**: GuiAgent.run() is a fully wired agent loop — it retrieves memory context, searches for matching skills, executes or explores, and records the trajectory end-to-end
@@ -105,7 +105,7 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. P1 Unit Tests | 0/3 | Not started | - |
+| 1. P1 Unit Tests | 0/3 | Planning complete | - |
 | 2. Agent Loop Integration | 0/3 | Not started | - |
 | 3. Nanobot Subagent | 0/3 | Not started | - |
 | 4. Desktop Backend | 0/1 | Not started | - |
