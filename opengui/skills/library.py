@@ -196,6 +196,33 @@ class SkillLibrary:
         """Direct add without dedup (for bulk loading or trusted sources)."""
         self._upsert(skill)
 
+    def update(self, skill_id: str, updated_skill: Skill) -> bool:
+        """Replace a skill by ID with an updated version.
+
+        Used by the agent loop after each run to persist confidence updates
+        (``success_count``, ``failure_count``, ``success_streak``,
+        ``failure_streak``) without triggering deduplication logic.
+
+        The ``updated_skill`` MUST carry the same ``skill_id`` as the one
+        passed in ``skill_id``; callers are responsible for ensuring this.
+
+        Args:
+            skill_id: The ID of the skill to replace.
+            updated_skill: The new Skill instance that replaces the old one.
+
+        Returns:
+            ``True`` if the skill was found and replaced; ``False`` if the
+            ``skill_id`` was not present in the library.
+        """
+        if skill_id not in self._skills:
+            return False
+        # Remove-then-upsert ensures the search index is rebuilt with any
+        # changed fields (e.g. updated description or tags in addition to
+        # stat counters).
+        self._remove_internal(skill_id)
+        self._upsert(updated_skill)
+        return True
+
     def remove(self, skill_id: str) -> bool:
         return self._remove_internal(skill_id)
 
