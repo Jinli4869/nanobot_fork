@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Phase 2 context gathered
-last_updated: "2026-03-17T09:45:34.296Z"
+stopped_at: Completed 02-00-PLAN.md (Wave 0 test stubs)
+last_updated: "2026-03-17T11:53:29.743Z"
 last_activity: 2026-03-17 — Completed P1 trajectory tests (TEST-04); 8 tests, all 29 opengui tests green
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 8
+  completed_plans: 4
   percent: 100
 ---
 
@@ -51,6 +51,7 @@ Progress: [██████████] 100% (of Phase 1 plans)
 
 *Updated after each plan completion*
 | Phase 01-p1-unit-tests P01 | 12 | 2 tasks | 2 files |
+| Phase 02-agent-loop-integration P00 | 1min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,7 @@ Recent decisions affecting current work:
 - [Phase 01-p1-unit-tests]: _FakeEmbedder pattern established: hash-to-slot unit vectors give deterministic FAISS search results without a real embedding API
 - [Phase 01-p1-unit-tests P02]: _ScriptedLLM for SkillExtractor takes raw strings (not LLMResponse objects) — extractor only uses response.content so wrapping at instantiation keeps tests cleaner
 - [Phase 01-p1-unit-tests P02]: Dedup test asserts decision in (MERGE, KEEP_OLD, KEEP_NEW) — heuristic may return either depending on action_sim threshold; both confirm near-duplicate was detected and not double-counted
+- [Phase 02-agent-loop-integration]: strict=False on xfail: stubs report XFAIL now, XPASS allowed when real implementations replace stubs in Waves 1-3
 
 ### Pending Todos
 
@@ -85,6 +87,6 @@ None — all P1 unit test blockers resolved:
 
 ## Session Continuity
 
-Last session: 2026-03-17T09:45:34.289Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-agent-loop-integration/02-CONTEXT.md
+Last session: 2026-03-17T11:53:29.741Z
+Stopped at: Completed 02-00-PLAN.md (Wave 0 test stubs)
+Resume file: None
