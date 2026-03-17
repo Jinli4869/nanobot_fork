@@ -13,6 +13,11 @@ from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.prompts.system import build_system_prompt
+from opengui.trajectory.recorder import TrajectoryRecorder
+
+
+def _make_recorder(tmp_path: Path, task: str = "test task") -> TrajectoryRecorder:
+    return TrajectoryRecorder(output_dir=tmp_path / "traj", task=task)
 
 
 class _ScriptedLLM:
@@ -128,6 +133,7 @@ async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:
             ),
         ]),
         DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "never finishes"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
     )
@@ -172,6 +178,7 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     agent = GuiAgent(
         llm,
         DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "Open Settings"),
         artifacts_root=tmp_path / "runs",
         max_steps=3,
         history_image_window=1,
