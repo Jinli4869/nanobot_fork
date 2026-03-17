@@ -24,6 +24,7 @@ from opengui.action import Action, ActionError, describe_action, parse_action
 from opengui.interfaces import DeviceBackend, LLMProvider, LLMResponse, ProgressCallback
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
+from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,7 @@ class GuiAgent:
         self,
         llm: LLMProvider,
         backend: DeviceBackend,
+        trajectory_recorder: TrajectoryRecorder,
         model: str = "",
         artifacts_root: Path | str = ".opengui/runs",
         max_steps: int = 15,
@@ -142,6 +144,11 @@ class GuiAgent:
         history_image_window: int = 4,
         include_date_context: bool = True,
         progress_callback: ProgressCallback | None = None,
+        memory_retriever: Any = None,
+        skill_library: Any = None,
+        skill_executor: Any = None,
+        memory_top_k: int = 5,
+        skill_threshold: float = 0.6,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -152,6 +159,12 @@ class GuiAgent:
         self.history_image_window = max(1, history_image_window)
         self.include_date_context = include_date_context
         self.progress_callback = progress_callback
+        self._trajectory_recorder = trajectory_recorder
+        self._memory_retriever = memory_retriever
+        self._skill_library = skill_library
+        self._skill_executor = skill_executor
+        self._memory_top_k = memory_top_k
+        self._skill_threshold = skill_threshold
 
     # ------------------------------------------------------------------
     # Public API
@@ -170,30 +183,73 @@ class GuiAgent:
         after all retries, ``success`` is ``False`` and ``error`` contains the
         last error message.
         """
+        # 1. Start trajectory recording
+        self._trajectory_recorder.start(phase=ExecutionPhase.AGENT)
+
+        # 2. Retrieve memory context (once)
+        memory_context = await self._retrieve_memory(task)
+
+        # 3. Search skill library (once)
+        skill_match = await self._search_skill(task)
+
+        # 4. If skill matched, attempt skill execution first
+        if skill_match is not None and self._skill_executor is not None:
+            skill, final_score = skill_match
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.SKILL,
+                reason=f"Matched skill: {skill.name} (score={final_score:.2f})",
+            )
+            try:
+                skill_result = await self._skill_executor.execute(skill)
+                if skill_result.state.value == "succeeded":
+                    # Skill succeeded — fall through to agent for confirmation
+                    self._trajectory_recorder.set_phase(
+                        ExecutionPhase.AGENT, reason="Skill complete, agent confirms"
+                    )
+            except Exception:
+                # Skill failed — fall back to free exploration
+                self._trajectory_recorder.set_phase(
+                    ExecutionPhase.AGENT, reason="Skill execution failed, falling back"
+                )
+
+        # 5. Retry loop with free exploration
         last_error: str | None = None
         last_trace_path: str | None = None
         last_steps_taken = 0
+        result: AgentResult | None = None
 
         for attempt in range(max_retries):
             run_dir = self._make_run_dir(task, attempt)
             last_trace_path = str(run_dir)
             try:
-                result = await self._run_once(task, app_hint=app_hint, run_dir=run_dir)
+                result = await self._run_once(
+                    task, app_hint=app_hint, run_dir=run_dir,
+                    memory_context=memory_context,
+                )
                 if result.success:
-                    return result
+                    break
                 last_error = result.error
                 last_trace_path = result.trace_path or last_trace_path
                 last_steps_taken = result.steps_taken
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
 
-        return AgentResult(
-            success=False,
-            summary=f"Failed after {max_retries} attempt(s).",
-            trace_path=last_trace_path,
-            steps_taken=last_steps_taken,
-            error=last_error,
-        )
+        if result is None or not result.success:
+            result = AgentResult(
+                success=False,
+                summary=f"Failed after {max_retries} attempt(s).",
+                trace_path=last_trace_path,
+                steps_taken=last_steps_taken,
+                error=last_error,
+            )
+
+        # 6. Finish trajectory
+        self._trajectory_recorder.finish(success=result.success, error=result.error)
+
+        # 7. Post-run skill maintenance
+        await self._skill_maintenance(skill_match, result.success)
+
+        return result
 
     # ------------------------------------------------------------------
     # Single attempt
@@ -205,6 +261,7 @@ class GuiAgent:
         *,
         app_hint: str | None,
         run_dir: Path,
+        memory_context: str | None = None,
     ) -> AgentResult:
         """Execute one full attempt of the task."""
         # 1. Preflight
@@ -235,6 +292,7 @@ class GuiAgent:
                 current_observation=obs,
                 history=history,
                 app_hint=app_hint,
+                memory_context=memory_context,
             )
 
             try:
@@ -276,6 +334,21 @@ class GuiAgent:
                 "done": result.done,
                 "timestamp": time.time(),
             })
+
+            # Record trajectory step
+            self._trajectory_recorder.record_step(
+                action=(
+                    result.action.to_dict()
+                    if hasattr(result.action, "to_dict")
+                    else {"action_type": result.action.action_type}
+                ),
+                model_output=result.action_summary,
+                screenshot_path=(
+                    str(result.next_observation.screenshot_path)
+                    if result.next_observation and result.next_observation.screenshot_path
+                    else None
+                ),
+            )
 
             if result.done:
                 success = result.action.status == "success"
@@ -438,6 +511,7 @@ class GuiAgent:
         current_observation: Observation,
         history: list[HistoryTurn],
         app_hint: str | None,
+        memory_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a Mobile-Agent-style prompt window with summaries and recent screenshots."""
         messages: list[dict[str, Any]] = [{
@@ -445,6 +519,7 @@ class GuiAgent:
             "content": build_system_prompt(
                 platform=self.backend.platform,
                 tool_definition=_COMPUTER_USE_TOOL,
+                memory_context=memory_context,
             ),
         }]
 
@@ -636,3 +711,72 @@ class GuiAgent:
         line = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
+
+    # ------------------------------------------------------------------
+    # Memory / skill / trajectory helpers
+    # ------------------------------------------------------------------
+
+    async def _retrieve_memory(self, task: str) -> str | None:
+        """Retrieve relevant memory entries for the task, always including POLICY entries."""
+        if self._memory_retriever is None:
+            return None
+        from opengui.memory.types import MemoryType
+
+        results = await self._memory_retriever.search(task, top_k=self._memory_top_k + 10)
+        policies = [(e, s) for e, s in results if e.memory_type == MemoryType.POLICY]
+        others = [(e, s) for e, s in results if e.memory_type != MemoryType.POLICY][
+            : self._memory_top_k
+        ]
+        memory_entries = policies + others
+        if not memory_entries:
+            return None
+        return self._memory_retriever.format_context(memory_entries)
+
+    async def _search_skill(self, task: str) -> tuple[Any, float] | None:
+        """Search skill library and return (skill, final_score) if above threshold."""
+        if self._skill_library is None:
+            return None
+        from opengui.skills.data import compute_confidence
+
+        search_results = await self._skill_library.search(task, top_k=1)
+        if not search_results:
+            return None
+        skill, relevance = search_results[0]
+        confidence = compute_confidence(skill)
+        final_score = relevance * confidence
+        if final_score >= self._skill_threshold:
+            return (skill, final_score)
+        return None
+
+    async def _skill_maintenance(
+        self, skill_match: tuple[Any, float] | None, success: bool
+    ) -> None:
+        """Post-run: update confidence, discard low-confidence, check merge."""
+        if skill_match is None or self._skill_library is None:
+            return
+        from dataclasses import replace
+        from opengui.skills.data import compute_confidence
+
+        skill, _ = skill_match
+        if success:
+            updated = replace(
+                skill,
+                success_count=skill.success_count + 1,
+                success_streak=skill.success_streak + 1,
+                failure_streak=0,
+            )
+        else:
+            updated = replace(
+                skill,
+                failure_count=skill.failure_count + 1,
+                failure_streak=skill.failure_streak + 1,
+                success_streak=0,
+            )
+
+        new_conf = compute_confidence(updated)
+        total_attempts = updated.success_count + updated.failure_count
+        if total_attempts >= 5 and new_conf < 0.3:
+            self._skill_library.remove(skill.skill_id)
+        else:
+            self._skill_library.update(skill.skill_id, updated)
+            await self._skill_library.add_or_merge(updated)
