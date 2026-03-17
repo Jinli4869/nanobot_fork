@@ -1,3 +1,19 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: planning
+stopped_at: Completed 01-p1-unit-tests plan 01-01 (memory module deps + tests)
+last_updated: "2026-03-17T06:47:43.718Z"
+last_activity: 2026-03-17 — ROADMAP.md created; P0 complete, starting P1 test coverage
+progress:
+  total_phases: 5
+  completed_phases: 0
+  total_plans: 3
+  completed_plans: 1
+  percent: 33
+---
+
 # Project State
 
 ## Project Reference
@@ -14,7 +30,7 @@ Plan: 0 of 3 in current phase
 Status: Ready to plan
 Last activity: 2026-03-17 — ROADMAP.md created; P0 complete, starting P1 test coverage
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [███░░░░░░░] 33%
 
 ## Performance Metrics
 
@@ -34,6 +50,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: n/a
 
 *Updated after each plan completion*
+| Phase 01-p1-unit-tests P01 | 12 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -46,6 +63,8 @@ Recent decisions affecting current work:
 - [P0]: FAISS (faiss-cpu) for embedding similarity; no pure-Python cosine fallback
 - [P0]: JSON file storage for memory and skills (SQLite deferred to v2)
 - [P0]: EmbeddingProvider as protocol — pluggable external API (qwen3-vl-embedding)
+- [Phase 01-p1-unit-tests]: faiss-cpu and numpy added to main deps: retrieval.py imports numpy at module top-level; these are runtime production requirements
+- [Phase 01-p1-unit-tests]: _FakeEmbedder pattern established: hash-to-slot unit vectors give deterministic FAISS search results without a real embedding API
 
 ### Pending Todos
 
@@ -58,6 +77,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-17
-Stopped at: Roadmap created, STATE.md initialized
+Last session: 2026-03-17T06:47:43.715Z
+Stopped at: Completed 01-p1-unit-tests plan 01-01 (memory module deps + tests)
 Resume file: None
