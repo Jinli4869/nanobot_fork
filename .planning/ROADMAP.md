@@ -45,12 +45,13 @@ Plans:
   2. When a matching skill exists in the library, GuiAgent uses SkillExecutor to attempt execution before falling back to free exploration
   3. Every agent run produces a JSONL trajectory file with one entry per step (screenshot path + action + model output)
   4. The integration test with DryRunBackend + mock LLM + pre-seeded memory and skill library runs to completion without errors
-**Plans**: TBD
+**Plans**: 4 plans
 
 Plans:
-- [ ] 02-01: Memory retrieval and prompt injection in GuiAgent.run()
-- [ ] 02-02: Skill search + conditional SkillExecutor path in GuiAgent.run()
-- [ ] 02-03: TrajectoryRecorder wiring and integration test (TEST-05)
+- [ ] 02-01-PLAN.md — Data model extensions (SkillStep/Skill fields) + MemoryStore markdown migration + memory prompt injection (AGENT-04, MEM-05)
+- [ ] 02-02-PLAN.md — Planner module: SubgoalNode tree dataclasses + TaskPlanner (AGENT-05)
+- [ ] 02-03-PLAN.md — TreeExecutor + GuiAgent.run() rewire with planning, skill dispatch, trajectory recording, post-run maintenance (AGENT-05, AGENT-06, SKILL-08, TRAJ-03)
+- [ ] 02-04-PLAN.md — Integration test: full agent loop with DryRunBackend + mock LLM + memory + skills (TEST-05)
 
 ### Phase 3: Nanobot Subagent
 **Goal**: The main nanobot agent can spawn a GUI subagent to complete device tasks, receive a structured result, and optionally extract new skills from the recorded trajectory
@@ -106,7 +107,7 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. P1 Unit Tests | 3/3 | Complete   | 2026-03-17 |
-| 2. Agent Loop Integration | 0/3 | Not started | - |
+| 2. Agent Loop Integration | 0/4 | Not started | - |
 | 3. Nanobot Subagent | 0/3 | Not started | - |
 | 4. Desktop Backend | 0/1 | Not started | - |
 | 5. CLI & Extensions | 0/2 | Not started | - |
