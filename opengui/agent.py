@@ -722,11 +722,26 @@ class GuiAgent:
             return None
         from opengui.memory.types import MemoryType
 
+        # Fetch relevant entries by query
         results = await self._memory_retriever.search(task, top_k=self._memory_top_k + 10)
+
+        # Separate POLICY entries from search results
         policies = [(e, s) for e, s in results if e.memory_type == MemoryType.POLICY]
         others = [(e, s) for e, s in results if e.memory_type != MemoryType.POLICY][
             : self._memory_top_k
         ]
+
+        # Also fetch all POLICY entries separately (they must always be included)
+        policy_results = await self._memory_retriever.search(
+            task, memory_type=MemoryType.POLICY, top_k=50,
+        )
+        # Merge: add any POLICY entries not already in the list
+        seen_ids = {e.entry_id for e, _ in policies}
+        for entry, score in policy_results:
+            if entry.entry_id not in seen_ids:
+                policies.append((entry, score))
+                seen_ids.add(entry.entry_id)
+
         memory_entries = policies + others
         if not memory_entries:
             return None
