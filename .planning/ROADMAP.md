@@ -12,7 +12,7 @@ P0 is complete: the core GuiAgent vision-action loop, ADB backend, DryRun backen
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: P1 Unit Tests** - Verify all memory, skills, and trajectory module code before integrating into the agent loop
+- [x] **Phase 1: P1 Unit Tests** - Verify all memory, skills, and trajectory module code before integrating into the agent loop
 - [ ] **Phase 2: Agent Loop Integration** - Wire memory retrieval, skill search + execute, and trajectory recording into GuiAgent.run()
 - [ ] **Phase 3: Nanobot Subagent** - Expose GuiAgent as a nanobot tool via GuiSubagentTool + NanobotLLMAdapter + backend selection
 - [ ] **Phase 4: Desktop Backend** - LocalDesktopBackend using pyautogui + pyperclip for macOS/Linux/Windows
@@ -32,9 +32,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Add faiss-cpu/numpy deps + memory module tests (TEST-02)
-- [ ] 01-02-PLAN.md — Skills module tests: library CRUD, search, dedup, executor, extractor (TEST-03)
-- [ ] 01-03-PLAN.md — Trajectory module tests: recorder events, summarizer output (TEST-04)
+- [x] 01-01-PLAN.md — Add faiss-cpu/numpy deps + memory module tests (TEST-02)
+- [x] 01-02-PLAN.md — Skills module tests: library CRUD, search, dedup, executor, extractor (TEST-03)
+- [x] 01-03-PLAN.md — Trajectory module tests: recorder events, summarizer output (TEST-04)
 
 ### Phase 2: Agent Loop Integration
 **Goal**: GuiAgent.run() is a fully wired agent loop — it retrieves memory context, searches for matching skills, executes or explores, and records the trajectory end-to-end
@@ -105,7 +105,7 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. P1 Unit Tests | 1/3 | In Progress|  |
+| 1. P1 Unit Tests | 3/3 | Complete   | 2026-03-17 |
 | 2. Agent Loop Integration | 0/3 | Not started | - |
 | 3. Nanobot Subagent | 0/3 | Not started | - |
 | 4. Desktop Backend | 0/1 | Not started | - |
