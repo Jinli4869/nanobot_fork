@@ -10,9 +10,9 @@
 - [x] **AGENT-01**: GuiAgent runs vision-action loop with retry logic
 - [x] **AGENT-02**: Mobile-Agent-style system prompt with `<tools>` XML + `Action:` prefix
 - [x] **AGENT-03**: History window: recent screenshots as images, older steps as text summaries
-- [ ] **AGENT-04**: GuiAgent.run() integrates memory retrieval into system prompt
-- [ ] **AGENT-05**: GuiAgent.run() integrates skill search → execute matched skill or free explore
-- [ ] **AGENT-06**: GuiAgent.run() records trajectory via TrajectoryRecorder
+- [x] **AGENT-04**: GuiAgent.run() integrates memory retrieval into system prompt
+- [x] **AGENT-05**: GuiAgent.run() integrates skill search → execute matched skill or free explore
+- [x] **AGENT-06**: GuiAgent.run() records trajectory via TrajectoryRecorder
 
 ### Memory
 
@@ -20,7 +20,7 @@
 - [x] **MEM-02**: MemoryStore with JSON persistence and atomic writes
 - [x] **MEM-03**: MemoryRetriever with BM25 + FAISS hybrid search
 - [x] **MEM-04**: EmbeddingProvider protocol for external API (qwen3-vl-embedding)
-- [ ] **MEM-05**: Memory context formatted and injected into system prompt
+- [x] **MEM-05**: Memory context formatted and injected into system prompt
 
 ### Skills
 
@@ -31,13 +31,13 @@
 - [x] **SKILL-05**: SkillExtractor from successful and failed trajectories via LLM
 - [x] **SKILL-06**: SkillExecutor with per-step valid_state verification
 - [x] **SKILL-07**: LLMStateValidator for screenshot-based state checks
-- [ ] **SKILL-08**: Skill execution integrated into agent loop (search → match → execute)
+- [x] **SKILL-08**: Skill execution integrated into agent loop (search → match → execute)
 
 ### Trajectory
 
 - [x] **TRAJ-01**: TrajectoryRecorder with JSONL format and execution phase tracking
 - [x] **TRAJ-02**: TrajectorySummarizer via LLM for natural language summaries
-- [ ] **TRAJ-03**: Trajectory recording integrated into agent loop
+- [x] **TRAJ-03**: Trajectory recording integrated into agent loop
 
 ### Backends
 
@@ -51,7 +51,7 @@
 - [x] **TEST-02**: Unit tests for memory module (store, retrieval, types)
 - [x] **TEST-03**: Unit tests for skills module (library CRUD, search, dedup, executor, extractor)
 - [x] **TEST-04**: Unit tests for trajectory module (recorder events, summarizer)
-- [ ] **TEST-05**: Integration test: full agent loop with DryRunBackend + mock LLM + memory + skills
+- [x] **TEST-05**: Integration test: full agent loop with DryRunBackend + mock LLM + memory + skills
 
 ### Nanobot Integration
 
