@@ -105,7 +105,7 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. P1 Unit Tests | 0/3 | Planning complete | - |
+| 1. P1 Unit Tests | 1/3 | In Progress|  |
 | 2. Agent Loop Integration | 0/3 | Not started | - |
 | 3. Nanobot Subagent | 0/3 | Not started | - |
 | 4. Desktop Backend | 0/1 | Not started | - |
