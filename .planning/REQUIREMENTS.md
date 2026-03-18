@@ -43,7 +43,7 @@
 
 - [x] **BACK-01**: ADB backend for Android (screencap, tap, swipe, scroll, text input, CJK broadcast)
 - [x] **BACK-02**: DryRun backend for testing
-- [ ] **BACK-03**: LocalDesktop backend (pyautogui + pyperclip) for macOS/Linux/Windows
+- [x] **BACK-03**: LocalDesktop backend (pyautogui + pyperclip) for macOS/Linux/Windows
 
 ### Testing
 
@@ -106,13 +106,13 @@
 | TEST-01 | Phase 0 (done) | Complete |
 | TEST-02..05 | Phase 1 | Complete |
 | AGENT-04..06, MEM-05, SKILL-08, TRAJ-03 | Phase 2 | Complete |
-| NANO-01..05 | Phase 3 | In Progress (NANO-02, NANO-03 complete) |
-| BACK-03 | Phase 4 | Pending |
+| NANO-01..05 | Phase 3 | In Progress (NANO-02, NANO-03 complete; NANO-01, NANO-04, NANO-05 pending Phase 3 Plan 02) |
+| BACK-03 | Phase 4 | Complete |
 | CLI-01, EXT-01 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 28 total
-- Complete: 17
+- Complete: 18
 - Mapped to phases: 28
 - Unmapped: 0 ✓
 

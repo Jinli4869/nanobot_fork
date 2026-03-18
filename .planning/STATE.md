@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 context gathered
-last_updated: "2026-03-18T10:51:37.829Z"
-last_activity: 2026-03-18 — Completed Phase 3 Plan 01 (NANO-02, NANO-03) with adapter bridge and GUI config coverage
+stopped_at: Completed Phase 4 Plan 01 (BACK-03) — LocalDesktopBackend
+last_updated: "2026-03-18T10:55:00.000Z"
+last_activity: 2026-03-18 — Completed Phase 4 Plan 01 (BACK-03) with LocalDesktopBackend, HiDPI capture, clipboard paste
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 10
-  completed_plans: 10
-  percent: 90
+  total_plans: 11
+  completed_plans: 11
+  percent: 91
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-03-17)
 
 ## Current Position
 
-Phase: 3 of 5 (nanobot-subagent) — IN PROGRESS
-Plan: 1 of 2 in current phase (COMPLETE)
-Status: Phase 3 in progress — GuiConfig plus nanobot-to-opengui adapters are complete; GuiSubagentTool, trajectory persistence, and skill extraction remain
-Last activity: 2026-03-18 — Completed Phase 3 Plan 01 (NANO-02, NANO-03) with adapter bridge and GUI config coverage
+Phase: 4 of 5 (desktop-backend) — IN PROGRESS
+Plan: 1 of 1 in current phase (COMPLETE)
+Status: Phase 4 Plan 01 complete — LocalDesktopBackend with mss+pyautogui+pyperclip, HiDPI downscaling, all action types, GuiSubagentTool wired
+Last activity: 2026-03-18 — Completed Phase 4 Plan 01 (BACK-03) with LocalDesktopBackend, HiDPI capture, clipboard paste
 
-Progress: [█████████░] 90% (of all milestone plans)
+Progress: [█████████░] 91% (of all milestone plans)
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [█████████░] 90% (of all milestone plans)
 | Phase 02-agent-loop-integration P00 | 1min | 1 tasks | 2 files |
 | Phase 03 P01 | 27min | 2 tasks | 6 files |
 | Phase 03 P02 | 10min | 2 tasks | 4 files |
+| Phase 04 P01 | 7min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -80,6 +81,9 @@ Recent decisions affecting current work:
 - [Phase 03]: GuiSubagentTool returns the recorder JSONL path so downstream consumers and extraction use the trajectory format SkillExtractor understands.
 - [Phase 03]: GUI skill libraries are cached per backend platform under workspace/gui_skills/{platform} and selected at execution time.
 - [Phase 03]: GUI run directories use microsecond timestamps to avoid collisions across consecutive execute() calls.
+- [Phase 04]: pyautogui/pyperclip imported at module level with try/except so patch() works in headless CI tests.
+- [Phase 04]: LocalDesktopBackend.input_text uses pyperclip clipboard paste (cmd/ctrl+v) instead of typewrite for Unicode correctness.
+- [Phase 04]: close_app on macOS always calls both osascript graceful quit and pkill fallback for resilience.
 
 ### Pending Todos
 
