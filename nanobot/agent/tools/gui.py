@@ -129,7 +129,9 @@ class GuiSubagentTool(Tool):
             return DryRunBackend()
 
         if backend_name == "local":
-            raise NotImplementedError("LocalDesktopBackend is planned for Phase 4 and is not available yet.")
+            from opengui.backends.desktop import LocalDesktopBackend
+
+            return LocalDesktopBackend()
 
         raise ValueError(f"Unsupported GUI backend: {backend_name}")
 
