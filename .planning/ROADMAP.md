@@ -80,10 +80,10 @@ Plans:
   2. LocalDesktopBackend.execute() dispatches tap, swipe, scroll, and text_input actions via pyautogui with [0,999] relative coordinate resolution
   3. LocalDesktopBackend.execute() handles text_input using pyperclip for clipboard paste, avoiding per-character typing
   4. Running GuiAgent with LocalDesktopBackend and a real task on the local machine completes without crashing
-**Plans**: TBD
+**Plans**: 1 plan
 
 Plans:
-- [ ] 04-01: LocalDesktopBackend implementation and unit tests (mocked pyautogui)
+- [ ] 04-01-PLAN.md — LocalDesktopBackend implementation, unit tests, and nanobot integration wiring (BACK-03)
 
 ### Phase 5: CLI & Extensions
 **Goal**: Developers can drive opengui from the command line without writing any host-agent code, and other claw adapters can follow a documented integration pattern
