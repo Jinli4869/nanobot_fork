@@ -13,7 +13,7 @@ P0 is complete: the core GuiAgent vision-action loop, ADB backend, DryRun backen
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: P1 Unit Tests** - Verify all memory, skills, and trajectory module code before integrating into the agent loop
-- [ ] **Phase 2: Agent Loop Integration** - Wire memory retrieval, skill search + execute, and trajectory recording into GuiAgent.run()
+- [x] **Phase 2: Agent Loop Integration** - Wire memory retrieval, skill search + execute, and trajectory recording into GuiAgent.run()
 - [ ] **Phase 3: Nanobot Subagent** - Expose GuiAgent as a nanobot tool via GuiSubagentTool + NanobotLLMAdapter + backend selection
 - [ ] **Phase 4: Desktop Backend** - LocalDesktopBackend using pyautogui + pyperclip for macOS/Linux/Windows
 - [ ] **Phase 5: CLI & Extensions** - Standalone CLI entry point and claw adapter documentation
@@ -49,11 +49,11 @@ Plans:
 **Plans**: 5 plans
 
 Plans:
-- [ ] 02-00-PLAN.md — Wave 0 test stubs for all Phase 2 requirements (Nyquist compliance)
-- [ ] 02-01-PLAN.md — Data model extensions (SkillStep fixed fields, Skill confidence, SkillLibrary.update()) + MemoryStore markdown migration
-- [ ] 02-02-PLAN.md — Wire memory, skill, trajectory into GuiAgent.run() + update P0 tests
-- [ ] 02-03-PLAN.md — TaskPlanner (AND/OR/ATOM tree) + TreeRouter (capability dispatch) at nanobot level
-- [ ] 02-04-PLAN.md — Integration tests: full agent loop + planner/router dispatch + memory tests
+- [x] 02-00-PLAN.md — Wave 0 test stubs for all Phase 2 requirements (Nyquist compliance)
+- [x] 02-01-PLAN.md — Data model extensions (SkillStep fixed fields, Skill confidence, SkillLibrary.update()) + MemoryStore markdown migration
+- [x] 02-02-PLAN.md — Wire memory, skill, trajectory into GuiAgent.run() + update P0 tests
+- [x] 02-03-PLAN.md — TaskPlanner (AND/OR/ATOM tree) + TreeRouter (capability dispatch) at nanobot level
+- [x] 02-04-PLAN.md — Integration tests: full agent loop + planner/router dispatch + memory tests
 
 ### Phase 3: Nanobot Subagent
 **Goal**: The main nanobot agent can spawn a GUI subagent to complete device tasks, receive a structured result, and optionally extract new skills from the recorded trajectory
@@ -68,7 +68,7 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Wave 0 test stubs + GuiConfig schema + NanobotLLMAdapter + NanobotEmbeddingAdapter (NANO-02, NANO-03)
+- [x] 03-01-PLAN.md — Wave 0 test stubs + GuiConfig schema + NanobotLLMAdapter + NanobotEmbeddingAdapter (NANO-02, NANO-03)
 - [ ] 03-02-PLAN.md — GuiSubagentTool + AgentLoop registration + trajectory save + auto skill extraction (NANO-01, NANO-04, NANO-05)
 
 ### Phase 4: Desktop Backend
@@ -108,7 +108,7 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. P1 Unit Tests | 3/3 | Complete   | 2026-03-17 |
-| 2. Agent Loop Integration | 0/5 | Not started | - |
-| 3. Nanobot Subagent | 0/2 | Not started | - |
+| 2. Agent Loop Integration | 5/5 | Complete | 2026-03-18 |
+| 3. Nanobot Subagent | 1/2 | In Progress | - |
 | 4. Desktop Backend | 0/1 | Not started | - |
 | 5. CLI & Extensions | 0/2 | Not started | - |
