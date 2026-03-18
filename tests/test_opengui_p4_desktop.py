@@ -387,7 +387,7 @@ async def test_execute_open_app_macos() -> None:
     with patch.object(backend, "_run_cmd", AsyncMock(return_value="")) as mock_run:
         await backend.execute(action)
 
-    mock_run.assert_called_once_with("open", "-a", "Safari")
+    mock_run.assert_called_once_with("open", "-a", "Safari", timeout=5.0)
 
 
 @pytest.mark.asyncio
