@@ -5,6 +5,7 @@ Core protocol definitions for the opengui GUI automation framework.
 
 All types here are free of third-party dependencies so that any host agent
 can conform to the protocols without pulling in extra packages.
+For host-agent adapter examples, see repo-root ADAPTERS.md and nanobot/agent/gui_adapter.py.
 """
 
 from __future__ import annotations
