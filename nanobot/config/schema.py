@@ -13,6 +13,7 @@ class Base(BaseModel):
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
+
 class ChannelsConfig(Base):
     """Configuration for chat channels.
 
@@ -150,6 +151,22 @@ class ToolsConfig(Base):
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
 
 
+class AdbConfig(Base):
+    """ADB backend configuration for GUI automation."""
+
+    serial: str | None = None
+
+
+class GuiConfig(Base):
+    """GUI subagent configuration."""
+
+    backend: Literal["adb", "local", "dry-run"] = "adb"
+    adb: AdbConfig = Field(default_factory=AdbConfig)
+    artifacts_dir: str = "gui_runs"
+    max_steps: int = 15
+    skill_threshold: float = 0.6
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -158,6 +175,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    gui: GuiConfig | None = None
 
     @property
     def workspace_path(self) -> Path:
