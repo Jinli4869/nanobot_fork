@@ -96,8 +96,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 05-01-PLAN.md — Standalone CLI entry point, YAML config loader, OpenAI-compatible provider bridge, and CLI tests (CLI-01)
-- [ ] 05-02-PLAN.md — Adapter documentation, protocol pointer comment, and docs regression tests (EXT-01)
+- [x] 05-01-PLAN.md — Standalone CLI entry point, YAML config loader, OpenAI-compatible provider bridge, and CLI tests (CLI-01)
+- [x] 05-02-PLAN.md — Adapter documentation, protocol pointer comment, and docs regression tests (EXT-01)
 
 ## Progress
 
@@ -110,5 +110,5 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 | 1. P1 Unit Tests | 3/3 | Complete   | 2026-03-17 |
 | 2. Agent Loop Integration | 5/5 | Complete | 2026-03-18 |
 | 3. Nanobot Subagent | 1/2 | In Progress | - |
-| 4. Desktop Backend | 0/1 | Not started | - |
-| 5. CLI & Extensions | 0/2 | Not started | - |
+| 4. Desktop Backend | 1/1 | Complete | 2026-03-18 |
+| 5. CLI & Extensions | 2/2 | In Progress | - |

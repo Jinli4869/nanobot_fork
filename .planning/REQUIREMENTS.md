@@ -64,7 +64,7 @@
 ### CLI & Extensions
 
 - [ ] **CLI-01**: `python -m opengui.cli` standalone entry point
-- [ ] **EXT-01**: Other claw adapter pattern documented
+- [x] **EXT-01**: Other claw adapter pattern documented
 
 ## v2 Requirements
 
@@ -108,7 +108,7 @@
 | AGENT-04..06, MEM-05, SKILL-08, TRAJ-03 | Phase 2 | Complete |
 | NANO-01..05 | Phase 3 | In Progress (NANO-02, NANO-03 complete; NANO-01, NANO-04, NANO-05 pending Phase 3 Plan 02) |
 | BACK-03 | Phase 4 | Complete |
-| CLI-01, EXT-01 | Phase 5 | Pending |
+| CLI-01, EXT-01 | Phase 5 | Awaiting human verification (all automated checks passed; real ADB/local smoke tests pending) |
 
 **Coverage:**
 - v1 requirements: 28 total
@@ -118,4 +118,4 @@
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-18 after 03-01 completion*
+*Last updated: 2026-03-18 after Phase 5 execution (awaiting human verification)*
