@@ -93,11 +93,11 @@ Plans:
   1. `python -m opengui.cli --backend adb --task "Open Settings"` runs a full agent loop and prints the result
   2. `python -m opengui.cli --backend local --task "Open Chrome"` runs a full agent loop against the local desktop
   3. A code comment or docstring in the CLI or interfaces module explains the adapter pattern so another developer can write an openclaw/nanoclaw/zeroclaw adapter without reading nanobot internals
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 05-01: CLI entry point (`opengui/cli.py` with `__main__` support)
-- [ ] 05-02: Claw adapter documentation (EXT-01)
+- [ ] 05-01-PLAN.md — Standalone CLI entry point, YAML config loader, OpenAI-compatible provider bridge, and CLI tests (CLI-01)
+- [ ] 05-02-PLAN.md — Adapter documentation, protocol pointer comment, and docs regression tests (EXT-01)
 
 ## Progress
 
