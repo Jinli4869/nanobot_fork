@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.web import WebToolsConfig
 
 
+
 class ChannelsConfig(Base):
     """Configuration for chat channels.
 
@@ -389,6 +390,22 @@ class ToolsConfig(Base):
     ssrf_whitelist: list[str] = Field(default_factory=list)  # CIDR ranges to exempt from SSRF blocking (e.g. ["100.64.0.0/10"] for Tailscale)
 
 
+class AdbConfig(Base):
+    """ADB backend configuration for GUI automation."""
+
+    serial: str | None = None
+
+
+class GuiConfig(Base):
+    """GUI subagent configuration."""
+
+    backend: Literal["adb", "local", "dry-run"] = "adb"
+    adb: AdbConfig = Field(default_factory=AdbConfig)
+    artifacts_dir: str = "gui_runs"
+    max_steps: int = 15
+    skill_threshold: float = 0.6
+
+
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -399,6 +416,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    gui: GuiConfig | None = None
     model_presets: dict[str, ModelPresetConfig] = Field(
         default_factory=dict,
         validation_alias=AliasChoices("modelPresets", "model_presets"),
