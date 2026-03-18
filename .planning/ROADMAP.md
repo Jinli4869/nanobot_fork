@@ -65,12 +65,11 @@ Plans:
   3. Backend is selected from nanobot config (adb / local / dry-run) and the agent starts without additional configuration
   4. After a run, the trajectory JSONL file is saved to the nanobot workspace and the main agent receives a structured result dict
   5. The main agent has a trajectory_summary skill that summarizes a trajectory and extracts new skills into the SkillLibrary
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 03-01: GuiSubagentTool + NanobotLLMAdapter + backend selection from config
-- [ ] 03-02: Trajectory workspace save + NANO-04 result handoff
-- [ ] 03-03: trajectory_summary skill for post-run skill extraction (NANO-05)
+- [ ] 03-01-PLAN.md — Wave 0 test stubs + GuiConfig schema + NanobotLLMAdapter + NanobotEmbeddingAdapter (NANO-02, NANO-03)
+- [ ] 03-02-PLAN.md — GuiSubagentTool + AgentLoop registration + trajectory save + auto skill extraction (NANO-01, NANO-04, NANO-05)
 
 ### Phase 4: Desktop Backend
 **Goal**: GuiAgent can automate a local desktop (macOS, Linux, or Windows) using the same DeviceBackend protocol as ADB
@@ -110,6 +109,6 @@ Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
 |-------|----------------|--------|-----------|
 | 1. P1 Unit Tests | 3/3 | Complete   | 2026-03-17 |
 | 2. Agent Loop Integration | 0/5 | Not started | - |
-| 3. Nanobot Subagent | 0/3 | Not started | - |
+| 3. Nanobot Subagent | 0/2 | Not started | - |
 | 4. Desktop Backend | 0/1 | Not started | - |
 | 5. CLI & Extensions | 0/2 | Not started | - |
