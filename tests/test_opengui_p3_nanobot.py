@@ -10,15 +10,22 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
+from pydantic import ValidationError
 
 try:
+    from opengui.interfaces import LLMProvider as OpenGuiLLMProvider
     from opengui.interfaces import LLMResponse as OpenGuiLLMResponse
     from opengui.interfaces import ToolCall as OpenGuiToolCall
+    from opengui.memory.retrieval import EmbeddingProvider as OpenGuiEmbeddingProvider
 except Exception as exc:  # pragma: no cover - only used if imports break
+    OpenGuiLLMProvider = None
     OpenGuiLLMResponse = None
     OpenGuiToolCall = None
+    OpenGuiEmbeddingProvider = None
     _OPENGUI_IMPORT_ERROR: Exception | None = exc
 else:
     _OPENGUI_IMPORT_ERROR = None
@@ -41,6 +48,24 @@ else:
 @dataclass
 class _QueuedResponse:
     response: Any
+
+
+def _nanobot_tool_response(
+    *,
+    content: str,
+    arguments: dict[str, Any],
+    call_id: str,
+) -> Any:
+    return NanobotLLMResponse(
+        content=content,
+        tool_calls=[
+            ToolCallRequest(
+                id=call_id,
+                name="computer_use",
+                arguments=arguments,
+            )
+        ],
+    )
 
 
 if _NANOBOT_IMPORT_ERROR is None:
@@ -103,20 +128,28 @@ def tmp_workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.mark.xfail(strict=False, reason="NANO-01 not yet implemented")
 def test_gui_tool_registered(tmp_workspace: Path) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
     from nanobot.agent.tools.registry import ToolRegistry
 
+    provider = _MockNanobotProvider([])
     registry = ToolRegistry()
-    tool = GuiSubagentTool(config=Config(), workspace=tmp_workspace)
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
     registry.register(tool)
 
+    assert tool.name == "gui_task"
+    assert tool.parameters["required"] == ["task"]
+    assert tool.parameters["properties"]["backend"]["enum"] == ["adb", "local", "dry-run"]
     definitions = registry.get_definitions()
     assert any(defn["function"]["name"] == tool.name for defn in definitions)
+    assert tool.description
 
 
-@pytest.mark.xfail(strict=False, reason="NANO-02 not yet implemented")
 @pytest.mark.asyncio
 async def test_llm_adapter_maps_response() -> None:
     from nanobot.agent.gui_adapter import NanobotLLMAdapter
@@ -139,12 +172,18 @@ async def test_llm_adapter_maps_response() -> None:
 
     result = await adapter.chat(messages=[{"role": "user", "content": "Open Settings"}])
 
+    assert isinstance(adapter, OpenGuiLLMProvider)
     assert isinstance(result, OpenGuiLLMResponse)
+    assert result.content == "tap settings"
+    assert result.tool_calls is not None
     assert isinstance(result.tool_calls[0], OpenGuiToolCall)
-    assert result.tool_calls[0].arguments["action_type"] == "tap"
+    assert result.tool_calls[0] == OpenGuiToolCall(
+        id="tc1",
+        name="computer_use",
+        arguments={"action_type": "tap", "x": 100, "y": 200},
+    )
 
 
-@pytest.mark.xfail(strict=False, reason="NANO-02 not yet implemented")
 @pytest.mark.asyncio
 async def test_llm_adapter_empty_tool_calls() -> None:
     from nanobot.agent.gui_adapter import NanobotLLMAdapter
@@ -157,41 +196,337 @@ async def test_llm_adapter_empty_tool_calls() -> None:
     assert result.tool_calls is None
 
 
-@pytest.mark.xfail(strict=False, reason="NANO-03 not yet implemented")
+@pytest.mark.asyncio
+async def test_llm_adapter_content_none() -> None:
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
+
+    provider = _MockNanobotProvider([NanobotLLMResponse(content=None, tool_calls=[])])
+    adapter = NanobotLLMAdapter(provider=provider, model=provider.get_default_model())
+
+    result = await adapter.chat(messages=[{"role": "user", "content": "Continue"}])
+
+    assert result.content == ""
+
+
+@pytest.mark.asyncio
+async def test_llm_adapter_raw_preserved() -> None:
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
+
+    response = NanobotLLMResponse(content="done", tool_calls=[])
+    provider = _MockNanobotProvider([response])
+    adapter = NanobotLLMAdapter(provider=provider, model=provider.get_default_model())
+
+    result = await adapter.chat(messages=[{"role": "user", "content": "Finish"}])
+
+    assert result.raw is response
+
+
+@pytest.mark.asyncio
+async def test_llm_adapter_tool_choice_passthrough() -> None:
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
+
+    provider = _MockNanobotProvider([NanobotLLMResponse(content="done", tool_calls=[])])
+    adapter = NanobotLLMAdapter(provider=provider, model=provider.get_default_model())
+    tools = [{"type": "function", "function": {"name": "computer_use"}}]
+
+    await adapter.chat(
+        messages=[{"role": "user", "content": "Use the computer"}],
+        tools=tools,
+        tool_choice="required",
+    )
+
+    assert provider.calls[0]["tool_choice"] == "required"
+    assert provider.calls[0]["model"] == "test-model"
+    assert provider.calls[0]["tools"] == tools
+
+
+@pytest.mark.asyncio
+async def test_embedding_adapter() -> None:
+    from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter
+
+    calls: list[list[str]] = []
+
+    async def embed_fn(texts: list[str]) -> np.ndarray:
+        calls.append(texts)
+        return np.array([[1.0, 2.0]], dtype=np.float32)
+
+    adapter = NanobotEmbeddingAdapter(embed_fn)
+    result = await adapter.embed(["hello"])
+
+    assert isinstance(adapter, OpenGuiEmbeddingProvider)
+    assert calls == [["hello"]]
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
+    assert result.shape == (1, 2)
+
+
 def test_backend_selection(tmp_workspace: Path) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
+
+    provider = _MockNanobotProvider([])
+    gui_config = Config(gui={"backend": "dry-run"}).gui
+    assert gui_config is not None
+    tool = GuiSubagentTool(
+        gui_config=gui_config,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    assert tool._backend.platform == "dry-run"
+    assert tool._skill_libraries["dry-run"].store_dir == tmp_workspace / "gui_skills" / "dry-run"
+
+
+def test_gui_config_defaults() -> None:
     from nanobot.config.schema import GuiConfig
 
-    config = Config(gui=GuiConfig(backend="dry-run"))
-    tool = GuiSubagentTool(config=config, workspace=tmp_workspace)
+    config = GuiConfig()
 
-    assert getattr(tool, "_backend_override", None) in (None, "dry-run")
+    assert config.backend == "adb"
+    assert config.adb.serial is None
+    assert config.artifacts_dir == "gui_runs"
+    assert config.max_steps == 15
+    assert config.skill_threshold == pytest.approx(0.6)
 
 
-@pytest.mark.xfail(strict=False, reason="NANO-04 not yet implemented")
+def test_gui_config_validation() -> None:
+    from nanobot.config.schema import GuiConfig
+
+    assert GuiConfig(backend="dry-run").backend == "dry-run"
+    with pytest.raises(ValidationError):
+        GuiConfig(backend="invalid")
+
+
+def test_config_gui_none_by_default() -> None:
+    config = Config()
+
+    assert config.gui is None
+
+
+def test_gui_config_nested_aliases() -> None:
+    config = Config(
+        gui={
+            "backend": "adb",
+            "adb": {"serial": "emulator-5554"},
+            "artifactsDir": "custom_runs",
+        }
+    )
+
+    assert config.gui is not None
+    assert config.gui.backend == "adb"
+    assert config.gui.adb.serial == "emulator-5554"
+    assert config.gui.artifacts_dir == "custom_runs"
+
+
 @pytest.mark.asyncio
 async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
 
-    tool = GuiSubagentTool(config=Config(gui={"backend": "dry-run"}), workspace=tmp_workspace)
-    result = await tool.execute(task="Open Settings")
+    provider = _MockNanobotProvider(
+        [
+            _nanobot_tool_response(
+                content="Action: wait briefly",
+                arguments={"action_type": "wait", "duration_ms": 1},
+                call_id="tc_wait",
+            ),
+            _nanobot_tool_response(
+                content="Action: task complete",
+                arguments={"action_type": "done", "status": "success"},
+                call_id="tc_done",
+            ),
+        ]
+    )
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+    result = json.loads(await tool.execute(task="Open Settings"))
 
     traces = list((tmp_workspace / "gui_runs").glob("**/*.jsonl"))
-    assert result["trace_path"]
+    assert set(result) == {"success", "summary", "trace_path", "steps_taken", "error"}
+    assert result["success"] is True
+    assert result["steps_taken"] == 2
+    assert result["error"] is None
+    assert Path(result["trace_path"]).is_file()
     assert traces
+    assert any(path.name == "trace.jsonl" for path in traces)
 
-
-@pytest.mark.xfail(strict=False, reason="NANO-05 not yet implemented")
 @pytest.mark.asyncio
 async def test_auto_skill_extraction(tmp_workspace: Path) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
+    from opengui.skills.data import Skill, SkillStep
 
-    tool = GuiSubagentTool(config=Config(gui={"backend": "dry-run"}), workspace=tmp_workspace)
-    await tool.execute(task="Open calculator")
+    extract_calls: list[tuple[Path, bool]] = []
+    add_or_merge = AsyncMock(return_value=("ADD", "skill-1"))
 
-    skills_dir = tmp_workspace / "gui_skills"
-    manifests = list(skills_dir.glob("**/*.json"))
-    assert manifests
+    async def fake_extract(self, trajectory_path: Path, *, is_success: bool = True):
+        extract_calls.append((trajectory_path, is_success))
+        return Skill(
+            skill_id="skill-1",
+            name="open_settings",
+            description="Open settings app",
+            app="settings",
+            platform="dry-run",
+            steps=(
+                SkillStep(action_type="wait", target="loading spinner"),
+                SkillStep(action_type="done", target="settings open"),
+            ),
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor.extract_from_file", fake_extract)
+    monkeypatch.setattr("opengui.skills.library.SkillLibrary.add_or_merge", add_or_merge)
+    try:
+        provider = _MockNanobotProvider(
+            [
+                _nanobot_tool_response(
+                    content="Action: wait briefly",
+                    arguments={"action_type": "wait", "duration_ms": 1},
+                    call_id="tc_wait",
+                ),
+                _nanobot_tool_response(
+                    content="Action: task complete",
+                    arguments={"action_type": "done", "status": "success"},
+                    call_id="tc_done",
+                ),
+            ]
+        )
+        tool = GuiSubagentTool(
+            gui_config=Config(gui={"backend": "dry-run"}).gui,
+            provider=provider,
+            model=provider.get_default_model(),
+            workspace=tmp_workspace,
+        )
+        result = json.loads(await tool.execute(task="Open calculator"))
+    finally:
+        monkeypatch.undo()
+
+    assert result["success"] is True
+    assert len(extract_calls) == 1
+    assert extract_calls[0][0] == Path(result["trace_path"])
+    assert extract_calls[0][1] is True
+    add_or_merge.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    add_or_merge = AsyncMock()
+    monkeypatch.setattr(
+        "opengui.skills.extractor.SkillExtractor.extract_from_file",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr("opengui.skills.library.SkillLibrary.add_or_merge", add_or_merge)
+
+    provider = _MockNanobotProvider(
+        [
+            _nanobot_tool_response(
+                content="Action: wait briefly",
+                arguments={"action_type": "wait", "duration_ms": 1},
+                call_id="tc_wait",
+            ),
+            _nanobot_tool_response(
+                content="Action: task complete",
+                arguments={"action_type": "done", "status": "success"},
+                call_id="tc_done",
+            ),
+        ]
+    )
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    result = json.loads(await tool.execute(task="Open calculator"))
+
+    assert result["success"] is True
+    add_or_merge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_creates_fresh_trajectory_recorder(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opengui.agent import AgentResult
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    recorder_ids: list[int] = []
+
+    async def fake_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None):
+        recorder_ids.append(id(self._trajectory_recorder))
+        self._trajectory_recorder.start()
+        self._trajectory_recorder.record_step(action={"action_type": "wait"}, model_output="wait")
+        self._trajectory_recorder.record_step(action={"action_type": "done"}, model_output="done")
+        trace_path = self._trajectory_recorder.finish(success=True)
+        return AgentResult(
+            success=True,
+            summary=f"completed {task}",
+            trace_path=str(trace_path),
+            steps_taken=2,
+            error=None,
+        )
+
+    monkeypatch.setattr("opengui.agent.GuiAgent.run", fake_run)
+    monkeypatch.setattr(
+        "opengui.skills.extractor.SkillExtractor.extract_from_file",
+        AsyncMock(return_value=None),
+    )
+
+    provider = _MockNanobotProvider([])
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    first = json.loads(await tool.execute(task="Open app"))
+    second = json.loads(await tool.execute(task="Open app"))
+
+    assert len(recorder_ids) == 2
+    assert recorder_ids[0] != recorder_ids[1]
+    assert first["trace_path"] != second["trace_path"]
+
+
+def test_agent_loop_registers_gui_tool(tmp_workspace: Path) -> None:
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.queue import MessageBus
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=tmp_workspace,
+        model="test-model",
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+    )
+
+    assert loop.tools.has("gui_task")
+
+
+def test_agent_loop_no_gui_config(tmp_workspace: Path) -> None:
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.queue import MessageBus
+
+    provider = MagicMock()
+    provider.get_default_model.return_value = "test-model"
+
+    loop = AgentLoop(
+        bus=MessageBus(),
+        provider=provider,
+        workspace=tmp_workspace,
+        model="test-model",
+    )
+
+    assert not loop.tools.has("gui_task")
 
 
 def test_scaffolding_uses_phase3_patterns() -> None:
