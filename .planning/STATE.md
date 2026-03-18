@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 5 context gathered
-last_updated: "2026-03-18T12:03:51.383Z"
-last_activity: 2026-03-18 — Completed Phase 4 Plan 01 (BACK-03) with LocalDesktopBackend, HiDPI capture, clipboard paste
+status: in_progress
+stopped_at: Phase 5 human verification
+last_updated: "2026-03-18T14:07:10Z"
+last_activity: 2026-03-18 — Completed all Phase 5 plans; automated checks passed and human verification is pending for real ADB/local CLI smoke tests
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 11
-  completed_plans: 11
-  percent: 91
+  total_plans: 13
+  completed_plans: 13
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-17)
 
 **Core value:** Any host agent can spawn a GUI subagent with reusable skills that improve over time.
-**Current focus:** Phase 3 in progress — nanobot adapter bridge and GUI config complete, GuiSubagentTool remains
+**Current focus:** Phase 5 awaiting human verification — all implementation work is done, but real ADB/local CLI smoke tests remain
 
 ## Current Position
 
-Phase: 4 of 5 (desktop-backend) — IN PROGRESS
-Plan: 1 of 1 in current phase (COMPLETE)
-Status: Phase 4 Plan 01 complete — LocalDesktopBackend with mss+pyautogui+pyperclip, HiDPI downscaling, all action types, GuiSubagentTool wired
-Last activity: 2026-03-18 — Completed Phase 4 Plan 01 (BACK-03) with LocalDesktopBackend, HiDPI capture, clipboard paste
+Phase: 5 of 5 (cli-extensions) — AWAITING HUMAN VERIFICATION
+Plan: 2 of 2 in current phase (COMPLETE)
+Status: All Phase 5 plans complete — standalone CLI, adapter docs, and automated tests are done; real ADB/local smoke tests are still pending
+Last activity: 2026-03-18 — Completed all Phase 5 plans and wrote 05-VERIFICATION.md with `human_needed` status
 
-Progress: [█████████░] 91% (of all milestone plans)
+Progress: [██████████] 100% (of all milestone plans)
 
 ## Performance Metrics
 
@@ -55,6 +55,8 @@ Progress: [█████████░] 91% (of all milestone plans)
 | Phase 03 P01 | 27min | 2 tasks | 6 files |
 | Phase 03 P02 | 10min | 2 tasks | 4 files |
 | Phase 04 P01 | 7min | 2 tasks | 5 files |
+| Phase 05-cli-extensions P02 | 8min | 2 tasks | 3 files |
+| Phase 05-cli-extensions P01 | unknown | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -84,6 +86,10 @@ Recent decisions affecting current work:
 - [Phase 04]: pyautogui/pyperclip imported at module level with try/except so patch() works in headless CI tests.
 - [Phase 04]: LocalDesktopBackend.input_text uses pyperclip clipboard paste (cmd/ctrl+v) instead of typewrite for Unicode correctness.
 - [Phase 04]: close_app on macOS always calls both osascript graceful quit and pkill fallback for resilience.
+- [Phase 05-cli-extensions]: Adapter documentation lives in repo-root ADAPTERS.md with a short pointer in opengui/interfaces.py.
+- [Phase 05-cli-extensions]: NanobotLLMAdapter is documented as a reference-only example and not a runtime dependency for opengui.
+- [Phase 05-cli-extensions]: The standalone CLI owns its YAML config schema and OpenAI-compatible provider bridge so `opengui` remains independent from nanobot runtime imports.
+- [Phase 05-cli-extensions]: Embedding-backed memory retrieval, skill search, and skill execution are enabled only as a bundle to avoid partial capability states in CLI runs.
 
 ### Pending Todos
 
@@ -98,9 +104,10 @@ None yet.
 
 
 - Git commits could not be created in this sandbox because writes inside .git are denied.
+- Phase 5 still needs human verification in a real ADB/device setup and a real local desktop session.
 
 ## Session Continuity
 
-Last session: 2026-03-18T12:03:51.374Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-cli-extensions/05-CONTEXT.md
+Last session: 2026-03-18T14:07:10Z
+Stopped at: Phase 5 human verification
+Resume file: .planning/phases/05-cli-extensions/05-VERIFICATION.md
