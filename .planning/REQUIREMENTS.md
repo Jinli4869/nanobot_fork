@@ -55,11 +55,11 @@
 
 ### Nanobot Integration
 
-- [ ] **NANO-01**: GuiSubagentTool registered in nanobot tool registry
-- [ ] **NANO-02**: NanobotLLMAdapter wrapping nanobot's provider to opengui LLMProvider protocol
-- [ ] **NANO-03**: Backend selection from nanobot config (adb/local/dry-run)
-- [ ] **NANO-04**: Trajectory saved to nanobot workspace for later skill extraction
-- [ ] **NANO-05**: Main agent trajectory_summary skill for post-run skill extraction
+- [x] **NANO-01**: GuiSubagentTool registered in nanobot tool registry
+- [x] **NANO-02**: NanobotLLMAdapter wrapping nanobot's provider to opengui LLMProvider protocol
+- [x] **NANO-03**: Backend selection from nanobot config (adb/local/dry-run)
+- [x] **NANO-04**: Trajectory saved to nanobot workspace for later skill extraction
+- [x] **NANO-05**: Main agent trajectory_summary skill for post-run skill extraction
 
 ### CLI & Extensions
 
@@ -104,18 +104,18 @@
 | TRAJ-01..02 | Phase 0 (done) | Complete |
 | BACK-01..02 | Phase 0 (done) | Complete |
 | TEST-01 | Phase 0 (done) | Complete |
-| TEST-02..05 | Phase 1 | Pending |
-| AGENT-04..06, MEM-05, SKILL-08, TRAJ-03 | Phase 2 | Pending |
-| NANO-01..05 | Phase 3 | Pending |
+| TEST-02..05 | Phase 1 | Complete |
+| AGENT-04..06, MEM-05, SKILL-08, TRAJ-03 | Phase 2 | Complete |
+| NANO-01..05 | Phase 3 | In Progress (NANO-02, NANO-03 complete) |
 | BACK-03 | Phase 4 | Pending |
 | CLI-01, EXT-01 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 28 total
-- Complete: 15
+- Complete: 17
 - Mapped to phases: 28
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-17 after initial definition*
+*Last updated: 2026-03-18 after 03-01 completion*
