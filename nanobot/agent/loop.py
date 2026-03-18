@@ -82,10 +82,12 @@ from nanobot.utils.runtime import (
 if TYPE_CHECKING:
     from nanobot.config.schema import (
         ChannelsConfig,
+        GuiConfig,
         ProviderConfig,
         ToolsConfig,
     )
     from nanobot.cron.service import CronService
+
 
 class TurnState(Enum):
     RESTORE = auto()
@@ -211,6 +213,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
+        gui_config: "GuiConfig | None" = None,
         timezone: str | None = None,
         session_ttl_minutes: int = 0,
         consolidation_ratio: float = 0.5,
@@ -285,6 +288,7 @@ class AgentLoop:
         )
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
+        self._gui_config = gui_config
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
@@ -393,6 +397,7 @@ class AgentLoop:
         resolved = config.resolve_preset()
         model = extra.pop("model", None) or resolved.model
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
+        gui_config = extra.pop("gui_config", getattr(config, "gui", None))
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
@@ -414,6 +419,7 @@ class AgentLoop:
             restrict_to_workspace=config.tools.restrict_to_workspace,
             mcp_servers=config.tools.mcp_servers,
             channels_config=config.channels,
+            gui_config=gui_config,
             timezone=defaults.timezone,
             unified_session=defaults.unified_session,
             disabled_skills=defaults.disabled_skills,
@@ -541,6 +547,19 @@ class AgentLoop:
                 MyTool(runtime_state=self, modify_allowed=self.tools_config.my.allow_set)
             )
             registered.append("my")
+
+        if self._gui_config is not None:
+            from nanobot.agent.tools.gui import GuiSubagentTool
+
+            self.tools.register(
+                GuiSubagentTool(
+                    gui_config=self._gui_config,
+                    provider=self.provider,
+                    model=self.model,
+                    workspace=self.workspace,
+                )
+            )
+            registered.append("gui_task")
 
         logger.info("Registered {} tools: {}", len(registered), registered)
 
