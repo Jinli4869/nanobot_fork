@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: P1 Unit Tests** - Verify all memory, skills, and trajectory module code before integrating into the agent loop
 - [x] **Phase 2: Agent Loop Integration** - Wire memory retrieval, skill search + execute, and trajectory recording into GuiAgent.run()
 - [ ] **Phase 3: Nanobot Subagent** - Expose GuiAgent as a nanobot tool via GuiSubagentTool + NanobotLLMAdapter + backend selection
-- [ ] **Phase 4: Desktop Backend** - LocalDesktopBackend using pyautogui + pyperclip for macOS/Linux/Windows
+- [x] **Phase 4: Desktop Backend** - LocalDesktopBackend using pyautogui + pyperclip for macOS/Linux/Windows
 - [ ] **Phase 5: CLI & Extensions** - Standalone CLI entry point and claw adapter documentation
 
 ## Phase Details
@@ -83,7 +83,7 @@ Plans:
 **Plans**: 1 plan
 
 Plans:
-- [ ] 04-01-PLAN.md — LocalDesktopBackend implementation, unit tests, and nanobot integration wiring (BACK-03)
+- [x] 04-01-PLAN.md — LocalDesktopBackend implementation, unit tests, and nanobot integration wiring (BACK-03)
 
 ### Phase 5: CLI & Extensions
 **Goal**: Developers can drive opengui from the command line without writing any host-agent code, and other claw adapters can follow a documented integration pattern
