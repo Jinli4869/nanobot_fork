@@ -25,3 +25,4 @@ nano.*.save
 uv.lock
 
 docs/
+opengui_runs/
