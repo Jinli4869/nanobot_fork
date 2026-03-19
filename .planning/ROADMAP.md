@@ -17,7 +17,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Nanobot Subagent** - Expose GuiAgent as a nanobot tool via GuiSubagentTool + NanobotLLMAdapter + backend selection
 - [x] **Phase 4: Desktop Backend** - LocalDesktopBackend using pyautogui + pyperclip for macOS/Linux/Windows
 - [ ] **Phase 5: CLI & Extensions** - Standalone CLI entry point and claw adapter documentation
-- [ ] **Phase 6: Fix Integration Wiring** - Wire skill_context, embedding adapter, Pillow dep, CLI entry point
+- [x] **Phase 6: Fix Integration Wiring** - Wire skill_context, embedding adapter, Pillow dep, CLI entry point (completed 2026-03-19)
 - [ ] **Phase 7: Phase 2 Retroactive Verification** - Create missing VERIFICATION.md for Phase 2
 - [ ] **Phase 8: Dead Export Cleanup** - Remove or wire orphaned TaskPlanner, TreeRouter, TrajectorySummarizer
 
@@ -146,6 +146,6 @@ Phase 6 depends on Phases 2-5. Phase 7 depends on Phase 6. Phase 8 depends on Ph
 | 3. Nanobot Subagent | 1/2 | In Progress | - |
 | 4. Desktop Backend | 1/1 | Complete | 2026-03-18 |
 | 5. CLI & Extensions | 2/2 | In Progress | - |
-| 6. Fix Integration Wiring | 0/0 | Pending | - |
+| 6. Fix Integration Wiring | 1/1 | Complete   | 2026-03-19 |
 | 7. Phase 2 Retroactive Verification | 0/0 | Pending | - |
 | 8. Dead Export Cleanup | 0/0 | Pending | - |

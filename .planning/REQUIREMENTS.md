@@ -43,7 +43,7 @@
 
 - [x] **BACK-01**: ADB backend for Android (screencap, tap, swipe, scroll, text input, CJK broadcast)
 - [x] **BACK-02**: DryRun backend for testing
-- [ ] **BACK-03**: LocalDesktop backend (pyautogui + pyperclip) for macOS/Linux/Windows
+- [x] **BACK-03**: LocalDesktop backend (pyautogui + pyperclip) for macOS/Linux/Windows
 
 ### Testing
 
@@ -63,7 +63,7 @@
 
 ### CLI & Extensions
 
-- [ ] **CLI-01**: `python -m opengui.cli` standalone entry point
+- [x] **CLI-01**: `python -m opengui.cli` standalone entry point
 - [x] **EXT-01**: Other claw adapter pattern documented
 
 ## v2 Requirements
@@ -108,9 +108,9 @@
 | AGENT-04, AGENT-06, MEM-05, TRAJ-03, TEST-05 | Phase 2 → Phase 7 (verification) | Pending |
 | AGENT-05, SKILL-08 | Phase 2 → Phase 6 (wiring fix) + Phase 7 (verification) | Pending |
 | NANO-01..05 | Phase 3 | In Progress (NANO-02, NANO-03 complete; NANO-01, NANO-04, NANO-05 pending Phase 3 Plan 02) |
-| NANO-03 | Phase 3 → Phase 6 (embedding adapter fix) | Pending |
-| BACK-03 | Phase 4 → Phase 6 (Pillow dep fix) | Pending |
-| CLI-01 | Phase 5 → Phase 6 (entry point + Pillow dep) | Pending |
+| NANO-03 | Phase 3 → Phase 6 (embedding adapter fix) | Complete |
+| BACK-03 | Phase 4 → Phase 6 (Pillow dep fix) | Complete |
+| CLI-01 | Phase 5 → Phase 6 (entry point + Pillow dep) | Complete |
 | EXT-01 | Phase 5 | Complete | |
 
 **Coverage:**

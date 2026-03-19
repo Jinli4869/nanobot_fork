@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Phase 6 context gathered
-last_updated: "2026-03-19T08:32:21.598Z"
+stopped_at: Completed 06-01-PLAN.md
+last_updated: "2026-03-19T09:22:28.381Z"
 last_activity: 2026-03-18 — Completed all Phase 5 plans and wrote 05-VERIFICATION.md with `human_needed` status
 progress:
   total_phases: 8
-  completed_phases: 5
-  total_plans: 13
-  completed_plans: 13
+  completed_phases: 6
+  total_plans: 14
+  completed_plans: 14
   percent: 100
 ---
 
@@ -57,6 +57,7 @@ Progress: [██████████] 100% (of all milestone plans)
 | Phase 04 P01 | 7min | 2 tasks | 5 files |
 | Phase 05-cli-extensions P02 | 8min | 2 tasks | 3 files |
 | Phase 05-cli-extensions P01 | unknown | 2 tasks | 4 files |
+| Phase 06-fix-integration-wiring P01 | 3min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,8 @@ Recent decisions affecting current work:
 - [Phase 05-cli-extensions]: NanobotLLMAdapter is documented as a reference-only example and not a runtime dependency for opengui.
 - [Phase 05-cli-extensions]: The standalone CLI owns its YAML config schema and OpenAI-compatible provider bridge so `opengui` remains independent from nanobot runtime imports.
 - [Phase 05-cli-extensions]: Embedding-backed memory retrieval, skill search, and skill execution are enabled only as a bundle to avoid partial capability states in CLI runs.
+- [Phase 06]: litellm.aembedding used for embedding calls with provider credential forwarding; model name resolved via _resolve_model() when available
+- [Phase 06]: GuiConfig.embedding_model field: optional with None fallback preserving zero-embedding SkillLibrary operation
 
 ### Pending Todos
 
@@ -108,6 +111,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-19T08:32:21.587Z
-Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-fix-integration-wiring/06-CONTEXT.md
+Last session: 2026-03-19T09:22:28.378Z
+Stopped at: Completed 06-01-PLAN.md
+Resume file: None
