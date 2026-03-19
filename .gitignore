@@ -99,4 +99,5 @@ temp/
 *.tmp
 exp/
 .playwright-mcp/
+opengui_runs/
 bridge/node_modules/
