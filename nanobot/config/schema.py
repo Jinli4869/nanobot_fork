@@ -165,6 +165,7 @@ class GuiConfig(Base):
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
     skill_threshold: float = 0.6
+    embedding_model: str | None = None
 
 
 class Config(BaseSettings):

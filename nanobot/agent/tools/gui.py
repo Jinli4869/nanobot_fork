@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nanobot.agent.gui_adapter import NanobotLLMAdapter
+import litellm
+import numpy as np
+
+from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
 
 if TYPE_CHECKING:
@@ -38,7 +42,7 @@ class GuiSubagentTool(Tool):
         self._model = model
         self._workspace = Path(workspace)
         self._llm_adapter = NanobotLLMAdapter(provider, model)
-        self._embedding_adapter = None
+        self._embedding_adapter = self._build_embedding_adapter() if gui_config.embedding_model else None
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
@@ -116,6 +120,45 @@ class GuiSubagentTool(Tool):
         if backend is None or backend == self._gui_config.backend:
             return self._backend
         return self._build_backend(backend)
+
+    def _build_embedding_adapter(self) -> NanobotEmbeddingAdapter:
+        """Build a NanobotEmbeddingAdapter backed by litellm.aembedding.
+
+        The embed function:
+        - resolves the configured model name via the provider when supported
+        - passes provider credentials to litellm so the correct API is used
+        - normalises the response into an (n, dim) float32 numpy array
+        """
+        embedding_model = self._gui_config.embedding_model  # guaranteed non-None by caller
+
+        # Resolve the model name through the provider when the method is available.
+        resolve = getattr(self._provider, "_resolve_model", None)
+        resolved_model: str = resolve(embedding_model) if callable(resolve) else embedding_model
+
+        provider = self._provider
+
+        async def _embed(texts: list[str]) -> np.ndarray:
+            if not texts:
+                return np.zeros((0, 0), dtype=np.float32)
+
+            # Collect provider credentials — only pass keys that are truthy to avoid
+            # sending empty strings that some backends reject.
+            kwargs: dict[str, Any] = {"model": resolved_model, "input": texts}
+            api_key = getattr(provider, "api_key", None)
+            if api_key:
+                kwargs["api_key"] = api_key
+            api_base = getattr(provider, "api_base", None)
+            if api_base:
+                kwargs["api_base"] = api_base
+            extra_headers = getattr(provider, "extra_headers", None)
+            if extra_headers:
+                kwargs["extra_headers"] = extra_headers
+
+            response = await litellm.aembedding(**kwargs)
+            vectors = [item.embedding for item in response.data]
+            return np.array(vectors, dtype=np.float32)
+
+        return NanobotEmbeddingAdapter(_embed)
 
     def _build_backend(self, backend_name: str) -> Any:
         if backend_name == "adb":
