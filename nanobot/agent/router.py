@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Capability priority for OR-node ordering (lower value = tried first)
+# ---------------------------------------------------------------------------
+
+_CAPABILITY_PRIORITY: dict[str, int] = {"mcp": 0, "tool": 1, "gui": 2, "api": 3}
 
 
 # ---------------------------------------------------------------------------
@@ -54,16 +62,39 @@ class TreeRouter:
     * **mcp** — placeholder (full wiring in Phase 3)
     * **api** — not yet implemented
 
-    AND nodes execute children sequentially. On failure the router may
-    trigger replanning through an optional :class:`TaskPlanner`.
+    AND nodes execute children in parallel via :func:`asyncio.gather`, bounded
+    by a ``max_concurrency`` semaphore (default 3).  Each child receives its own
+    snapshot of ``context.completed`` to prevent shared-list mutation during
+    concurrent execution.  After gather completes, all per-child completed lists
+    are merged back into ``context.completed`` in child order.
 
-    OR nodes try children in order until one succeeds. If all fail,
-    replanning is attempted before reporting failure.
+    On any AND-child failure, replanning is attempted if budget remains.
+
+    OR nodes try children in **mcp > tool > gui > api** priority order until
+    one succeeds.  If all alternatives fail, replanning is attempted before
+    reporting failure.
     """
 
-    def __init__(self, planner: Any = None, max_replans: int = 2) -> None:
+    def __init__(
+        self,
+        planner: Any = None,
+        max_replans: int = 2,
+        max_concurrency: int = 3,
+    ) -> None:
+        """
+        Args:
+            planner: Optional :class:`TaskPlanner` used for replanning after
+                     failures.
+            max_replans: Maximum number of replan attempts allowed across the
+                         whole tree execution.
+            max_concurrency: Maximum number of AND children executed
+                             concurrently.  Defaults to 3.  Set to 1 for
+                             strictly sequential (useful in tests and
+                             environments with limited parallelism).
+        """
         self._planner = planner
         self._max_replans = max_replans
+        self._max_concurrency = max_concurrency
         self._replan_count = 0
 
     # ------------------------------------------------------------------
@@ -90,46 +121,102 @@ class TreeRouter:
     # ------------------------------------------------------------------
 
     async def _execute_and(self, node: Any, context: RouterContext) -> NodeResult:
-        """AND: all children sequentially, fail-fast with optional replan."""
-        all_outputs: list[str] = []
-        all_traces: list[str] = []
+        """AND: parallel execution bounded by a concurrency semaphore.
 
-        for i, child in enumerate(node.children):
-            result = await self.execute(child, context)
-            all_traces.extend(result.trace_paths)
+        Each child receives a snapshot copy of ``context.completed`` so that
+        sibling executions cannot observe each other's intermediate writes.
+        After all children complete, their completed lists are merged into
+        ``context.completed`` in child index order.
 
-            if result.success:
-                all_outputs.append(result.output)
-                if child.node_type == "atom":
-                    context.completed.append(child.instruction)
+        If any child fails, a replan attempt is made (subject to budget).
+        All partial outputs and trace paths from successful children are
+        preserved regardless of failure.
+        """
+        sem = asyncio.Semaphore(self._max_concurrency)
+        n = len(node.children)
+
+        all_outputs: list[str] = [""] * n
+        all_traces: list[list[str]] = [[] for _ in range(n)]
+        child_completed: list[list[str]] = [[] for _ in range(n)]
+        child_results: list[NodeResult | None] = [None] * n
+
+        async def _run_child(idx: int, child: Any) -> None:
+            async with sem:
+                # Each child gets an isolated snapshot of completed so that
+                # parallel siblings cannot mutate each other's view.
+                child_ctx = RouterContext(
+                    task=context.task,
+                    completed=list(context.completed),
+                    gui_agent=context.gui_agent,
+                    tool_registry=context.tool_registry,
+                    mcp_client=context.mcp_client,
+                )
+                result = await self.execute(child, child_ctx)
+                child_results[idx] = result
+                all_traces[idx] = list(result.trace_paths)
+                if result.success:
+                    all_outputs[idx] = result.output
+                    if child.node_type == "atom":
+                        child_completed[idx].append(child.instruction)
+
+        await asyncio.gather(
+            *[_run_child(i, c) for i, c in enumerate(node.children)],
+            return_exceptions=False,
+        )
+
+        # Merge per-child completed lists into the shared context in child order
+        # so the sequence is deterministic regardless of execution order.
+        for cc in child_completed:
+            context.completed.extend(cc)
+
+        merged_traces: list[str] = [t for traces in all_traces for t in traces]
+        merged_outputs: str = "\n".join(o for o in all_outputs if o)
+
+        # Check for failures and attempt replan on the first one found.
+        for i, result in enumerate(child_results):
+            if result is None or result.success:
                 continue
-
-            # Child failed — attempt replan if budget remains.
             if self._planner is not None and self._replan_count < self._max_replans:
                 replan_result = await self._try_replan_and(
-                    node, i, child, context, all_outputs, all_traces,
+                    node=node,
+                    failed_index=i,
+                    failed_child=node.children[i],
+                    context=context,
+                    all_outputs=[o for o in all_outputs if o],
+                    all_traces=merged_traces,
                 )
                 if replan_result is not None:
-                    all_traces.extend(replan_result.trace_paths)
+                    merged_traces.extend(replan_result.trace_paths)
                     if replan_result.success:
-                        all_outputs.append(replan_result.output)
                         continue
-
             return NodeResult(
                 success=False,
-                output="\n".join(all_outputs),
+                output=merged_outputs,
                 error=result.error or f"AND child {i} failed",
-                trace_paths=all_traces,
+                trace_paths=merged_traces,
             )
 
-        return NodeResult(success=True, output="\n".join(all_outputs), trace_paths=all_traces)
+        return NodeResult(success=True, output=merged_outputs, trace_paths=merged_traces)
 
     async def _execute_or(self, node: Any, context: RouterContext) -> NodeResult:
-        """OR: try children until one succeeds."""
+        """OR: try children in priority order (mcp > tool > gui) until one succeeds.
+
+        Children are sorted by capability priority before iteration so that
+        the most capable (lowest-latency / highest-fidelity) executor is
+        always tried first regardless of the planner's output order.  Within
+        the same capability tier the original child order is preserved via a
+        stable sort.
+        """
         all_traces: list[str] = []
         last_error: str | None = None
 
-        for child in node.children:
+        # Stable sort by capability priority; ties preserve original order.
+        sorted_children = sorted(
+            node.children,
+            key=lambda c: _CAPABILITY_PRIORITY.get(getattr(c, "capability", "gui"), 99),
+        )
+
+        for child in sorted_children:
             result = await self.execute(child, context)
             all_traces.extend(result.trace_paths)
             if result.success:
@@ -138,7 +225,7 @@ class TreeRouter:
                 return NodeResult(success=True, output=result.output, trace_paths=all_traces)
             last_error = result.error
 
-        # All children failed — attempt replan.
+        # All children failed — attempt replan if budget remains.
         if self._planner is not None and self._replan_count < self._max_replans:
             self._replan_count += 1
             try:
@@ -221,7 +308,11 @@ class TreeRouter:
         all_outputs: list[str],
         all_traces: list[str],
     ) -> NodeResult | None:
-        """Attempt to replan after an AND-child failure.  Returns *None* on replan error."""
+        """Attempt to replan after an AND-child failure.
+
+        Returns the result of executing the new plan, or *None* if replanning
+        itself raised an exception.
+        """
         self._replan_count += 1
         remaining = [
             c.instruction for c in node.children[failed_index + 1:] if c.node_type == "atom"
