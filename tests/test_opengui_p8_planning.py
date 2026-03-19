@@ -297,10 +297,11 @@ async def test_or_priority_order() -> None:
     assert dispatch_order[0].startswith("mcp:"), (
         f"Expected mcp first, got: {dispatch_order}"
     )
-    # gui (lowest priority) must appear after tool and mcp
-    gui_idx = next(i for i, x in enumerate(dispatch_order) if x.startswith("gui:"))
-    mcp_idx = next(i for i, x in enumerate(dispatch_order) if x.startswith("mcp:"))
-    assert mcp_idx < gui_idx, "mcp must be tried before gui"
+    # gui (lowest priority) must appear after mcp (mcp succeeded so gui not tried)
+    # At minimum mcp was first and gui was not tried (mcp succeeded)
+    assert not any(x.startswith("gui:") for x in dispatch_order), (
+        "gui should not be tried because mcp already succeeded"
+    )
 
 
 @pytest.mark.asyncio
