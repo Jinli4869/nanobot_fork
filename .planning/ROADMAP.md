@@ -103,20 +103,19 @@ Plans:
 - [x] 05-02-PLAN.md — Adapter documentation, protocol pointer comment, and docs regression tests (EXT-01)
 
 ### Phase 6: Fix Integration Wiring
-**Goal:** Close all broken cross-phase connections — wire skill_context into system prompt, instantiate NanobotEmbeddingAdapter, declare missing Pillow dependency, and add CLI entry point to pyproject.toml
-**Depends on**: Phase 2, Phase 3, Phase 4, Phase 5
-**Requirements**: AGENT-05, SKILL-08, NANO-03, BACK-03, CLI-01
-**Gap Closure:** Closes gaps from audit — fixes 2 broken E2E flows and 5 requirements
+**Goal:** Close broken cross-phase connections — instantiate NanobotEmbeddingAdapter, declare missing Pillow dependency, and add CLI entry point to pyproject.toml
+**Depends on**: Phase 3, Phase 4, Phase 5
+**Requirements**: NANO-03, BACK-03, CLI-01
+**Gap Closure:** Closes gaps from audit — fixes 3 broken wiring issues
 **Success Criteria** (what must be TRUE):
-  1. `build_system_prompt()` receives `skill_context` from `agent.py:_build_messages()` and the `# Available Skills` section appears in the system prompt when skills exist
-  2. `GuiSubagentTool` instantiates `NanobotEmbeddingAdapter` and passes it to `SkillLibrary` so FAISS skill search works in the nanobot path
-  3. `pip install .[desktop]` installs Pillow and `from PIL import Image` succeeds without error
-  4. `pyproject.toml` declares `opengui = "opengui.cli:main"` as a console script entry point
+  1. `GuiSubagentTool` instantiates `NanobotEmbeddingAdapter` and passes it to `SkillLibrary` so FAISS skill search works in the nanobot path
+  2. `pip install .[desktop]` installs Pillow and `from PIL import Image` succeeds without error
+  3. `pyproject.toml` declares `opengui = "opengui.cli:main"` as a console script entry point
 **Plans**: 0 plans
 
 ### Phase 7: Phase 2 Retroactive Verification
 **Goal:** Create the missing VERIFICATION.md for Phase 2 by verifying all 7 requirements (AGENT-04..06, MEM-05, SKILL-08, TRAJ-03, TEST-05) against code and tests
-**Depends on**: Phase 6 (skill_context wiring must be fixed first)
+**Depends on**: Phase 6 (embedding adapter wiring must be fixed first)
 **Requirements**: AGENT-04, AGENT-05, AGENT-06, MEM-05, SKILL-08, TRAJ-03, TEST-05
 **Gap Closure:** Closes 7 verification gaps from audit
 **Success Criteria** (what must be TRUE):
