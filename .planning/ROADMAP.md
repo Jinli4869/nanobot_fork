@@ -17,6 +17,9 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 3: Nanobot Subagent** - Expose GuiAgent as a nanobot tool via GuiSubagentTool + NanobotLLMAdapter + backend selection
 - [x] **Phase 4: Desktop Backend** - LocalDesktopBackend using pyautogui + pyperclip for macOS/Linux/Windows
 - [ ] **Phase 5: CLI & Extensions** - Standalone CLI entry point and claw adapter documentation
+- [ ] **Phase 6: Fix Integration Wiring** - Wire skill_context, embedding adapter, Pillow dep, CLI entry point
+- [ ] **Phase 7: Phase 2 Retroactive Verification** - Create missing VERIFICATION.md for Phase 2
+- [ ] **Phase 8: Dead Export Cleanup** - Remove or wire orphaned TaskPlanner, TreeRouter, TrajectorySummarizer
 
 ## Phase Details
 
@@ -99,16 +102,51 @@ Plans:
 - [x] 05-01-PLAN.md — Standalone CLI entry point, YAML config loader, OpenAI-compatible provider bridge, and CLI tests (CLI-01)
 - [x] 05-02-PLAN.md — Adapter documentation, protocol pointer comment, and docs regression tests (EXT-01)
 
+### Phase 6: Fix Integration Wiring
+**Goal:** Close all broken cross-phase connections — wire skill_context into system prompt, instantiate NanobotEmbeddingAdapter, declare missing Pillow dependency, and add CLI entry point to pyproject.toml
+**Depends on**: Phase 2, Phase 3, Phase 4, Phase 5
+**Requirements**: AGENT-05, SKILL-08, NANO-03, BACK-03, CLI-01
+**Gap Closure:** Closes gaps from audit — fixes 2 broken E2E flows and 5 requirements
+**Success Criteria** (what must be TRUE):
+  1. `build_system_prompt()` receives `skill_context` from `agent.py:_build_messages()` and the `# Available Skills` section appears in the system prompt when skills exist
+  2. `GuiSubagentTool` instantiates `NanobotEmbeddingAdapter` and passes it to `SkillLibrary` so FAISS skill search works in the nanobot path
+  3. `pip install .[desktop]` installs Pillow and `from PIL import Image` succeeds without error
+  4. `pyproject.toml` declares `opengui = "opengui.cli:main"` as a console script entry point
+**Plans**: 0 plans
+
+### Phase 7: Phase 2 Retroactive Verification
+**Goal:** Create the missing VERIFICATION.md for Phase 2 by verifying all 7 requirements (AGENT-04..06, MEM-05, SKILL-08, TRAJ-03, TEST-05) against code and tests
+**Depends on**: Phase 6 (skill_context wiring must be fixed first)
+**Requirements**: AGENT-04, AGENT-05, AGENT-06, MEM-05, SKILL-08, TRAJ-03, TEST-05
+**Gap Closure:** Closes 7 verification gaps from audit
+**Success Criteria** (what must be TRUE):
+  1. `.planning/phases/02-agent-loop-integration/VERIFICATION.md` exists and covers all 7 requirements
+  2. Each requirement has a pass/fail verdict with evidence (test output, code reference, or manual check)
+**Plans**: 0 plans
+
+### Phase 8: Dead Export Cleanup
+**Goal:** Remove or wire orphaned exports (TaskPlanner, TreeRouter, TrajectorySummarizer) that are tested but never called from production code
+**Depends on**: Phase 7
+**Requirements**: None (tech debt)
+**Gap Closure:** Closes 3 orphaned export warnings from audit
+**Success Criteria** (what must be TRUE):
+  1. No production-unreachable exports remain in `__init__.py` or public APIs
+  2. All tests still pass after cleanup
+**Plans**: 0 plans
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
-Phase 4 depends only on Phase 2 and can run in parallel with Phase 3 if desired.
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+Phase 6 depends on Phases 2-5. Phase 7 depends on Phase 6. Phase 8 depends on Phase 7.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. P1 Unit Tests | 3/3 | Complete   | 2026-03-17 |
+| 1. P1 Unit Tests | 3/3 | Complete | 2026-03-17 |
 | 2. Agent Loop Integration | 5/5 | Complete | 2026-03-18 |
 | 3. Nanobot Subagent | 1/2 | In Progress | - |
 | 4. Desktop Backend | 1/1 | Complete | 2026-03-18 |
 | 5. CLI & Extensions | 2/2 | In Progress | - |
+| 6. Fix Integration Wiring | 0/0 | Pending | - |
+| 7. Phase 2 Retroactive Verification | 0/0 | Pending | - |
+| 8. Dead Export Cleanup | 0/0 | Pending | - |
