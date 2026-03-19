@@ -136,6 +136,7 @@ desktop = [
     "mss>=10.0",
     "pyautogui>=0.9.50",
     "pyperclip>=1.8",
+    "Pillow>=10.0",
 ]
 dev = [
     "pytest>=9.0.0,<10.0.0",
@@ -153,10 +154,12 @@ dev = [
     "mss>=10.0",
     "pyautogui>=0.9.50",
     "pyperclip>=1.8",
+    "Pillow>=10.0",
 ]
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"
+opengui = "opengui.cli:main"
 
 # Third-party tool plugins register here.  Built-in tools are discovered
 # automatically via pkgutil scanning in ToolLoader.discover().
