@@ -35,6 +35,34 @@ if TYPE_CHECKING:
     from nanobot.cron.service import CronService
 
 
+# ---------------------------------------------------------------------------
+# Complexity assessment tool — used by _needs_planning to decide whether a
+# task should be decomposed via TaskPlanner before execution.
+# ---------------------------------------------------------------------------
+
+_COMPLEXITY_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "assess_complexity",
+        "description": "Determine if a task requires multi-step decomposition.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "needs_planning": {
+                    "type": "boolean",
+                    "description": (
+                        "True if the task requires multiple distinct steps, "
+                        "multiple capabilities (GUI + web search), or sequential "
+                        "multi-app operations. False for simple single-step tasks."
+                    ),
+                }
+            },
+            "required": ["needs_planning"],
+        },
+    },
+}
+
+
 class AgentLoop:
     """
     The agent loop is the core processing engine.
@@ -343,6 +371,111 @@ class AgentLoop:
 
         return final_content, tools_used, messages
 
+    async def _needs_planning(self, task: str) -> bool:
+        """One LLM call to assess whether a task warrants multi-step decomposition.
+
+        Uses the ``assess_complexity`` tool to force a structured Boolean response.
+        Returns ``False`` on any parsing failure (safe default — never blocks
+        execution on gate ambiguity).
+        """
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a task complexity assessor. Determine if the user's task "
+                    "requires multi-step decomposition (multiple distinct capabilities, "
+                    "sequential multi-app operations, or parallel sub-tasks). "
+                    "Single-capability tasks with no sequential dependencies should return False."
+                ),
+            },
+            {"role": "user", "content": f"Task: {task}"},
+        ]
+        response = await self.provider.chat_with_retry(
+            messages=messages,
+            tools=[_COMPLEXITY_TOOL],
+            model=self.model,
+        )
+        if response.tool_calls:
+            args = response.tool_calls[0].arguments
+            if isinstance(args, str):
+                import json as _json
+                try:
+                    args = _json.loads(args)
+                except Exception:
+                    return False
+            return bool(args.get("needs_planning", False))
+        return False  # safe default: no tool call → treat as simple
+
+    async def _plan_and_execute(
+        self, task: str
+    ) -> tuple[str | None, list[str], list[dict]]:
+        """Decompose *task* via TaskPlanner and dispatch via TreeRouter.
+
+        Lazy-imports TaskPlanner and TreeRouter to keep loop.py import overhead
+        low (both modules are only needed when planning is actually triggered).
+
+        A thin ``_GuiDispatchAdapter`` bridges GuiSubagentTool's ``execute()``
+        interface (returns a JSON string) to the ``run()`` interface that
+        ``TreeRouter._run_gui`` expects (returns an object with ``.success``,
+        ``.summary``, ``.error``, ``.trace_path``).
+        """
+        from nanobot.agent.planner import TaskPlanner
+        from nanobot.agent.router import RouterContext, TreeRouter
+
+        class _GuiDispatchAdapter:
+            """Bridges GuiSubagentTool.execute() to TreeRouter._run_gui's expected interface."""
+
+            def __init__(self, tool: Any) -> None:
+                self._tool = tool
+
+            async def run(self, instruction: str, max_retries: int = 1) -> Any:
+                import json as _json
+                from dataclasses import dataclass
+
+                result_json = await self._tool.execute(task=instruction)
+                data = _json.loads(result_json)
+
+                @dataclass
+                class _GuiResult:
+                    success: bool
+                    summary: str
+                    error: str | None
+                    trace_path: str | None
+
+                return _GuiResult(
+                    success=data.get("success", False),
+                    summary=data.get("summary", ""),
+                    error=data.get("error"),
+                    trace_path=data.get("trace_path"),
+                )
+
+        planner = TaskPlanner(llm=self.provider)
+        tree = await planner.plan(task)
+        logger.info("Decomposed plan: %s", tree.to_dict())
+
+        raw_gui_tool = self.tools.get("gui_task")
+        gui_agent = _GuiDispatchAdapter(raw_gui_tool) if raw_gui_tool is not None else None
+
+        ctx = RouterContext(
+            task=task,
+            gui_agent=gui_agent,
+            tool_registry=self.tools,
+            mcp_client=self.tools,  # MCP tools are also registered in the registry
+        )
+
+        router = TreeRouter(planner=planner, max_replans=2)
+        result = await router.execute(tree, ctx)
+
+        output: str
+        if result.output:
+            output = result.output
+        elif result.success:
+            output = "Done."
+        else:
+            output = result.error or "Task failed."
+
+        return output, ["task_planner", "tree_router"], []
+
     async def run(self) -> None:
         """Run the agent loop, dispatching messages as tasks to stay responsive to /stop."""
         self._running = True
@@ -508,14 +641,36 @@ class AgentLoop:
                 channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
             ))
 
-        final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages,
-            on_progress=on_progress or _bus_progress,
-            on_stream=on_stream,
-            on_stream_end=on_stream_end,
-            channel=msg.channel, chat_id=msg.chat_id,
-            message_id=msg.metadata.get("message_id"),
-        )
+        # Complexity gate: evaluate whether the task warrants multi-step
+        # decomposition.  Gate is skipped for short messages (already handled
+        # above via slash-command logic or trivially short content) and when no
+        # GUI config is present (planning currently relies on GUI capability).
+        use_planning = False
+        if self._gui_config is not None and len(msg.content.strip()) >= 20:
+            try:
+                use_planning = await self._needs_planning(msg.content.strip())
+            except Exception:
+                logger.debug(
+                    "Complexity gate raised unexpectedly; falling back to direct agent loop"
+                )
+
+        if use_planning:
+            final_content, _tools_used_plan, _ = await self._plan_and_execute(
+                msg.content.strip()
+            )
+            # Reconstruct a minimal messages list for _save_turn / session history.
+            all_msgs = initial_messages + [
+                {"role": "assistant", "content": final_content}
+            ]
+        else:
+            final_content, _, all_msgs = await self._run_agent_loop(
+                initial_messages,
+                on_progress=on_progress or _bus_progress,
+                on_stream=on_stream,
+                on_stream_end=on_stream_end,
+                channel=msg.channel, chat_id=msg.chat_id,
+                message_id=msg.metadata.get("message_id"),
+            )
 
         if final_content is None:
             final_content = "I've completed processing but have no response to give."

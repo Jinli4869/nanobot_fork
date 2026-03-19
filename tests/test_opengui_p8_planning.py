@@ -1,4 +1,4 @@
-"""Phase 8 tests — parallel AND execution and prioritized OR routing in TreeRouter.
+"""Phase 8 tests — parallel AND execution, prioritized OR routing, and complexity gate.
 
 Covers:
   - AND node parallel execution via asyncio.gather with concurrency semaphore
@@ -7,13 +7,17 @@ Covers:
   - OR node priority sorting (mcp > tool > gui)
   - OR node auto-fallback on child failure
   - OR node exhaustion with error reporting
+  - AgentLoop complexity gate (skip for slash commands, short messages)
+  - AgentLoop plan-and-execute path (TaskPlanner + TreeRouter integration)
+  - AgentLoop fallback to direct agent loop on gate exception
 """
 from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -389,3 +393,202 @@ async def test_or_all_fail() -> None:
 
     assert not result.success
     assert result.error is not None and len(result.error) > 0
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Plan 03): AgentLoop complexity gate and plan-and-execute integration
+# ---------------------------------------------------------------------------
+
+
+def _make_agent_loop(tmp_path: Path) -> Any:
+    """Build a minimal AgentLoop with all dependencies mocked.
+
+    GuiSubagentTool construction is patched out so tests do not require a real
+    device backend.  The loop is still created with a non-None gui_config so that
+    the complexity gate condition (`self._gui_config is not None`) is satisfied.
+    """
+    from nanobot.agent.loop import AgentLoop
+    from nanobot.bus.events import OutboundMessage
+
+    mock_bus = MagicMock()
+    mock_bus.publish_outbound = AsyncMock()
+    mock_bus.consume_inbound = AsyncMock()
+
+    mock_provider = MagicMock()
+    mock_provider.get_default_model.return_value = "test-model"
+    mock_provider.chat_with_retry = AsyncMock()
+
+    # Minimal GuiConfig to satisfy _gui_config is not None check
+    mock_gui_config = MagicMock()
+
+    # Patch GuiSubagentTool so _register_default_tools does not try to
+    # instantiate a real device backend during tests.
+    with patch("nanobot.agent.tools.gui.GuiSubagentTool") as mock_gui_cls:
+        mock_gui_cls.return_value = MagicMock(name="gui_task")
+        loop = AgentLoop(
+            bus=mock_bus,
+            provider=mock_provider,
+            workspace=tmp_path,
+            gui_config=mock_gui_config,
+        )
+    return loop
+
+
+def _make_inbound(content: str) -> Any:
+    """Build a minimal InboundMessage."""
+    from nanobot.bus.events import InboundMessage
+
+    return InboundMessage(
+        channel="cli",
+        sender_id="user",
+        chat_id="test",
+        content=content,
+    )
+
+
+@pytest.mark.asyncio
+async def test_complexity_gate_skip_slash_command(tmp_path: Path) -> None:
+    """/help slash command bypasses _needs_planning entirely."""
+    loop = _make_agent_loop(tmp_path)
+
+    with patch.object(loop, "_needs_planning", new_callable=AsyncMock) as mock_gate:
+        # /help is handled before any complexity check and returns early
+        result = await loop._process_message(_make_inbound("/help"))
+
+    mock_gate.assert_not_awaited()
+    assert result is not None
+    assert "/help" in result.content.lower() or "command" in result.content.lower()
+
+
+@pytest.mark.asyncio
+async def test_complexity_gate_skip_short_message(tmp_path: Path) -> None:
+    """Messages shorter than 20 chars bypass _needs_planning."""
+    loop = _make_agent_loop(tmp_path)
+
+    # Patch _run_agent_loop to avoid real LLM call
+    with (
+        patch.object(loop, "_needs_planning", new_callable=AsyncMock) as mock_gate,
+        patch.object(
+            loop,
+            "_run_agent_loop",
+            new=AsyncMock(return_value=("short reply", [], [])),
+        ),
+        patch.object(loop.context, "build_messages", return_value=[]),
+    ):
+        await loop._process_message(_make_inbound("hi"))
+
+    mock_gate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_complexity_gate_false_uses_agent_loop(tmp_path: Path) -> None:
+    """When _needs_planning returns False, _run_agent_loop is called."""
+    loop = _make_agent_loop(tmp_path)
+
+    with (
+        patch.object(loop, "_needs_planning", new_callable=AsyncMock, return_value=False),
+        patch.object(
+            loop,
+            "_run_agent_loop",
+            new=AsyncMock(return_value=("agent response", [], [])),
+        ) as mock_run,
+        patch.object(loop.context, "build_messages", return_value=[]),
+    ):
+        result = await loop._process_message(
+            _make_inbound("Please do a complex multi-step task for me")
+        )
+
+    mock_run.assert_awaited_once()
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_complexity_gate_true_uses_planning(tmp_path: Path) -> None:
+    """When _needs_planning returns True, _plan_and_execute is called instead."""
+    loop = _make_agent_loop(tmp_path)
+
+    with (
+        patch.object(loop, "_needs_planning", new_callable=AsyncMock, return_value=True),
+        patch.object(
+            loop,
+            "_plan_and_execute",
+            new=AsyncMock(return_value=("plan result", ["task_planner"], [])),
+        ) as mock_plan,
+        patch.object(
+            loop,
+            "_run_agent_loop",
+            new=AsyncMock(return_value=("should not be called", [], [])),
+        ) as mock_run,
+        patch.object(loop.context, "build_messages", return_value=[]),
+    ):
+        result = await loop._process_message(
+            _make_inbound("Search the web and then open a browser for me")
+        )
+
+    mock_plan.assert_awaited_once()
+    mock_run.assert_not_awaited()
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_complexity_gate_exception_falls_back(tmp_path: Path) -> None:
+    """When _needs_planning raises, execution falls back to _run_agent_loop."""
+    loop = _make_agent_loop(tmp_path)
+
+    with (
+        patch.object(
+            loop,
+            "_needs_planning",
+            new=AsyncMock(side_effect=RuntimeError("gate failed")),
+        ),
+        patch.object(
+            loop,
+            "_run_agent_loop",
+            new=AsyncMock(return_value=("fallback response", [], [])),
+        ) as mock_run,
+        patch.object(loop.context, "build_messages", return_value=[]),
+    ):
+        result = await loop._process_message(
+            _make_inbound("Do something that makes the gate fail unexpectedly")
+        )
+
+    mock_run.assert_awaited_once()
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
+    """_plan_and_execute logs the decomposed plan tree via logger.info."""
+    loop = _make_agent_loop(tmp_path)
+
+    atom_node = PlanNode(node_type="atom", instruction="open browser", capability="gui")
+
+    mock_planner = AsyncMock()
+    mock_planner.plan = AsyncMock(return_value=atom_node)
+
+    from nanobot.agent.router import NodeResult
+
+    mock_router_execute = AsyncMock(return_value=NodeResult(success=True, output="done"))
+
+    with (
+        patch("nanobot.agent.planner.TaskPlanner", return_value=mock_planner),
+        patch("nanobot.agent.router.TreeRouter") as mock_router_cls,
+        patch("nanobot.agent.router.RouterContext"),
+    ):
+        mock_router_instance = MagicMock()
+        mock_router_instance.execute = mock_router_execute
+        mock_router_cls.return_value = mock_router_instance
+
+        import logging
+
+        with patch("nanobot.agent.loop.logger") as mock_logger:
+            output, tools_used, _ = await loop._plan_and_execute(
+                "Open the browser and search for something complex"
+            )
+
+    # logger.info must be called with "Decomposed plan" at some point
+    info_calls = [str(call) for call in mock_logger.info.call_args_list]
+    assert any("Decomposed plan" in c for c in info_calls), (
+        f"Expected 'Decomposed plan' in logger.info calls, got: {info_calls}"
+    )
+    assert output == "done"
