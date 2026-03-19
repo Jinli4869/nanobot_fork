@@ -97,6 +97,41 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
     )
 
 
+def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> None:
+    qwen_agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen"),
+        model="qwen-vl-max",
+    )
+    gemini_agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "gemini"),
+        model="gemini-2.5-pro",
+    )
+
+    action = parse_action({"action_type": "tap", "x": 500, "y": 250})
+
+    assert qwen_agent._normalize_relative_coordinates(action).relative is True
+    assert gemini_agent._normalize_relative_coordinates(action).relative is True
+    assert qwen_agent._coordinate_mode() == "relative_999"
+
+
+def test_agent_keeps_absolute_coordinates_for_other_models(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "other"),
+        model="gpt-5.2",
+    )
+
+    action = parse_action({"action_type": "tap", "x": 500, "y": 250})
+
+    assert agent._normalize_relative_coordinates(action).relative is False
+    assert agent._coordinate_mode() == "absolute"
+
+
 @pytest.mark.asyncio
 async def test_adb_backend_scrolls_horizontally_from_center(
     monkeypatch: pytest.MonkeyPatch,

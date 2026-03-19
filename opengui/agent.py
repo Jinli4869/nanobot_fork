@@ -15,7 +15,7 @@ import base64
 import json
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -131,6 +131,8 @@ class GuiAgent:
     """
 
     _MAX_TOOL_RETRIES = 2
+    _MODEL_RELATIVE_GRID_HINTS = ("qwen", "gemini")
+    _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
 
     def __init__(
         self,
@@ -439,6 +441,7 @@ class GuiAgent:
             # Parse action
             try:
                 action = parse_action(tool_call.arguments)
+                action = self._normalize_relative_coordinates(action)
             except ActionError as exc:
                 if retries_left > 0:
                     messages.append({
@@ -500,6 +503,23 @@ class GuiAgent:
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
 
+    def _coordinate_mode(self) -> str:
+        return "relative_999" if self._model_uses_relative_grid() else "absolute"
+
+    def _model_uses_relative_grid(self) -> bool:
+        model = self.model.lower()
+        return any(hint in model for hint in self._MODEL_RELATIVE_GRID_HINTS)
+
+    def _normalize_relative_coordinates(self, action: Action) -> Action:
+        if action.relative or action.action_type not in self._COORDINATE_ACTIONS:
+            return action
+        if not self._model_uses_relative_grid():
+            return action
+        coords = [value for value in (action.x, action.y, action.x2, action.y2) if value is not None]
+        if coords and all(0 <= value <= 999 for value in coords):
+            return replace(action, relative=True)
+        return action
+
     # ------------------------------------------------------------------
     # Message helpers
     # ------------------------------------------------------------------
@@ -518,6 +538,7 @@ class GuiAgent:
             "role": "system",
             "content": build_system_prompt(
                 platform=self.backend.platform,
+                coordinate_mode=self._coordinate_mode(),
                 tool_definition=_COMPUTER_USE_TOOL,
                 memory_context=memory_context,
             ),
@@ -625,12 +646,25 @@ class GuiAgent:
         app_hint: str | None,
         prompt_text: str | None = None,
     ) -> dict[str, Any]:
+        if self._coordinate_mode() == "relative_999":
+            coord_inst = (
+                "Use relative coordinates in [0, 999] for both x and y, "
+                "and set relative=true."
+            )
+        else:
+            coord_inst = "Prefer absolute pixel coordinates."
+
         content: list[dict[str, Any]] = []
         if prompt_text:
             content.append({"type": "text", "text": prompt_text})
         content.append({
             "type": "text",
-            "text": observation.to_user_text(task, step_index=step_index, app_hint=app_hint),
+            "text": observation.to_user_text(
+                task,
+                step_index=step_index,
+                app_hint=app_hint,
+                coordinate_instruction=coord_inst,
+            ),
         })
         if observation.screenshot_path and Path(observation.screenshot_path).exists():
             content.append(self._image_block(Path(observation.screenshot_path)))
