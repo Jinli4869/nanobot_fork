@@ -33,7 +33,46 @@ LocalDesktopBackend = None
 DEFAULT_CONFIG_PATH = Path.home() / ".opengui" / "config.yaml"
 DEFAULT_MEMORY_DIR = Path.home() / ".opengui" / "memory"
 DEFAULT_SKILLS_DIR = Path.home() / ".opengui" / "skills"
+DEFAULT_APPS_DIR = Path.home() / ".opengui" / "apps"
 DEFAULT_RUNS_DIR = Path("opengui_runs")
+
+
+class AppCache:
+    """Read/write cached app lists under ``~/.opengui/apps/``."""
+
+    def __init__(self, cache_dir: Path = DEFAULT_APPS_DIR) -> None:
+        self._dir = cache_dir
+
+    @staticmethod
+    def cache_key(backend: Any) -> str:
+        """Derive a unique filename stem from a backend instance.
+
+        - AdbBackend  → ``android_{serial}`` or ``android_default``
+        - Desktop     → ``macos`` / ``linux`` / ``windows``
+        - DryRun      → ``dry-run``
+        """
+        platform = getattr(backend, "platform", "unknown")
+        if platform == "android":
+            serial = getattr(backend, "_serial", None) or "default"
+            return f"android_{serial}"
+        return platform
+
+    def load(self, key: str) -> list[str] | None:
+        path = self._dir / f"{key}.json"
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list) and all(isinstance(s, str) for s in data):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+        return None
+
+    def save(self, key: str, apps: list[str]) -> None:
+        self._dir.mkdir(parents=True, exist_ok=True)
+        path = self._dir / f"{key}.json"
+        path.write_text(json.dumps(apps, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 @dataclass(slots=True)
@@ -148,6 +187,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Shortcut for --backend dry-run")
     parser.add_argument("--json", dest="json_output", action="store_true", help="Emit JSON output")
     parser.add_argument("--config", type=Path, help="Config file path")
+    parser.add_argument(
+        "--refresh-apps",
+        action="store_true",
+        help="Force re-fetch and cache the installed app list from the device",
+    )
 
     args = parser.parse_args(argv)
     if not args.task_input and not args.task_flag:
@@ -276,6 +320,20 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
         backend=backend,
     )
 
+    # Resolve installed apps: read from cache, or fetch and cache
+    app_cache = AppCache()
+    cache_key = AppCache.cache_key(backend)
+    installed_apps: list[str] | None = None
+    if not args.refresh_apps:
+        installed_apps = app_cache.load(cache_key)
+    if installed_apps is None and hasattr(backend, "list_apps"):
+        try:
+            installed_apps = await backend.list_apps()
+            if installed_apps:
+                app_cache.save(cache_key, installed_apps)
+        except Exception:
+            installed_apps = None
+
     run_root = DEFAULT_RUNS_DIR / datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
     recorder = TrajectoryRecorder(output_dir=run_root, task=task, platform=backend.platform)
     agent = GuiAgent(
@@ -289,6 +347,7 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
         memory_retriever=memory_retriever,
         skill_library=skill_library,
         skill_executor=skill_executor,
+        installed_apps=installed_apps,
     )
     return await agent.run(task)
 
