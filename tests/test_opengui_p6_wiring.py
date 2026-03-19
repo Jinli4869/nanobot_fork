@@ -1,0 +1,169 @@
+"""Phase 6 regression tests for integration gap closure.
+
+Covers three wiring seams left broken after Phases 3-5:
+  1. GuiConfig.embedding_model field (config surface, camelCase alias)
+  2. GuiSubagentTool embedding adapter wiring (NanobotEmbeddingAdapter → SkillLibrary)
+  3. pyproject.toml packaging metadata (Pillow in desktop/dev extras, opengui console script)
+
+These tests are intentionally self-contained: they do not import helpers or
+fixtures from other Phase test files.
+"""
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
+import numpy as np
+import pytest
+
+
+# ---------------------------------------------------------------------------
+# 1. GuiConfig camelCase alias for embedding_model
+# ---------------------------------------------------------------------------
+
+
+def test_gui_config_accepts_embedding_model_alias() -> None:
+    """GuiConfig must deserialise the camelCase alias 'embeddingModel'."""
+    from nanobot.config.schema import Config
+
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "text-embedding-3-small"})
+    assert config.gui is not None
+    assert config.gui.embedding_model == "text-embedding-3-small"
+
+
+# ---------------------------------------------------------------------------
+# 2. Embedding adapter wiring when embedding_model is configured
+# ---------------------------------------------------------------------------
+
+
+class _FakeProvider:
+    """Minimal provider stub exposing the attributes read by GuiSubagentTool."""
+
+    api_key: str = "sk-test"
+    api_base: str | None = None
+    extra_headers: dict[str, str] = {}
+
+    def _resolve_model(self, model: str) -> str:  # noqa: PLR6301
+        return "resolved/" + model
+
+    # chat_with_retry is called by NanobotLLMAdapter; not exercised in embedding tests.
+    async def chat_with_retry(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        raise NotImplementedError
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_wires_embedding_adapter_when_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GuiSubagentTool must instantiate NanobotEmbeddingAdapter and wire it to SkillLibrary
+    when gui.embedding_model is set in the config."""
+    import litellm
+
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    # Build a fake litellm.aembedding response: two embeddings of dimension 2.
+    fake_embedding_data = [
+        SimpleNamespace(embedding=[1.0, 2.0]),
+        SimpleNamespace(embedding=[3.0, 4.0]),
+    ]
+    fake_response = SimpleNamespace(data=fake_embedding_data)
+    aembedding_mock = AsyncMock(return_value=fake_response)
+    monkeypatch.setattr(litellm, "aembedding", aembedding_mock)
+
+    provider = _FakeProvider()
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    # Adapter must be created.
+    assert tool._embedding_adapter is not None
+
+    # The SkillLibrary for "dry-run" must have the adapter wired in.
+    assert "dry-run" in tool._skill_libraries
+    assert tool._skill_libraries["dry-run"].embedding_provider is tool._embedding_adapter
+
+    # The adapter must produce the correct numpy array.
+    result = await tool._embedding_adapter.embed(["hello", "world"])
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
+    assert result.shape == (2, 2)
+
+    # litellm.aembedding must have been called with resolved model and provider credentials.
+    aembedding_mock.assert_awaited_once()
+    call_kwargs = aembedding_mock.await_args.kwargs
+    assert call_kwargs.get("model") == "resolved/embed-model"
+    assert call_kwargs.get("input") == ["hello", "world"]
+    assert call_kwargs.get("api_key") == "sk-test"
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_skips_embedding_adapter_without_config(tmp_path: Path) -> None:
+    """GuiSubagentTool must leave _embedding_adapter as None when embedding_model is absent,
+    and SkillLibrary must still be created successfully with embedding_provider=None."""
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    provider = _FakeProvider()
+    config = Config(gui={"backend": "dry-run"})
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    assert tool._embedding_adapter is None
+    assert "dry-run" in tool._skill_libraries
+    assert tool._skill_libraries["dry-run"].embedding_provider is None
+
+
+# ---------------------------------------------------------------------------
+# 3. pyproject.toml packaging metadata
+# ---------------------------------------------------------------------------
+
+_PYPROJECT_PATH = Path(__file__).parent.parent / "pyproject.toml"
+
+
+def _load_pyproject() -> dict:
+    with _PYPROJECT_PATH.open("rb") as fh:
+        return tomllib.load(fh)
+
+
+def test_pyproject_declares_pillow_for_desktop_and_dev() -> None:
+    """Both 'desktop' and 'dev' optional-dependency groups must list Pillow>=10.0."""
+    data = _load_pyproject()
+    optional_deps: dict[str, list[str]] = data["project"]["optional-dependencies"]
+
+    desktop_deps = optional_deps.get("desktop", [])
+    dev_deps = optional_deps.get("dev", [])
+
+    assert any(dep.startswith("Pillow>=10.0") for dep in desktop_deps), (
+        f"'Pillow>=10.0' not found in [project.optional-dependencies].desktop: {desktop_deps}"
+    )
+    assert any(dep.startswith("Pillow>=10.0") for dep in dev_deps), (
+        f"'Pillow>=10.0' not found in [project.optional-dependencies].dev: {dev_deps}"
+    )
+
+
+def test_pyproject_declares_opengui_console_script() -> None:
+    """pyproject.toml must declare opengui = 'opengui.cli:main' under [project.scripts]."""
+    data = _load_pyproject()
+    scripts: dict[str, str] = data["project"].get("scripts", {})
+
+    assert scripts.get("opengui") == "opengui.cli:main", (
+        f"Expected opengui console script 'opengui.cli:main', got: {scripts}"
+    )
