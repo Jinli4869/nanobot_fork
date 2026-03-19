@@ -175,6 +175,57 @@ class AdbBackend:
                 raise AdbError("No Android device found. Connect a device or start an emulator.")
 
     # ------------------------------------------------------------------
+    # App discovery
+    # ------------------------------------------------------------------
+
+    async def list_apps(self) -> list[str]:
+        """Return package names of launchable apps on the device.
+
+        Fetches third-party packages (``pm list packages -3``) and merges a
+        small set of commonly-used system packages so the LLM can resolve
+        human-readable names like "Settings" to ``com.android.settings``.
+        """
+        _COMMON_SYSTEM_PACKAGES = [
+            "com.android.settings",
+            "com.android.contacts",
+            "com.android.dialer",
+            "com.android.mms",
+            "com.android.camera2",
+            "com.android.gallery3d",
+            "com.android.calculator2",
+            "com.android.calendar",
+            "com.android.deskclock",
+            "com.android.documentsui",
+            "com.android.vending",
+            "com.google.android.apps.messaging",
+            "com.google.android.apps.photos",
+            "com.google.android.gm",
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.youtube",
+            "com.google.android.apps.maps",
+            "com.google.android.dialer",
+            "com.google.android.contacts",
+            "com.google.android.calendar",
+        ]
+        try:
+            output = await self._run("shell", "pm", "list", "packages", "-3", timeout=10.0)
+        except (AdbError, TimeoutError):
+            return list(_COMMON_SYSTEM_PACKAGES)
+
+        packages: list[str] = []
+        for line in output.splitlines():
+            line = line.strip()
+            if line.startswith("package:"):
+                packages.append(line[len("package:"):])
+        # Merge common system packages (deduplicated, order preserved)
+        seen = set(packages)
+        for pkg in _COMMON_SYSTEM_PACKAGES:
+            if pkg not in seen:
+                packages.append(pkg)
+                seen.add(pkg)
+        return packages
+
+    # ------------------------------------------------------------------
     # Observe
     # ------------------------------------------------------------------
 

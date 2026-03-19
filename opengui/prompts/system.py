@@ -55,6 +55,7 @@ def build_system_prompt(
     memory_context: str | None = None,
     skill_context: str | None = None,
     tool_definition: dict[str, Any] | None = None,
+    installed_apps: list[str] | None = None,
 ) -> str:
     """Build a Mobile-Agent-style system prompt while keeping native tool calls."""
     tool_schema = json.dumps(
@@ -97,6 +98,25 @@ def build_system_prompt(
 
     if memory_context:
         sections.extend(["", "# Relevant Knowledge", "", memory_context])
+
+    if installed_apps:
+        app_list = "\n".join(f"- {app}" for app in installed_apps)
+        if platform == "android":
+            sections.extend([
+                "",
+                "# Installed Apps (package names)",
+                "",
+                "Use these exact package names for `open_app` and `close_app` actions:",
+                app_list,
+            ])
+        else:
+            sections.extend([
+                "",
+                "# Installed Apps",
+                "",
+                "Use these app names for `open_app` and `close_app` actions:",
+                app_list,
+            ])
 
     if skill_context:
         sections.extend(["", "# Available Skills", "", skill_context])

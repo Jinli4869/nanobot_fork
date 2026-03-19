@@ -43,5 +43,8 @@ class DryRunBackend:
             platform=self.platform,
         )
 
+    async def list_apps(self) -> list[str]:
+        return []
+
     async def execute(self, action: Action, timeout: float = 5.0) -> str:
         return f"[dry-run] {describe_action(action)}"

@@ -261,6 +261,51 @@ class LocalDesktopBackend:
         return describe_action(action)
 
     # ------------------------------------------------------------------
+    # App discovery
+    # ------------------------------------------------------------------
+
+    async def list_apps(self) -> list[str]:
+        """Return application names available on the local desktop.
+
+        - macOS: scans ``/Applications`` and ``~/Applications`` for ``.app`` bundles.
+        - Linux: parses ``.desktop`` files under ``/usr/share/applications``.
+        - Windows: returns an empty list (not yet implemented).
+        """
+        if self._platform == "macos":
+            return await self._list_apps_macos()
+        if self._platform == "linux":
+            return await self._list_apps_linux()
+        return []
+
+    async def _list_apps_macos(self) -> list[str]:
+        app_dirs = [Path("/Applications"), Path.home() / "Applications"]
+        names: list[str] = []
+        for d in app_dirs:
+            if not d.is_dir():
+                continue
+            for entry in sorted(d.iterdir()):
+                if entry.suffix == ".app" and entry.is_dir():
+                    names.append(entry.stem)
+        return names
+
+    async def _list_apps_linux(self) -> list[str]:
+        desktop_dir = Path("/usr/share/applications")
+        if not desktop_dir.is_dir():
+            return []
+        names: list[str] = []
+        for entry in sorted(desktop_dir.iterdir()):
+            if entry.suffix != ".desktop":
+                continue
+            try:
+                for line in entry.read_text(errors="replace").splitlines():
+                    if line.startswith("Name="):
+                        names.append(line[len("Name="):].strip())
+                        break
+            except OSError:
+                continue
+        return names
+
+    # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
 

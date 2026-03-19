@@ -151,6 +151,7 @@ class GuiAgent:
         skill_executor: Any = None,
         memory_top_k: int = 5,
         skill_threshold: float = 0.6,
+        installed_apps: list[str] | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -167,6 +168,7 @@ class GuiAgent:
         self._skill_executor = skill_executor
         self._memory_top_k = memory_top_k
         self._skill_threshold = skill_threshold
+        self._installed_apps = installed_apps
 
     # ------------------------------------------------------------------
     # Public API
@@ -541,6 +543,7 @@ class GuiAgent:
                 coordinate_mode=self._coordinate_mode(),
                 tool_definition=_COMPUTER_USE_TOOL,
                 memory_context=memory_context,
+                installed_apps=self._installed_apps,
             ),
         }]
 
