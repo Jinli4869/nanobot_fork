@@ -19,7 +19,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 5: CLI & Extensions** - Standalone CLI entry point and claw adapter documentation
 - [x] **Phase 6: Fix Integration Wiring** - Wire skill_context, embedding adapter, Pillow dep, CLI entry point (completed 2026-03-19)
 - [x] **Phase 7: Phase 2 Retroactive Verification** - Create missing VERIFICATION.md for Phase 2 (completed 2026-03-19)
-- [ ] **Phase 8: Dead Export Cleanup** - Remove or wire orphaned TaskPlanner, TreeRouter, TrajectorySummarizer
+- [ ] **Phase 8: Dead Export Cleanup** - Wire orphaned TaskPlanner, TreeRouter, TrajectorySummarizer into production code
 
 ## Phase Details
 
@@ -124,14 +124,21 @@ Plans:
 **Plans**: 0 plans
 
 ### Phase 8: Dead Export Cleanup
-**Goal:** Remove or wire orphaned exports (TaskPlanner, TreeRouter, TrajectorySummarizer) that are tested but never called from production code
+**Goal:** Wire orphaned exports (TaskPlanner, TreeRouter, TrajectorySummarizer) into production code paths — completing remaining Phase 3 requirements (NANO-01, NANO-04, NANO-05) in the process
 **Depends on**: Phase 7
 **Requirements**: None (tech debt)
 **Gap Closure:** Closes 3 orphaned export warnings from audit
 **Success Criteria** (what must be TRUE):
   1. No production-unreachable exports remain in `__init__.py` or public APIs
   2. All tests still pass after cleanup
-**Plans**: 0 plans
+  3. TaskPlanner + TreeRouter wired into AgentLoop with complexity gate
+  4. TrajectorySummarizer called in GuiSubagentTool post-run pipeline
+**Plans**: 3 plans
+
+Plans:
+- [ ] 08-01-PLAN.md — Wire TrajectorySummarizer into GuiSubagentTool post-run + export planner/router from nanobot.agent
+- [ ] 08-02-PLAN.md — Enhance TreeRouter: parallel AND execution + OR priority sorting (mcp > tool > gui)
+- [ ] 08-03-PLAN.md — Wire TaskPlanner complexity gate + TreeRouter dispatch into AgentLoop._process_message
 
 ## Progress
 
@@ -148,4 +155,4 @@ Phase 6 depends on Phases 2-5. Phase 7 depends on Phase 6. Phase 8 depends on Ph
 | 5. CLI & Extensions | 2/2 | In Progress | - |
 | 6. Fix Integration Wiring | 1/1 | Complete   | 2026-03-19 |
 | 7. Phase 2 Retroactive Verification | 1/1 | Complete   | 2026-03-19 |
-| 8. Dead Export Cleanup | 0/0 | Pending | - |
+| 8. Dead Export Cleanup | 0/3 | Planned | - |
