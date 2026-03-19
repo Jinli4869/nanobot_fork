@@ -155,4 +155,4 @@ Phase 6 depends on Phases 2-5. Phase 7 depends on Phase 6. Phase 8 depends on Ph
 | 5. CLI & Extensions | 2/2 | In Progress | - |
 | 6. Fix Integration Wiring | 1/1 | Complete   | 2026-03-19 |
 | 7. Phase 2 Retroactive Verification | 1/1 | Complete   | 2026-03-19 |
-| 8. Dead Export Cleanup | 0/3 | Planned | - |
+| 8. Dead Export Cleanup | 2/3 | In Progress|  |
