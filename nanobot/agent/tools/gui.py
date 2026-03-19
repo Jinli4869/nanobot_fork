@@ -103,6 +103,9 @@ class GuiSubagentTool(Tool):
 
         result = await agent.run(task=task)
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
+        summary = await self._summarize_trajectory(trace_path)
+        if summary:
+            logger.info("Trajectory summary: %s", summary[:200])
         await self._extract_skill(trace_path, result.success, skill_library)
 
         return json.dumps(
@@ -220,6 +223,19 @@ class GuiSubagentTool(Tool):
             )
         except Exception:
             logger.warning("Skill extraction failed for %s", trace_path, exc_info=True)
+
+    async def _summarize_trajectory(self, trace_path: Path | None) -> str:
+        """Summarize the trajectory via LLM; return empty string on error or when unavailable."""
+        if trace_path is None or not trace_path.exists():
+            return ""
+        from opengui.trajectory.summarizer import TrajectorySummarizer
+
+        try:
+            summarizer = TrajectorySummarizer(llm=self._llm_adapter)
+            return await summarizer.summarize_file(trace_path)
+        except Exception:
+            logger.warning("Trajectory summarization failed for %s", trace_path, exc_info=True)
+            return ""
 
     @staticmethod
     def _resolve_trace_path(recorder_path: Path | None, agent_trace_path: str | None) -> Path | None:
