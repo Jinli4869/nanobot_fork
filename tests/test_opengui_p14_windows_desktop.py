@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import logging
+import os
 import pathlib
 from importlib import import_module
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, call
 
 import pytest
 
@@ -65,6 +69,8 @@ def _make_windows_inner() -> AsyncMock:
     inner = AsyncMock()
     type(inner).platform = PropertyMock(return_value="windows")
     inner.preflight = AsyncMock()
+    inner.observe = AsyncMock()
+    inner.execute = AsyncMock()
     inner.list_apps = AsyncMock(return_value=[])
     inner.configure_target_display = MagicMock()
     return inner
@@ -139,22 +145,37 @@ def test_probe_reports_unsupported_app_class_with_actionable_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_win32desktop_manager_returns_display_info(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_win32desktop_manager_creates_and_closes_real_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     win32desktop = _load_win32desktop_module()
 
     class _FakeUUID:
         hex = "0123456789abcdef0123456789abcdef"
 
     manager = win32desktop.Win32DesktopManager(width=1600, height=900)
-    launched_desktop = AsyncMock()
+    created_desktops: list[str] = []
+    closed_handles: list[object] = []
+    handle = object()
 
     monkeypatch.setattr(win32desktop.uuid, "uuid4", lambda: _FakeUUID())
-    monkeypatch.setattr(manager, "_create_desktop_handle", lambda: object())
+    monkeypatch.setattr(
+        manager,
+        "_win32_create_desktop",
+        lambda desktop_name: created_desktops.append(desktop_name) or handle,
+    )
+    monkeypatch.setattr(
+        manager,
+        "_win32_close_desktop",
+        lambda desktop_handle: closed_handles.append(desktop_handle),
+    )
 
-    info = await manager.start()
-    await launched_desktop(f"WinSta0\\{manager.desktop_name}")
+    first = await manager.start()
+    second = await manager.start()
+    await manager.stop()
+    await manager.stop()
 
-    assert info == DisplayInfo(
+    assert first == DisplayInfo(
         display_id="windows_isolated_desktop:OpenGUI-Background-01234567",
         width=1600,
         height=900,
@@ -162,152 +183,127 @@ async def test_win32desktop_manager_returns_display_info(monkeypatch: pytest.Mon
         offset_y=0,
         monitor_index=1,
     )
+    assert second == first
     assert manager.desktop_name == "OpenGUI-Background-01234567"
-    launched_desktop.assert_awaited_once_with("WinSta0\\OpenGUI-Background-01234567")
-
-
-@pytest.mark.asyncio
-async def test_win32desktop_manager_stop_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:
-    win32desktop = _load_win32desktop_module()
-    manager = win32desktop.Win32DesktopManager()
-    closed_handles: list[object] = []
-    handle = object()
-
-    monkeypatch.setattr(manager, "_create_desktop_handle", lambda: handle)
-    monkeypatch.setattr(manager, "_close_desktop_handle", lambda target: closed_handles.append(target))
-
-    await manager.start()
-    await manager.stop()
-    await manager.stop()
-
+    assert created_desktops == ["OpenGUI-Background-01234567"]
     assert closed_handles == [handle]
 
 
-@pytest.mark.asyncio
-async def test_windows_isolated_backend_launches_worker_on_named_desktop(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    windows_isolated = _load_windows_isolated_module()
-    display_info = _make_windows_display_info()
-    manager = _make_windows_manager(display_info)
-    inner = _make_windows_inner()
-    backend = windows_isolated.WindowsIsolatedBackend(
-        inner,
-        manager,
-        run_metadata={"owner": "phase14-test", "task": "launch"},
-    )
-    launch_calls: list[dict[str, object]] = []
-
-    def _launch_windows_worker(**kwargs: object) -> object:
-        launch_calls.append(dict(kwargs))
-        return object()
-
-    monkeypatch.setattr(windows_isolated, "launch_windows_worker", _launch_windows_worker)
-    monkeypatch.setattr(backend, "_stop_worker_session", AsyncMock())
-    caplog.set_level(logging.INFO)
-
-    try:
-        await backend.preflight()
-    finally:
-        await backend.shutdown()
-
-    assert launch_calls == [
-        {
-            "desktop_name": "OpenGUI-Background-1",
-            "width": 1280,
-            "height": 720,
-            "control_path": launch_calls[0]["control_path"],
-        }
-    ]
-    assert isinstance(launch_calls[0]["control_path"], str)
-    inner.configure_target_display.assert_any_call(display_info)
-    assert "windows isolated backend ready:" in caplog.text
-    assert "backend_name=windows_isolated_desktop" in caplog.text
-    assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in caplog.text
-    assert r"lpDesktop=WinSta0\OpenGUI-Background-1" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_windows_isolated_backend_observe_and_execute_use_target_desktop(
+def test_windows_worker_main_services_observe_execute_list_apps_and_shutdown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    windows_isolated = _load_windows_isolated_module()
-    display_info = _make_windows_display_info()
-    manager = _make_windows_manager(display_info)
-    inner = _make_windows_inner()
-    backend = windows_isolated.WindowsIsolatedBackend(inner, manager)
+    windows_worker = import_module("opengui.backends.windows_worker")
+    backend_events: list[object] = []
 
-    monkeypatch.setattr(windows_isolated, "launch_windows_worker", lambda **_: object())
-    observe_mock = AsyncMock(
-        return_value=Observation(
-            screenshot_path="/tmp/windows-shot.png",
-            screen_width=display_info.width,
-            screen_height=display_info.height,
-            platform="windows",
-            extra={"display_id": display_info.display_id},
+    class _FakeLocalDesktopBackend:
+        async def preflight(self) -> None:
+            backend_events.append("preflight")
+
+        async def observe(
+            self,
+            screenshot_path: pathlib.Path,
+            timeout: float = 5.0,
+        ) -> Observation:
+            backend_events.append(("observe", screenshot_path, timeout))
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=800,
+                screen_height=600,
+                foreground_app="Notepad",
+                platform="windows",
+                extra={"display_id": "windows_isolated_desktop:OpenGUI-Background-1"},
+            )
+
+        async def execute(self, action: Action, timeout: float = 5.0) -> str:
+            backend_events.append(("execute", action, timeout))
+            if action.x == 99.0:
+                raise RuntimeError("execute boom")
+            return f"executed:{action.action_type}"
+
+        async def list_apps(self) -> list[str]:
+            backend_events.append("list_apps")
+            return ["Notepad", "Calculator"]
+
+    stdin = io.StringIO(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "command": "observe",
+                        "screenshot_path": "/tmp/windows-shot.png",
+                        "timeout": 5.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "command": "execute",
+                        "action": {"action_type": "tap", "x": 10.0, "y": 20.0},
+                        "timeout": 5.0,
+                    }
+                ),
+                json.dumps({"command": "list_apps"}),
+                json.dumps(
+                    {
+                        "command": "execute",
+                        "action": {"action_type": "tap", "x": 99.0, "y": 100.0},
+                        "timeout": 5.0,
+                    }
+                ),
+                json.dumps({"command": "shutdown"}),
+            ]
         )
+        + "\n"
     )
-    execute_mock = AsyncMock(return_value=f"executed:{display_info.display_id}")
-    stop_mock = AsyncMock()
-    monkeypatch.setattr(backend, "_observe_via_worker", observe_mock)
-    monkeypatch.setattr(backend, "_execute_via_worker", execute_mock)
-    monkeypatch.setattr(backend, "_stop_worker_session", stop_mock)
+    stdout = io.StringIO()
 
-    try:
-        await backend.preflight()
-        observation = await backend.observe(pathlib.Path("/tmp/windows-shot.png"))
-        result = await backend.execute(Action(action_type="tap", x=10.0, y=20.0))
-    finally:
-        await backend.shutdown()
+    monkeypatch.setattr(windows_worker, "LocalDesktopBackend", _FakeLocalDesktopBackend)
+    monkeypatch.setattr(windows_worker.sys, "stdin", stdin)
+    monkeypatch.setattr(windows_worker.sys, "stdout", stdout)
 
-    assert observation.extra["display_id"] == display_info.display_id
-    assert result == f"executed:{display_info.display_id}"
-    observe_mock.assert_awaited_once_with(pathlib.Path("/tmp/windows-shot.png"), 5.0)
-    execute_mock.assert_awaited_once_with(Action(action_type="tap", x=10.0, y=20.0), 5.0)
-    inner.configure_target_display.assert_any_call(display_info)
-    inner.configure_target_display.assert_any_call(None)
+    assert windows_worker.main(
+        [
+            "--desktop-name",
+            "OpenGUI-Background-1",
+            "--width",
+            "1280",
+            "--height",
+            "720",
+            "--control-path",
+            "/tmp/windows-worker-control.json",
+        ]
+    ) == 0
+
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+
+    assert responses == [
+        {
+            "ok": True,
+            "observation": {
+                "screenshot_path": "/tmp/windows-shot.png",
+                "screen_width": 800,
+                "screen_height": 600,
+                "foreground_app": "Notepad",
+                "platform": "windows",
+                "extra": {"display_id": "windows_isolated_desktop:OpenGUI-Background-1"},
+            },
+        },
+        {"ok": True, "result": "executed:tap"},
+        {"ok": True, "apps": ["Notepad", "Calculator"]},
+        {"ok": False, "error": "execute boom"},
+        {"ok": True, "result": "shutdown"},
+    ]
+    assert backend_events == [
+        "preflight",
+        ("observe", pathlib.Path("/tmp/windows-shot.png"), 5.0),
+        ("execute", Action(action_type="tap", x=10.0, y=20.0), 5.0),
+        "list_apps",
+        ("execute", Action(action_type="tap", x=99.0, y=100.0), 5.0),
+    ]
 
 
 @pytest.mark.asyncio
-async def test_windows_isolated_backend_cleans_up_on_cancellation(
+async def test_windows_isolated_backend_routes_observe_execute_and_list_apps_through_worker(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    windows_isolated = _load_windows_isolated_module()
-    display_info = _make_windows_display_info()
-    manager = _make_windows_manager(display_info)
-    inner = _make_windows_inner()
-    backend = windows_isolated.WindowsIsolatedBackend(inner, manager)
-
-    monkeypatch.setattr(backend, "_start_worker_session", AsyncMock())
-    monkeypatch.setattr(
-        backend,
-        "_observe_via_worker",
-        AsyncMock(side_effect=asyncio.CancelledError()),
-    )
-    stop_mock = AsyncMock()
-    monkeypatch.setattr(backend, "_stop_worker_session", stop_mock)
-    caplog.set_level(logging.INFO)
-
-    await backend.preflight()
-
-    with pytest.raises(asyncio.CancelledError):
-        await backend.observe(pathlib.Path("/tmp/windows-shot.png"))
-
-    await backend.shutdown()
-
-    stop_mock.assert_awaited_once_with("cancelled")
-    manager.stop.assert_awaited_once()
-    inner.configure_target_display.assert_any_call(None)
-    assert "windows isolated backend cleanup:" in caplog.text
-    assert "cleanup_reason=cancelled" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_windows_isolated_backend_cleans_up_after_startup_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     windows_isolated = _load_windows_isolated_module()
     display_info = _make_windows_display_info()
@@ -318,20 +314,166 @@ async def test_windows_isolated_backend_cleans_up_after_startup_failure(
     monkeypatch.setattr(
         backend,
         "_start_worker_session",
-        AsyncMock(side_effect=RuntimeError("worker launch failed")),
+        AsyncMock(side_effect=lambda target_display: setattr(backend, "_worker_process", object())),
     )
-    stop_mock = AsyncMock()
-    monkeypatch.setattr(backend, "_stop_worker_session", stop_mock)
+    send_worker_command = AsyncMock(
+        side_effect=[
+            {
+                "ok": True,
+                "observation": {
+                    "screenshot_path": "/tmp/windows-shot.png",
+                    "screen_width": display_info.width,
+                    "screen_height": display_info.height,
+                    "foreground_app": "Notepad",
+                    "platform": "windows",
+                    "extra": {"display_id": display_info.display_id},
+                },
+            },
+            {"ok": True, "result": "executed tap"},
+            {"ok": True, "apps": ["Notepad", "Calculator"]},
+            {"ok": True, "result": "shutdown"},
+        ]
+    )
+    monkeypatch.setattr(backend, "_send_worker_command", send_worker_command)
+    monkeypatch.setattr(backend, "_stop_worker_process", AsyncMock())
+    monkeypatch.setattr(backend._display_manager, "stop", AsyncMock())
+
+    try:
+        await backend.preflight()
+        observation = await backend.observe(pathlib.Path("/tmp/windows-shot.png"))
+        result = await backend.execute(Action(action_type="tap", x=10.0, y=20.0))
+        apps = await backend.list_apps()
+    finally:
+        await backend.shutdown()
+
+    assert observation == Observation(
+        screenshot_path="/tmp/windows-shot.png",
+        screen_width=display_info.width,
+        screen_height=display_info.height,
+        foreground_app="Notepad",
+        platform="windows",
+        extra={"display_id": display_info.display_id},
+    )
+    assert result == "executed tap"
+    assert apps == ["Notepad", "Calculator"]
+    send_worker_command.assert_has_awaits(
+        [
+            call(
+                {
+                    "command": "observe",
+                    "screenshot_path": "/tmp/windows-shot.png",
+                    "timeout": 5.0,
+                }
+            ),
+            call(
+                {
+                    "command": "execute",
+                    "action": {
+                        "action_type": "tap",
+                        "x": 10.0,
+                        "y": 20.0,
+                        "x2": None,
+                        "y2": None,
+                        "text": None,
+                        "key": None,
+                        "pixels": None,
+                        "duration_ms": None,
+                        "relative": False,
+                        "status": None,
+                    },
+                    "timeout": 5.0,
+                }
+            ),
+            call({"command": "list_apps"}),
+            call({"command": "shutdown"}),
+        ]
+    )
+    inner.preflight.assert_not_awaited()
+    inner.observe.assert_not_awaited()
+    inner.execute.assert_not_awaited()
+    inner.list_apps.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_windows_isolated_backend_shutdown_closes_worker_before_desktop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: pathlib.Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    windows_isolated = _load_windows_isolated_module()
+
+    class _FakePipe:
+        def __init__(self, name: str, events: list[str]) -> None:
+            self._name = name
+            self._events = events
+
+        def close(self) -> None:
+            self._events.append(f"close:{self._name}")
+
+    async def _run_shutdown(cleanup_reason: str) -> list[str]:
+        display_info = _make_windows_display_info()
+        manager = _make_windows_manager(display_info)
+        inner = _make_windows_inner()
+        backend = windows_isolated.WindowsIsolatedBackend(inner, manager)
+        control_path = tmp_path / f"{cleanup_reason}.json"
+        control_path.write_text("{}", encoding="utf-8")
+        process_events: list[str] = []
+
+        class _FakeLease:
+            async def __aexit__(self, *_: object) -> None:
+                process_events.append("lease_release")
+
+        fake_process = SimpleNamespace(
+            stdin=_FakePipe("stdin", process_events),
+            stdout=_FakePipe("stdout", process_events),
+            stderr=_FakePipe("stderr", process_events),
+        )
+
+        backend._display_info = display_info
+        backend._worker_process = fake_process
+        backend._worker_control_path = os.fspath(control_path)
+        backend._lease_cm = _FakeLease()
+        backend._stopped = False
+
+        monkeypatch.setattr(
+            backend,
+            "_send_worker_command",
+            AsyncMock(
+                side_effect=lambda payload: process_events.append(f"send:{payload['command']}") or {
+                    "ok": True,
+                    "result": "shutdown",
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            backend,
+            "_stop_worker_process",
+            AsyncMock(side_effect=lambda timeout=1.0: process_events.append("stop_worker_process")),
+        )
+        monkeypatch.setattr(
+            backend._display_manager,
+            "stop",
+            AsyncMock(side_effect=lambda: process_events.append("display_stop")),
+        )
+
+        await backend.shutdown(cleanup_reason)
+
+        assert not control_path.exists()
+        assert process_events.index("send:shutdown") < process_events.index("stop_worker_process")
+        assert process_events.index("stop_worker_process") < process_events.index("close:stdin")
+        assert process_events.index("close:stdin") < process_events.index("display_stop")
+        assert process_events.index("close:stdout") < process_events.index("display_stop")
+        assert process_events.index("close:stderr") < process_events.index("display_stop")
+        assert process_events[-1] == "lease_release"
+        return process_events
+
     caplog.set_level(logging.INFO)
 
-    with pytest.raises(RuntimeError, match="worker launch failed"):
-        await backend.preflight()
-
-    await backend.shutdown()
-
-    stop_mock.assert_awaited_once_with("startup_failed")
-    manager.stop.assert_awaited_once()
-    inner.configure_target_display.assert_any_call(display_info)
-    inner.configure_target_display.assert_any_call(None)
-    assert "windows isolated backend cleanup:" in caplog.text
+    startup_failed_events = await _run_shutdown("startup_failed")
     assert "cleanup_reason=startup_failed" in caplog.text
+    caplog.clear()
+
+    cancelled_events = await _run_shutdown("cancelled")
+    assert "cleanup_reason=cancelled" in caplog.text
+    assert startup_failed_events.count("display_stop") == 1
+    assert cancelled_events.count("display_stop") == 1
