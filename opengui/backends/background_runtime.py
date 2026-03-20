@@ -39,6 +39,26 @@ _REMEDIATIONS = {
     "macos_event_post_denied": (
         "Allow event posting in System Settings > Privacy & Security > Accessibility."
     ),
+    "windows_isolated_desktop_available": "Windows isolated desktop execution is available.",
+    "windows_non_interactive_session": (
+        "Sign in to the interactive Windows session and rerun; Session 0 and service contexts "
+        "cannot host isolated desktop automation."
+    ),
+    "windows_input_desktop_unavailable": (
+        "Unlock the interactive desktop or switch back to the default input desktop before "
+        "retrying isolated automation."
+    ),
+    "windows_create_desktop_failed": (
+        "Check desktop-creation permissions and close stale OpenGUI desktops before retrying."
+    ),
+    "windows_attach_desktop_failed": (
+        "Retry from the same interactive session; Windows could not attach the worker thread to "
+        "the isolated desktop."
+    ),
+    "windows_app_class_unsupported": (
+        "Use classic Win32/GDI apps on the isolated desktop; UWP, DirectX, and GPU-heavy "
+        "surfaces must run in the foreground session."
+    ),
 }
 
 
@@ -75,6 +95,7 @@ def probe_isolated_background_support(
     *,
     sys_platform: str | None = None,
     xvfb_binary: str = "Xvfb",
+    target_app_class: str | None = None,
 ) -> IsolationProbeResult:
     host_platform = normalize_host_platform(sys_platform)
     raw_platform = sys_platform or sys.platform
@@ -99,6 +120,11 @@ def probe_isolated_background_support(
         )
     if host_platform == "macos":
         return _probe_macos_isolated_support(raw_platform)
+    if host_platform == "windows":
+        return _probe_windows_isolated_support(
+            raw_platform,
+            target_app_class=target_app_class,
+        )
 
     return IsolationProbeResult(
         supported=False,
@@ -214,5 +240,23 @@ def _probe_macos_isolated_support(raw_platform: str) -> IsolationProbeResult:
         retryable=bool(support["retryable"]),
         host_platform="macos",
         backend_name="cgvirtualdisplay",
+        sys_platform=raw_platform,
+    )
+
+
+def _probe_windows_isolated_support(
+    raw_platform: str,
+    *,
+    target_app_class: str | None = None,
+) -> IsolationProbeResult:
+    from opengui.backends.displays.win32desktop import probe_windows_isolated_desktop_support
+
+    support = probe_windows_isolated_desktop_support(target_app_class=target_app_class)
+    return IsolationProbeResult(
+        supported=bool(support["supported"]),
+        reason_code=str(support["reason_code"]),
+        retryable=bool(support["retryable"]),
+        host_platform="windows",
+        backend_name="windows_isolated_desktop",
         sys_platform=raw_platform,
     )
