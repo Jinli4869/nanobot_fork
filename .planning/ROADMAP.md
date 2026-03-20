@@ -32,6 +32,13 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 
 **Depends on:** Phase 11
 **Requirements:** BGND-05, BGND-06, BGND-07
+**Plans:** 4 plans
+
+Plans:
+- [ ] 12-01-PLAN.md — Seed Wave 0 tests and implement shared runtime contracts
+- [ ] 12-02-PLAN.md — Wire the CLI through probe, resolved-mode logging, and strict isolation blocking
+- [ ] 12-03-PLAN.md — Wire nanobot through fallback acknowledgement and serialized busy metadata
+- [ ] 12-04-PLAN.md — Run the full phase regression suite and mark validation green
 
 **Success criteria:**
 1. Background startup performs explicit capability checks before launching automation.
