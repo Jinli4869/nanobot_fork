@@ -68,16 +68,16 @@ class XvfbDisplayManager:
         """Launch Xvfb and wait for the X11 socket to become available.
 
         Tries ``_MAX_RETRIES`` display numbers starting from ``display_num``,
-        skipping any that already have a lock file.
+        skipping any slot whose lock file already exists.  If a free slot is
+        found, delegates to ``_try_start()`` and propagates any errors directly
+        (``XvfbNotFoundError``, ``XvfbCrashedError``, ``TimeoutError``).
 
         Raises:
             XvfbNotFoundError: If the ``Xvfb`` binary is not installed.
             XvfbCrashedError: If the Xvfb process exits before the socket appears.
             TimeoutError: If the socket does not appear within ``startup_timeout`` seconds.
-            RuntimeError: If all ``_MAX_RETRIES`` display numbers are unavailable.
+            RuntimeError: If all ``_MAX_RETRIES`` display numbers have lock files.
         """
-        last_exc: Exception | None = None
-
         for attempt in range(_MAX_RETRIES):
             num = self._display_num + attempt
             lock_path = pathlib.Path(f"/tmp/.X{num}-lock")
@@ -88,15 +88,12 @@ class XvfbDisplayManager:
                 )
                 continue
 
-            try:
-                return await self._try_start(num)
-            except (XvfbCrashedError, TimeoutError) as exc:
-                last_exc = exc
-                logger.debug("Display :%d unavailable (%s), retrying", num, exc)
+            # Found a free slot — attempt launch; propagate all errors immediately.
+            return await self._try_start(num)
 
         raise RuntimeError(
             f"Could not acquire a free display after {_MAX_RETRIES} attempts"
-        ) from last_exc
+        )
 
     async def stop(self) -> None:
         """Terminate the Xvfb process.  Idempotent and safe on never-started managers."""
