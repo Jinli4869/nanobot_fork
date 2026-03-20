@@ -450,7 +450,7 @@ async def test_gui_tool_uses_windows_isolated_desktop_backend_for_windows_isolat
             ),
         ),
         patch("opengui.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
-        patch.object(GuiSubagentTool, "WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
+        patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
     ):
         monkeypatch.setattr(sys, "platform", "win32")
         result = await tool.execute("test task")
@@ -538,7 +538,7 @@ async def test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload(
             ),
         ),
         patch("opengui.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
-        patch.object(GuiSubagentTool, "WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
+        patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
         patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(side_effect=RuntimeError(failure_message))),
     ):
         monkeypatch.setattr(sys, "platform", "win32")
