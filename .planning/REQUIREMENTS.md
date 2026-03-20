@@ -79,10 +79,10 @@ Requirements for milestone v1.1: Background Execution.
 
 ### Background Wrapper
 
-- [ ] **BGND-01**: BackgroundDesktopBackend wraps any DeviceBackend via decorator pattern
-- [ ] **BGND-02**: Wrapper sets DISPLAY env var for X11-based virtual displays
-- [ ] **BGND-03**: Wrapper applies coordinate offsets for non-Xvfb platforms (macOS prep)
-- [ ] **BGND-04**: Wrapper shutdown stops virtual display (idempotent)
+- [x] **BGND-01**: BackgroundDesktopBackend wraps any DeviceBackend via decorator pattern
+- [x] **BGND-02**: Wrapper sets DISPLAY env var for X11-based virtual displays
+- [x] **BGND-03**: Wrapper applies coordinate offsets for non-Xvfb platforms (macOS prep)
+- [x] **BGND-04**: Wrapper shutdown stops virtual display (idempotent)
 
 ### Integration
 
@@ -145,10 +145,10 @@ Requirements for milestone v1.1: Background Execution.
 | VDISP-02 | Phase 9 | Complete |
 | VDISP-03 | Phase 9 | Complete |
 | VDISP-04 | Phase 9 | Complete |
-| BGND-01 | Phase 10 | Pending |
-| BGND-02 | Phase 10 | Pending |
-| BGND-03 | Phase 10 | Pending |
-| BGND-04 | Phase 10 | Pending |
+| BGND-01 | Phase 10 | Complete |
+| BGND-02 | Phase 10 | Complete |
+| BGND-03 | Phase 10 | Complete |
+| BGND-04 | Phase 10 | Complete |
 | INTG-01 | Phase 11 | Pending |
 | INTG-02 | Phase 11 | Pending |
 | INTG-03 | Phase 11 | Pending |
