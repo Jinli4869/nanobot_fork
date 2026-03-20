@@ -104,6 +104,9 @@ class BackgroundDesktopBackend:
             self._display_info = await self._display_manager.start()
             self._original_display = os.environ.get("DISPLAY")
             self._apply_display_env()
+            configure_target_display = getattr(self._inner, "configure_target_display", None)
+            if callable(configure_target_display):
+                configure_target_display(self._display_info)
             await self._inner.preflight()
         except Exception:
             await self._release_runtime_lease()
@@ -146,6 +149,9 @@ class BackgroundDesktopBackend:
         except Exception:
             logger.exception("Error stopping display manager during shutdown")
         finally:
+            configure_target_display = getattr(self._inner, "configure_target_display", None)
+            if callable(configure_target_display):
+                configure_target_display(None)
             self._restore_display_env()
             self._stopped = True
             await self._release_runtime_lease()

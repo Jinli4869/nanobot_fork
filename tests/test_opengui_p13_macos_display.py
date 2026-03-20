@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
 import opengui.backends.background_runtime as runtime
+from opengui.action import Action
+from opengui.backends.background import BackgroundDesktopBackend
 from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
 from opengui.backends.virtual_display import DisplayInfo
+from opengui.observation import Observation
 
 
 def test_probe_macos_virtual_display_available() -> None:
@@ -124,3 +129,96 @@ async def test_cgvirtualdisplay_manager_stop_is_idempotent() -> None:
         monkeypatch.undo()
 
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_background_wrapper_configures_target_display_before_preflight() -> None:
+    display_info = DisplayInfo(
+        display_id="macos:42",
+        width=1440,
+        height=900,
+        offset_x=200,
+        offset_y=120,
+        monitor_index=2,
+    )
+    call_order: list[str] = []
+
+    manager = AsyncMock()
+    manager.start = AsyncMock(return_value=display_info)
+    manager.stop = AsyncMock(side_effect=lambda: call_order.append("stop"))
+
+    inner = AsyncMock()
+    type(inner).platform = PropertyMock(return_value="macos")
+    inner.configure_target_display = MagicMock(
+        side_effect=lambda info: call_order.append(
+            f"configure:{'set' if info is display_info else 'clear'}"
+        )
+    )
+    inner.preflight = AsyncMock(side_effect=lambda: call_order.append("preflight"))
+    inner.observe = AsyncMock()
+    inner.execute = AsyncMock(return_value="ok")
+
+    backend = BackgroundDesktopBackend(inner, manager)
+    await backend.preflight()
+
+    assert call_order == ["configure:set", "preflight"]
+    inner.configure_target_display.assert_called_once_with(display_info)
+
+    await backend.shutdown()
+
+    assert call_order[-2:] == ["stop", "configure:clear"]
+    assert inner.configure_target_display.call_args_list[-1].args == (None,)
+
+
+@pytest.mark.asyncio
+async def test_macos_target_surface_routing_keeps_observe_and_execute_aligned(
+    tmp_path: Path,
+) -> None:
+    display_info = DisplayInfo(
+        display_id="macos:42",
+        width=1440,
+        height=900,
+        offset_x=200,
+        offset_y=120,
+        monitor_index=2,
+    )
+    configured_displays: list[DisplayInfo | None] = []
+
+    manager = AsyncMock()
+    manager.start = AsyncMock(return_value=display_info)
+    manager.stop = AsyncMock()
+
+    inner = AsyncMock()
+    type(inner).platform = PropertyMock(return_value="macos")
+
+    def _configure(info: DisplayInfo | None) -> None:
+        configured_displays.append(info)
+
+    inner.configure_target_display = MagicMock(side_effect=_configure)
+    inner.preflight = AsyncMock()
+    inner.observe = AsyncMock(
+        side_effect=lambda screenshot_path, timeout=5.0: Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=display_info.width,
+            screen_height=display_info.height,
+            foreground_app="Finder",
+            platform="macos",
+        )
+    )
+    inner.execute = AsyncMock(return_value="ok")
+
+    backend = BackgroundDesktopBackend(inner, manager)
+    await backend.preflight()
+
+    observation = await backend.observe(tmp_path / "surface.png")
+    result = await backend.execute(Action(action_type="tap", x=100.0, y=200.0))
+
+    assert configured_displays == [display_info]
+    assert observation.screen_width == 1440
+    assert observation.screen_height == 900
+    passed_action = inner.execute.call_args.args[0]
+    assert passed_action.x == 300.0
+    assert passed_action.y == 320.0
+    assert result == "ok"
+
+    await backend.shutdown()
