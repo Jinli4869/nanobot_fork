@@ -413,3 +413,325 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
 
     assert disabled == (None, None, None)
     assert {key: len(value) for key, value in calls.items()} == before
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 Plan 01 — --background CLI flag tests
+# ---------------------------------------------------------------------------
+
+
+def test_cli_parses_background_flags() -> None:
+    """parse_args accepts --background and optional display geometry flags."""
+    import opengui.cli as cli
+
+    # Basic --background flag
+    args = cli.parse_args(["--background", "--task", "t"])
+    assert args.background is True
+    assert args.display_num is None
+    assert args.width is None
+    assert args.height is None
+
+    # With all display geometry flags
+    args2 = cli.parse_args(
+        ["--background", "--display-num", "42", "--width", "1920", "--height", "1080", "--task", "t"]
+    )
+    assert args2.background is True
+    assert args2.display_num == 42
+    assert args2.width == 1920
+    assert args2.height == 1080
+
+
+def test_cli_background_rejects_adb() -> None:
+    """--background combined with --backend adb exits with an error."""
+    import opengui.cli as cli
+
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--background", "--backend", "adb", "--task", "t"])
+
+
+def test_cli_background_rejects_dry_run() -> None:
+    """--background combined with --dry-run exits with an error."""
+    import opengui.cli as cli
+
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--background", "--dry-run", "--task", "t"])
+
+
+def test_cli_background_implies_local() -> None:
+    """--background without --backend should resolve to 'local'."""
+    import opengui.cli as cli
+
+    args = cli.parse_args(["--background", "--task", "t"])
+    assert cli.resolve_backend_name(args) == "local"
+
+
+def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """On Linux, run_cli wraps the inner backend in BackgroundDesktopBackend."""
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="linux")
+    wrapped_backend_ref: list[Any] = []
+    agent_backend_ref: list[Any] = []
+
+    class FakeXvfbDisplayManager:
+        def __init__(self, display_num: int = 99, width: int = 1280, height: int = 720) -> None:
+            self.display_num = display_num
+            self.width = width
+            self.height = height
+
+        async def start(self) -> Any:
+            from opengui.backends.virtual_display import DisplayInfo
+            return DisplayInfo(display_id=":99", width=self.width, height=self.height)
+
+        async def stop(self) -> None:
+            pass
+
+    class FakeBackgroundBackend:
+        def __init__(self, inner: Any, manager: Any) -> None:
+            self._inner = inner
+            self._manager = manager
+            wrapped_backend_ref.append(self)
+
+        async def __aenter__(self) -> "FakeBackgroundBackend":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        @property
+        def platform(self) -> str:
+            return self._inner.platform
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+            self.task = task
+            self.platform = platform
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            agent_backend_ref.append(kwargs["backend"])
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            return AgentResult(
+                success=True,
+                summary="done",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    import opengui.backends.displays.xvfb as xvfb_mod
+    monkeypatch.setattr(xvfb_mod, "XvfbDisplayManager", FakeXvfbDisplayManager)
+
+    # Also patch the xvfb import inside run_cli's local scope by patching the module reference
+    import importlib
+    import opengui.backends.displays.xvfb as _xvfb
+    monkeypatch.setattr(_xvfb, "XvfbDisplayManager", FakeXvfbDisplayManager)
+
+    args = cli.parse_args(["--background", "--task", "open settings"])
+    asyncio.run(cli.run_cli(args))
+
+    # FakeBackgroundBackend was constructed and the agent received the wrapped backend
+    assert len(wrapped_backend_ref) == 1
+    assert wrapped_backend_ref[0]._inner is inner_backend
+    assert len(agent_backend_ref) == 1
+    assert agent_backend_ref[0] is wrapped_backend_ref[0]
+
+
+def test_run_cli_background_nonlinux_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """On non-Linux platforms, --background logs a warning and uses raw backend."""
+    import logging
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="macos")
+    agent_backend_ref: list[Any] = []
+    bg_created: list[Any] = []
+
+    class FakeBackgroundBackend:
+        def __init__(self, inner: Any, manager: Any) -> None:
+            bg_created.append(self)
+
+        async def __aenter__(self) -> "FakeBackgroundBackend":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        @property
+        def platform(self) -> str:
+            return "linux"
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+            self.task = task
+            self.platform = platform
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            agent_backend_ref.append(kwargs["backend"])
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            return AgentResult(
+                success=True,
+                summary="done",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
+    # Leave sys.platform as "darwin" (do not patch)
+
+    args = cli.parse_args(["--background", "--task", "open settings"])
+    with caplog.at_level(logging.WARNING, logger="opengui.cli"):
+        asyncio.run(cli.run_cli(args))
+
+    # BackgroundDesktopBackend was NOT constructed
+    assert len(bg_created) == 0
+    # Agent received raw backend
+    assert len(agent_backend_ref) == 1
+    assert agent_backend_ref[0] is inner_backend
+    # Warning was logged mentioning Linux-only
+    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Linux-only" in msg for msg in warning_messages), (
+        f"Expected 'Linux-only' in warning logs, got: {warning_messages}"
+    )
+
+
+def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    """XvfbDisplayManager is constructed with --display-num, --width, --height values."""
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="linux")
+    xvfb_init_kwargs: list[dict[str, Any]] = []
+
+    class FakeXvfbDisplayManager:
+        def __init__(self, display_num: int = 99, width: int = 1280, height: int = 720) -> None:
+            xvfb_init_kwargs.append({"display_num": display_num, "width": width, "height": height})
+
+        async def start(self) -> Any:
+            from opengui.backends.virtual_display import DisplayInfo
+            return DisplayInfo(display_id=":42", width=1920, height=1080)
+
+        async def stop(self) -> None:
+            pass
+
+    class FakeBackgroundBackend:
+        def __init__(self, inner: Any, manager: Any) -> None:
+            self._inner = inner
+            self._manager = manager
+
+        async def __aenter__(self) -> "FakeBackgroundBackend":
+            return self
+
+        async def __aexit__(self, *args: Any) -> None:
+            pass
+
+        @property
+        def platform(self) -> str:
+            return self._inner.platform
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            return AgentResult(
+                success=True,
+                summary="done",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    import opengui.backends.displays.xvfb as _xvfb
+    monkeypatch.setattr(_xvfb, "XvfbDisplayManager", FakeXvfbDisplayManager)
+
+    args = cli.parse_args(
+        ["--background", "--display-num", "42", "--width", "1920", "--height", "1080", "--task", "t"]
+    )
+    asyncio.run(cli.run_cli(args))
+
+    assert len(xvfb_init_kwargs) == 1
+    assert xvfb_init_kwargs[0] == {"display_num": 42, "width": 1920, "height": 1080}
