@@ -1090,3 +1090,319 @@ def test_run_cli_logs_macos_permission_remediation_before_agent_start() -> None:
     assert "System Settings" in log_messages[0]
     assert "Screen Recording" in log_messages[0]
     assert cgvd_created == []
+
+
+def test_run_cli_uses_windows_isolated_desktop_backend_for_windows_isolated_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="windows")
+    manager_init_kwargs: list[dict[str, Any]] = []
+    wrapped_backend_ref: list[Any] = []
+    agent_backend_ref: list[Any] = []
+
+    class FakeWin32DesktopManager:
+        def __init__(self, width: int = 1280, height: int = 720) -> None:
+            manager_init_kwargs.append({"width": width, "height": height})
+
+    class FakeWindowsIsolatedBackend:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+            self._manager = manager
+            self._run_metadata = run_metadata
+            self.shutdown_calls = 0
+            wrapped_backend_ref.append(self)
+
+        @property
+        def platform(self) -> str:
+            return self._inner.platform
+
+        async def shutdown(self) -> None:
+            self.shutdown_calls += 1
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+            self.task = task
+            self.platform = platform
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            agent_backend_ref.append(kwargs["backend"])
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            return AgentResult(
+                success=True,
+                summary="done",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(cli, "WindowsIsolatedBackend", FakeWindowsIsolatedBackend, raising=False)
+    monkeypatch.setattr(
+        cli,
+        "probe_isolated_background_support",
+        lambda **_: runtime.IsolationProbeResult(
+            supported=True,
+            reason_code="windows_isolated_desktop_available",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        ),
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    import opengui.backends.displays.win32desktop as win32_mod
+
+    monkeypatch.setattr(win32_mod, "Win32DesktopManager", FakeWin32DesktopManager)
+
+    args = cli.parse_args(["--background", "--width", "1600", "--height", "900", "--task", "open settings"])
+    asyncio.run(cli.run_cli(args))
+
+    assert manager_init_kwargs == [{"width": 1600, "height": 900}]
+    assert len(wrapped_backend_ref) == 1
+    assert wrapped_backend_ref[0]._inner is inner_backend
+    assert wrapped_backend_ref[0]._run_metadata == {"owner": "cli", "task": "open settings"}
+    assert wrapped_backend_ref[0].shutdown_calls == 1
+    assert agent_backend_ref == [wrapped_backend_ref[0]]
+
+
+def test_run_cli_warns_for_windows_unsupported_app_class_before_agent_start() -> None:
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="windows")
+    events: list[str] = []
+    log_messages: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+            self.task = task
+            self.platform = platform
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            assert kwargs["backend"] is inner_backend
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            events.append("agent_started")
+            return AgentResult(
+                success=True,
+                summary=f"Completed {task}",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    class _EventHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "background runtime resolved:" in record.getMessage():
+                events.append("mode_logged")
+                log_messages.append(record.getMessage())
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    handler = _EventHandler()
+    cli_logger = logging.getLogger("opengui.cli")
+    cli_logger.addHandler(handler)
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+        monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+        monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+        monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+        monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+        monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+        monkeypatch.setattr(
+            cli,
+            "WindowsIsolatedBackend",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("WindowsIsolatedBackend should not be constructed for fallback")
+            ),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            cli,
+            "probe_isolated_background_support",
+            lambda **_: runtime.IsolationProbeResult(
+                supported=False,
+                reason_code="windows_app_class_unsupported",
+                retryable=False,
+                host_platform="windows",
+                backend_name="windows_isolated_desktop",
+                sys_platform="win32",
+            ),
+        )
+        monkeypatch.setattr(sys, "platform", "win32")
+
+        import opengui.backends.displays.win32desktop as win32_mod
+
+        monkeypatch.setattr(
+            win32_mod,
+            "Win32DesktopManager",
+            lambda *args, **kwargs: (_ for _ in ()).throw(
+                AssertionError("Win32DesktopManager should not be constructed for fallback")
+            ),
+        )
+
+        asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
+    finally:
+        cli_logger.removeHandler(handler)
+        monkeypatch.undo()
+
+    assert events[:2] == ["mode_logged", "agent_started"]
+    assert "windows_app_class_unsupported" in log_messages[0]
+    assert "classic Win32/GDI" in log_messages[0]
+    assert "UWP, DirectX, and GPU-heavy surfaces" in log_messages[0]
+
+
+def test_run_cli_logs_windows_target_surface_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+    import opengui.backends.windows_isolated as win_iso
+    from opengui.backends.virtual_display import DisplayInfo
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="windows")
+
+    class FakeWin32DesktopManager:
+        def __init__(self, width: int = 1280, height: int = 720) -> None:
+            self._width = width
+            self._height = height
+            self._desktop_name = "OpenGUI-Background-1"
+
+        @property
+        def desktop_name(self) -> str:
+            return self._desktop_name
+
+        async def start(self) -> DisplayInfo:
+            return DisplayInfo(
+                display_id="windows_isolated_desktop:OpenGUI-Background-1",
+                width=self._width,
+                height=self._height,
+                offset_x=0,
+                offset_y=0,
+                monitor_index=1,
+            )
+
+        async def stop(self) -> None:
+            return None
+
+    class FakeWorkerProcess:
+        def terminate(self) -> None:
+            return None
+
+        def wait(self, timeout: float = 1) -> int:
+            return 0
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+            self.task = task
+            self.platform = platform
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            self._backend = kwargs["backend"]
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            await self._backend.preflight()
+            return AgentResult(
+                success=True,
+                summary="done",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(
+        cli,
+        "probe_isolated_background_support",
+        lambda **_: runtime.IsolationProbeResult(
+            supported=True,
+            reason_code="windows_isolated_desktop_available",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        ),
+    )
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    import opengui.backends.displays.win32desktop as win32_mod
+
+    monkeypatch.setattr(win32_mod, "Win32DesktopManager", FakeWin32DesktopManager)
+    monkeypatch.setattr(win_iso, "launch_windows_worker", lambda **kwargs: FakeWorkerProcess())
+
+    with caplog.at_level(logging.INFO):
+        result = asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
+
+    assert result.success is True
+    assert "backend_name=windows_isolated_desktop" in caplog.text
+    assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in caplog.text
