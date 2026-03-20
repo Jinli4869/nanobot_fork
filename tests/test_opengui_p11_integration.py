@@ -406,3 +406,144 @@ async def test_gui_tool_surfaces_macos_permission_remediation_for_background_fal
     assert "System Settings" in payload["summary"]
     assert "acknowledge_background_fallback=true" in payload["summary"]
     mock_run_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_uses_windows_isolated_desktop_backend_for_windows_isolated_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import opengui.backends.background_runtime as runtime
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    tool = _make_gui_tool(background=True, display_width=1600, display_height=900)
+    inner_backend = tool._backend
+    inner_backend.platform = "windows"
+
+    manager_init_kwargs: list[dict[str, Any]] = []
+    wrapped_backend_ref: list[Any] = []
+    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+
+    class FakeWin32DesktopManager:
+        def __init__(self, width: int = 1280, height: int = 720) -> None:
+            manager_init_kwargs.append({"width": width, "height": height})
+
+    class FakeWindowsIsolatedBackend:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+            self._manager = manager
+            self._run_metadata = run_metadata
+            self.shutdown = AsyncMock()
+            self.platform = "windows"
+            wrapped_backend_ref.append(self)
+
+    with (
+        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)),
+        patch(
+            "opengui.backends.background_runtime.probe_isolated_background_support",
+            return_value=runtime.IsolationProbeResult(
+                supported=True,
+                reason_code="windows_isolated_desktop_available",
+                retryable=False,
+                host_platform="windows",
+                backend_name="windows_isolated_desktop",
+                sys_platform="win32",
+            ),
+        ),
+        patch("opengui.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
+        patch.object(GuiSubagentTool, "WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
+    ):
+        monkeypatch.setattr(sys, "platform", "win32")
+        result = await tool.execute("test task")
+
+    assert result == canned_result
+    assert manager_init_kwargs == [{"width": 1600, "height": 900}]
+    assert len(wrapped_backend_ref) == 1
+    assert wrapped_backend_ref[0]._inner is inner_backend
+    assert wrapped_backend_ref[0]._run_metadata == {
+        "owner": "nanobot",
+        "task": "test task",
+        "model": "test-model",
+    }
+    wrapped_backend_ref[0].shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_blocks_windows_non_interactive_isolation_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _make_gui_tool(background=True)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with patch(
+        "opengui.backends.background_runtime.probe_isolated_background_support",
+        return_value=MagicMock(
+            supported=False,
+            reason_code="windows_non_interactive_session",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        ),
+    ):
+        with patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock()) as mock_run_task:
+            payload = json.loads(await tool.execute("open settings"))
+
+    assert payload["success"] is False
+    assert payload["trace_path"] is None
+    assert payload["steps_taken"] == 0
+    assert "windows_non_interactive_session" in payload["summary"]
+    assert "Session 0 and service contexts" in payload["summary"]
+    mock_run_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import opengui.backends.background_runtime as runtime
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    tool = _make_gui_tool(background=True)
+    inner_backend = tool._backend
+    inner_backend.platform = "windows"
+
+    class FakeWin32DesktopManager:
+        def __init__(self, width: int = 1280, height: int = 720) -> None:
+            self.width = width
+            self.height = height
+
+    class FakeWindowsIsolatedBackend:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+            self._manager = manager
+            self._run_metadata = run_metadata
+            self.shutdown = AsyncMock()
+            self.platform = "windows"
+
+    failure_message = (
+        "worker startup failed cleanup_reason=startup_failed "
+        "display_id=windows_isolated_desktop:OpenGUI-Background-1"
+    )
+
+    with (
+        patch(
+            "opengui.backends.background_runtime.probe_isolated_background_support",
+            return_value=runtime.IsolationProbeResult(
+                supported=True,
+                reason_code="windows_isolated_desktop_available",
+                retryable=False,
+                host_platform="windows",
+                backend_name="windows_isolated_desktop",
+                sys_platform="win32",
+            ),
+        ),
+        patch("opengui.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
+        patch.object(GuiSubagentTool, "WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
+        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(side_effect=RuntimeError(failure_message))),
+    ):
+        monkeypatch.setattr(sys, "platform", "win32")
+        payload = json.loads(await tool.execute("test task"))
+
+    assert payload["success"] is False
+    assert "cleanup_reason=startup_failed" in payload["summary"]
+    assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in payload["summary"]
