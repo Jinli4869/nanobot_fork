@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Background Execution
 status: unknown
-stopped_at: Completed 09-01-PLAN.md (VirtualDisplayManager protocol + tests)
-last_updated: "2026-03-20T07:25:22.546Z"
+stopped_at: Completed 09-02-PLAN.md (XvfbDisplayManager production implementation + 12 tests)
+last_updated: "2026-03-20T07:27:34.794Z"
 progress:
   total_phases: 3
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -43,6 +43,7 @@ Plan: 2 of 3
 *Updated after each plan completion*
 | Phase 09-virtual-display-protocol P00 | 1min | 1 tasks | 2 files |
 | Phase 09 P01 | 171s | 2 tasks | 3 files |
+| Phase 09-virtual-display-protocol P02 | 5min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -57,6 +58,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 09-virtual-display-protocol]: Wave-0 xfail stub pattern: create test files before production code to satisfy Nyquist sampling; guarded imports with _IMPORTS_OK + pytestmark skipif for test files whose imports depend on not-yet-implemented code
 - [Phase 09]: virtual_display.py draft fully matched all locked decisions — committed to git without modification
 - [Phase 09]: ROADMAP.md Phase 9 SC-2 already had correct offset_x/offset_y names — no update needed
+- [Phase 09-virtual-display-protocol]: XvfbCrashedError propagates directly (not caught in retry loop); only lock-file presence triggers auto-increment retry
+- [Phase 09-virtual-display-protocol]: TimeoutError from _try_start() propagates directly to caller — timeout is not a collision signal, no retry attempted
+- [Phase 09-virtual-display-protocol]: _poll_socket() as separate coroutine enables asyncio.wait_for() clean cancellation on timeout
 
 ### Pending Todos
 
@@ -68,6 +72,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T07:25:22.544Z
-Stopped at: Completed 09-01-PLAN.md (VirtualDisplayManager protocol + tests)
+Last session: 2026-03-20T07:27:34.792Z
+Stopped at: Completed 09-02-PLAN.md (XvfbDisplayManager production implementation + 12 tests)
 Resume file: None
