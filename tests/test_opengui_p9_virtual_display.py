@@ -1,35 +1,37 @@
-"""Phase 9 Wave-0 stubs — VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager.
-
-All tests are marked xfail; Plan 01 will replace each stub with real assertions.
+"""Phase 9 Plan 01 tests — VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager.
 
 Requirements covered:
-  VDISP-01: VirtualDisplayManager protocol (importable, async methods)
-  VDISP-02: DisplayInfo frozen dataclass (fields, defaults)
-  VDISP-03: NoOpDisplayManager (start/stop behaviour, no subprocess)
+  VDISP-01: VirtualDisplayManager protocol (importable, isinstance, async methods)
+  VDISP-02: DisplayInfo frozen dataclass (fields, defaults, immutability)
+  VDISP-03: NoOpDisplayManager (start/stop behaviour, idempotency, no subprocess)
 """
 from __future__ import annotations
 
+import dataclasses
+import inspect
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
-from opengui.backends.virtual_display import (
-    DisplayInfo,
-    NoOpDisplayManager,
-    VirtualDisplayManager,
-)
+from opengui.backends.virtual_display import NoOpDisplayManager
+from opengui.interfaces import DisplayInfo, VirtualDisplayManager
 
 # ---------------------------------------------------------------------------
 # VDISP-01: protocol importability and async shape
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_protocol_importable() -> None:
-    assert False, "stub"
+    """VirtualDisplayManager is importable from interfaces; NoOpDisplayManager satisfies it."""
+    mgr = NoOpDisplayManager()
+    assert isinstance(mgr, VirtualDisplayManager)
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_protocol_methods_are_async() -> None:
-    assert False, "stub"
+    """VirtualDisplayManager.start() and stop() are coroutine functions."""
+    mgr = NoOpDisplayManager()
+    assert inspect.iscoroutinefunction(mgr.start)
+    assert inspect.iscoroutinefunction(mgr.stop)
 
 
 # ---------------------------------------------------------------------------
@@ -37,19 +39,32 @@ async def test_protocol_methods_are_async() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_display_info_frozen() -> None:
-    assert False, "stub"
+    """DisplayInfo is immutable — assigning any attribute raises FrozenInstanceError."""
+    di = DisplayInfo(display_id=":99", width=1920, height=1080)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        di.width = 100  # type: ignore[misc]
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_display_info_field_names() -> None:
-    assert False, "stub"
+    """DisplayInfo declares the exact fields required by the locked protocol decision."""
+    field_names = [f.name for f in dataclasses.fields(DisplayInfo)]
+    assert field_names == [
+        "display_id",
+        "width",
+        "height",
+        "offset_x",
+        "offset_y",
+        "monitor_index",
+    ]
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_display_info_defaults() -> None:
-    assert False, "stub"
+    """Optional fields default to the locked values: offset_x=0, offset_y=0, monitor_index=1."""
+    di = DisplayInfo(display_id=":99", width=1920, height=1080)
+    assert di.offset_x == 0
+    assert di.offset_y == 0
+    assert di.monitor_index == 1
 
 
 # ---------------------------------------------------------------------------
@@ -57,21 +72,31 @@ async def test_display_info_defaults() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_noop_start_returns_display_info() -> None:
-    assert False, "stub"
+    """NoOpDisplayManager.start() returns a DisplayInfo with expected defaults."""
+    info = await NoOpDisplayManager().start()
+    assert isinstance(info, DisplayInfo)
+    assert info.display_id == "noop"
+    assert info.width == 1920
+    assert info.height == 1080
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_noop_custom_dimensions() -> None:
-    assert False, "stub"
+    """NoOpDisplayManager respects custom width/height constructor arguments."""
+    info = await NoOpDisplayManager(width=800, height=600).start()
+    assert info.width == 800
+    assert info.height == 600
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_noop_stop_is_idempotent() -> None:
-    assert False, "stub"
+    """Calling stop() multiple times must not raise."""
+    mgr = NoOpDisplayManager()
+    await mgr.stop()
+    await mgr.stop()  # second call — must not raise
 
 
-@pytest.mark.xfail(reason="Wave 0 stub — implementation in Plan 01")
 async def test_noop_start_no_subprocess() -> None:
-    assert False, "stub"
+    """NoOpDisplayManager.start() must not spawn any subprocess."""
+    with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
+        await NoOpDisplayManager().start()
+        mock_exec.assert_not_called()
