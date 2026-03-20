@@ -139,14 +139,10 @@ class GuiSubagentTool(Tool):
 
             if decision.mode == "isolated":
                 from opengui.backends.background import BackgroundDesktopBackend
-                from opengui.backends.displays.xvfb import XvfbDisplayManager
-
-                display_num = self._gui_config.display_num if self._gui_config.display_num is not None else 99
-                mgr = XvfbDisplayManager(
-                    display_num=display_num,
-                    width=self._gui_config.display_width,
-                    height=self._gui_config.display_height,
-                )
+                try:
+                    mgr = self._build_isolated_display_manager(probe)
+                except RuntimeError as exc:
+                    return self._background_json_failure(str(exc))
                 wrapped_backend = BackgroundDesktopBackend(
                     active_backend,
                     mgr,
@@ -260,6 +256,27 @@ class GuiSubagentTool(Tool):
             return LocalDesktopBackend()
 
         raise ValueError(f"Unsupported GUI backend: {backend_name}")
+
+    def _build_isolated_display_manager(self, probe: Any) -> Any:
+        if probe.backend_name == "xvfb":
+            from opengui.backends.displays.xvfb import XvfbDisplayManager
+
+            display_num = self._gui_config.display_num if self._gui_config.display_num is not None else 99
+            return XvfbDisplayManager(
+                display_num=display_num,
+                width=self._gui_config.display_width,
+                height=self._gui_config.display_height,
+            )
+
+        if probe.backend_name == "cgvirtualdisplay":
+            from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
+
+            return CGVirtualDisplayManager(
+                width=self._gui_config.display_width,
+                height=self._gui_config.display_height,
+            )
+
+        raise RuntimeError(f"Unsupported isolated backend: {probe.backend_name}")
 
     def _get_skill_library(self, platform: str) -> Any:
         if platform not in self._skill_libraries:
