@@ -72,6 +72,13 @@ Plans:
 
 **Depends on:** Phase 12
 **Requirements:** WIN-01, WIN-02, WIN-03
+**Plans:** 4 plans
+
+Plans:
+- [ ] 14-01-PLAN.md — Establish the Windows runtime probe taxonomy and `Win32DesktopManager` contract
+- [ ] 14-02-PLAN.md — Implement the Windows isolated execution seam with cleanup-safe lifecycle ownership
+- [ ] 14-03-PLAN.md — Wire CLI and nanobot through the Windows isolated backend path
+- [ ] 14-04-PLAN.md — Run regression closeout and add the real-host Windows smoke checklist
 
 **Success criteria:**
 1. Supported Windows runs launch automation inside an isolated desktop/session target.
