@@ -28,6 +28,7 @@ from opengui.skills.library import SkillLibrary
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
+BackgroundDesktopBackend = None
 
 
 DEFAULT_CONFIG_PATH = Path.home() / ".opengui" / "config.yaml"
@@ -96,6 +97,15 @@ class AdbConfig:
 
 
 @dataclass(slots=True)
+class BackgroundConfig:
+    """Settings for virtual Xvfb display used with --background."""
+
+    display_num: int = 99
+    width: int = 1280
+    height: int = 720
+
+
+@dataclass(slots=True)
 class CliConfig:
     provider: ProviderConfig
     embedding: EmbeddingConfig | None = None
@@ -103,6 +113,8 @@ class CliConfig:
     max_steps: int = 15
     memory_dir: Path | None = None
     skills_dir: Path | None = None
+    background: bool = False
+    background_config: BackgroundConfig = field(default_factory=BackgroundConfig)
 
 
 class OpenAICompatibleLLMProvider:
@@ -192,10 +204,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Force re-fetch and cache the installed app list from the device",
     )
+    parser.add_argument(
+        "--background",
+        action="store_true",
+        help="Run on virtual Xvfb display (Linux only)",
+    )
+    parser.add_argument(
+        "--display-num",
+        type=int,
+        default=None,
+        help="Xvfb display number (default: 99)",
+    )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="Display width in pixels (default: 1280)",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="Display height in pixels (default: 720)",
+    )
 
     args = parser.parse_args(argv)
     if not args.task_input and not args.task_flag:
         parser.error("task is required via positional input or --task")
+    if args.background and args.backend in ("adb", "dry-run"):
+        parser.error("--background requires --backend local (or omit --backend)")
+    if args.background and args.dry_run:
+        parser.error("--background is incompatible with --dry-run")
     return args
 
 
@@ -211,7 +250,11 @@ def resolve_task(args: argparse.Namespace) -> str:
 
 
 def resolve_backend_name(args: argparse.Namespace) -> str:
-    return "dry-run" if args.dry_run else args.backend
+    if args.dry_run:
+        return "dry-run"
+    if getattr(args, "background", False):
+        return "local"
+    return args.backend
 
 
 def load_config(path: Path | None = None) -> CliConfig:
@@ -305,15 +348,14 @@ async def build_optional_components(
     return memory_retriever, skill_library, skill_executor
 
 
-async def run_cli(args: argparse.Namespace) -> AgentResult:
-    task = resolve_task(args)
-    config = load_config(args.config)
-    backend = build_backend(resolve_backend_name(args), config)
-    provider = OpenAICompatibleLLMProvider(
-        base_url=config.provider.base_url,
-        model=config.provider.model,
-        api_key=config.provider.api_key,
-    )
+async def _execute_agent(
+    args: argparse.Namespace,
+    config: CliConfig,
+    backend: Any,
+    provider: OpenAICompatibleLLMProvider,
+    task: str,
+) -> AgentResult:
+    """Assemble and run the GUI agent with the given backend and provider."""
     memory_retriever, skill_library, skill_executor = await build_optional_components(
         config,
         provider=provider,
@@ -350,6 +392,39 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
         installed_apps=installed_apps,
     )
     return await agent.run(task)
+
+
+async def run_cli(args: argparse.Namespace) -> AgentResult:
+    task = resolve_task(args)
+    config = load_config(args.config)
+    backend = build_backend(resolve_backend_name(args), config)
+    provider = OpenAICompatibleLLMProvider(
+        base_url=config.provider.base_url,
+        model=config.provider.model,
+        api_key=config.provider.api_key,
+    )
+
+    if getattr(args, "background", False):
+        if sys.platform != "linux":
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Background mode (Xvfb) is Linux-only; running in foreground on %s",
+                sys.platform,
+            )
+        else:
+            bg_cls = BackgroundDesktopBackend
+            if bg_cls is None:
+                from opengui.backends.background import BackgroundDesktopBackend as bg_cls  # type: ignore[assignment]
+            from opengui.backends.displays.xvfb import XvfbDisplayManager
+            display_num = args.display_num if args.display_num is not None else 99
+            width = args.width if args.width is not None else 1280
+            height = args.height if args.height is not None else 720
+            mgr = XvfbDisplayManager(display_num=display_num, width=width, height=height)
+            backend = bg_cls(backend, mgr)
+            async with backend:
+                return await _execute_agent(args, config, backend, provider, task)
+
+    return await _execute_agent(args, config, backend, provider, task)
 
 
 def main(argv: list[str] | None = None) -> int:
