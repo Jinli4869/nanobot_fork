@@ -72,10 +72,10 @@ Requirements for milestone v1.1: Background Execution.
 
 ### Virtual Display
 
-- [ ] **VDISP-01**: VirtualDisplayManager protocol with async start/stop lifecycle
-- [ ] **VDISP-02**: DisplayInfo frozen dataclass with display_id, dimensions, offsets
-- [ ] **VDISP-03**: NoOpDisplayManager for testing and Android (no virtual display needed)
-- [ ] **VDISP-04**: XvfbDisplayManager launches Xvfb subprocess and waits for X11 socket
+- [x] **VDISP-01**: VirtualDisplayManager protocol with async start/stop lifecycle
+- [x] **VDISP-02**: DisplayInfo frozen dataclass with display_id, dimensions, offsets
+- [x] **VDISP-03**: NoOpDisplayManager for testing and Android (no virtual display needed)
+- [x] **VDISP-04**: XvfbDisplayManager launches Xvfb subprocess and waits for X11 socket
 
 ### Background Wrapper
 
@@ -141,10 +141,10 @@ Requirements for milestone v1.1: Background Execution.
 | BACK-03 | Phase 4 → Phase 6 (Pillow dep fix) | Complete |
 | CLI-01 | Phase 5 → Phase 6 (entry point + Pillow dep) | Complete |
 | EXT-01 | Phase 5 | Complete |
-| VDISP-01 | Phase 9 | Pending |
-| VDISP-02 | Phase 9 | Pending |
-| VDISP-03 | Phase 9 | Pending |
-| VDISP-04 | Phase 9 | Pending |
+| VDISP-01 | Phase 9 | Complete |
+| VDISP-02 | Phase 9 | Complete |
+| VDISP-03 | Phase 9 | Complete |
+| VDISP-04 | Phase 9 | Complete |
 | BGND-01 | Phase 10 | Pending |
 | BGND-02 | Phase 10 | Pending |
 | BGND-03 | Phase 10 | Pending |
