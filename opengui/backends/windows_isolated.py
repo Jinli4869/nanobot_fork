@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import inspect
+import json
 import logging
 import os
 import pathlib
@@ -14,11 +16,11 @@ from opengui.backends import background_runtime
 from opengui.backends.displays.win32desktop import Win32DesktopManager
 from opengui.backends.virtual_display import DisplayInfo
 from opengui.backends.windows_worker import launch_windows_worker
+from opengui.observation import Observation
 
 if TYPE_CHECKING:
     from opengui.action import Action
     from opengui.interfaces import DeviceBackend
-    from opengui.observation import Observation
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,6 @@ class WindowsIsolatedBackend:
                 configure_target_display(self._display_info)
                 self._target_display_configured = True
             await self._start_worker_session(self._display_info)
-            await self._inner.preflight()
             logger.info(
                 "windows isolated backend ready: owner=%s task=%s backend_name=%s display_id=%s desktop_name=%s",
                 self._run_metadata.get("owner", "unknown"),
@@ -104,7 +105,16 @@ class WindowsIsolatedBackend:
     ) -> Observation:
         self._assert_started()
         try:
-            return await self._observe_via_worker(screenshot_path, timeout)
+            response = await self._send_worker_command(
+                {
+                    "command": "observe",
+                    "screenshot_path": os.fspath(screenshot_path),
+                    "timeout": timeout,
+                }
+            )
+            if not response.get("ok"):
+                raise RuntimeError(str(response.get("error", "worker observe failed")))
+            return self._deserialize_observation(response.get("observation"))
         except asyncio.CancelledError:
             await self.shutdown("cancelled")
             raise
@@ -116,14 +126,30 @@ class WindowsIsolatedBackend:
     ) -> str:
         self._assert_started()
         try:
-            return await self._execute_via_worker(action, timeout)
+            response = await self._send_worker_command(
+                {
+                    "command": "execute",
+                    "action": dataclasses.asdict(action),
+                    "timeout": timeout,
+                }
+            )
+            if not response.get("ok"):
+                raise RuntimeError(str(response.get("error", "worker execute failed")))
+            return str(response.get("result", ""))
         except asyncio.CancelledError:
             await self.shutdown("cancelled")
             raise
 
     async def list_apps(self) -> list[str]:
         self._assert_started()
-        return await self._inner.list_apps()
+        try:
+            response = await self._send_worker_command({"command": "list_apps"})
+            if not response.get("ok"):
+                raise RuntimeError(str(response.get("error", "worker list-apps failed")))
+            return self._deserialize_list_apps(response.get("apps"))
+        except asyncio.CancelledError:
+            await self.shutdown("cancelled")
+            raise
 
     async def shutdown(self, cleanup_reason: str = "normal") -> None:
         if self._stopped:
@@ -132,7 +158,7 @@ class WindowsIsolatedBackend:
         self._stopped = True
         display_id = self._display_info.display_id if self._display_info is not None else "unknown"
         try:
-            await self._stop_worker_session(cleanup_reason)
+            await self._shutdown_worker_session()
         except Exception:
             logger.exception(
                 "windows isolated backend worker cleanup failed: cleanup_reason=%s backend_name=%s",
@@ -163,12 +189,19 @@ class WindowsIsolatedBackend:
         fd, control_path = tempfile.mkstemp(prefix="opengui-windows-worker-", suffix=".json")
         os.close(fd)
         self._worker_control_path = control_path
-        self._worker_process = launch_windows_worker(
+        process = launch_windows_worker(
             desktop_name=self._display_manager.desktop_name,
             width=display_info.width,
             height=display_info.height,
             control_path=control_path,
         )
+        if getattr(process, "stdin", None) is None or getattr(process, "stdout", None) is None:
+            self._cleanup_control_path()
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+            raise RuntimeError("Windows worker process did not expose stdin/stdout pipes")
+        self._worker_process = process
         logger.info(
             "windows isolated backend worker launched: backend_name=%s display_id=%s desktop_name=%s "
             "lpDesktop=%s control_path=%s",
@@ -179,40 +212,17 @@ class WindowsIsolatedBackend:
             control_path,
         )
 
-    async def _observe_via_worker(
-        self,
-        screenshot_path: pathlib.Path,
-        timeout: float,
-    ) -> Observation:
-        return await self._inner.observe(screenshot_path, timeout)
-
-    async def _execute_via_worker(
-        self,
-        action: Action,
-        timeout: float,
-    ) -> str:
-        return await self._inner.execute(action, timeout)
-
-    async def _stop_worker_session(self, cleanup_reason: str) -> None:
-        _ = cleanup_reason
+    async def _shutdown_worker_session(self) -> None:
         process = self._worker_process
-        self._worker_process = None
         if process is not None:
-            terminate = getattr(process, "terminate", None)
-            if callable(terminate):
-                terminate()
-            wait = getattr(process, "wait", None)
-            if callable(wait):
-                try:
-                    result = wait(timeout=1)
-                except TypeError:
-                    result = wait()
-                if inspect.isawaitable(result):
-                    await result
-        control_path = self._worker_control_path
-        self._worker_control_path = None
-        if control_path and os.path.exists(control_path):
-            os.unlink(control_path)
+            try:
+                await self._send_worker_command({"command": "shutdown"})
+            except Exception:
+                logger.exception("windows isolated backend worker shutdown command failed")
+            await self._stop_worker_process(timeout=1.0)
+            self._close_process_pipes(process)
+        self._worker_process = None
+        self._cleanup_control_path()
 
     def _resolve_configure_target_display(self) -> Any | None:
         if "configure_target_display" in vars(self._inner):
@@ -241,3 +251,105 @@ class WindowsIsolatedBackend:
         lease_cm = self._lease_cm
         self._lease_cm = None
         await lease_cm.__aexit__(None, None, None)
+
+    async def _send_worker_command(self, payload: dict[str, Any]) -> dict[str, Any]:
+        process = self._require_worker_process()
+        stdin = getattr(process, "stdin", None)
+        if stdin is None:
+            raise RuntimeError("Windows worker stdin is unavailable")
+        message = json.dumps(payload) + "\n"
+        await asyncio.to_thread(self._write_worker_command, stdin, message)
+        return await self._read_worker_response()
+
+    async def _read_worker_response(self) -> dict[str, Any]:
+        process = self._require_worker_process()
+        stdout = getattr(process, "stdout", None)
+        if stdout is None:
+            raise RuntimeError("Windows worker stdout is unavailable")
+        line = await asyncio.to_thread(stdout.readline)
+        if line == "":
+            raise RuntimeError("Windows worker closed its response channel")
+        try:
+            response = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid Windows worker response: {exc}") from exc
+        if not isinstance(response, dict):
+            raise RuntimeError("Windows worker response must be a JSON object")
+        return response
+
+    def _deserialize_observation(self, payload: Any) -> Observation:
+        if not isinstance(payload, dict):
+            raise RuntimeError("Windows worker observation payload must be an object")
+        extra = payload.get("extra") or {}
+        if not isinstance(extra, dict):
+            raise RuntimeError("Windows worker observation extra payload must be an object")
+        return Observation(
+            screenshot_path=payload.get("screenshot_path"),
+            screen_width=int(payload["screen_width"]),
+            screen_height=int(payload["screen_height"]),
+            foreground_app=payload.get("foreground_app"),
+            platform=str(payload.get("platform", "unknown")),
+            extra=extra,
+        )
+
+    def _deserialize_list_apps(self, payload: Any) -> list[str]:
+        if not isinstance(payload, list):
+            raise RuntimeError("Windows worker app list payload must be an array")
+        return [str(item) for item in payload]
+
+    async def _stop_worker_process(self, timeout: float) -> None:
+        process = self._worker_process
+        if process is None:
+            return
+        try:
+            await asyncio.wait_for(self._wait_for_process(process), timeout=timeout)
+            return
+        except asyncio.TimeoutError:
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+        try:
+            await asyncio.wait_for(self._wait_for_process(process), timeout=timeout)
+            return
+        except asyncio.TimeoutError:
+            kill = getattr(process, "kill", None)
+            if callable(kill):
+                kill()
+            await self._wait_for_process(process)
+
+    async def _wait_for_process(self, process: Any) -> Any:
+        wait = getattr(process, "wait", None)
+        if not callable(wait):
+            return None
+        try:
+            return await asyncio.to_thread(wait)
+        except TypeError:
+            result = wait()
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+    def _close_process_pipes(self, process: Any) -> None:
+        for name in ("stdin", "stdout", "stderr"):
+            pipe = getattr(process, name, None)
+            close = getattr(pipe, "close", None)
+            if callable(close):
+                close()
+
+    def _cleanup_control_path(self) -> None:
+        control_path = self._worker_control_path
+        self._worker_control_path = None
+        if control_path and os.path.exists(control_path):
+            os.unlink(control_path)
+
+    def _require_worker_process(self) -> Any:
+        if self._worker_process is None:
+            raise RuntimeError("Windows worker process has not been started")
+        return self._worker_process
+
+    @staticmethod
+    def _write_worker_command(stdin: Any, message: str) -> None:
+        stdin.write(message)
+        flush = getattr(stdin, "flush", None)
+        if callable(flush):
+            flush()
