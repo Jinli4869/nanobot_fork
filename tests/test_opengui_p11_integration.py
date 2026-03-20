@@ -315,3 +315,90 @@ async def test_gui_tool_reports_busy_waiting_metadata_for_serialized_background_
     assert "waiting_owner=nanobot" in busy_messages[0]
     assert "active_owner=nanobot" in busy_messages[0]
     assert "active_task=first" in busy_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_uses_cgvirtualdisplay_manager_for_macos_isolated_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import opengui.backends.background_runtime as runtime
+
+    tool = _make_gui_tool(background=True, display_width=1440, display_height=900)
+    inner_backend = tool._backend
+    inner_backend.platform = "macos"
+
+    cgvd_init_kwargs: list[dict[str, Any]] = []
+    wrapped_backend_ref: list[Any] = []
+
+    class FakeCGVirtualDisplayManager:
+        def __init__(self, width: int = 1280, height: int = 720) -> None:
+            cgvd_init_kwargs.append({"width": width, "height": height})
+
+    class FakeBackgroundBackend:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+            self._manager = manager
+            self._run_metadata = run_metadata
+            self.shutdown = AsyncMock()
+            self.platform = "macos"
+            wrapped_backend_ref.append(self)
+
+    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+
+    with (
+        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)),
+        patch(
+            "opengui.backends.background_runtime.probe_isolated_background_support",
+            return_value=runtime.IsolationProbeResult(
+                supported=True,
+                reason_code="macos_virtual_display_available",
+                retryable=False,
+                host_platform="macos",
+                backend_name="cgvirtualdisplay",
+                sys_platform="darwin",
+            ),
+        ),
+        patch("opengui.backends.background.BackgroundDesktopBackend", FakeBackgroundBackend),
+        patch("opengui.backends.displays.cgvirtualdisplay.CGVirtualDisplayManager", FakeCGVirtualDisplayManager),
+    ):
+        monkeypatch.setattr(sys, "platform", "darwin")
+        result = await tool.execute("test task")
+
+    assert result == canned_result
+    assert cgvd_init_kwargs == [{"width": 1440, "height": 900}]
+    assert len(wrapped_backend_ref) == 1
+    assert wrapped_backend_ref[0]._inner is inner_backend
+    assert wrapped_backend_ref[0]._run_metadata == {
+        "owner": "nanobot",
+        "task": "test task",
+        "model": "test-model",
+    }
+    wrapped_backend_ref[0].shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_surfaces_macos_permission_remediation_for_background_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _make_gui_tool(background=True)
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    with patch(
+        "opengui.backends.background_runtime.probe_isolated_background_support",
+        return_value=MagicMock(
+            supported=False,
+            reason_code="macos_screen_recording_denied",
+            retryable=True,
+            host_platform="macos",
+            backend_name="cgvirtualdisplay",
+            sys_platform="darwin",
+        ),
+    ):
+        with patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock()) as mock_run_task:
+            payload = json.loads(await tool.execute("open settings"))
+
+    assert payload["success"] is False
+    assert "macos_screen_recording_denied" in payload["summary"]
+    assert "System Settings" in payload["summary"]
+    assert "acknowledge_background_fallback=true" in payload["summary"]
+    mock_run_task.assert_not_awaited()
