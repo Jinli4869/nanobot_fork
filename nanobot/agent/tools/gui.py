@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +22,9 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+probe_isolated_background_support = None
+resolve_run_mode = None
+log_mode_resolution = None
 
 
 class GuiSubagentTool(Tool):
@@ -74,23 +78,66 @@ class GuiSubagentTool(Tool):
                     "enum": ["adb", "local", "dry-run"],
                     "description": "Optional backend override. Defaults to the configured GUI backend.",
                 },
+                "require_background_isolation": {
+                    "type": "boolean",
+                    "description": "Block instead of falling back when isolated background execution is unavailable.",
+                },
+                "acknowledge_background_fallback": {
+                    "type": "boolean",
+                    "description": "Explicitly acknowledge foreground fallback when isolated background execution is unavailable.",
+                },
             },
             "required": ["task"],
         }
 
-    async def execute(self, task: str, backend: str | None = None, **kwargs: Any) -> str:
+    async def execute(
+        self,
+        task: str,
+        backend: str | None = None,
+        require_background_isolation: bool = False,
+        acknowledge_background_fallback: bool = False,
+        **kwargs: Any,
+    ) -> str:
         active_backend = self._select_backend(backend)
 
         if self._gui_config.background:
-            import sys
-
-            if sys.platform != "linux":
-                logger.warning(
-                    "GuiConfig.background=true but Xvfb is Linux-only; "
-                    "running in foreground on %s. Use Linux for background mode.",
-                    sys.platform,
+            probe_fn = probe_isolated_background_support
+            resolve_fn = resolve_run_mode
+            log_fn = log_mode_resolution
+            if probe_fn is None:
+                from opengui.backends.background_runtime import (
+                    probe_isolated_background_support as runtime_probe_isolated_background_support,
                 )
-            else:
+
+                probe_fn = runtime_probe_isolated_background_support
+            if resolve_fn is None:
+                from opengui.backends.background_runtime import resolve_run_mode as runtime_resolve_run_mode
+
+                resolve_fn = runtime_resolve_run_mode
+            if log_fn is None:
+                from opengui.backends.background_runtime import (
+                    log_mode_resolution as runtime_log_mode_resolution,
+                )
+
+                log_fn = runtime_log_mode_resolution
+
+            probe = probe_fn(sys_platform=sys.platform)
+            decision = resolve_fn(
+                probe,
+                require_isolation=require_background_isolation,
+                require_acknowledgement_for_fallback=True,
+            )
+            log_fn(logger, decision, owner="nanobot", task=task)
+
+            if decision.mode == "blocked":
+                return self._background_json_failure(decision.message)
+
+            if decision.mode == "fallback" and not acknowledge_background_fallback:
+                return self._background_json_failure(
+                    f"{decision.message} Re-run with acknowledge_background_fallback=true to continue in foreground."
+                )
+
+            if decision.mode == "isolated":
                 from opengui.backends.background import BackgroundDesktopBackend
                 from opengui.backends.displays.xvfb import XvfbDisplayManager
 
@@ -100,9 +147,15 @@ class GuiSubagentTool(Tool):
                     width=self._gui_config.display_width,
                     height=self._gui_config.display_height,
                 )
-                active_backend = BackgroundDesktopBackend(active_backend, mgr)
-                async with active_backend:
-                    return await self._run_task(active_backend, task, **kwargs)
+                wrapped_backend = BackgroundDesktopBackend(
+                    active_backend,
+                    mgr,
+                    run_metadata={"owner": "nanobot", "task": task, "model": self._model},
+                )
+                try:
+                    return await self._run_task(wrapped_backend, task, **kwargs)
+                finally:
+                    await wrapped_backend.shutdown()
 
         return await self._run_task(active_backend, task, **kwargs)
 
@@ -280,3 +333,16 @@ class GuiSubagentTool(Tool):
             if matches:
                 return matches[0]
         return None
+
+    @staticmethod
+    def _background_json_failure(summary: str) -> str:
+        return json.dumps(
+            {
+                "success": False,
+                "summary": summary,
+                "trace_path": None,
+                "steps_taken": 0,
+                "error": None,
+            },
+            ensure_ascii=False,
+        )

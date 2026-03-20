@@ -25,8 +25,9 @@ import dataclasses
 import logging
 import os
 import pathlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from opengui.backends import background_runtime
 from opengui.backends.virtual_display import DisplayInfo, VirtualDisplayManager
 
 if TYPE_CHECKING:
@@ -59,10 +60,18 @@ class BackgroundDesktopBackend:
         self,
         inner: DeviceBackend,
         display_manager: VirtualDisplayManager,
+        run_metadata: dict[str, str] | None = None,
     ) -> None:
         self._inner = inner
         self._display_manager = display_manager
         self._display_info: DisplayInfo | None = None
+        self.runtime_coordinator = background_runtime.GLOBAL_BACKGROUND_RUNTIME_COORDINATOR
+        self._run_metadata = {
+            "owner": "background-backend",
+            "task": "unknown",
+            **(run_metadata or {}),
+        }
+        self._lease_cm: Any | None = None
         # Tracks the DISPLAY value before preflight() so shutdown() can restore it.
         # _SENTINEL means preflight() has not been called yet.
         self._original_display: str | None | object = _SENTINEL
@@ -89,10 +98,16 @@ class BackgroundDesktopBackend:
 
     async def preflight(self) -> None:
         """Start the virtual display and prepare the inner backend."""
-        self._display_info = await self._display_manager.start()
-        self._original_display = os.environ.get("DISPLAY")
-        self._apply_display_env()
-        await self._inner.preflight()
+        self._lease_cm = self.runtime_coordinator.lease(self._run_metadata, logger=logger)
+        await self._lease_cm.__aenter__()
+        try:
+            self._display_info = await self._display_manager.start()
+            self._original_display = os.environ.get("DISPLAY")
+            self._apply_display_env()
+            await self._inner.preflight()
+        except Exception:
+            await self._release_runtime_lease()
+            raise
 
     async def observe(
         self,
@@ -130,8 +145,10 @@ class BackgroundDesktopBackend:
             await self._display_manager.stop()
         except Exception:
             logger.exception("Error stopping display manager during shutdown")
-        self._restore_display_env()
-        self._stopped = True
+        finally:
+            self._restore_display_env()
+            self._stopped = True
+            await self._release_runtime_lease()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -176,3 +193,10 @@ class BackgroundDesktopBackend:
             x2=(action.x2 + info.offset_x) if action.x2 is not None else None,
             y2=(action.y2 + info.offset_y) if action.y2 is not None else None,
         )
+
+    async def _release_runtime_lease(self) -> None:
+        if self._lease_cm is None:
+            return
+        lease_cm = self._lease_cm
+        self._lease_cm = None
+        await lease_cm.__aexit__(None, None, None)

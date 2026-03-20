@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 from dataclasses import asdict, dataclass, field
@@ -29,7 +30,11 @@ from opengui.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
 BackgroundDesktopBackend = None
+probe_isolated_background_support = None
+resolve_run_mode = None
+log_mode_resolution = None
 
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path.home() / ".opengui" / "config.yaml"
 DEFAULT_MEMORY_DIR = Path.home() / ".opengui" / "memory"
@@ -210,6 +215,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run on virtual Xvfb display (Linux only)",
     )
     parser.add_argument(
+        "--require-isolation",
+        action="store_true",
+        help="Block instead of falling back when isolated background execution is unavailable",
+    )
+    parser.add_argument(
         "--display-num",
         type=int,
         default=None,
@@ -235,6 +245,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--background requires --backend local (or omit --backend)")
     if args.background and args.dry_run:
         parser.error("--background is incompatible with --dry-run")
+    if args.require_isolation and not args.background:
+        parser.error("--require-isolation requires --background")
     return args
 
 
@@ -405,24 +417,52 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
     )
 
     if getattr(args, "background", False):
-        if sys.platform != "linux":
-            import logging as _logging
-            _logging.getLogger(__name__).warning(
-                "Background mode (Xvfb) is Linux-only; running in foreground on %s",
-                sys.platform,
+        probe_fn = probe_isolated_background_support
+        resolve_fn = resolve_run_mode
+        log_fn = log_mode_resolution
+        if probe_fn is None:
+            from opengui.backends.background_runtime import (
+                probe_isolated_background_support as runtime_probe_isolated_background_support,
             )
-        else:
+
+            probe_fn = runtime_probe_isolated_background_support
+        if resolve_fn is None:
+            from opengui.backends.background_runtime import resolve_run_mode as runtime_resolve_run_mode
+
+            resolve_fn = runtime_resolve_run_mode
+        if log_fn is None:
+            from opengui.backends.background_runtime import (
+                log_mode_resolution as runtime_log_mode_resolution,
+            )
+
+            log_fn = runtime_log_mode_resolution
+
+        probe = probe_fn(sys_platform=sys.platform)
+        decision = resolve_fn(
+            probe,
+            require_isolation=args.require_isolation,
+            require_acknowledgement_for_fallback=False,
+        )
+        log_fn(logger, decision, owner="cli", task=task)
+
+        if decision.mode == "blocked":
+            raise RuntimeError(decision.message)
+
+        if decision.mode == "isolated":
             bg_cls = BackgroundDesktopBackend
             if bg_cls is None:
                 from opengui.backends.background import BackgroundDesktopBackend as bg_cls  # type: ignore[assignment]
             from opengui.backends.displays.xvfb import XvfbDisplayManager
+
             display_num = args.display_num if args.display_num is not None else 99
             width = args.width if args.width is not None else 1280
             height = args.height if args.height is not None else 720
             mgr = XvfbDisplayManager(display_num=display_num, width=width, height=height)
-            backend = bg_cls(backend, mgr)
-            async with backend:
-                return await _execute_agent(args, config, backend, provider, task)
+            wrapped_backend = bg_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
+            try:
+                return await _execute_agent(args, config, wrapped_backend, provider, task)
+            finally:
+                await wrapped_backend.shutdown()
 
     return await _execute_agent(args, config, backend, provider, task)
 

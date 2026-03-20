@@ -13,7 +13,8 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Shipped through:** v1.1 Background Execution
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, standalone CLI, nanobot GUI tool integration
 - **Background execution:** Linux background desktop automation is supported through `XvfbDisplayManager` and `BackgroundDesktopBackend`
-- **Verification state:** Full regression suite passes at milestone close (`678 passed`)
+- **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
+- **Verification state:** Phase 12 regression slice passes (`30 passed`) while milestone v1.2 continues
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
 
 ## Current Milestone: v1.2 Cross-Platform Background Execution
@@ -44,6 +45,9 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **P1-07**: Virtual display protocol and Linux Xvfb implementation — v1.1
 - ✓ **P1-08**: Background desktop backend wrapper with lifecycle safety — v1.1
 - ✓ **P1-09**: CLI and nanobot background execution integration with CI-safe tests — v1.1
+- ✓ **BGND-05**: Background runtime probes isolated support before any desktop background run starts — v1.2 Phase 12
+- ✓ **BGND-06**: Background runtime reports isolated, fallback, or blocked mode before automation begins — v1.2 Phase 12
+- ✓ **BGND-07**: Overlapping background desktop runs serialize with explicit busy metadata — v1.2 Phase 12
 
 ### Active
 
@@ -80,6 +84,8 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 | Background execution via virtual display abstraction | Keep Linux Xvfb, future macOS, and future Windows under one contract | ✓ Good |
 | `BackgroundDesktopBackend` as a decorator wrapper | Reuse any existing backend without duplicating control logic | ✓ Good |
 | Xvfb via `asyncio.subprocess` | No extra Python binding dependency, CI-friendly mocking boundary | ✓ Good |
+| Shared runtime probe + resolved-mode contract | Keep CLI, nanobot, and future macOS/Windows flows on one capability vocabulary | ✓ Good |
+| Process-wide runtime lease coordinator | Prevent overlapping background runs from corrupting global desktop state | ✓ Good |
 
 ## Constraints
 
@@ -89,4 +95,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Memory and skill persistence remain file-backed JSON/markdown stores for now.
 
 ---
-*Last updated: 2026-03-20 after v1.2 milestone initialization*
+*Last updated: 2026-03-20 after Phase 12 execution*

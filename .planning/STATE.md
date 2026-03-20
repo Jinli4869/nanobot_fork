@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Cross-Platform Background Execution
 status: ready_for_phase_planning
-stopped_at: Roadmap created for milestone v1.2
-last_updated: "2026-03-20T11:58:59Z"
+stopped_at: Phase 12 execution complete; Phase 13 ready for discussion/planning
+last_updated: "2026-03-20T14:18:42.972Z"
 progress:
   total_phases: 5
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  completed_phases: 1
+  total_plans: 4
+  completed_plans: 4
 ---
 
 # Project State
@@ -19,20 +19,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 12 planning
+**Current focus:** Phase 13 planning
 
 ## Current Position
 
-Phase: 12 — Background Runtime Contracts
+Phase: 13 — macos-background-execution
 Plan: Awaiting phase discussion / planning
-Status: Ready to plan Phase 12
-Last activity: 2026-03-20 — Roadmap created for milestone v1.2
+Status: Ready to plan Phase 13
+Last activity: 2026-03-20 — Phase 12 execution complete
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed (v1.2): 0
+- Total plans completed (v1.2): 4
 - Average duration: —
 - Total execution time: —
 
@@ -40,7 +40,7 @@ Last activity: 2026-03-20 — Roadmap created for milestone v1.2
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| - | - | - | - |
+| 12 | 4 | — | — |
 
 *Updated after each plan completion*
 
@@ -72,6 +72,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11-integration-tests P01]: Two separate parser.error() calls needed — args.backend check catches --backend adb/dry-run; args.dry_run check catches --dry-run flag which leaves args.backend at default 'local'
 - [Phase 11-integration-tests P01]: XvfbDisplayManager patched at module attribute level for correct resolution of run_cli's local from-import
 - [Phase 11-integration-tests P01]: _execute_agent() extracted as standalone async function to avoid duplicating 40+ lines across background and non-background paths
+- [Phase 12-background-runtime-contracts]: Shared `background_runtime.py` now owns capability probing, resolved-mode logging, and remediation text for background runs
+- [Phase 12-background-runtime-contracts]: `BackgroundRuntimeCoordinator` serializes overlapping background runs and surfaces busy metadata through the wrapper lease
 
 ### Pending Todos
 
@@ -83,6 +85,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T11:44:58Z
-Stopped at: Roadmap created for milestone v1.2
-Resume file: .planning/ROADMAP.md
+Last session: 2026-03-20T14:18:42Z
+Stopped at: Phase 12 execution complete; Phase 13 ready for discussion/planning
+Resume file: .planning/phases/13-macos-background-execution
