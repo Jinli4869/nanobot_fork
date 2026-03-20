@@ -468,6 +468,39 @@ async def test_gui_tool_uses_windows_isolated_desktop_backend_for_windows_isolat
 
 
 @pytest.mark.asyncio
+async def test_gui_tool_passes_target_app_class_to_windows_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _make_gui_tool(background=True)
+    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+    probe_calls: list[dict[str, Any]] = []
+
+    def fake_probe(**kwargs: Any) -> Any:
+        probe_calls.append(kwargs)
+        return MagicMock(
+            supported=False,
+            reason_code="platform_unsupported",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        )
+
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with (
+        patch("opengui.backends.background_runtime.probe_isolated_background_support", side_effect=fake_probe),
+        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)) as mock_run_task,
+    ):
+        assert await tool.execute("test task", target_app_class="uwp", acknowledge_background_fallback=True) == canned_result
+        assert await tool.execute("test task", acknowledge_background_fallback=True) == canned_result
+
+    assert mock_run_task.await_count == 2
+    assert probe_calls[0] == {"sys_platform": "win32", "target_app_class": "uwp"}
+    assert probe_calls[1] == {"sys_platform": "win32", "target_app_class": "classic-win32"}
+
+
+@pytest.mark.asyncio
 async def test_gui_tool_blocks_windows_non_interactive_isolation_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -493,6 +526,37 @@ async def test_gui_tool_blocks_windows_non_interactive_isolation_request(
     assert payload["steps_taken"] == 0
     assert "windows_non_interactive_session" in payload["summary"]
     assert "Session 0 and service contexts" in payload["summary"]
+    mock_run_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_blocks_windows_unsupported_app_class_before_agent_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _make_gui_tool(background=True)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with patch(
+        "opengui.backends.background_runtime.probe_isolated_background_support",
+        return_value=MagicMock(
+            supported=False,
+            reason_code="windows_app_class_unsupported",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        ),
+    ):
+        with patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(side_effect=AssertionError("agent execution should not start")),
+        ) as mock_run_task:
+            payload = json.loads(await tool.execute("open settings"))
+
+    assert payload["success"] is False
+    assert payload["trace_path"] is None
+    assert payload["steps_taken"] == 0
+    assert "windows_app_class_unsupported" in payload["summary"]
     mock_run_task.assert_not_awaited()
 
 
