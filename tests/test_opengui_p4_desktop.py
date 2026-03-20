@@ -15,6 +15,8 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from opengui.backends.virtual_display import DisplayInfo
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -31,6 +33,7 @@ def _make_backend(platform_name: str = "macos") -> Any:
     backend._screen_width = 1440
     backend._screen_height = 900
     backend._platform = platform_name
+    backend._target_display = None
     return backend
 
 
@@ -65,17 +68,28 @@ def test_platform_property_windows() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_mss_mock(physical_w: int, physical_h: int, logical_w: int, logical_h: int) -> MagicMock:
+def _build_mss_mock(
+    physical_w: int,
+    physical_h: int,
+    logical_w: int,
+    logical_h: int,
+    *,
+    additional_monitors: list[dict[str, int]] | None = None,
+) -> MagicMock:
     """Build a mock mss context manager with the given dimensions."""
     mock_img = MagicMock()
     mock_img.size = (physical_w, physical_h)
     mock_img.bgra = b"\x00" * (physical_w * physical_h * 4)
 
-    mock_sct = MagicMock()
-    mock_sct.monitors = [
+    monitors = [
         {},  # index 0 is "all monitors"
         {"width": logical_w, "height": logical_h},
     ]
+    if additional_monitors:
+        monitors.extend(additional_monitors)
+
+    mock_sct = MagicMock()
+    mock_sct.monitors = monitors
     mock_sct.grab.return_value = mock_img
     mock_sct.__enter__ = MagicMock(return_value=mock_sct)
     mock_sct.__exit__ = MagicMock(return_value=False)
@@ -167,6 +181,75 @@ async def test_observe_hidpi_downscale(tmp_path: Path) -> None:
 
     # resized image was saved, not the original
     mock_resized.save.assert_called_once_with(str(screenshot_path), "PNG")
+
+
+@pytest.mark.asyncio
+async def test_observe_uses_configured_monitor_index(tmp_path: Path) -> None:
+    screenshot_path = tmp_path / "monitor-two.png"
+    backend = _make_backend("macos")
+    backend.configure_target_display(
+        DisplayInfo(
+            display_id="macos:42",
+            width=1440,
+            height=900,
+            offset_x=200,
+            offset_y=120,
+            monitor_index=2,
+        )
+    )
+
+    second_monitor = {"width": 1600, "height": 1000}
+    mock_mss = _build_mss_mock(
+        1600,
+        1000,
+        1440,
+        900,
+        additional_monitors=[second_monitor],
+    )
+    mock_pil_img = MagicMock()
+    mock_pil_img.resize.return_value = mock_pil_img
+
+    with (
+        patch("opengui.backends.desktop.mss.mss", mock_mss),
+        patch("opengui.backends.desktop.Image.frombytes", return_value=mock_pil_img),
+        patch.object(backend, "_query_foreground_app", AsyncMock(return_value="Finder")),
+    ):
+        obs = await backend.observe(screenshot_path)
+
+    mock_mss.return_value.grab.assert_called_once_with(second_monitor)
+    assert obs.screen_width == 1600
+    assert obs.screen_height == 1000
+
+
+@pytest.mark.asyncio
+async def test_observe_defaults_to_primary_monitor_when_target_display_missing(
+    tmp_path: Path,
+) -> None:
+    screenshot_path = tmp_path / "primary.png"
+    backend = _make_backend("linux")
+
+    primary_monitor = {"width": 1440, "height": 900}
+    second_monitor = {"width": 1600, "height": 1000}
+    mock_mss = _build_mss_mock(
+        1440,
+        900,
+        1440,
+        900,
+        additional_monitors=[second_monitor],
+    )
+    mock_pil_img = MagicMock()
+    mock_pil_img.resize.return_value = mock_pil_img
+
+    with (
+        patch("opengui.backends.desktop.mss.mss", mock_mss),
+        patch("opengui.backends.desktop.Image.frombytes", return_value=mock_pil_img),
+        patch.object(backend, "_query_foreground_app", AsyncMock(return_value="unknown")),
+    ):
+        obs = await backend.observe(screenshot_path)
+
+    mock_mss.return_value.grab.assert_called_once_with(primary_monitor)
+    assert obs.screen_width == 1440
+    assert obs.screen_height == 900
 
 
 # ---------------------------------------------------------------------------
