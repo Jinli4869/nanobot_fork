@@ -42,6 +42,7 @@ DEFAULT_MEMORY_DIR = Path.home() / ".opengui" / "memory"
 DEFAULT_SKILLS_DIR = Path.home() / ".opengui" / "skills"
 DEFAULT_APPS_DIR = Path.home() / ".opengui" / "apps"
 DEFAULT_RUNS_DIR = Path("opengui_runs")
+WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
 
 
 class AppCache:
@@ -221,6 +222,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Block instead of falling back when isolated background execution is unavailable",
     )
     parser.add_argument(
+        "--target-app-class",
+        choices=WINDOWS_TARGET_APP_CLASSES,
+        default=None,
+        help="Windows app class hint for isolated background probing.",
+    )
+    parser.add_argument(
         "--display-num",
         type=int,
         default=None,
@@ -268,6 +275,16 @@ def resolve_backend_name(args: argparse.Namespace) -> str:
     if getattr(args, "background", False):
         return "local"
     return args.backend
+
+
+def resolve_target_app_class(args: argparse.Namespace, *, sys_platform: str | None = None) -> str | None:
+    if not getattr(args, "background", False):
+        return None
+    if resolve_backend_name(args) != "local":
+        return None
+    if (sys_platform or sys.platform) != "win32":
+        return None
+    return args.target_app_class or "classic-win32"
 
 
 def load_config(path: Path | None = None) -> CliConfig:
@@ -438,7 +455,11 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
 
             log_fn = runtime_log_mode_resolution
 
-        probe = probe_fn(sys_platform=sys.platform)
+        resolved_target_app_class = resolve_target_app_class(args, sys_platform=sys.platform)
+        probe = probe_fn(
+            sys_platform=sys.platform,
+            target_app_class=resolved_target_app_class,
+        )
         decision = resolve_fn(
             probe,
             require_isolation=args.require_isolation,
