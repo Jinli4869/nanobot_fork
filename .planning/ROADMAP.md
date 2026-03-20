@@ -19,7 +19,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
 | 12 | Background Runtime Contracts | The shared background-execution runtime can determine whether a host supports isolated execution, expose that mode decision clearly, and prevent overlapping desktop runs from corrupting process-global state. | BGND-05, BGND-06, BGND-07 | 4 |
-| 13 | 3/4 | In Progress|  | 4 |
+| 13 | macOS Background Execution | macOS background runs execute against an isolated target surface when supported, fail with actionable permission/capability messaging when not supported, and maintain correct coordinate routing across offsets and scale factors. | MAC-01, MAC-02, MAC-03 | 4 |
 | 14 | Windows Isolated Desktop Execution | Add Windows isolated-desktop execution with lifecycle-safe cleanup and clear support limits | WIN-01, WIN-02, WIN-03 | 4 |
 | 15 | Intervention Safety and Handoff | Pause safely for sensitive/blocked states, hand control to the user, and resume from fresh observation | SAFE-01, SAFE-02, SAFE-03, SAFE-04 | 5 |
 | 16 | Host Integration and Verification | Align CLI and nanobot behavior and close the milestone with regression coverage | INTG-05, INTG-06, TEST-V12-01 | 4 |
@@ -52,13 +52,13 @@ Plans:
 
 **Depends on:** Phase 12
 **Requirements:** MAC-01, MAC-02, MAC-03
-**Plans:** 3/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 - [x] 13-01-PLAN.md — Establish macOS capability probing, remediation, and CGVirtualDisplayManager
 - [x] 13-02-PLAN.md — Route observe/execute through one target-surface contract
 - [x] 13-03-PLAN.md — Expose macOS isolated mode through CLI and nanobot wiring
-- [ ] 13-04-PLAN.md — Run regression closeout and real-host smoke checklist
+- [x] 13-04-PLAN.md — Run regression closeout and real-host smoke checklist
 
 **Success criteria:**
 1. Supported macOS environments can create and tear down an isolated background target for desktop automation.
@@ -128,4 +128,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-20*
-*Last updated: 2026-03-20 after Phase 13 Plan 02 completion*
+*Last updated: 2026-03-20 after Phase 13 completion*

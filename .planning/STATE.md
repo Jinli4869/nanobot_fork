@@ -5,14 +5,14 @@ milestone_name: Cross-Platform Background Execution
 current_phase: 13
 current_phase_name: macos-background-execution
 current_plan: 4
-status: executing
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-03-20T15:29:22.242Z"
+status: phase_complete
+stopped_at: Completed Phase 13 (macos-background-execution)
+last_updated: "2026-03-20T15:33:17.178Z"
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 8
-  completed_plans: 7
+  completed_plans: 8
 ---
 
 # Project State
@@ -22,24 +22,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 13 — macos-background-execution
+**Current focus:** Phase 14 — Windows Isolated Desktop Execution
 
 ## Current Position
 
-Phase: 13 (macos-background-execution) — EXECUTING
+Phase: 13 (macos-background-execution) — COMPLETE
 Plan: 4 of 4
 Current Phase: 13
 Current Phase Name: macos-background-execution
 Current Plan: 4
 Total Plans in Phase: 4
-Status: Executing Phase 13
-Last Activity Description: Completed 13-03-PLAN.md; next up is 13-04-PLAN.md
+Status: Phase 13 complete
+Last Activity Description: Completed 13-04-PLAN.md; Phase 13 is complete and ready to hand off to Phase 14
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed (v1.2): 7
+- Total plans completed (v1.2): 8
 - Average duration: —
 - Total execution time: —
 
@@ -48,12 +48,13 @@ Last Activity Description: Completed 13-03-PLAN.md; next up is 13-04-PLAN.md
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 12 | 4 | — | — |
-| 13 | 3 | 21min | 7min |
+| 13 | 4 | 25min | 6.25min |
 
 *Updated after each plan completion*
 | Phase 13 P01 | 12min | 2 tasks | 5 files |
 | Phase 13 P02 | 5min | 2 tasks | 4 files |
 | Phase 13 P03 | 4min | 2 tasks | 4 files |
+| Phase 13 P04 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 13]: BackgroundDesktopBackend now injects and clears DisplayInfo metadata around inner lifecycle calls — Ensures macOS background monitor routing stays aligned across observe() and execute() and does not leak into later foreground runs
 - [Phase 13]: CLI isolated execution now selects Xvfb vs CGVirtualDisplay from probe.backend_name — Keeps macOS enablement on the shared runtime contract and avoids reintroducing host-specific drift in run_cli()
 - [Phase 13]: Nanobot GUI execution now uses the same backend_name dispatch and structured remediation semantics as the CLI path — Preserves one cross-host background contract while keeping nanobot's JSON failure behavior stable
+- [Phase 13]: Phase 13 closeout reruns the full macOS regression slice and fixes stale Linux/darwin expectations in the same wave — Keeps the milestone honest by treating verification regressions as implementation work instead of deferring them
 
 ### Pending Todos
 
@@ -101,6 +103,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T15:29:15.510Z
-Stopped at: Completed 13-03-PLAN.md
-Resume file: .planning/phases/13-macos-background-execution/13-04-PLAN.md
+Last session: 2026-03-20T15:33:17.161Z
+Stopped at: Completed Phase 13 (macos-background-execution)
+Resume file: .planning/ROADMAP.md
