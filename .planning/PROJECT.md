@@ -2,90 +2,89 @@
 
 ## What This Is
 
-A portable, zero-dependency GUI SubAgent package (`opengui`) that automates Android and desktop devices through vision-action loops. It plugs into any host agent (nanobot, openclaw, nanoclaw, zeroclaw) via two protocols (`LLMProvider` + `DeviceBackend`), bringing skills, memory, and trajectory recording as an independent subsystem.
+OpenGUI is a portable GUI subagent package that automates Android and desktop environments through a vision-action loop. It is designed to plug into host agents such as nanobot through protocol boundaries rather than direct product coupling.
 
 ## Core Value
 
-Any host agent can spawn a GUI subagent to complete device tasks autonomously — with reusable skills that improve over time through trajectory extraction.
+Any host agent can spawn a GUI subagent to complete device tasks autonomously, while accumulating reusable skills and execution history over time.
+
+## Current State
+
+- **Shipped through:** v1.1 Background Execution
+- **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, standalone CLI, nanobot GUI tool integration
+- **Background execution:** Linux background desktop automation is supported through `XvfbDisplayManager` and `BackgroundDesktopBackend`
+- **Verification state:** Full regression suite passes at milestone close (`678 passed`)
+- **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
+
+## Next Milestone Goals
+
+- macOS background execution via CGVirtualDisplay
+- Windows background execution via CreateDesktop or equivalent desktop session isolation
+- User-intervention detection and clean foreground handoff during background execution
+- Refresh milestone-scoped requirements and roadmap before resuming implementation
 
 ## Requirements
 
 ### Validated
 
-- ✓ **CORE-01**: Protocol-based architecture (LLMProvider + DeviceBackend) — P0
-- ✓ **CORE-02**: Action dataclass with [0,999] relative coordinates and alias support — P0
-- ✓ **CORE-03**: ADB backend for Android automation (screencap, tap, swipe, scroll, text input) — P0
+- ✓ **CORE-01**: Protocol-based architecture (`LLMProvider` + `DeviceBackend`) — P0
+- ✓ **CORE-02**: Action dataclass with `[0,999]` relative coordinates and alias support — P0
+- ✓ **CORE-03**: ADB backend for Android automation — P0
 - ✓ **CORE-04**: DryRun backend for testing — P0
 - ✓ **CORE-05**: GuiAgent vision-action loop with Mobile-Agent-style prompting — P0
-- ✓ **CORE-06**: History window with sliding image context + text summaries for older steps — P0
-- ✓ **P1-01**: Memory (FAISS+BM25), skills (library+extractor+executor), trajectory (recorder+summarizer) — v1.0
-- ✓ **P1-02**: Agent loop integration with memory/skills/trajectory — v1.0
-- ✓ **P1-03**: Nanobot subagent (GuiSubagentTool + adapters) — v1.0
-- ✓ **P1-04**: Desktop backend (pyautogui + pyperclip for macOS/Linux/Windows) — v1.0
+- ✓ **CORE-06**: History window with sliding image context and older-step summaries — P0
+- ✓ **P1-01**: Memory, skills, and trajectory subsystems — v1.0
+- ✓ **P1-02**: Agent loop integration with memory, skills, and trajectory — v1.0
+- ✓ **P1-03**: Nanobot subagent integration path — v1.0
+- ✓ **P1-04**: Desktop backend for macOS/Linux/Windows foreground execution — v1.0
 - ✓ **P1-05**: Standalone CLI entry point — v1.0
-- ✓ **P1-06**: Integration wiring, dead export cleanup — v1.0
+- ✓ **P1-06**: Cross-phase wiring and dead export cleanup — v1.0
+- ✓ **P1-07**: Virtual display protocol and Linux Xvfb implementation — v1.1
+- ✓ **P1-08**: Background desktop backend wrapper with lifecycle safety — v1.1
+- ✓ **P1-09**: CLI and nanobot background execution integration with CI-safe tests — v1.1
 
 ### Active
 
-- ✓ **VDISP-01–04**: VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager, XvfbDisplayManager — Validated in Phase 9
-- ✓ **BGND-01–04**: BackgroundDesktopBackend decorator with lifecycle guards, DISPLAY management, coordinate offsets, idempotent shutdown — Validated in Phase 10
-- ✓ **INTG-01–04, TEST-V11-01**: CLI --background flag, GuiConfig.background integration, full test suite — Validated in Phase 11
-- [ ] macOS CGVirtualDisplay implementation (deferred to v1.2)
-- [ ] Windows CreateDesktop implementation (deferred to v1.2)
-- [ ] Intervention detection and user handoff (deferred to v1.2)
+- [ ] macOS CGVirtualDisplay support
+- [ ] Windows background desktop isolation support
+- [ ] Intervention detection and user handoff during background runs
 
 ### Out of Scope
 
-- Multi-action batching per turn — single-step single-tool-call only
-- Human-in-the-loop interactive prompts during agent execution
-- XML `<tool_call>` parsing — OpenAI-compatible native tool calls only
-- Local embedding models (SentenceTransformer) — use external API via EmbeddingProvider
-- SQLite storage — JSON files sufficient for current scale
-- Multi-stage vision grounding (UITARS/Phi-V) — single LLM approach for now
-
-## Current Milestone: v1.1 Background Execution
-
-**Goal:** Enable GUI automation to run in the background on a virtual display, freeing the user's screen.
-
-**Target features:**
-- VirtualDisplayManager protocol with DisplayInfo data type
-- Linux Xvfb implementation (production-ready, CI-testable)
-- BackgroundDesktopBackend decorator pattern (wraps any DeviceBackend)
-- CLI `--background` flag and nanobot GuiConfig.background integration
-- Full test suite with mocked subprocess (no real Xvfb needed in CI)
+- Multi-action batching per turn
+- Human-in-the-loop prompts during the standard agent loop
+- XML `<tool_call>` parsing
+- Local embedding models in the default path
+- SQLite persistence before JSON storage becomes a real bottleneck
+- Multi-stage vision grounding before the single-LLM path is exhausted
 
 ## Context
 
-- **Brownfield**: opengui/ has complete P0+P1 code with 29+ passing tests
-- **Reference projects**: KnowAct (skill lifecycle + memory layers), CUA-Skill (parameter grounding), Mobile-Agent-v3.5 (prompt patterns)
-- **Host agent**: nanobot is the primary integration target (layered agent-bus-channel architecture with tool registry)
-- **v1.0 complete**: All 8 phases shipped — core, tests, agent loop, subagent, desktop backend, CLI, wiring fixes, cleanup
-- **v1.1 complete**: All 3 phases shipped — virtual display protocol, background backend wrapper, integration & tests
-- **Background research**: Xvfb (Linux), CGVirtualDisplay (macOS 13+), CreateDesktop (Windows), ADB naturally background
-
-## Constraints
-
-- **Zero host dependency**: opengui must not import any nanobot/claw code; only Protocol interfaces
-- **Embedding API**: External embedding (qwen3-vl-embedding via DashScope) through EmbeddingProvider protocol
-- **FAISS required**: Embedding similarity search uses faiss-cpu, not pure Python cosine
-- **KnowAct patterns**: Skill lifecycle follows extraction→library→retrieval→execution→validation with dedup/merge and per-step valid_state verification
-- **JSON storage**: Memory and skill persistence via JSON files (not SQLite)
+- **Brownfield status:** The codebase now includes shipped P0, v1.0, and v1.1 functionality.
+- **Host integration:** nanobot remains the primary host-agent target.
+- **Testing posture:** Background execution paths are designed to be CI-safe by mocking subprocess boundaries instead of requiring real Xvfb.
+- **Deferred platform work:** Linux is production-ready for background execution; macOS and Windows remain milestone candidates.
 
 ## Key Decisions
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Protocol-based (LLMProvider + DeviceBackend) | Zero coupling to any host agent | ✓ Good |
-| Mobile-Agent-style prompting | Proven prompt structure from Mobile-Agent-v3.5 | ✓ Good |
-| [0,999] relative coordinates | Cross-resolution portability | ✓ Good |
-| FAISS for embedding similarity | User requirement for production-grade vector search | — Pending |
-| JSON storage over SQLite | Simplicity and portability for current scale | — Pending |
-| Single LLM (no vision grounding) | Simpler pipeline, fewer dependencies | — Pending |
-| EmbeddingProvider as protocol | Pluggable: qwen3-vl-embedding or any future provider | — Pending |
-| KnowAct-style valid_state per step | LLM-based screen verification before each skill step | — Pending |
+| Protocol-based boundaries between host and GUI agent | Keep OpenGUI reusable across host agents | ✓ Good |
+| Mobile-Agent-style prompting | Proven prompt structure for GUI action loops | ✓ Good |
+| `[0,999]` relative coordinates | Preserve resolution portability | ✓ Good |
+| FAISS-backed embedding similarity | Production-grade retrieval quality | — Pending |
+| JSON storage before SQLite | Lower complexity at current scale | — Pending |
+| Single-LLM control loop before separate grounding stage | Reduce dependency surface and pipeline complexity | — Pending |
+| Background execution via virtual display abstraction | Keep Linux Xvfb, future macOS, and future Windows under one contract | ✓ Good |
+| `BackgroundDesktopBackend` as a decorator wrapper | Reuse any existing backend without duplicating control logic | ✓ Good |
+| Xvfb via `asyncio.subprocess` | No extra Python binding dependency, CI-friendly mocking boundary | ✓ Good |
 
-| Decorator pattern for BackgroundDesktopBackend | Thin wrapper + DISPLAY env var; sentinel-based save/restore | ✓ Good |
-| Xvfb subprocess management | No Python deps; invoke Xvfb binary via asyncio.subprocess | — Pending |
+## Constraints
+
+- OpenGUI must not import nanobot or claw internals directly.
+- Embedding remains external and protocol-driven.
+- FAISS is still the intended similarity-search path when embeddings are enabled.
+- Memory and skill persistence remain file-backed JSON/markdown stores for now.
 
 ---
-*Last updated: 2026-03-20 after Phase 11 (integration-tests) complete — v1.1 milestone finished*
+*Last updated: 2026-03-20 after v1.1 milestone completion*
