@@ -21,9 +21,9 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 
 ### Windows Background Execution
 
-- [ ] **WIN-01**: User can run desktop automation on Windows inside an alternate isolated desktop within the interactive user session
-- [ ] **WIN-02**: User receives a clear warning or block when the Windows launch context or target app class cannot support isolated desktop execution
-- [ ] **WIN-03**: Windows isolated-desktop resources are cleaned up on success, failure, and cancellation without leaving orphaned desktops or leaked handles
+- [x] **WIN-01**: User can run desktop automation on Windows inside an alternate isolated desktop within the interactive user session
+- [x] **WIN-02**: User receives a clear warning or block when the Windows launch context or target app class cannot support isolated desktop execution
+- [x] **WIN-03**: Windows isolated-desktop resources are cleaned up on success, failure, and cancellation without leaving orphaned desktops or leaked handles
 
 ### Intervention and Handoff
 
@@ -69,9 +69,9 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 | MAC-01 | Phase 13 | Complete |
 | MAC-02 | Phase 13 | Complete |
 | MAC-03 | Phase 13 | Complete |
-| WIN-01 | Phase 14 | Pending |
-| WIN-02 | Phase 14 | Pending |
-| WIN-03 | Phase 14 | Pending |
+| WIN-01 | Phase 14 | Complete |
+| WIN-02 | Phase 14 | Complete |
+| WIN-03 | Phase 14 | Complete |
 | SAFE-01 | Phase 15 | Pending |
 | SAFE-02 | Phase 15 | Pending |
 | SAFE-03 | Phase 15 | Pending |
