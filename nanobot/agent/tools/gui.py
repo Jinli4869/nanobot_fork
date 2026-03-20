@@ -26,6 +26,7 @@ WindowsIsolatedBackend = None
 probe_isolated_background_support = None
 resolve_run_mode = None
 log_mode_resolution = None
+WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
 
 
 class GuiSubagentTool(Tool):
@@ -87,6 +88,11 @@ class GuiSubagentTool(Tool):
                     "type": "boolean",
                     "description": "Explicitly acknowledge foreground fallback when isolated background execution is unavailable.",
                 },
+                "target_app_class": {
+                    "type": "string",
+                    "enum": list(WINDOWS_TARGET_APP_CLASSES),
+                    "description": "Optional Windows app class hint for isolated background probing.",
+                },
             },
             "required": ["task"],
         }
@@ -97,6 +103,7 @@ class GuiSubagentTool(Tool):
         backend: str | None = None,
         require_background_isolation: bool = False,
         acknowledge_background_fallback: bool = False,
+        target_app_class: str | None = None,
         **kwargs: Any,
     ) -> str:
         active_backend = self._select_backend(backend)
@@ -122,7 +129,15 @@ class GuiSubagentTool(Tool):
 
                 log_fn = runtime_log_mode_resolution
 
-            probe = probe_fn(sys_platform=sys.platform)
+            resolved_target_app_class = self._resolve_probe_target_app_class(
+                backend,
+                target_app_class,
+                sys_platform=sys.platform,
+            )
+            probe = probe_fn(
+                sys_platform=sys.platform,
+                target_app_class=resolved_target_app_class,
+            )
             decision = resolve_fn(
                 probe,
                 require_isolation=require_background_isolation,
@@ -307,6 +322,21 @@ class GuiSubagentTool(Tool):
             )
 
         raise RuntimeError(f"Unsupported isolated backend: {probe.backend_name}")
+
+    def _resolve_probe_target_app_class(
+        self,
+        backend: str | None,
+        target_app_class: str | None,
+        *,
+        sys_platform: str | None = None,
+    ) -> str | None:
+        if not self._gui_config.background:
+            return None
+        if (sys_platform or sys.platform) != "win32":
+            return None
+        if (backend or self._gui_config.backend) != "local":
+            return None
+        return target_app_class or "classic-win32"
 
     def _get_skill_library(self, platform: str) -> Any:
         if platform not in self._skill_libraries:
