@@ -4,7 +4,15 @@
 
 P0 is complete: the core GuiAgent vision-action loop, ADB backend, DryRun backend, prompts, and 8 passing regression tests are all in place. P1 module code for memory, skills, and trajectory exists but lacks test coverage. The remaining work is: test the P1 modules before trusting them, wire them into the agent loop, expose the agent as a nanobot subagent tool, add the desktop backend, and ship a standalone CLI entry point.
 
+## Milestones
+
+- ✅ **v1.0** - Phases 1-8 (shipped 2026-03-19)
+- 🚧 **v1.1 Background Execution** - Phases 9-11 (in progress)
+
 ## Phases
+
+<details>
+<summary>✅ v1.0 (Phases 1-8) - SHIPPED 2026-03-19</summary>
 
 **Phase Numbering:**
 - Integer phases (1, 2, 3): Planned milestone work
@@ -20,8 +28,6 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 6: Fix Integration Wiring** - Wire skill_context, embedding adapter, Pillow dep, CLI entry point (completed 2026-03-19)
 - [x] **Phase 7: Phase 2 Retroactive Verification** - Create missing VERIFICATION.md for Phase 2 (completed 2026-03-19)
 - [x] **Phase 8: Dead Export Cleanup** - Wire orphaned TaskPlanner, TreeRouter, TrajectorySummarizer into production code (completed 2026-03-19)
-
-## Phase Details
 
 ### Phase 1: P1 Unit Tests
 **Goal**: All memory, skills, and trajectory modules are covered by fast, isolated unit tests that catch regressions before integration begins
@@ -140,19 +146,70 @@ Plans:
 - [ ] 08-02-PLAN.md — Enhance TreeRouter: parallel AND execution + OR priority sorting (mcp > tool > gui)
 - [ ] 08-03-PLAN.md — Wire TaskPlanner complexity gate + TreeRouter dispatch into AgentLoop._process_message
 
+</details>
+
+---
+
+### 🚧 v1.1 Background Execution (In Progress)
+
+**Milestone Goal:** Enable GUI automation to run in the background on a virtual display, freeing the user's screen during desktop automation tasks.
+
+- [ ] **Phase 9: Virtual Display Protocol** - Define VirtualDisplayManager protocol, DisplayInfo dataclass, NoOp and Xvfb implementations
+- [ ] **Phase 10: Background Backend Wrapper** - BackgroundDesktopBackend decorator that injects DISPLAY, applies coordinate offsets, and manages display lifecycle
+- [ ] **Phase 11: Integration & Tests** - Wire --background flag into CLI and nanobot GuiConfig, plus full CI-safe test suite with mocked subprocess
+
+### Phase 9: Virtual Display Protocol
+**Goal**: The codebase has a well-defined, testable abstraction for virtual displays — with a no-op implementation for Android/tests and a working Xvfb implementation for Linux CI and production
+**Depends on**: Phase 8 (v1.0 complete)
+**Requirements**: VDISP-01, VDISP-02, VDISP-03, VDISP-04
+**Success Criteria** (what must be TRUE):
+  1. `VirtualDisplayManager` protocol is importable from `opengui.interfaces` and accepts async `start()` / `stop()` calls with no concrete dependency on Xvfb
+  2. `DisplayInfo` is a frozen dataclass with `display_id`, `width`, `height`, `x_offset`, `y_offset` that any implementation returns from `start()`
+  3. `NoOpDisplayManager.start()` returns a `DisplayInfo` immediately without spawning any subprocess, usable in tests and ADB sessions
+  4. `XvfbDisplayManager.start()` launches Xvfb via `asyncio.subprocess`, waits for the X11 socket to appear, and returns `DisplayInfo` with the correct display number
+  5. `XvfbDisplayManager.stop()` terminates the Xvfb process cleanly; calling `stop()` on a never-started manager does not raise
+**Plans**: TBD
+
+### Phase 10: Background Backend Wrapper
+**Goal**: Any DeviceBackend can be wrapped in `BackgroundDesktopBackend` to run GUI actions against a virtual display — setting `DISPLAY` for X11 and translating coordinates for non-zero-offset displays
+**Depends on**: Phase 9
+**Requirements**: BGND-01, BGND-02, BGND-03, BGND-04
+**Success Criteria** (what must be TRUE):
+  1. `BackgroundDesktopBackend(backend, display_manager)` wraps any `DeviceBackend` and itself satisfies the `DeviceBackend` protocol
+  2. When `observe()` or `execute()` is called, the `DISPLAY` environment variable is set to `:N` matching the `DisplayInfo.display_id` from the virtual display manager
+  3. Tap and swipe coordinates are offset by `DisplayInfo.x_offset` / `y_offset` before being forwarded to the inner backend
+  4. Calling `shutdown()` on the wrapper calls `stop()` on the virtual display manager exactly once, even if called multiple times
+**Plans**: TBD
+
+### Phase 11: Integration & Tests
+**Goal**: The `--background` flag is a first-class CLI option, nanobot's `GuiConfig` supports background mode, and every new code path is verified by CI-safe unit tests with mocked subprocess
+**Depends on**: Phase 10
+**Requirements**: INTG-01, INTG-02, INTG-03, INTG-04, TEST-V11-01
+**Success Criteria** (what must be TRUE):
+  1. `python -m opengui.cli --background --task "Open Settings"` wraps `LocalDesktopBackend` in `BackgroundDesktopBackend` backed by `XvfbDisplayManager` without any additional flags
+  2. Nanobot `GuiConfig` accepts `background`, `display_num`, `width`, and `height` fields; `_build_backend` wraps `LocalDesktopBackend` when `background=true`
+  3. All new tests pass in CI without a real Xvfb binary — subprocess creation is mocked at the `asyncio.subprocess` boundary
+  4. `pytest tests/` still passes in full after the integration (no regressions against v1.0 test suite)
+**Plans**: TBD
+
+---
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
-Phase 6 depends on Phases 2-5. Phase 7 depends on Phase 6. Phase 8 depends on Phase 7.
+v1.0: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8
+v1.1: 9 → 10 → 11
 
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 1. P1 Unit Tests | 3/3 | Complete | 2026-03-17 |
-| 2. Agent Loop Integration | 5/5 | Complete | 2026-03-18 |
-| 3. Nanobot Subagent | 1/2 | In Progress | - |
-| 4. Desktop Backend | 1/1 | Complete | 2026-03-18 |
-| 5. CLI & Extensions | 2/2 | In Progress | - |
-| 6. Fix Integration Wiring | 1/1 | Complete   | 2026-03-19 |
-| 7. Phase 2 Retroactive Verification | 1/1 | Complete   | 2026-03-19 |
-| 8. Dead Export Cleanup | 3/3 | Complete   | 2026-03-19 |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 1. P1 Unit Tests | v1.0 | 3/3 | Complete | 2026-03-17 |
+| 2. Agent Loop Integration | v1.0 | 5/5 | Complete | 2026-03-18 |
+| 3. Nanobot Subagent | v1.0 | 1/2 | In Progress | - |
+| 4. Desktop Backend | v1.0 | 1/1 | Complete | 2026-03-18 |
+| 5. CLI & Extensions | v1.0 | 2/2 | In Progress | - |
+| 6. Fix Integration Wiring | v1.0 | 1/1 | Complete | 2026-03-19 |
+| 7. Phase 2 Retroactive Verification | v1.0 | 1/1 | Complete | 2026-03-19 |
+| 8. Dead Export Cleanup | v1.0 | 3/3 | Complete | 2026-03-19 |
+| 9. Virtual Display Protocol | v1.1 | 0/TBD | Not started | - |
+| 10. Background Backend Wrapper | v1.1 | 0/TBD | Not started | - |
+| 11. Integration & Tests | v1.1 | 0/TBD | Not started | - |
