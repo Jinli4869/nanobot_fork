@@ -83,3 +83,6 @@ class DeviceBackend(typing.Protocol):
 
 
 ProgressCallback = typing.Callable[[str], typing.Awaitable[None]]
+
+from opengui.backends.virtual_display import DisplayInfo as DisplayInfo  # noqa: F401
+from opengui.backends.virtual_display import VirtualDisplayManager as VirtualDisplayManager  # noqa: F401
