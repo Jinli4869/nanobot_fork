@@ -108,7 +108,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+1. Background GUI execution with user intervention handoff (2026-03-20)
 
 ### Decisions
 
