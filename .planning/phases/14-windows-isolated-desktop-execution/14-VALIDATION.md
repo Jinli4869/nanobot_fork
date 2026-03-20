@@ -19,7 +19,7 @@ created: 2026-03-20
 |----------|-------|
 | **Framework** | pytest 9.x + pytest-asyncio 1.3+ |
 | **Config file** | `pyproject.toml` `[tool.pytest.ini_options]` - `asyncio_mode = "auto"` |
-| **Quick run command** | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_probe_windows_isolated_desktop_available tests/test_opengui_p14_windows_desktop.py::test_windows_isolated_backend_launches_worker_on_named_desktop -q` |
+| **Quick run command** | `uv run pytest tests/test_opengui_p14_windows_desktop.py -k "creates_and_closes_real_handle or services_observe_execute_list_apps_and_shutdown or routes_observe_execute_and_list_apps_through_worker or shutdown_closes_worker_before_desktop" -q` |
 | **Full suite command** | `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q` |
 | **Estimated runtime** | ~28 seconds |
 
@@ -27,7 +27,7 @@ created: 2026-03-20
 
 ## Sampling Rate
 
-- **After every task commit:** Run `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_probe_windows_isolated_desktop_available tests/test_opengui_p14_windows_desktop.py::test_windows_isolated_backend_launches_worker_on_named_desktop -q`
+- **After every task commit:** Run the task-specific command from the Per-Task Verification Map below; for Wave 1 gap-closure work default to `uv run pytest tests/test_opengui_p14_windows_desktop.py -k "creates_and_closes_real_handle or services_observe_execute_list_apps_and_shutdown or routes_observe_execute_and_list_apps_through_worker or shutdown_closes_worker_before_desktop" -q`
 - **After every plan wave:** Run `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q`
 - **Before `$gsd-verify-work`:** Full suite must be green
 - **Max feedback latency:** 28 seconds
@@ -48,6 +48,10 @@ created: 2026-03-20
 | 14-03-03 | 03 | 3 | WIN-03 | integration | `uv run pytest tests/test_opengui_p5_cli.py::test_run_cli_logs_windows_target_surface_metadata tests/test_opengui_p11_integration.py::test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload -q` | ✅ | ⬜ pending |
 | 14-04-01 | 04 | 4 | WIN-01 | suite | `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q` | ✅ | ⬜ pending |
 | 14-04-02 | 04 | 4 | WIN-03 | manual | `.planning/phases/14-windows-isolated-desktop-execution/14-MANUAL-SMOKE.md` checklist completed on a real Windows host | ❌ P4 | ⬜ pending |
+| 14-05-01 | 05 | 1 | WIN-01, WIN-03 | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py -k "creates_and_closes_real_handle or services_observe_execute_list_apps_and_shutdown or routes_observe_execute_and_list_apps_through_worker or shutdown_closes_worker_before_desktop" -q` | ✅ | ⬜ pending |
+| 14-05-02 | 05 | 1 | WIN-01, WIN-03 | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py -k "creates_and_closes_real_handle or services_observe_execute_list_apps_and_shutdown or routes_observe_execute_and_list_apps_through_worker or shutdown_closes_worker_before_desktop" -q` | ✅ | ⬜ pending |
+| 14-06-01 | 06 | 2 | WIN-01, WIN-02, WIN-03 | integration | `uv run pytest tests/test_opengui_p5_cli.py -k "passes_target_app_class_to_windows_probe or warns_for_windows_unsupported_app_class_before_agent_start" tests/test_opengui_p11_integration.py -k "passes_target_app_class_to_windows_probe or blocks_windows_unsupported_app_class_before_agent_start or blocks_windows_non_interactive_isolation_request" -q` | ✅ | ⬜ pending |
+| 14-06-02 | 06 | 2 | WIN-01, WIN-02, WIN-03 | suite | `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠ flaky*
 
