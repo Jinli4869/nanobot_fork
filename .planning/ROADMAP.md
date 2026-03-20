@@ -154,7 +154,7 @@ Plans:
 
 **Milestone Goal:** Enable GUI automation to run in the background on a virtual display, freeing the user's screen during desktop automation tasks.
 
-- [ ] **Phase 9: Virtual Display Protocol** - Define VirtualDisplayManager protocol, DisplayInfo dataclass, NoOp and Xvfb implementations
+- [x] **Phase 9: Virtual Display Protocol** - Define VirtualDisplayManager protocol, DisplayInfo dataclass, NoOp and Xvfb implementations (completed 2026-03-20)
 - [ ] **Phase 10: Background Backend Wrapper** - BackgroundDesktopBackend decorator that injects DISPLAY, applies coordinate offsets, and manages display lifecycle
 - [ ] **Phase 11: Integration & Tests** - Wire --background flag into CLI and nanobot GuiConfig, plus full CI-safe test suite with mocked subprocess
 
@@ -215,6 +215,6 @@ v1.1: 9 → 10 → 11
 | 6. Fix Integration Wiring | v1.0 | 1/1 | Complete | 2026-03-19 |
 | 7. Phase 2 Retroactive Verification | v1.0 | 1/1 | Complete | 2026-03-19 |
 | 8. Dead Export Cleanup | v1.0 | 3/3 | Complete | 2026-03-19 |
-| 9. Virtual Display Protocol | 2/3 | In Progress|  | - |
+| 9. Virtual Display Protocol | 3/3 | Complete   | 2026-03-20 | - |
 | 10. Background Backend Wrapper | v1.1 | 0/TBD | Not started | - |
 | 11. Integration & Tests | v1.1 | 0/TBD | Not started | - |
