@@ -22,6 +22,7 @@ Or with explicit lifecycle management::
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import os
 import pathlib
@@ -104,7 +105,7 @@ class BackgroundDesktopBackend:
             self._display_info = await self._display_manager.start()
             self._original_display = os.environ.get("DISPLAY")
             self._apply_display_env()
-            configure_target_display = getattr(self._inner, "configure_target_display", None)
+            configure_target_display = self._resolve_configure_target_display()
             if callable(configure_target_display):
                 configure_target_display(self._display_info)
             await self._inner.preflight()
@@ -149,7 +150,7 @@ class BackgroundDesktopBackend:
         except Exception:
             logger.exception("Error stopping display manager during shutdown")
         finally:
-            configure_target_display = getattr(self._inner, "configure_target_display", None)
+            configure_target_display = self._resolve_configure_target_display()
             if callable(configure_target_display):
                 configure_target_display(None)
             self._restore_display_env()
@@ -169,6 +170,15 @@ class BackgroundDesktopBackend:
         """Set ``DISPLAY`` env var for X11-based virtual displays."""
         if self._display_info and self._display_info.display_id.startswith(":"):
             os.environ["DISPLAY"] = self._display_info.display_id
+
+    def _resolve_configure_target_display(self) -> Any | None:
+        if "configure_target_display" in vars(self._inner):
+            configure_target_display = vars(self._inner)["configure_target_display"]
+            return configure_target_display if callable(configure_target_display) else None
+        if inspect.isclass(type(self._inner)) and "configure_target_display" in vars(type(self._inner)):
+            configure_target_display = getattr(self._inner, "configure_target_display", None)
+            return configure_target_display if callable(configure_target_display) else None
+        return None
 
     def _restore_display_env(self) -> None:
         """Restore ``DISPLAY`` to its pre-preflight value (or remove it)."""

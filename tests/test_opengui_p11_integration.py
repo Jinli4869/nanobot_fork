@@ -126,7 +126,11 @@ async def test_gui_tool_execute_background_wraps_backend(monkeypatch: pytest.Mon
         patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)) as mock_run_task,
         patch(
             "opengui.backends.background_runtime.probe_isolated_background_support",
-            return_value=MagicMock(supported=True, reason_code="xvfb_available"),
+            return_value=MagicMock(
+                supported=True,
+                reason_code="xvfb_available",
+                backend_name="xvfb",
+            ),
         ),
         patch("opengui.backends.background.BackgroundDesktopBackend", mock_bg_cls),
         patch("opengui.backends.displays.xvfb.XvfbDisplayManager", mock_xvfb_cls),
