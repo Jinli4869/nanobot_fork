@@ -66,6 +66,35 @@
 - [x] **CLI-01**: `python -m opengui.cli` standalone entry point
 - [x] **EXT-01**: Other claw adapter pattern documented
 
+## v1.1 Requirements
+
+Requirements for milestone v1.1: Background Execution.
+
+### Virtual Display
+
+- [ ] **VDISP-01**: VirtualDisplayManager protocol with async start/stop lifecycle
+- [ ] **VDISP-02**: DisplayInfo frozen dataclass with display_id, dimensions, offsets
+- [ ] **VDISP-03**: NoOpDisplayManager for testing and Android (no virtual display needed)
+- [ ] **VDISP-04**: XvfbDisplayManager launches Xvfb subprocess and waits for X11 socket
+
+### Background Wrapper
+
+- [ ] **BGND-01**: BackgroundDesktopBackend wraps any DeviceBackend via decorator pattern
+- [ ] **BGND-02**: Wrapper sets DISPLAY env var for X11-based virtual displays
+- [ ] **BGND-03**: Wrapper applies coordinate offsets for non-Xvfb platforms (macOS prep)
+- [ ] **BGND-04**: Wrapper shutdown stops virtual display (idempotent)
+
+### Integration
+
+- [ ] **INTG-01**: CLI --background flag with display_num, width, height config
+- [ ] **INTG-02**: GuiConfig.background fields in nanobot config schema
+- [ ] **INTG-03**: build_backend wraps LocalDesktopBackend when background=true (CLI)
+- [ ] **INTG-04**: _build_backend wraps LocalDesktopBackend when background=true (nanobot)
+
+### Testing
+
+- [ ] **TEST-V11-01**: Full test suite with mocked subprocess (no real Xvfb in CI)
+
 ## v2 Requirements
 
 ### Advanced Memory
@@ -113,13 +142,17 @@
 | CLI-01 | Phase 5 → Phase 6 (entry point + Pillow dep) | Complete |
 | EXT-01 | Phase 5 | Complete | |
 
-**Coverage:**
+**v1 Coverage:**
 - v1 requirements: 28 total
-- Complete: 20
-- Pending (gap closure): 1 (CLI-01)
+- Complete: 28
 - Mapped to phases: 28
 - Unmapped: 0 ✓
 
+**v1.1 Coverage:**
+- v1.1 requirements: 13 total
+- Mapped to phases: 0
+- Unmapped: 13
+
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-19 after gap closure phases 6-8 created*
+*Last updated: 2026-03-20 after milestone v1.1 requirements defined*
