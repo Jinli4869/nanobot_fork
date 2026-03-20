@@ -172,6 +172,7 @@ async def test_win32desktop_manager_creates_and_closes_real_handle(
 
     first = await manager.start()
     second = await manager.start()
+    assert manager.desktop_name == "OpenGUI-Background-01234567"
     await manager.stop()
     await manager.stop()
 
@@ -184,7 +185,6 @@ async def test_win32desktop_manager_creates_and_closes_real_handle(
         monitor_index=1,
     )
     assert second == first
-    assert manager.desktop_name == "OpenGUI-Background-01234567"
     assert created_desktops == ["OpenGUI-Background-01234567"]
     assert closed_handles == [handle]
 
