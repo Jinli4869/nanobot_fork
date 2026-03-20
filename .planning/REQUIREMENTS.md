@@ -140,7 +140,20 @@ Requirements for milestone v1.1: Background Execution.
 | NANO-03 | Phase 3 → Phase 6 (embedding adapter fix) | Complete |
 | BACK-03 | Phase 4 → Phase 6 (Pillow dep fix) | Complete |
 | CLI-01 | Phase 5 → Phase 6 (entry point + Pillow dep) | Complete |
-| EXT-01 | Phase 5 | Complete | |
+| EXT-01 | Phase 5 | Complete |
+| VDISP-01 | Phase 9 | Pending |
+| VDISP-02 | Phase 9 | Pending |
+| VDISP-03 | Phase 9 | Pending |
+| VDISP-04 | Phase 9 | Pending |
+| BGND-01 | Phase 10 | Pending |
+| BGND-02 | Phase 10 | Pending |
+| BGND-03 | Phase 10 | Pending |
+| BGND-04 | Phase 10 | Pending |
+| INTG-01 | Phase 11 | Pending |
+| INTG-02 | Phase 11 | Pending |
+| INTG-03 | Phase 11 | Pending |
+| INTG-04 | Phase 11 | Pending |
+| TEST-V11-01 | Phase 11 | Pending |
 
 **v1 Coverage:**
 - v1 requirements: 28 total
@@ -150,9 +163,9 @@ Requirements for milestone v1.1: Background Execution.
 
 **v1.1 Coverage:**
 - v1.1 requirements: 13 total
-- Mapped to phases: 0
-- Unmapped: 13
+- Mapped to phases: 13
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-03-17*
-*Last updated: 2026-03-20 after milestone v1.1 requirements defined*
+*Last updated: 2026-03-20 after v1.1 roadmap created (Phases 9-11)*
