@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+WindowsIsolatedBackend = None
 probe_isolated_background_support = None
 resolve_run_mode = None
 log_mode_resolution = None
@@ -138,20 +139,41 @@ class GuiSubagentTool(Tool):
                 )
 
             if decision.mode == "isolated":
-                from opengui.backends.background import BackgroundDesktopBackend
                 try:
                     mgr = self._build_isolated_display_manager(probe)
                 except RuntimeError as exc:
                     return self._background_json_failure(str(exc))
-                wrapped_backend = BackgroundDesktopBackend(
-                    active_backend,
-                    mgr,
-                    run_metadata={"owner": "nanobot", "task": task, "model": self._model},
-                )
-                try:
-                    return await self._run_task(wrapped_backend, task, **kwargs)
-                finally:
-                    await wrapped_backend.shutdown()
+                if probe.backend_name == "windows_isolated_desktop":
+                    wrapped_backend = None
+                    try:
+                        isolated_backend_cls = WindowsIsolatedBackend
+                        if isolated_backend_cls is None:
+                            from opengui.backends.windows_isolated import (
+                                WindowsIsolatedBackend as isolated_backend_cls,  # type: ignore[assignment]
+                            )
+                        wrapped_backend = isolated_backend_cls(
+                            active_backend,
+                            mgr,
+                            run_metadata={"owner": "nanobot", "task": task, "model": self._model},
+                        )
+                        return await self._run_task(wrapped_backend, task, **kwargs)
+                    except RuntimeError as exc:
+                        return self._background_json_failure(str(exc))
+                    finally:
+                        if wrapped_backend is not None:
+                            await wrapped_backend.shutdown()
+                else:
+                    from opengui.backends.background import BackgroundDesktopBackend
+
+                    wrapped_backend = BackgroundDesktopBackend(
+                        active_backend,
+                        mgr,
+                        run_metadata={"owner": "nanobot", "task": task, "model": self._model},
+                    )
+                    try:
+                        return await self._run_task(wrapped_backend, task, **kwargs)
+                    finally:
+                        await wrapped_backend.shutdown()
 
         return await self._run_task(active_backend, task, **kwargs)
 
@@ -272,6 +294,14 @@ class GuiSubagentTool(Tool):
             from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
 
             return CGVirtualDisplayManager(
+                width=self._gui_config.display_width,
+                height=self._gui_config.display_height,
+            )
+
+        if probe.backend_name == "windows_isolated_desktop":
+            from opengui.backends.displays.win32desktop import Win32DesktopManager
+
+            return Win32DesktopManager(
                 width=self._gui_config.display_width,
                 height=self._gui_config.display_height,
             )
