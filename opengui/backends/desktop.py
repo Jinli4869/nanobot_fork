@@ -27,6 +27,7 @@ from PIL import Image
 
 from opengui.action import Action, describe_action, resolve_coordinate
 from opengui.observation import Observation
+from opengui.backends.virtual_display import DisplayInfo
 
 # pyautogui and pyperclip are optional desktop dependencies.  Import them at
 # module level so that patch("opengui.backends.desktop.pyautogui") works in
@@ -88,6 +89,7 @@ class LocalDesktopBackend:
 
         self._screen_width: int = 0
         self._screen_height: int = 0
+        self._target_display: DisplayInfo | None = None
 
     # ------------------------------------------------------------------
     # DeviceBackend protocol
@@ -97,6 +99,10 @@ class LocalDesktopBackend:
     def platform(self) -> str:
         """Return the canonical platform identifier."""
         return self._platform
+
+    def configure_target_display(self, display_info: DisplayInfo | None) -> None:
+        """Set the display metadata used by observe() for monitor selection."""
+        self._target_display = display_info
 
     async def preflight(self) -> None:
         """Verify that pyautogui can access the display (accessibility check).
@@ -136,7 +142,10 @@ class LocalDesktopBackend:
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
 
         with mss.mss() as sct:
-            monitor = sct.monitors[1]  # primary monitor
+            monitor_index = 1
+            if self._target_display is not None:
+                monitor_index = self._target_display.monitor_index
+            monitor = sct.monitors[monitor_index]
             logical_w: int = monitor["width"]
             logical_h: int = monitor["height"]
             sct_img = sct.grab(monitor)
