@@ -199,7 +199,11 @@ Plans:
   2. Nanobot `GuiConfig` accepts `background`, `display_num`, `width`, and `height` fields; `_build_backend` wraps `LocalDesktopBackend` when `background=true`
   3. All new tests pass in CI without a real Xvfb binary — subprocess creation is mocked at the `asyncio.subprocess` boundary
   4. `pytest tests/` still passes in full after the integration (no regressions against v1.0 test suite)
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 11-01-PLAN.md — CLI --background flag, CliConfig fields, run_cli wrapping + CLI tests (INTG-01, INTG-03, TEST-V11-01)
+- [ ] 11-02-PLAN.md — GuiConfig background fields, model_validator, execute() wrapping + nanobot tests (INTG-02, INTG-04, TEST-V11-01)
 
 ---
 
