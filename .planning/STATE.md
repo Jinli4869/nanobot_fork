@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Cross-Platform Background Execution
-status: ready_for_phase_planning
-stopped_at: Phase 12 execution complete; Phase 13 ready for discussion/planning
-last_updated: "2026-03-20T14:18:42.972Z"
+status: executing_phase
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-03-20T15:18:20.005Z"
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 4
-  completed_plans: 4
+  total_plans: 8
+  completed_plans: 5
 ---
 
 # Project State
@@ -19,14 +19,18 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 13 planning
+**Current focus:** Phase 13 — macos-background-execution
 
 ## Current Position
 
-Phase: 13 — macos-background-execution
-Plan: Awaiting phase discussion / planning
-Status: Ready to plan Phase 13
-Last activity: 2026-03-20 — Phase 12 execution complete
+Phase: 13 (macos-background-execution) — EXECUTING
+Plan: 1 of 4
+Current Phase: 13
+Current Phase Name: macos-background-execution
+Current Plan: 1
+Total Plans in Phase: 4
+Status: Executing Phase 13
+Last Activity Description: Completed 13-01-PLAN.md; next up is 13-02-PLAN.md
 
 ## Performance Metrics
 
@@ -43,6 +47,7 @@ Last activity: 2026-03-20 — Phase 12 execution complete
 | 12 | 4 | — | — |
 
 *Updated after each plan completion*
+| Phase 13 P01 | 12min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -74,6 +79,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11-integration-tests P01]: _execute_agent() extracted as standalone async function to avoid duplicating 40+ lines across background and non-background paths
 - [Phase 12-background-runtime-contracts]: Shared `background_runtime.py` now owns capability probing, resolved-mode logging, and remediation text for background runs
 - [Phase 12-background-runtime-contracts]: `BackgroundRuntimeCoordinator` serializes overlapping background runs and surfaces busy metadata through the wrapper lease
+- [Phase 13]: Implemented CGVirtualDisplayManager with lazy macOS imports and patchable helper boundaries — Preserves Linux CI stability while adding a real macOS isolated-display seam
 
 ### Pending Todos
 
@@ -85,6 +91,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T14:18:42Z
-Stopped at: Phase 12 execution complete; Phase 13 ready for discussion/planning
-Resume file: .planning/phases/13-macos-background-execution
+Last session: 2026-03-20T15:18:20.003Z
+Stopped at: Completed 13-01-PLAN.md
+Resume file: .planning/phases/13-macos-background-execution/13-02-PLAN.md

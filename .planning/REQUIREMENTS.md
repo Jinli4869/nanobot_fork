@@ -15,8 +15,8 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 
 ### macOS Background Execution
 
-- [ ] **MAC-01**: User can run desktop automation on macOS in an isolated background target when the OS version and permissions support it
-- [ ] **MAC-02**: User receives actionable remediation when macOS background execution cannot start because required permissions or platform capabilities are missing
+- [x] **MAC-01**: User can run desktop automation on macOS in an isolated background target when the OS version and permissions support it
+- [x] **MAC-02**: User receives actionable remediation when macOS background execution cannot start because required permissions or platform capabilities are missing
 - [ ] **MAC-03**: User actions on macOS isolated runs land on the correct target surface across display offsets and scale factors
 
 ### Windows Background Execution
@@ -66,8 +66,8 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 | BGND-05 | Phase 12 | Complete |
 | BGND-06 | Phase 12 | Complete |
 | BGND-07 | Phase 12 | Complete |
-| MAC-01 | Phase 13 | Pending |
-| MAC-02 | Phase 13 | Pending |
+| MAC-01 | Phase 13 | Complete |
+| MAC-02 | Phase 13 | Complete |
 | MAC-03 | Phase 13 | Pending |
 | WIN-01 | Phase 14 | Pending |
 | WIN-02 | Phase 14 | Pending |
