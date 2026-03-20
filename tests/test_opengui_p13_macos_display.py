@@ -1,61 +1,126 @@
-"""Phase 13 Wave 0 placeholders for macOS background execution contracts."""
+"""Phase 13 macOS background execution contract coverage."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-try:
-    import opengui.backends.background_runtime as runtime
-    from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
-    from opengui.backends.virtual_display import DisplayInfo
-
-    _IMPORTS_OK = True
-except ImportError:
-    runtime = None
-    CGVirtualDisplayManager = None
-    DisplayInfo = None
-    _IMPORTS_OK = False
+import opengui.backends.background_runtime as runtime
+from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
+from opengui.backends.virtual_display import DisplayInfo
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 13 macOS background contracts not implemented yet")
 def test_probe_macos_virtual_display_available() -> None:
-    expected_backend_name = "cgvirtualdisplay"
-    assert expected_backend_name == "cgvirtualdisplay"
-    assert runtime is None or hasattr(runtime, "probe_isolated_background_support")
-    pytest.fail("phase 13 placeholder")
+    expected = runtime.IsolationProbeResult(
+        supported=True,
+        reason_code="macos_virtual_display_available",
+        retryable=False,
+        host_platform="macos",
+        backend_name="cgvirtualdisplay",
+        sys_platform="darwin",
+    )
+
+    def _probe(raw_platform: str) -> runtime.IsolationProbeResult:
+        assert raw_platform == "darwin"
+        return expected
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(runtime, "_probe_macos_isolated_support", _probe)
+    try:
+        result = runtime.probe_isolated_background_support(sys_platform="darwin")
+    finally:
+        monkeypatch.undo()
+
+    assert result == expected
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 13 macOS background contracts not implemented yet")
 def test_probe_reports_macos_version_unsupported() -> None:
-    expected_reason_code = "macos_version_unsupported"
-    assert expected_reason_code.endswith("unsupported")
-    assert runtime is None or hasattr(runtime, "resolve_run_mode")
-    pytest.fail("phase 13 placeholder")
+    probe = runtime.IsolationProbeResult(
+        supported=False,
+        reason_code="macos_version_unsupported",
+        retryable=False,
+        host_platform="macos",
+        backend_name="cgvirtualdisplay",
+        sys_platform="darwin",
+    )
+
+    decision = runtime.resolve_run_mode(
+        probe,
+        require_isolation=True,
+        require_acknowledgement_for_fallback=False,
+    )
+
+    assert decision.mode == "blocked"
+    assert decision.reason_code == "macos_version_unsupported"
+    assert "macos_version_unsupported" in decision.message
+    assert "macOS 14 or newer" in decision.message
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 13 macOS background contracts not implemented yet")
 def test_probe_reports_actionable_permission_remediation() -> None:
-    expected_reason_code = "macos_screen_recording_denied"
-    expected_remediation = "System Settings"
-    assert expected_reason_code.startswith("macos_")
-    assert "Settings" in expected_remediation
-    pytest.fail("phase 13 placeholder")
+    probe = runtime.IsolationProbeResult(
+        supported=False,
+        reason_code="macos_screen_recording_denied",
+        retryable=True,
+        host_platform="macos",
+        backend_name="cgvirtualdisplay",
+        sys_platform="darwin",
+    )
+
+    decision = runtime.resolve_run_mode(
+        probe,
+        require_isolation=False,
+        require_acknowledgement_for_fallback=False,
+    )
+
+    assert decision.mode == "fallback"
+    assert decision.reason_code == "macos_screen_recording_denied"
+    assert "System Settings" in decision.message
+    assert "Screen Recording" in decision.message
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 13 macOS background contracts not implemented yet")
 @pytest.mark.asyncio
 async def test_cgvirtualdisplay_manager_returns_display_info() -> None:
-    expected_type_name = "DisplayInfo"
-    assert expected_type_name == "DisplayInfo"
-    assert DisplayInfo is None or DisplayInfo.__name__ == "DisplayInfo"
-    assert CGVirtualDisplayManager is None or CGVirtualDisplayManager.__name__ == "CGVirtualDisplayManager"
-    pytest.fail("phase 13 placeholder")
+    manager = CGVirtualDisplayManager(width=1440, height=900, offset_x=200, offset_y=120, monitor_index=3)
+    handle = {
+        "display_id": "macos:42",
+        "width": 1440,
+        "height": 900,
+        "offset_x": 200,
+        "offset_y": 120,
+        "monitor_index": 3,
+    }
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(manager, "_create_virtual_display", lambda: handle)
+    try:
+        info = await manager.start()
+    finally:
+        monkeypatch.undo()
+
+    assert info == DisplayInfo(
+        display_id="macos:42",
+        width=1440,
+        height=900,
+        offset_x=200,
+        offset_y=120,
+        monitor_index=3,
+    )
 
 
-@pytest.mark.xfail(strict=True, reason="Phase 13 macOS background contracts not implemented yet")
 @pytest.mark.asyncio
 async def test_cgvirtualdisplay_manager_stop_is_idempotent() -> None:
-    cleanup_contract = "idempotent cleanup"
-    assert cleanup_contract.endswith("cleanup")
-    assert _IMPORTS_OK in {True, False}
-    pytest.fail("phase 13 placeholder")
+    manager = CGVirtualDisplayManager()
+    calls: list[Any] = []
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(manager, "_create_virtual_display", lambda: {"display_id": "macos:1", "width": 1440, "height": 900})
+    monkeypatch.setattr(manager, "_destroy_virtual_display", lambda handle: calls.append(handle))
+    try:
+        await manager.start()
+        await manager.stop()
+        await manager.stop()
+    finally:
+        monkeypatch.undo()
+
+    assert len(calls) == 1

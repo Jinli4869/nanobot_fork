@@ -22,6 +22,23 @@ _DEFAULT_REMEDIATION = (
 _REMEDIATIONS = {
     "xvfb_missing": "Install Xvfb to enable isolated background execution.",
     "platform_unsupported": "Run without background isolation on this host until a supported isolated backend exists.",
+    "macos_virtual_display_available": "macOS isolated background execution is available.",
+    "macos_version_unsupported": "Upgrade to macOS 14 or newer to enable isolated background execution.",
+    "macos_pyobjc_missing": (
+        "Install the macOS desktop extras in this environment to enable isolated background execution."
+    ),
+    "macos_virtual_display_api_missing": (
+        "This macOS build does not expose the CGVirtualDisplay runtime APIs required for isolated background execution."
+    ),
+    "macos_screen_recording_denied": (
+        "Grant Screen Recording in System Settings > Privacy & Security > Screen Recording."
+    ),
+    "macos_accessibility_denied": (
+        "Grant Accessibility in System Settings > Privacy & Security > Accessibility."
+    ),
+    "macos_event_post_denied": (
+        "Allow event posting in System Settings > Privacy & Security > Accessibility."
+    ),
 }
 
 
@@ -80,6 +97,8 @@ def probe_isolated_background_support(
             backend_name="xvfb",
             sys_platform=raw_platform,
         )
+    if host_platform == "macos":
+        return _probe_macos_isolated_support(raw_platform)
 
     return IsolationProbeResult(
         supported=False,
@@ -173,3 +192,27 @@ class BackgroundRuntimeCoordinator:
 
 
 GLOBAL_BACKGROUND_RUNTIME_COORDINATOR = BackgroundRuntimeCoordinator()
+
+
+def _probe_macos_isolated_support(raw_platform: str) -> IsolationProbeResult:
+    try:
+        from opengui.backends.displays.cgvirtualdisplay import probe_macos_virtual_display_support
+    except ImportError:
+        return IsolationProbeResult(
+            supported=False,
+            reason_code="macos_pyobjc_missing",
+            retryable=True,
+            host_platform="macos",
+            backend_name="cgvirtualdisplay",
+            sys_platform=raw_platform,
+        )
+
+    support = probe_macos_virtual_display_support()
+    return IsolationProbeResult(
+        supported=bool(support["supported"]),
+        reason_code=str(support["reason_code"]),
+        retryable=bool(support["retryable"]),
+        host_platform="macos",
+        backend_name="cgvirtualdisplay",
+        sys_platform=raw_platform,
+    )
