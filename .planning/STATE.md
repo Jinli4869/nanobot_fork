@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Cross-Platform Background Execution
 current_phase: 14
 current_phase_name: windows-isolated-desktop-execution
-current_plan: 2
+current_plan: 3
 status: executing
-stopped_at: Completed 14-windows-isolated-desktop-execution-01-PLAN.md
-last_updated: "2026-03-20T16:34:06.457Z"
+stopped_at: Completed 14-windows-isolated-desktop-execution-02-PLAN.md
+last_updated: "2026-03-20T16:44:44.985Z"
 last_activity: 2026-03-20
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 12
-  completed_plans: 9
-  percent: 75
+  completed_plans: 10
+  percent: 83
 ---
 
 # Project State
@@ -30,21 +30,21 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Current Phase:** 14
 **Current Phase Name:** windows-isolated-desktop-execution
-**Current Plan:** 2
+**Current Plan:** 3
 **Total Plans in Phase:** 4
 **Total Phases:** 5
 **Status:** Ready to execute
 **Last Activity:** 2026-03-20
-**Progress:** [████████░░] 75%
+**Progress:** [████████░░] 83%
 
 Phase: 14 (windows-isolated-desktop-execution) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed (v1.2): 8
+- Total plans completed (v1.2): 10
 - Average duration: —
 - Total execution time: —
 
@@ -61,6 +61,7 @@ Plan: 2 of 4
 | Phase 13 P03 | 4min | 2 tasks | 4 files |
 | Phase 13 P04 | 4min | 2 tasks | 4 files |
 | Phase 14 P01 | 3min | 2 tasks | 4 files |
+| Phase 14 P02 | 6min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 13]: Phase 13 closeout reruns the full macOS regression slice and fixes stale Linux/darwin expectations in the same wave — Keeps the milestone honest by treating verification regressions as implementation work instead of deferring them
 - [Phase 14]: Windows isolated support resolves through backend_name="windows_isolated_desktop" in the shared runtime contract
 - [Phase 14]: Win32DesktopManager owns desktop naming and idempotent teardown while publishing DisplayInfo for later worker launch wiring
+- [Phase 14]: Windows isolated runs use a dedicated backend instead of BackgroundDesktopBackend so worker launch, routing, and cleanup stay desktop-aware.
+- [Phase 14]: The worker launch seam is import-safe on non-Windows hosts but still encodes STARTUPINFO.lpDesktop for Windows process creation.
 
 ### Pending Todos
 
@@ -111,6 +114,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T16:34:06.455Z
-Stopped at: Completed 14-windows-isolated-desktop-execution-01-PLAN.md
+Last session: 2026-03-20T16:44:44.983Z
+Stopped at: Completed 14-windows-isolated-desktop-execution-02-PLAN.md
 Resume file: None

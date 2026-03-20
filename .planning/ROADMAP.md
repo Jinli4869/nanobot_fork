@@ -20,7 +20,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 |-------|------|------|--------------|------------------|
 | 12 | Background Runtime Contracts | The shared background-execution runtime can determine whether a host supports isolated execution, expose that mode decision clearly, and prevent overlapping desktop runs from corrupting process-global state. | BGND-05, BGND-06, BGND-07 | 4 |
 | 13 | macOS Background Execution | macOS background runs execute against an isolated target surface when supported, fail with actionable permission/capability messaging when not supported, and maintain correct coordinate routing across offsets and scale factors. | MAC-01, MAC-02, MAC-03 | 4 |
-| 14 | 1/4 | In Progress|  | 4 |
+| 14 | 2/4 | In Progress|  | 4 |
 | 15 | Intervention Safety and Handoff | Pause safely for sensitive/blocked states, hand control to the user, and resume from fresh observation | SAFE-01, SAFE-02, SAFE-03, SAFE-04 | 5 |
 | 16 | Host Integration and Verification | Align CLI and nanobot behavior and close the milestone with regression coverage | INTG-05, INTG-06, TEST-V12-01 | 4 |
 
@@ -72,11 +72,11 @@ Plans:
 
 **Depends on:** Phase 12
 **Requirements:** WIN-01, WIN-02, WIN-03
-**Plans:** 1/4 plans executed
+**Plans:** 2/4 plans executed
 
 Plans:
 - [x] 14-01-PLAN.md — Establish the Windows runtime probe taxonomy and `Win32DesktopManager` contract
-- [ ] 14-02-PLAN.md — Implement the Windows isolated execution seam with cleanup-safe lifecycle ownership
+- [x] 14-02-PLAN.md — Implement the Windows isolated execution seam with cleanup-safe lifecycle ownership
 - [ ] 14-03-PLAN.md — Wire CLI and nanobot through the Windows isolated backend path
 - [ ] 14-04-PLAN.md — Run regression closeout and add the real-host Windows smoke checklist
 
@@ -135,4 +135,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-20*
-*Last updated: 2026-03-20 after Phase 13 completion*
+*Last updated: 2026-03-20 after Phase 14 Plan 02 completion*
