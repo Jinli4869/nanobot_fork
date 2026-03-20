@@ -106,6 +106,17 @@ class TrajectoryRecorder:
             "at_step": self._step_count,
         })
 
+    def record_event(self, event_type: str, **payload: Any) -> None:
+        """Record a non-step lifecycle event in the trajectory."""
+        if self._closed:
+            raise RuntimeError("Recorder already closed")
+        self._write_event({
+            "type": event_type,
+            "timestamp": time.time(),
+            "at_step": self._step_count,
+            **payload,
+        })
+
     def record_step(
         self,
         *,
@@ -113,6 +124,9 @@ class TrajectoryRecorder:
         model_output: str = "",
         screenshot_path: str | None = None,
         observation: dict[str, Any] | None = None,
+        prompt: dict[str, Any] | None = None,
+        model_response: dict[str, Any] | None = None,
+        execution: dict[str, Any] | None = None,
         phase: ExecutionPhase | None = None,
         skill_id: str | None = None,
         skill_step_index: int | None = None,
@@ -129,6 +143,12 @@ class TrajectoryRecorder:
             Path to the screenshot taken before this step.
         observation:
             Observation metadata dict.
+        prompt:
+            Serialized prompt snapshot, including message window and history context.
+        model_response:
+            Serialized LLM output for this step.
+        execution:
+            Serialized backend execution result and follow-up observation.
         phase:
             Override current phase for this step.
         skill_id:
@@ -149,6 +169,12 @@ class TrajectoryRecorder:
             "screenshot_path": screenshot_path,
             "observation": observation,
         }
+        if prompt is not None:
+            event["prompt"] = prompt
+        if model_response is not None:
+            event["model_response"] = model_response
+        if execution is not None:
+            event["execution"] = execution
         if skill_id is not None:
             event["skill_id"] = skill_id
         if skill_step_index is not None:
