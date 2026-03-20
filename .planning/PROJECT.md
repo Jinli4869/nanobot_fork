@@ -27,8 +27,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 
 ### Active
 
-- [ ] Background GUI execution: VirtualDisplayManager protocol + platform implementations
-- [ ] Linux Xvfb virtual display manager
+- ✓ **VDISP-01–04**: VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager, XvfbDisplayManager — Validated in Phase 9
 - [ ] BackgroundDesktopBackend decorator wrapping any DeviceBackend
 - [ ] CLI --background flag and GuiConfig.background integration
 - [ ] macOS CGVirtualDisplay implementation (deferred to v1.2)
@@ -88,4 +87,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 | Xvfb subprocess management | No Python deps; invoke Xvfb binary via asyncio.subprocess | — Pending |
 
 ---
-*Last updated: 2026-03-20 after milestone v1.1 start*
+*Last updated: 2026-03-20 after Phase 9 (virtual-display-protocol) complete*
