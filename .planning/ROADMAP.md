@@ -164,11 +164,15 @@ Plans:
 **Requirements**: VDISP-01, VDISP-02, VDISP-03, VDISP-04
 **Success Criteria** (what must be TRUE):
   1. `VirtualDisplayManager` protocol is importable from `opengui.interfaces` and accepts async `start()` / `stop()` calls with no concrete dependency on Xvfb
-  2. `DisplayInfo` is a frozen dataclass with `display_id`, `width`, `height`, `x_offset`, `y_offset` that any implementation returns from `start()`
+  2. `DisplayInfo` is a frozen dataclass with `display_id`, `width`, `height`, `offset_x`, `offset_y`, `monitor_index` that any implementation returns from `start()`
   3. `NoOpDisplayManager.start()` returns a `DisplayInfo` immediately without spawning any subprocess, usable in tests and ADB sessions
   4. `XvfbDisplayManager.start()` launches Xvfb via `asyncio.subprocess`, waits for the X11 socket to appear, and returns `DisplayInfo` with the correct display number
   5. `XvfbDisplayManager.stop()` terminates the Xvfb process cleanly; calling `stop()` on a never-started manager does not raise
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 09-01-PLAN.md — Protocol + DisplayInfo + NoOpDisplayManager + re-exports + tests (VDISP-01, VDISP-02, VDISP-03)
+- [ ] 09-02-PLAN.md — XvfbDisplayManager with error handling, auto-increment, crash detection + tests (VDISP-04)
 
 ### Phase 10: Background Backend Wrapper
 **Goal**: Any DeviceBackend can be wrapped in `BackgroundDesktopBackend` to run GUI actions against a virtual display — setting `DISPLAY` for X11 and translating coordinates for non-zero-offset displays
@@ -177,7 +181,7 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. `BackgroundDesktopBackend(backend, display_manager)` wraps any `DeviceBackend` and itself satisfies the `DeviceBackend` protocol
   2. When `observe()` or `execute()` is called, the `DISPLAY` environment variable is set to `:N` matching the `DisplayInfo.display_id` from the virtual display manager
-  3. Tap and swipe coordinates are offset by `DisplayInfo.x_offset` / `y_offset` before being forwarded to the inner backend
+  3. Tap and swipe coordinates are offset by `DisplayInfo.offset_x` / `offset_y` before being forwarded to the inner backend
   4. Calling `shutdown()` on the wrapper calls `stop()` on the virtual display manager exactly once, even if called multiple times
 **Plans**: TBD
 
@@ -210,6 +214,6 @@ v1.1: 9 → 10 → 11
 | 6. Fix Integration Wiring | v1.0 | 1/1 | Complete | 2026-03-19 |
 | 7. Phase 2 Retroactive Verification | v1.0 | 1/1 | Complete | 2026-03-19 |
 | 8. Dead Export Cleanup | v1.0 | 3/3 | Complete | 2026-03-19 |
-| 9. Virtual Display Protocol | v1.1 | 0/TBD | Not started | - |
+| 9. Virtual Display Protocol | v1.1 | 0/2 | Not started | - |
 | 10. Background Backend Wrapper | v1.1 | 0/TBD | Not started | - |
 | 11. Integration & Tests | v1.1 | 0/TBD | Not started | - |
