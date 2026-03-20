@@ -251,8 +251,8 @@ class MemoryConsolidator:
         """Archive a selected message chunk into persistent memory."""
         return await self.store.consolidate(messages, self.provider, self.model)
 
+    @staticmethod
     def pick_consolidation_boundary(
-        self,
         session: Session,
         tokens_to_remove: int,
     ) -> tuple[int, int] | None:

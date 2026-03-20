@@ -295,7 +295,7 @@ class AgentLoop:
         return final_content, tools_used, messages
 
     async def _needs_planning(self, task: str) -> bool:
-        """One LLM call to assess whether a task warrants multi-step decomposition.
+        """One LLM call to assess whether a task warrants multistep decomposition.
 
         Uses the ``assess_complexity`` tool to force a structured Boolean response.
         Returns ``False`` on any parsing failure (safe default — never blocks
@@ -616,7 +616,7 @@ class AgentLoop:
         self.sessions.save(session)
         self._schedule_background(self.memory_consolidator.maybe_consolidate_by_tokens(session))
 
-        if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt._sent_in_turn:
+        if (mt := self.tools.get("message")) and isinstance(mt, MessageTool) and mt.send_in_turn:
             return None
 
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
@@ -637,7 +637,7 @@ class AgentLoop:
             if role == "tool" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
                 entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
             elif role == "user":
-                if isinstance(content, str) and content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
+                if isinstance(content, str) and content.startswith(ContextBuilder.RUNTIME_CONTEXT_TAG):
                     # Strip the runtime-context prefix, keep only the user text.
                     parts = content.split("\n\n", 1)
                     if len(parts) > 1 and parts[1].strip():
@@ -647,7 +647,7 @@ class AgentLoop:
                 if isinstance(content, list):
                     filtered = []
                     for c in content:
-                        if c.get("type") == "text" and isinstance(c.get("text"), str) and c["text"].startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
+                        if c.get("type") == "text" and isinstance(c.get("text"), str) and c["text"].startswith(ContextBuilder.RUNTIME_CONTEXT_TAG):
                             continue  # Strip runtime context from multimodal messages
                         if (c.get("type") == "image_url"
                                 and c.get("image_url", {}).get("url", "").startswith("data:image/")):

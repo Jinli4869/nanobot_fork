@@ -48,15 +48,34 @@ class PlanNode:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlanNode:
+        if not isinstance(data, dict):
+            raise TypeError(f"Expected dict for PlanNode, got {type(data).__name__}")
+
+        raw_type = data.get("type")
+        if raw_type not in ["and", "or", "atom"]:
+            raise ValueError(f"Invalid node type: {raw_type!r}")
+
+
         """Deserialize from a JSON dict produced by :meth:`to_dict`."""
-        node_type: NodeType = data["type"]
+        node_type: NodeType = raw_type
         if node_type == "atom":
-            return cls(
-                node_type="atom",
-                instruction=data.get("instruction", ""),
-                capability=data.get("capability", "tool"),
-            )
-        children = tuple(cls.from_dict(child) for child in data.get("children", []))
+            instruction = data.get("instruction", "")
+            if not isinstance(instruction, str):
+                raise TypeError(f"Expected string for instruction, got {type(instruction).__name__}")
+
+            raw_cap = data.get("capability", "tool")
+            if raw_cap not in {"gui", "tool", "mcp", "api"}:
+                raise ValueError(f"Invalid capability: {raw_cap!r}")
+
+            capability: CapabilityType = raw_cap
+
+            return cls(node_type="atom", instruction=instruction, capability=capability)
+
+        raw_children = data.get("children", [])
+        if not isinstance(raw_children, list):
+            raise TypeError(f"{node_type.upper()} children must be a list")
+
+        children = tuple(cls.from_dict(child) for child in raw_children)
         return cls(node_type=node_type, children=children)
 
 
@@ -252,7 +271,8 @@ class TaskPlanner:
         lines.extend(["", "Call the create_plan tool with your decomposition."])
         return "\n".join(lines)
 
-    def _build_user_prompt(self, task: str, context: str) -> str:
+    @staticmethod
+    def _build_user_prompt(task: str, context: str) -> str:
         """Build the user prompt, optionally including prior-execution context."""
         parts = [f"Task: {task}"]
         if context:

@@ -112,8 +112,8 @@ class SkillsLoader:
         if not all_skills:
             return ""
 
-        def escape_xml(s: str) -> str:
-            return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        def escape_xml(_s: str) -> str:
+            return _s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         lines = ["<skills>"]
         for s in all_skills:
@@ -139,11 +139,13 @@ class SkillsLoader:
 
         return "\n".join(lines)
 
-    def _get_missing_requirements(self, skill_meta: dict) -> str:
+    @staticmethod
+    def _get_missing_requirements(skill_meta: dict) -> str:
         """Get a description of missing requirements."""
         missing = []
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
+            # TODO
             if not shutil.which(b):
                 missing.append(f"CLI: {b}")
         for env in requires.get("env", []):
@@ -158,15 +160,17 @@ class SkillsLoader:
             return meta["description"]
         return name  # Fallback to skill name
 
-    def _strip_frontmatter(self, content: str) -> str:
-        """Remove YAML frontmatter from markdown content."""
+    @staticmethod
+    def _strip_frontmatter(content: str) -> str:
+        """Remove YAML frontmatter from Markdown content."""
         if content.startswith("---"):
             match = re.match(r"^---\n.*?\n---\n", content, re.DOTALL)
             if match:
                 return content[match.end():].strip()
         return content
 
-    def _parse_nanobot_metadata(self, raw: str) -> dict:
+    @staticmethod
+    def _parse_nanobot_metadata(raw: str) -> dict:
         """Parse skill metadata JSON from frontmatter (supports nanobot and openclaw keys)."""
         try:
             data = json.loads(raw)
@@ -174,7 +178,8 @@ class SkillsLoader:
         except (json.JSONDecodeError, TypeError):
             return {}
 
-    def _check_requirements(self, skill_meta: dict) -> bool:
+    @staticmethod
+    def _check_requirements(skill_meta: dict) -> bool:
         """Check if skill requirements are met (bins, env vars)."""
         requires = skill_meta.get("requires", {})
         for b in requires.get("bins", []):
