@@ -2,19 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Cross-Platform Background Execution
-current_phase: 14
-current_phase_name: windows-isolated-desktop-execution
-current_plan: 4
-status: verifying
-stopped_at: Completed 14-04-PLAN.md
-last_updated: "2026-03-20T17:08:40.331Z"
+current_phase: 14 (windows-isolated-desktop-execution)
+current_plan: 6
+status: executing
+stopped_at: Completed 14-05-PLAN.md
+last_updated: "2026-03-20T18:17:30.980Z"
 last_activity: 2026-03-20
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 12
-  completed_plans: 12
-  percent: 100
+  completed_phases: 2
+  total_plans: 14
+  completed_plans: 13
+  percent: 93
 ---
 
 # Project State
@@ -28,19 +27,18 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ## Current Position
 
-**Current Phase:** 14
-**Current Phase Name:** windows-isolated-desktop-execution
-**Current Plan:** 4
-**Total Plans in Phase:** 4
-**Total Phases:** 5
-**Status:** Phase complete — ready for verification
+**Current Phase:** 14 (windows-isolated-desktop-execution)
+**Current Plan:** 6
+**Total Plans in Phase:** 6
+**Status:** Ready to execute
 **Last Activity:** 2026-03-20
-**Progress:** [██████████] 100%
-
-Phase: 14 (windows-isolated-desktop-execution) — COMPLETE
-Plan: 4 of 4
 
 ## Performance Metrics
+
+**Progress:** [█████████░] 93%
+
+| Execution | Duration | Tasks | Files |
+|-----------|----------|-------|-------|
 
 **Velocity:**
 
@@ -65,6 +63,7 @@ Plan: 4 of 4
 | Phase 14 P02 | 6min | 2 tasks | 3 files |
 | Phase 14 P03 | 4min | 2 tasks | 4 files |
 | Phase 14 P04 | 4min | 2 tasks | 1 files |
+| Phase 14 P05 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -111,6 +110,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Windows isolated runs use WindowsIsolatedBackend directly while Linux and macOS continue through BackgroundDesktopBackend.
 - [Phase 14]: Phase 14 closeout keeps a fully green regression slice unchanged and records the verification as its own atomic task commit.
 - [Phase 14]: Real-host Windows validation remains phase-local in 14-MANUAL-SMOKE.md and reuses the same runtime and cleanup tokens asserted by automated tests.
+- [Phase 14]: Windows isolated desktop IO now belongs exclusively to the child worker, so the parent backend no longer observes or executes against the user desktop.
+- [Phase 14]: Win32 support probing now validates session, input-desktop, and create-desktop prerequisites through patchable Win32 wrappers instead of hard-coded availability booleans.
 
 ### Pending Todos
 
@@ -122,6 +123,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T17:08:40.329Z
-Stopped at: Completed 14-04-PLAN.md
+Last session: 2026-03-20T18:17:30.976Z
+Stopped at: Completed 14-05-PLAN.md
 Resume file: None
