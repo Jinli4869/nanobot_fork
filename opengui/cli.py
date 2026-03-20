@@ -30,6 +30,7 @@ from opengui.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
 BackgroundDesktopBackend = None
+WindowsIsolatedBackend = None
 probe_isolated_background_support = None
 resolve_run_mode = None
 log_mode_resolution = None
@@ -449,11 +450,23 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
             raise RuntimeError(decision.message)
 
         if decision.mode == "isolated":
-            bg_cls = BackgroundDesktopBackend
-            if bg_cls is None:
-                from opengui.backends.background import BackgroundDesktopBackend as bg_cls  # type: ignore[assignment]
             mgr = _build_isolated_display_manager(args, probe)
-            wrapped_backend = bg_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
+            if probe.backend_name == "windows_isolated_desktop":
+                isolated_backend_cls = WindowsIsolatedBackend
+                if isolated_backend_cls is None:
+                    from opengui.backends.windows_isolated import (
+                        WindowsIsolatedBackend as isolated_backend_cls,  # type: ignore[assignment]
+                    )
+                wrapped_backend = isolated_backend_cls(
+                    backend,
+                    mgr,
+                    run_metadata={"owner": "cli", "task": task},
+                )
+            else:
+                bg_cls = BackgroundDesktopBackend
+                if bg_cls is None:
+                    from opengui.backends.background import BackgroundDesktopBackend as bg_cls  # type: ignore[assignment]
+                wrapped_backend = bg_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
             try:
                 return await _execute_agent(args, config, wrapped_backend, provider, task)
             finally:
@@ -509,6 +522,11 @@ def _build_isolated_display_manager(args: argparse.Namespace, probe: Any) -> Any
         from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
 
         return CGVirtualDisplayManager(width=width, height=height)
+
+    if probe.backend_name == "windows_isolated_desktop":
+        from opengui.backends.displays.win32desktop import Win32DesktopManager
+
+        return Win32DesktopManager(width=width, height=height)
 
     raise RuntimeError(f"Unsupported isolated backend: {probe.backend_name}")
 
