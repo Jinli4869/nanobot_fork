@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Background Execution
 status: executing
-stopped_at: "Completed Phase 11 Plan 02 (11-02-PLAN.md)"
-last_updated: "2026-03-20T11:14:00.000Z"
+stopped_at: "Completed Phase 11 Plan 01 (11-01-PLAN.md) — all Phase 11 plans done"
+last_updated: "2026-03-20T11:15:18Z"
 progress:
   total_phases: 3
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
@@ -23,8 +23,8 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 ## Current Position
 
-Phase: 11 (integration-tests) — EXECUTING
-Plan: 2 of 2 (COMPLETE)
+Phase: 11 (integration-tests) — COMPLETE
+Plan: 2 of 2 (ALL PLANS DONE)
 
 ## Performance Metrics
 
@@ -47,6 +47,7 @@ Plan: 2 of 2 (COMPLETE)
 | Phase 10-background-backend-wrapper P01 | 229s | 1 tasks | 1 files |
 | Phase 10-background-backend-wrapper P02 | 3min | 1 tasks | 1 files |
 | Phase 11-integration-tests P02 | 155s | 2 tasks | 3 files |
+| Phase 11-integration-tests P01 | 212s | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 11-integration-tests P02]: execute() extracts _run_task() helper to avoid duplicating 20+ lines across wrapped and unwrapped paths
 - [Phase 11-integration-tests P02]: BackgroundDesktopBackend and XvfbDisplayManager imported lazily inside execute() — avoids import-time cost on non-Linux
 - [Phase 11-integration-tests P02]: Non-Linux fallback runs task in foreground with WARNING log containing 'Linux-only' — no exception raised
+- [Phase 11-integration-tests P01]: Two separate parser.error() calls needed — args.backend check catches --backend adb/dry-run; args.dry_run check catches --dry-run flag which leaves args.backend at default 'local'
+- [Phase 11-integration-tests P01]: XvfbDisplayManager patched at module attribute level for correct resolution of run_cli's local from-import
+- [Phase 11-integration-tests P01]: _execute_agent() extracted as standalone async function to avoid duplicating 40+ lines across background and non-background paths
 
 ### Pending Todos
 
@@ -84,6 +88,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T11:14:00.000Z
-Stopped at: Completed Phase 11 Plan 02 (11-02-PLAN.md)
-Resume file: .planning/phases/11-integration-tests/11-02-SUMMARY.md
+Last session: 2026-03-20T11:15:18Z
+Stopped at: Completed Phase 11 Plan 01 (11-01-PLAN.md) — Phase 11 fully complete
+Resume file: .planning/phases/11-integration-tests/11-01-SUMMARY.md
