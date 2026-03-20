@@ -184,7 +184,11 @@ Plans:
   2. When `observe()` or `execute()` is called, the `DISPLAY` environment variable is set to `:N` matching the `DisplayInfo.display_id` from the virtual display manager
   3. Tap and swipe coordinates are offset by `DisplayInfo.offset_x` / `offset_y` before being forwarded to the inner backend
   4. Calling `shutdown()` on the wrapper calls `stop()` on the virtual display manager exactly once, even if called multiple times
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 10-01-PLAN.md — Test file with all 13 BGND test cases (BGND-01, BGND-02, BGND-03, BGND-04)
+- [ ] 10-02-PLAN.md — Refine BackgroundDesktopBackend with lifecycle guards, context manager, idempotent shutdown (BGND-01, BGND-02, BGND-03, BGND-04)
 
 ### Phase 11: Integration & Tests
 **Goal**: The `--background` flag is a first-class CLI option, nanobot's `GuiConfig` supports background mode, and every new code path is verified by CI-safe unit tests with mocked subprocess
@@ -215,6 +219,6 @@ v1.1: 9 → 10 → 11
 | 6. Fix Integration Wiring | v1.0 | 1/1 | Complete | 2026-03-19 |
 | 7. Phase 2 Retroactive Verification | v1.0 | 1/1 | Complete | 2026-03-19 |
 | 8. Dead Export Cleanup | v1.0 | 3/3 | Complete | 2026-03-19 |
-| 9. Virtual Display Protocol | 3/3 | Complete   | 2026-03-20 | - |
-| 10. Background Backend Wrapper | v1.1 | 0/TBD | Not started | - |
+| 9. Virtual Display Protocol | v1.1 | 3/3 | Complete | 2026-03-20 |
+| 10. Background Backend Wrapper | v1.1 | 0/2 | Not started | - |
 | 11. Integration & Tests | v1.1 | 0/TBD | Not started | - |
