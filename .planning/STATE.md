@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Cross-Platform Background Execution
 current_phase: 14
 current_phase_name: windows-isolated-desktop-execution
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 14-windows-isolated-desktop-execution-02-PLAN.md
-last_updated: "2026-03-20T16:44:44.985Z"
+stopped_at: Completed 14-windows-isolated-desktop-execution-03-PLAN.md
+last_updated: "2026-03-20T16:58:50.610Z"
 last_activity: 2026-03-20
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 12
-  completed_plans: 10
-  percent: 83
+  completed_plans: 11
+  percent: 92
 ---
 
 # Project State
@@ -30,12 +30,12 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Current Phase:** 14
 **Current Phase Name:** windows-isolated-desktop-execution
-**Current Plan:** 3
+**Current Plan:** 4
 **Total Plans in Phase:** 4
 **Total Phases:** 5
 **Status:** Ready to execute
 **Last Activity:** 2026-03-20
-**Progress:** [████████░░] 83%
+**Progress:** [█████████░] 92%
 
 Phase: 14 (windows-isolated-desktop-execution) — EXECUTING
 Plan: 3 of 4
@@ -62,6 +62,7 @@ Plan: 3 of 4
 | Phase 13 P04 | 4min | 2 tasks | 4 files |
 | Phase 14 P01 | 3min | 2 tasks | 4 files |
 | Phase 14 P02 | 6min | 2 tasks | 3 files |
+| Phase 14 P03 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Win32DesktopManager owns desktop naming and idempotent teardown while publishing DisplayInfo for later worker launch wiring
 - [Phase 14]: Windows isolated runs use a dedicated backend instead of BackgroundDesktopBackend so worker launch, routing, and cleanup stay desktop-aware.
 - [Phase 14]: The worker launch seam is import-safe on non-Windows hosts but still encodes STARTUPINFO.lpDesktop for Windows process creation.
+- [Phase 14]: Both host entry points dispatch isolated execution from probe.backend_name instead of raw platform branching.
+- [Phase 14]: Nanobot preserves cleanup_reason= and display_id= tokens by returning RuntimeError text through the existing background JSON failure payload.
+- [Phase 14]: Windows isolated runs use WindowsIsolatedBackend directly while Linux and macOS continue through BackgroundDesktopBackend.
 
 ### Pending Todos
 
@@ -114,6 +118,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T16:44:44.983Z
-Stopped at: Completed 14-windows-isolated-desktop-execution-02-PLAN.md
+Last session: 2026-03-20T16:58:50.608Z
+Stopped at: Completed 14-windows-isolated-desktop-execution-03-PLAN.md
 Resume file: None
