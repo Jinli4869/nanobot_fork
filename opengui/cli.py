@@ -103,7 +103,7 @@ class AdbConfig:
 
 @dataclass(slots=True)
 class BackgroundConfig:
-    """Settings for virtual Xvfb display used with --background."""
+    """Settings for isolated background displays used with --background."""
 
     display_num: int = 99
     width: int = 1280
@@ -452,12 +452,7 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
             bg_cls = BackgroundDesktopBackend
             if bg_cls is None:
                 from opengui.backends.background import BackgroundDesktopBackend as bg_cls  # type: ignore[assignment]
-            from opengui.backends.displays.xvfb import XvfbDisplayManager
-
-            display_num = args.display_num if args.display_num is not None else 99
-            width = args.width if args.width is not None else 1280
-            height = args.height if args.height is not None else 720
-            mgr = XvfbDisplayManager(display_num=display_num, width=width, height=height)
+            mgr = _build_isolated_display_manager(args, probe)
             wrapped_backend = bg_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
             try:
                 return await _execute_agent(args, config, wrapped_backend, provider, task)
@@ -498,6 +493,24 @@ def _print_human_result(result: AgentResult) -> None:
     print(f"steps_taken: {result.steps_taken}")
     if result.error is not None:
         print(f"error: {result.error}")
+
+
+def _build_isolated_display_manager(args: argparse.Namespace, probe: Any) -> Any:
+    width = args.width if args.width is not None else 1280
+    height = args.height if args.height is not None else 720
+
+    if probe.backend_name == "xvfb":
+        from opengui.backends.displays.xvfb import XvfbDisplayManager
+
+        display_num = args.display_num if args.display_num is not None else 99
+        return XvfbDisplayManager(display_num=display_num, width=width, height=height)
+
+    if probe.backend_name == "cgvirtualdisplay":
+        from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
+
+        return CGVirtualDisplayManager(width=width, height=height)
+
+    raise RuntimeError(f"Unsupported isolated backend: {probe.backend_name}")
 
 
 def _make_progress_printer(*, json_output: bool) -> Any:
