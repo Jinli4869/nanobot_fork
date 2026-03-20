@@ -74,7 +74,7 @@ Plans:
   3. Backend is selected from nanobot config (adb / local / dry-run) and the agent starts without additional configuration
   4. After a run, the trajectory JSONL file is saved to the nanobot workspace and the main agent receives a structured result dict
   5. The main agent has a trajectory_summary skill that summarizes a trajectory and extracts new skills into the SkillLibrary
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
 - [x] 03-01-PLAN.md — Wave 0 test stubs + GuiConfig schema + NanobotLLMAdapter + NanobotEmbeddingAdapter (NANO-02, NANO-03)
@@ -102,7 +102,7 @@ Plans:
   1. `python -m opengui.cli --backend adb --task "Open Settings"` runs a full agent loop and prints the result
   2. `python -m opengui.cli --backend local --task "Open Chrome"` runs a full agent loop against the local desktop
   3. A code comment or docstring in the CLI or interfaces module explains the adapter pattern so another developer can write an openclaw/nanoclaw/zeroclaw adapter without reading nanobot internals
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
 - [x] 05-01-PLAN.md — Standalone CLI entry point, YAML config loader, OpenAI-compatible provider bridge, and CLI tests (CLI-01)
@@ -168,9 +168,10 @@ Plans:
   3. `NoOpDisplayManager.start()` returns a `DisplayInfo` immediately without spawning any subprocess, usable in tests and ADB sessions
   4. `XvfbDisplayManager.start()` launches Xvfb via `asyncio.subprocess`, waits for the X11 socket to appear, and returns `DisplayInfo` with the correct display number
   5. `XvfbDisplayManager.stop()` terminates the Xvfb process cleanly; calling `stop()` on a never-started manager does not raise
-**Plans**: 2 plans
+**Plans**: 3 plans
 
 Plans:
+- [ ] 09-00-PLAN.md — Wave 0 test stubs for all VDISP requirements (Nyquist compliance)
 - [ ] 09-01-PLAN.md — Protocol + DisplayInfo + NoOpDisplayManager + re-exports + tests (VDISP-01, VDISP-02, VDISP-03)
 - [ ] 09-02-PLAN.md — XvfbDisplayManager with error handling, auto-increment, crash detection + tests (VDISP-04)
 
