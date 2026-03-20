@@ -34,10 +34,17 @@ def test_probe_result_shape_and_platform_normalization(monkeypatch: pytest.Monke
     assert missing.reason_code == "xvfb_missing"
     assert missing.backend_name == "xvfb"
 
+    expected_macos = runtime.IsolationProbeResult(
+        supported=False,
+        reason_code="macos_screen_recording_denied",
+        retryable=True,
+        host_platform="macos",
+        backend_name="cgvirtualdisplay",
+        sys_platform="darwin",
+    )
+    monkeypatch.setattr(runtime, "_probe_macos_isolated_support", lambda raw_platform: expected_macos)
     unsupported = runtime.probe_isolated_background_support(sys_platform="darwin")
-    assert unsupported.supported is False
-    assert unsupported.reason_code == "platform_unsupported"
-    assert unsupported.host_platform == "macos"
+    assert unsupported == expected_macos
 
 
 def test_resolve_run_mode_variants() -> None:
