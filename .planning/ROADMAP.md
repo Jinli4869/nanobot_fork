@@ -20,7 +20,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 |-------|------|------|--------------|------------------|
 | 12 | Background Runtime Contracts | The shared background-execution runtime can determine whether a host supports isolated execution, expose that mode decision clearly, and prevent overlapping desktop runs from corrupting process-global state. | BGND-05, BGND-06, BGND-07 | 4 |
 | 13 | macOS Background Execution | macOS background runs execute against an isolated target surface when supported, fail with actionable permission/capability messaging when not supported, and maintain correct coordinate routing across offsets and scale factors. | MAC-01, MAC-02, MAC-03 | 4 |
-| 14 | 5/6 | In Progress |  | 4 |
+| 14 | 6/6 | Complete   | 2026-03-20 | 4 |
 | 15 | Intervention Safety and Handoff | Pause safely for sensitive/blocked states, hand control to the user, and resume from fresh observation | SAFE-01, SAFE-02, SAFE-03, SAFE-04 | 5 |
 | 16 | Host Integration and Verification | Align CLI and nanobot behavior and close the milestone with regression coverage | INTG-05, INTG-06, TEST-V12-01 | 4 |
 
@@ -72,7 +72,7 @@ Plans:
 
 **Depends on:** Phase 12
 **Requirements:** WIN-01, WIN-02, WIN-03
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 - [x] 14-01-PLAN.md — Establish the Windows runtime probe taxonomy and `Win32DesktopManager` contract
@@ -136,4 +136,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-20*
-*Last updated: 2026-03-21 after Phase 14 Plan 05 completion*
+*Last updated: 2026-03-21 after Phase 14 Plan 06 completion*

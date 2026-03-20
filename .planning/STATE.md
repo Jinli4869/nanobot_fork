@@ -4,16 +4,16 @@ milestone: v1.2
 milestone_name: Cross-Platform Background Execution
 current_phase: 14 (windows-isolated-desktop-execution)
 current_plan: 6
-status: executing
-stopped_at: Completed 14-05-PLAN.md
-last_updated: "2026-03-20T18:17:30.980Z"
+status: verifying
+stopped_at: Completed 14-06-PLAN.md
+last_updated: "2026-03-20T18:27:49.014Z"
 last_activity: 2026-03-20
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 14
-  completed_plans: 13
-  percent: 93
+  completed_plans: 14
+  percent: 100
 ---
 
 # Project State
@@ -30,19 +30,19 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 **Current Phase:** 14 (windows-isolated-desktop-execution)
 **Current Plan:** 6
 **Total Plans in Phase:** 6
-**Status:** Ready to execute
+**Status:** Phase complete — ready for verification
 **Last Activity:** 2026-03-20
 
 ## Performance Metrics
 
-**Progress:** [█████████░] 93%
+**Progress:** [██████████] 100%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
 
 **Velocity:**
 
-- Total plans completed (v1.2): 12
+- Total plans completed (v1.2): 14
 - Average duration: —
 - Total execution time: —
 
@@ -52,7 +52,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 |-------|-------|-------|----------|
 | 12 | 4 | — | — |
 | 13 | 4 | 25min | 6.25min |
-| 14 | 4 | 17min | 4.25min |
+| 14 | 6 | 24min | 4min |
 
 *Updated after each plan completion*
 | Phase 13 P01 | 12min | 2 tasks | 5 files |
@@ -64,6 +64,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 14 P03 | 4min | 2 tasks | 4 files |
 | Phase 14 P04 | 4min | 2 tasks | 1 files |
 | Phase 14 P05 | 4min | 2 tasks | 4 files |
+| Phase 14 P06 | 3min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: Real-host Windows validation remains phase-local in 14-MANUAL-SMOKE.md and reuses the same runtime and cleanup tokens asserted by automated tests.
 - [Phase 14]: Windows isolated desktop IO now belongs exclusively to the child worker, so the parent backend no longer observes or executes against the user desktop.
 - [Phase 14]: Win32 support probing now validates session, input-desktop, and create-desktop prerequisites through patchable Win32 wrappers instead of hard-coded availability booleans.
+- [Phase 14]: CLI and nanobot now default omitted Windows app-class hints to classic-win32 only for background local runs on win32 hosts.
+- [Phase 14]: Unsupported Windows app classes stay on the shared remediation path: CLI warns before agent start, while nanobot returns its existing JSON failure shape before any task execution.
+- [Phase 14]: The Phase 14 regression fix stayed in test code because the failing Windows metadata check was a stale worker fixture, not a runtime defect.
 
 ### Pending Todos
 
@@ -123,6 +127,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T18:17:30.976Z
-Stopped at: Completed 14-05-PLAN.md
+Last session: 2026-03-20T18:27:49.009Z
+Stopped at: Completed 14-06-PLAN.md
 Resume file: None
