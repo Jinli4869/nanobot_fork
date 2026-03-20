@@ -18,7 +18,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
-| 12 | Background Runtime Contracts | Harden shared background-runtime seams before adding new platform implementations | BGND-05, BGND-06, BGND-07 | 4 |
+| 12 | Background Runtime Contracts | The shared background-execution runtime can determine whether a host supports isolated execution, expose that mode decision clearly, and prevent overlapping desktop runs from corrupting process-global state. | BGND-05, BGND-06, BGND-07 | 4 |
 | 13 | macOS Background Execution | Add isolated macOS execution with permission-aware capability checks and correct geometry routing | MAC-01, MAC-02, MAC-03 | 4 |
 | 14 | Windows Isolated Desktop Execution | Add Windows isolated-desktop execution with lifecycle-safe cleanup and clear support limits | WIN-01, WIN-02, WIN-03 | 4 |
 | 15 | Intervention Safety and Handoff | Pause safely for sensitive/blocked states, hand control to the user, and resume from fresh observation | SAFE-01, SAFE-02, SAFE-03, SAFE-04 | 5 |
@@ -32,13 +32,13 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 
 **Depends on:** Phase 11
 **Requirements:** BGND-05, BGND-06, BGND-07
-**Plans:** 4 plans
+**Plans:** 4/4 plans complete
 
 Plans:
-- [ ] 12-01-PLAN.md — Seed Wave 0 tests and implement shared runtime contracts
-- [ ] 12-02-PLAN.md — Wire the CLI through probe, resolved-mode logging, and strict isolation blocking
-- [ ] 12-03-PLAN.md — Wire nanobot through fallback acknowledgement and serialized busy metadata
-- [ ] 12-04-PLAN.md — Run the full phase regression suite and mark validation green
+- [x] 12-01-PLAN.md — Seed Wave 0 tests and implement shared runtime contracts
+- [x] 12-02-PLAN.md — Wire the CLI through probe, resolved-mode logging, and strict isolation blocking
+- [x] 12-03-PLAN.md — Wire nanobot through fallback acknowledgement and serialized busy metadata
+- [x] 12-04-PLAN.md — Run the full phase regression suite and mark validation green
 
 **Success criteria:**
 1. Background startup performs explicit capability checks before launching automation.
@@ -117,8 +117,8 @@ Plans:
 |-----------|-------------|--------|---------|
 | v1.0 Core Foundations | 1-8 | Complete | 2026-03-19 |
 | v1.1 Background Execution | 9-11 | Complete | 2026-03-20 |
-| v1.2 Cross-Platform Background Execution | 12-16 | Planned | — |
+| v1.2 Cross-Platform Background Execution | 12-16 | In Progress | — |
 
 ---
 *Roadmap defined: 2026-03-20*
-*Last updated: 2026-03-20 after v1.2 milestone planning*
+*Last updated: 2026-03-20 after Phase 12 completion*

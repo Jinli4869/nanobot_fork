@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import runpy
 import sys
 import textwrap
@@ -465,10 +466,141 @@ def test_cli_background_implies_local() -> None:
     assert cli.resolve_backend_name(args) == "local"
 
 
+def test_run_cli_logs_resolved_background_mode_before_agent_start() -> None:
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="linux")
+    events: list[str] = []
+    log_messages: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    class FakeRecorder:
+        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
+            self.output_dir = output_dir
+            self.task = task
+            self.platform = platform
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            assert kwargs["backend"] is inner_backend
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            events.append("agent_started")
+            return AgentResult(
+                success=True,
+                summary=f"Completed {task}",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    probe_result = runtime.IsolationProbeResult(
+        supported=False,
+        reason_code="xvfb_missing",
+        retryable=True,
+        host_platform="linux",
+        backend_name="xvfb",
+        sys_platform="linux",
+    )
+
+    class _EventHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "background runtime resolved:" in record.getMessage():
+                events.append("mode_logged")
+                log_messages.append(record.getMessage())
+
+    handler = _EventHandler()
+    logger = logging.getLogger("opengui.cli")
+    logger.addHandler(handler)
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+        monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+        monkeypatch.setattr(cli, "build_backend", lambda backend_name, cfg: inner_backend)
+        monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+        monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+        monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+        monkeypatch.setattr(cli, "probe_isolated_background_support", lambda **_: probe_result)
+        asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
+    finally:
+        logger.removeHandler(handler)
+        monkeypatch.undo()
+
+    assert events[0] == "mode_logged"
+    assert events[1] == "agent_started"
+    assert "mode=fallback" in log_messages[0]
+    assert "reason=xvfb_missing" in log_messages[0]
+    assert "Install Xvfb to enable isolated background execution." in log_messages[0]
+
+def test_run_cli_blocks_when_isolation_required_but_unavailable() -> None:
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    probe_result = runtime.IsolationProbeResult(
+        supported=False,
+        reason_code="xvfb_missing",
+        retryable=True,
+        host_platform="linux",
+        backend_name="xvfb",
+        sys_platform="linux",
+    )
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+        monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+        monkeypatch.setattr(cli, "build_backend", lambda backend_name, cfg: _FakeBackend(platform="linux"))
+        monkeypatch.setattr(cli, "probe_isolated_background_support", lambda **_: probe_result)
+        monkeypatch.setattr(
+            cli,
+            "GuiAgent",
+            lambda **kwargs: (_ for _ in ()).throw(AssertionError("GuiAgent should not be constructed")),
+        )
+
+        args = cli.parse_args(["--background", "--require-isolation", "--task", "open settings"])
+        with pytest.raises(RuntimeError) as exc_info:
+            asyncio.run(cli.run_cli(args))
+    finally:
+        monkeypatch.undo()
+
+    assert "blocked" in str(exc_info.value)
+    assert "xvfb_missing" in str(exc_info.value)
+    assert "Install Xvfb to enable isolated background execution." in str(exc_info.value)
+
+
 def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     """On Linux, run_cli wraps the inner backend in BackgroundDesktopBackend."""
     from opengui.agent import AgentResult
     import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
 
     config = cli.CliConfig(
         provider=cli.ProviderConfig(
@@ -495,20 +627,19 @@ def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> No
             pass
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any) -> None:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
             self._inner = inner
             self._manager = manager
+            self._run_metadata = run_metadata
             wrapped_backend_ref.append(self)
-
-        async def __aenter__(self) -> "FakeBackgroundBackend":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
+            self.shutdown_calls = 0
 
         @property
         def platform(self) -> str:
             return self._inner.platform
+
+        async def shutdown(self) -> None:
+            self.shutdown_calls += 1
 
     class FakeProvider:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -544,6 +675,18 @@ def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
     monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
     monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
+    monkeypatch.setattr(
+        cli,
+        "probe_isolated_background_support",
+        lambda **_: runtime.IsolationProbeResult(
+            supported=True,
+            reason_code="xvfb_available",
+            retryable=False,
+            host_platform="linux",
+            backend_name="xvfb",
+            sys_platform="linux",
+        ),
+    )
     monkeypatch.setattr(sys, "platform", "linux")
 
     import opengui.backends.displays.xvfb as xvfb_mod
@@ -560,6 +703,8 @@ def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> No
     # FakeBackgroundBackend was constructed and the agent received the wrapped backend
     assert len(wrapped_backend_ref) == 1
     assert wrapped_backend_ref[0]._inner is inner_backend
+    assert wrapped_backend_ref[0]._run_metadata == {"owner": "cli", "task": "open settings"}
+    assert wrapped_backend_ref[0].shutdown_calls == 1
     assert len(agent_backend_ref) == 1
     assert agent_backend_ref[0] is wrapped_backend_ref[0]
 
@@ -568,10 +713,10 @@ def test_run_cli_background_nonlinux_fallback(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """On non-Linux platforms, --background logs a warning and uses raw backend."""
-    import logging
+    """Unsupported isolation falls back on the raw backend and logs the resolved mode."""
     from opengui.agent import AgentResult
     import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
 
     config = cli.CliConfig(
         provider=cli.ProviderConfig(
@@ -585,14 +730,8 @@ def test_run_cli_background_nonlinux_fallback(
     bg_created: list[Any] = []
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any) -> None:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
             bg_created.append(self)
-
-        async def __aenter__(self) -> "FakeBackgroundBackend":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
 
         @property
         def platform(self) -> str:
@@ -632,7 +771,19 @@ def test_run_cli_background_nonlinux_fallback(
     monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
     monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
     monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
-    # Leave sys.platform as "darwin" (do not patch)
+    monkeypatch.setattr(
+        cli,
+        "probe_isolated_background_support",
+        lambda **_: runtime.IsolationProbeResult(
+            supported=False,
+            reason_code="platform_unsupported",
+            retryable=False,
+            host_platform="macos",
+            backend_name=None,
+            sys_platform="darwin",
+        ),
+    )
+    monkeypatch.setattr(sys, "platform", "darwin")
 
     args = cli.parse_args(["--background", "--task", "open settings"])
     with caplog.at_level(logging.WARNING, logger="opengui.cli"):
@@ -643,17 +794,16 @@ def test_run_cli_background_nonlinux_fallback(
     # Agent received raw backend
     assert len(agent_backend_ref) == 1
     assert agent_backend_ref[0] is inner_backend
-    # Warning was logged mentioning Linux-only
     warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("Linux-only" in msg for msg in warning_messages), (
-        f"Expected 'Linux-only' in warning logs, got: {warning_messages}"
-    )
+    assert any("background runtime resolved:" in msg for msg in warning_messages)
+    assert any("mode=fallback" in msg and "reason=platform_unsupported" in msg for msg in warning_messages)
 
 
 def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
     """XvfbDisplayManager is constructed with --display-num, --width, --height values."""
     from opengui.agent import AgentResult
     import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
 
     config = cli.CliConfig(
         provider=cli.ProviderConfig(
@@ -677,19 +827,16 @@ def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> No
             pass
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any) -> None:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
             self._inner = inner
             self._manager = manager
-
-        async def __aenter__(self) -> "FakeBackgroundBackend":
-            return self
-
-        async def __aexit__(self, *args: Any) -> None:
-            pass
 
         @property
         def platform(self) -> str:
             return self._inner.platform
+
+        async def shutdown(self) -> None:
+            return None
 
     class FakeProvider:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -723,6 +870,18 @@ def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
     monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
     monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
+    monkeypatch.setattr(
+        cli,
+        "probe_isolated_background_support",
+        lambda **_: runtime.IsolationProbeResult(
+            supported=True,
+            reason_code="xvfb_available",
+            retryable=False,
+            host_platform="linux",
+            backend_name="xvfb",
+            sys_platform="linux",
+        ),
+    )
     monkeypatch.setattr(sys, "platform", "linux")
 
     import opengui.backends.displays.xvfb as _xvfb

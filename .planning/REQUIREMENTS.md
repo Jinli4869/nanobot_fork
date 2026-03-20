@@ -9,9 +9,9 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 
 ### Background Runtime
 
-- [ ] **BGND-05**: User can start a background desktop run only after the runtime probes whether isolated execution is supported on the current host
-- [ ] **BGND-06**: User is told explicitly whether the run will be isolated, downgraded with warning, or blocked before automation begins
-- [ ] **BGND-07**: Background desktop execution rejects or serializes overlapping desktop background runs on the same host to avoid shared global-state interference
+- [x] **BGND-05**: User can start a background desktop run only after the runtime probes whether isolated execution is supported on the current host
+- [x] **BGND-06**: User is told explicitly whether the run will be isolated, downgraded with warning, or blocked before automation begins
+- [x] **BGND-07**: Background desktop execution rejects or serializes overlapping desktop background runs on the same host to avoid shared global-state interference
 
 ### macOS Background Execution
 
@@ -63,9 +63,9 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BGND-05 | Phase 12 | Pending |
-| BGND-06 | Phase 12 | Pending |
-| BGND-07 | Phase 12 | Pending |
+| BGND-05 | Phase 12 | Complete |
+| BGND-06 | Phase 12 | Complete |
+| BGND-07 | Phase 12 | Complete |
 | MAC-01 | Phase 13 | Pending |
 | MAC-02 | Phase 13 | Pending |
 | MAC-03 | Phase 13 | Pending |
@@ -87,4 +87,4 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-20 after v1.2 roadmap creation*
+*Last updated: 2026-03-20 after Phase 12 completion*
