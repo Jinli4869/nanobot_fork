@@ -28,7 +28,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 ### Active
 
 - ✓ **VDISP-01–04**: VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager, XvfbDisplayManager — Validated in Phase 9
-- [ ] BackgroundDesktopBackend decorator wrapping any DeviceBackend
+- ✓ **BGND-01–04**: BackgroundDesktopBackend decorator with lifecycle guards, DISPLAY management, coordinate offsets, idempotent shutdown — Validated in Phase 10
 - [ ] CLI --background flag and GuiConfig.background integration
 - [ ] macOS CGVirtualDisplay implementation (deferred to v1.2)
 - [ ] Windows CreateDesktop implementation (deferred to v1.2)
@@ -83,8 +83,8 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 | EmbeddingProvider as protocol | Pluggable: qwen3-vl-embedding or any future provider | — Pending |
 | KnowAct-style valid_state per step | LLM-based screen verification before each skill step | — Pending |
 
-| Decorator pattern for BackgroundDesktopBackend | Thin wrapper + DISPLAY env var; zero coordinate offset for Xvfb | — Pending |
+| Decorator pattern for BackgroundDesktopBackend | Thin wrapper + DISPLAY env var; sentinel-based save/restore | ✓ Good |
 | Xvfb subprocess management | No Python deps; invoke Xvfb binary via asyncio.subprocess | — Pending |
 
 ---
-*Last updated: 2026-03-20 after Phase 9 (virtual-display-protocol) complete*
+*Last updated: 2026-03-20 after Phase 10 (background-backend-wrapper) complete*
