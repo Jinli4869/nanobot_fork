@@ -151,11 +151,11 @@ class TreeRouter:
                     tool_registry=context.tool_registry,
                     mcp_client=context.mcp_client,
                 )
-                result = await self.execute(child, child_ctx)
-                child_results[idx] = result
-                all_traces[idx] = list(result.trace_paths)
-                if result.success:
-                    all_outputs[idx] = result.output
+                _result = await self.execute(child, child_ctx)
+                child_results[idx] = _result
+                all_traces[idx] = list(_result.trace_paths)
+                if _result.success:
+                    all_outputs[idx] = _result.output
                     if child.node_type == "atom":
                         child_completed[idx].append(child.instruction)
 
@@ -271,7 +271,8 @@ class TreeRouter:
             logger.error("ATOM dispatch failed: %s", exc)
             return NodeResult(success=False, error=str(exc))
 
-    async def _run_gui(self, instruction: str, context: RouterContext) -> NodeResult:
+    @staticmethod
+    async def _run_gui(instruction: str, context: RouterContext) -> NodeResult:
         """Dispatch to ``GuiAgent.run()`` for GUI tasks."""
         if context.gui_agent is None:
             return NodeResult(success=False, error="No GuiAgent configured for GUI dispatch")
@@ -283,13 +284,15 @@ class TreeRouter:
             trace_paths=[result.trace_path] if getattr(result, "trace_path", None) else [],
         )
 
-    async def _run_tool(self, instruction: str, context: RouterContext) -> NodeResult:
+    @staticmethod
+    async def _run_tool(instruction: str, context: RouterContext) -> NodeResult:
         """Dispatch to ToolRegistry — placeholder until Phase 3."""
         if context.tool_registry is None:
             return NodeResult(success=False, error="No ToolRegistry configured for tool dispatch")
         return NodeResult(success=True, output=f"Tool executed: {instruction}")
 
-    async def _run_mcp(self, instruction: str, context: RouterContext) -> NodeResult:
+    @staticmethod
+    async def _run_mcp(instruction: str, context: RouterContext) -> NodeResult:
         """Dispatch to MCP client — placeholder until Phase 3."""
         if context.mcp_client is None:
             return NodeResult(success=False, error="No MCP client configured")
