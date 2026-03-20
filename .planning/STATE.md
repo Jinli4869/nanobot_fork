@@ -2,14 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Cross-Platform Background Execution
-status: executing_phase
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-03-20T15:18:20.005Z"
+current_phase: 13
+current_phase_name: macos-background-execution
+current_plan: 3
+status: executing
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-03-20T15:24:30.000Z"
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 8
-  completed_plans: 5
+  completed_plans: 6
 ---
 
 # Project State
@@ -24,19 +27,19 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 ## Current Position
 
 Phase: 13 (macos-background-execution) — EXECUTING
-Plan: 1 of 4
+Plan: 3 of 4
 Current Phase: 13
 Current Phase Name: macos-background-execution
-Current Plan: 1
+Current Plan: 3
 Total Plans in Phase: 4
 Status: Executing Phase 13
-Last Activity Description: Completed 13-01-PLAN.md; next up is 13-02-PLAN.md
+Last Activity Description: Completed 13-02-PLAN.md; next up is 13-03-PLAN.md
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed (v1.2): 4
+- Total plans completed (v1.2): 6
 - Average duration: —
 - Total execution time: —
 
@@ -45,9 +48,11 @@ Last Activity Description: Completed 13-01-PLAN.md; next up is 13-02-PLAN.md
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 12 | 4 | — | — |
+| 13 | 2 | 17min | 8.5min |
 
 *Updated after each plan completion*
 | Phase 13 P01 | 12min | 2 tasks | 5 files |
+| Phase 13 P02 | 5min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -80,6 +85,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 12-background-runtime-contracts]: Shared `background_runtime.py` now owns capability probing, resolved-mode logging, and remediation text for background runs
 - [Phase 12-background-runtime-contracts]: `BackgroundRuntimeCoordinator` serializes overlapping background runs and surfaces busy metadata through the wrapper lease
 - [Phase 13]: Implemented CGVirtualDisplayManager with lazy macOS imports and patchable helper boundaries — Preserves Linux CI stability while adding a real macOS isolated-display seam
+- [Phase 13]: Added configure_target_display() to LocalDesktopBackend so observe() can follow DisplayInfo.monitor_index without touching action math — Separates surface selection from coordinate translation and keeps the existing desktop execution path stable
+- [Phase 13]: BackgroundDesktopBackend now injects and clears DisplayInfo metadata around inner lifecycle calls — Ensures macOS background monitor routing stays aligned across observe() and execute() and does not leak into later foreground runs
 
 ### Pending Todos
 
@@ -91,6 +98,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T15:18:20.003Z
-Stopped at: Completed 13-01-PLAN.md
-Resume file: .planning/phases/13-macos-background-execution/13-02-PLAN.md
+Last session: 2026-03-20T15:23:58.568Z
+Stopped at: Completed 13-02-PLAN.md
+Resume file: .planning/phases/13-macos-background-execution/13-03-PLAN.md
