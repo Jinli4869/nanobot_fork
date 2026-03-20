@@ -1406,6 +1406,31 @@ def test_run_cli_logs_windows_target_surface_metadata(
             return None
 
     class FakeWorkerProcess:
+        def __init__(self) -> None:
+            self.stdin = self._FakeStdin()
+            self.stdout = self._FakeStdout(['{"ok": true, "result": "shutdown"}\n'])
+            self.stderr = self._FakePipe()
+
+        class _FakePipe:
+            def close(self) -> None:
+                return None
+
+        class _FakeStdin(_FakePipe):
+            def write(self, data: str) -> None:
+                return None
+
+            def flush(self) -> None:
+                return None
+
+        class _FakeStdout(_FakePipe):
+            def __init__(self, responses: list[str]) -> None:
+                self._responses = responses
+
+            def readline(self) -> str:
+                if self._responses:
+                    return self._responses.pop(0)
+                return ""
+
         def terminate(self) -> None:
             return None
 
