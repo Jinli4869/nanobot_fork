@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -163,6 +163,18 @@ class GuiConfig(Base):
     max_steps: int = 15
     skill_threshold: float = 0.6
     embedding_model: str | None = None
+    background: bool = False
+    display_num: int | None = None
+    display_width: int = 1280
+    display_height: int = 720
+
+    @model_validator(mode="after")
+    def _validate_background_requires_local(self) -> "GuiConfig":
+        if self.background and self.backend != "local":
+            raise ValueError(
+                f"background mode requires backend='local', got backend={self.backend!r}"
+            )
+        return self
 
 
 class Config(BaseSettings):

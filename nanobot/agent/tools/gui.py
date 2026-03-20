@@ -79,10 +79,37 @@ class GuiSubagentTool(Tool):
         }
 
     async def execute(self, task: str, backend: str | None = None, **kwargs: Any) -> str:
+        active_backend = self._select_backend(backend)
+
+        if self._gui_config.background:
+            import sys
+
+            if sys.platform != "linux":
+                logger.warning(
+                    "GuiConfig.background=true but Xvfb is Linux-only; "
+                    "running in foreground on %s. Use Linux for background mode.",
+                    sys.platform,
+                )
+            else:
+                from opengui.backends.background import BackgroundDesktopBackend
+                from opengui.backends.displays.xvfb import XvfbDisplayManager
+
+                display_num = self._gui_config.display_num if self._gui_config.display_num is not None else 99
+                mgr = XvfbDisplayManager(
+                    display_num=display_num,
+                    width=self._gui_config.display_width,
+                    height=self._gui_config.display_height,
+                )
+                active_backend = BackgroundDesktopBackend(active_backend, mgr)
+                async with active_backend:
+                    return await self._run_task(active_backend, task, **kwargs)
+
+        return await self._run_task(active_backend, task, **kwargs)
+
+    async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         from opengui.agent import GuiAgent
         from opengui.trajectory.recorder import TrajectoryRecorder
 
-        active_backend = self._select_backend(backend)
         skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
