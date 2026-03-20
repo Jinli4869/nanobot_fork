@@ -29,7 +29,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 
 - ✓ **VDISP-01–04**: VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager, XvfbDisplayManager — Validated in Phase 9
 - ✓ **BGND-01–04**: BackgroundDesktopBackend decorator with lifecycle guards, DISPLAY management, coordinate offsets, idempotent shutdown — Validated in Phase 10
-- [ ] CLI --background flag and GuiConfig.background integration
+- ✓ **INTG-01–04, TEST-V11-01**: CLI --background flag, GuiConfig.background integration, full test suite — Validated in Phase 11
 - [ ] macOS CGVirtualDisplay implementation (deferred to v1.2)
 - [ ] Windows CreateDesktop implementation (deferred to v1.2)
 - [ ] Intervention detection and user handoff (deferred to v1.2)
@@ -60,6 +60,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 - **Reference projects**: KnowAct (skill lifecycle + memory layers), CUA-Skill (parameter grounding), Mobile-Agent-v3.5 (prompt patterns)
 - **Host agent**: nanobot is the primary integration target (layered agent-bus-channel architecture with tool registry)
 - **v1.0 complete**: All 8 phases shipped — core, tests, agent loop, subagent, desktop backend, CLI, wiring fixes, cleanup
+- **v1.1 complete**: All 3 phases shipped — virtual display protocol, background backend wrapper, integration & tests
 - **Background research**: Xvfb (Linux), CGVirtualDisplay (macOS 13+), CreateDesktop (Windows), ADB naturally background
 
 ## Constraints
@@ -87,4 +88,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 | Xvfb subprocess management | No Python deps; invoke Xvfb binary via asyncio.subprocess | — Pending |
 
 ---
-*Last updated: 2026-03-20 after Phase 10 (background-backend-wrapper) complete*
+*Last updated: 2026-03-20 after Phase 11 (integration-tests) complete — v1.1 milestone finished*
