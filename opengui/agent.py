@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import json
 import re
 import time
@@ -42,6 +43,9 @@ class StepResult:
     action_summary: str
     next_observation: Observation | None = None
     action_debug: dict[str, Any] | None = None
+    prompt_snapshot: dict[str, Any] | None = None
+    model_snapshot: dict[str, Any] | None = None
+    execution_snapshot: dict[str, Any] | None = None
     done: bool = False
 
 
@@ -62,6 +66,7 @@ class AgentResult:
 
     success: bool
     summary: str
+    model_summary: str | None = None
     trace_path: str | None = None
     steps_taken: int = 0
     error: str | None = None
@@ -218,6 +223,7 @@ class GuiAgent:
 
         # 5. Retry loop with free exploration
         last_error: str | None = None
+        last_model_summary: str | None = None
         last_trace_path: str | None = None
         last_steps_taken = 0
         result: AgentResult | None = None
@@ -225,23 +231,66 @@ class GuiAgent:
         for attempt in range(max_retries):
             run_dir = self._make_run_dir(task, attempt)
             last_trace_path = str(run_dir)
+            await self._log_attempt_event(
+                run_dir,
+                "attempt_start",
+                attempt=attempt,
+                max_retries=max_retries,
+                task=task,
+            )
             try:
                 result = await self._run_once(
                     task, app_hint=app_hint, run_dir=run_dir,
                     memory_context=memory_context,
                 )
+                await self._log_attempt_event(
+                    run_dir,
+                    "attempt_result",
+                    attempt=attempt,
+                    success=result.success,
+                    summary=result.summary,
+                    model_summary=result.model_summary,
+                    error=result.error,
+                    steps_taken=result.steps_taken,
+                    trace_path=result.trace_path,
+                )
                 if result.success:
                     break
                 last_error = result.error
+                last_model_summary = result.model_summary
                 last_trace_path = result.trace_path or last_trace_path
                 last_steps_taken = result.steps_taken
+                if attempt < max_retries - 1:
+                    await self._log_attempt_event(
+                        run_dir,
+                        "retry",
+                        attempt=attempt,
+                        next_attempt=attempt + 1,
+                        reason=result.error or result.summary,
+                    )
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
+                await self._log_attempt_event(
+                    run_dir,
+                    "attempt_exception",
+                    attempt=attempt,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                if attempt < max_retries - 1:
+                    await self._log_attempt_event(
+                        run_dir,
+                        "retry",
+                        attempt=attempt,
+                        next_attempt=attempt + 1,
+                        reason=last_error,
+                    )
 
         if result is None or not result.success:
             result = AgentResult(
                 success=False,
                 summary=f"Failed after {max_retries} attempt(s).",
+                model_summary=last_model_summary,
                 trace_path=last_trace_path,
                 steps_taken=last_steps_taken,
                 error=last_error,
@@ -298,11 +347,19 @@ class GuiAgent:
                 app_hint=app_hint,
                 memory_context=memory_context,
             )
+            prompt_snapshot = self._snapshot_step_prompt(
+                task=task,
+                step_index=step_index,
+                messages=messages,
+                current_observation=obs,
+                history=history,
+            )
 
             try:
                 result = await asyncio.wait_for(
                     self._run_step(
                         messages=messages,
+                        prompt_snapshot=prompt_snapshot,
                         step_index=step_index,
                         total_steps=self.max_steps,
                         current_observation=obs,
@@ -317,6 +374,7 @@ class GuiAgent:
                 return AgentResult(
                     success=False,
                     summary=f"Step {step_index} timed out.",
+                    model_summary=None,
                     trace_path=str(run_dir),
                     steps_taken=step_index,
                     error="step_timeout",
@@ -330,6 +388,9 @@ class GuiAgent:
                 "step_index": step_index,
                 "action": describe_action(result.action),
                 "action_debug": result.action_debug,
+                "prompt": result.prompt_snapshot,
+                "model_output": result.model_snapshot,
+                "execution": result.execution_snapshot,
                 "tool_result": result.tool_result,
                 "screenshot_path": (
                     result.next_observation.screenshot_path
@@ -341,17 +402,16 @@ class GuiAgent:
 
             # Record trajectory step
             self._trajectory_recorder.record_step(
-                action=(
-                    result.action.to_dict()
-                    if hasattr(result.action, "to_dict")
-                    else {"action_type": result.action.action_type}
-                ),
+                action=self._serialize_action(result.action),
                 model_output=result.action_summary,
                 screenshot_path=(
                     str(result.next_observation.screenshot_path)
                     if result.next_observation and result.next_observation.screenshot_path
                     else None
                 ),
+                prompt=result.prompt_snapshot,
+                model_response=result.model_snapshot,
+                execution=result.execution_snapshot,
             )
 
             if result.done:
@@ -360,6 +420,7 @@ class GuiAgent:
                     success=success,
                     summary=f"Task {'completed' if success else 'failed'} "
                             f"after {steps_taken} step(s).",
+                    model_summary=result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=None if success else result.tool_result,
@@ -385,6 +446,7 @@ class GuiAgent:
         return AgentResult(
             success=False,
             summary=f"Reached max steps ({self.max_steps}) without completion.",
+            model_summary=None,
             trace_path=str(run_dir),
             steps_taken=steps_taken,
             error="max_steps_exceeded",
@@ -397,6 +459,7 @@ class GuiAgent:
     async def _run_step(
         self,
         messages: list[dict[str, Any]],
+        prompt_snapshot: dict[str, Any] | None,
         step_index: int,
         total_steps: int,
         current_observation: Observation,
@@ -465,15 +528,29 @@ class GuiAgent:
                 response,
                 content_override=action_text,
             )
+            model_snapshot = self._snapshot_model_response(
+                response=response,
+                action=action,
+                assistant_message=assistant_message,
+                action_text=action_text,
+            )
 
             # Handle terminal action (done)
             if action.action_type == "done":
+                tool_result = f"Task terminated with status: {action.status or 'unknown'}"
                 return StepResult(
                     action=action,
                     tool_call_id=tool_call.id,
-                    tool_result=f"Task terminated with status: {action.status or 'unknown'}",
+                    tool_result=tool_result,
                     assistant_message=assistant_message,
                     action_summary=self._action_summary(action_text),
+                    prompt_snapshot=prompt_snapshot,
+                    model_snapshot=model_snapshot,
+                    execution_snapshot={
+                        "tool_result": tool_result,
+                        "next_observation": None,
+                        "done": True,
+                    },
                     done=True,
                 )
 
@@ -501,6 +578,13 @@ class GuiAgent:
                 assistant_message=assistant_message,
                 action_summary=self._action_summary(action_text),
                 next_observation=next_observation,
+                prompt_snapshot=prompt_snapshot,
+                model_snapshot=model_snapshot,
+                execution_snapshot={
+                    "tool_result": result_text,
+                    "next_observation": self._serialize_observation(next_observation),
+                    "done": False,
+                },
             )
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
@@ -702,6 +786,55 @@ class GuiAgent:
 
         return msg
 
+    def _snapshot_step_prompt(
+        self,
+        *,
+        task: str,
+        step_index: int,
+        messages: list[dict[str, Any]],
+        current_observation: Observation,
+        history: list[HistoryTurn],
+    ) -> dict[str, Any]:
+        return {
+            "task": task,
+            "step_index": step_index,
+            "messages": self._scrub_for_log(messages),
+            "history": [
+                {
+                    "step_index": turn.step_index,
+                    "action_summary": turn.action_summary,
+                    "observation": self._serialize_observation(turn.observation),
+                    "tool_result": turn.tool_result_message.get("content"),
+                }
+                for turn in history
+            ],
+            "current_observation": self._serialize_observation(current_observation),
+        }
+
+    def _snapshot_model_response(
+        self,
+        *,
+        response: LLMResponse,
+        action: Action,
+        assistant_message: dict[str, Any],
+        action_text: str,
+    ) -> dict[str, Any]:
+        return {
+            "raw_content": response.content,
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": self._scrub_for_log(tool_call.arguments),
+                }
+                for tool_call in (response.tool_calls or [])
+            ],
+            "assistant_message": self._scrub_for_log(assistant_message),
+            "parsed_action": self._serialize_action(action),
+            "action_text": action_text,
+            "action_summary": self._action_summary(action_text),
+        }
+
     @staticmethod
     def _normalize_action_text(content: str, action: Action) -> str:
         text = content.strip() if content else ""
@@ -728,6 +861,42 @@ class GuiAgent:
             "image_url": {"url": f"data:image/png;base64,{b64}"},
         }
 
+    @staticmethod
+    def _serialize_action(action: Action) -> dict[str, Any]:
+        payload = dataclasses.asdict(action)
+        return {
+            key: value
+            for key, value in payload.items()
+            if value is not None and not (key == "relative" and value is False)
+        }
+
+    @staticmethod
+    def _serialize_observation(observation: Observation | None) -> dict[str, Any] | None:
+        if observation is None:
+            return None
+        return {
+            "screenshot_path": observation.screenshot_path,
+            "screen_width": observation.screen_width,
+            "screen_height": observation.screen_height,
+            "foreground_app": observation.foreground_app,
+            "platform": observation.platform,
+            "extra": GuiAgent._scrub_for_log(observation.extra),
+        }
+
+    @staticmethod
+    def _scrub_for_log(value: Any) -> Any:
+        if isinstance(value, dict):
+            scrubbed: dict[str, Any] = {}
+            for key, item in value.items():
+                if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
+                    scrubbed[key] = "<omitted:image-data-url>"
+                else:
+                    scrubbed[key] = GuiAgent._scrub_for_log(item)
+            return scrubbed
+        if isinstance(value, list):
+            return [GuiAgent._scrub_for_log(item) for item in value]
+        return value
+
     # ------------------------------------------------------------------
     # Run directory and trace
     # ------------------------------------------------------------------
@@ -748,6 +917,19 @@ class GuiAgent:
         line = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
+
+    async def _log_attempt_event(
+        self,
+        run_dir: Path,
+        event: str,
+        **payload: Any,
+    ) -> None:
+        await self._write_trace(run_dir / "trace.jsonl", {
+            "event": event,
+            "timestamp": time.time(),
+            **payload,
+        })
+        self._trajectory_recorder.record_event(event, **payload)
 
     # ------------------------------------------------------------------
     # Memory / skill / trajectory helpers

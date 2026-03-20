@@ -105,6 +105,36 @@ def test_trajectory_recorder_set_phase(tmp_path: Path) -> None:
     )
 
 
+def test_trajectory_recorder_step_details_are_persisted(tmp_path: Path) -> None:
+    """record_step() should persist prompt, model response, and execution details."""
+    rec = TrajectoryRecorder(output_dir=tmp_path, task="search video", platform="android")
+    path = rec.start()
+
+    rec.record_step(
+        action={"action_type": "input_text", "text": "we are the world"},
+        model_output="输入搜索词",
+        prompt={
+            "task": "search video",
+            "step_index": 2,
+            "messages": [{"role": "system", "content": "prompt body"}],
+        },
+        model_response={
+            "raw_content": "Action: type text",
+            "tool_calls": [{"name": "computer_use", "arguments": {"action_type": "input_text"}}],
+        },
+        execution={"tool_result": "type text", "done": False},
+    )
+    rec.finish(success=True)
+
+    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+    step_event = next(event for event in events if event["type"] == "step")
+
+    assert step_event["prompt"]["task"] == "search video"
+    assert step_event["prompt"]["messages"][0]["role"] == "system"
+    assert step_event["model_response"]["tool_calls"][0]["arguments"]["action_type"] == "input_text"
+    assert step_event["execution"]["tool_result"] == "type text"
+
+
 def test_trajectory_recorder_not_started_raises(tmp_path: Path) -> None:
     """Calling record_step() before start() raises RuntimeError."""
     rec = TrajectoryRecorder(output_dir=tmp_path, task="test", platform="android")

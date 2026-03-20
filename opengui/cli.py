@@ -360,6 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         result = AgentResult(
             success=False,
             summary="CLI execution failed.",
+            model_summary=None,
             trace_path=None,
             steps_taken=0,
             error=f"{type(exc).__name__}: {exc}",
@@ -373,8 +374,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _print_human_result(result: AgentResult) -> None:
+    print(f"status: {'success' if result.success else 'failure'}")
     print(f"success: {'true' if result.success else 'false'}")
     print(f"summary: {result.summary}")
+    if result.model_summary is not None:
+        print(f"model_summary: {result.model_summary}")
     print(f"trace_path: {result.trace_path}")
     print(f"steps_taken: {result.steps_taken}")
     if result.error is not None:

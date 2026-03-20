@@ -172,6 +172,7 @@ def test_cli_runs_dry_run_agent_loop(
             return AgentResult(
                 success=True,
                 summary=f"Completed {task}",
+                model_summary="Opened app and confirmed final state.",
                 trace_path="trace.jsonl",
                 steps_taken=2,
                 error=None,
@@ -192,8 +193,10 @@ def test_cli_runs_dry_run_agent_loop(
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "GUI step 1/15: inspect screen" in captured.out
+    assert "status: success" in captured.out
     assert "success: true" in captured.out
     assert "summary: Completed Open Settings" in captured.out
+    assert "model_summary: Opened app and confirmed final state." in captured.out
     assert "trace_path: trace.jsonl" in captured.out
     assert "steps_taken: 2" in captured.out
     assert recorder_state["task"] == "Open Settings"
@@ -240,6 +243,7 @@ def test_cli_json_output(
             return AgentResult(
                 success=True,
                 summary=f"Completed {task}",
+                model_summary="Opened app and confirmed final state.",
                 trace_path="trace.jsonl",
                 steps_taken=3,
                 error=None,
@@ -263,11 +267,30 @@ def test_cli_json_output(
     assert payload == {
         "success": True,
         "summary": "Completed Open Settings",
+        "model_summary": "Opened app and confirmed final state.",
         "trace_path": "trace.jsonl",
         "steps_taken": 3,
         "error": None,
     }
     assert "GUI step 1/15: inspect screen" not in captured.out
+
+
+def test_cli_main_catches_runtime_exception_and_prints_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import opengui.cli as cli
+
+    monkeypatch.setattr(cli, "run_cli", lambda args: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    exit_code = cli.main(["--dry-run", "--task", "Open Settings"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "status: failure" in captured.out
+    assert "success: false" in captured.out
+    assert "summary: CLI execution failed." in captured.out
+    assert "error: RuntimeError: boom" in captured.out
 
 
 def test_package_main_delegates_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:

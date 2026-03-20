@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import tomllib
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -133,6 +134,61 @@ def test_agent_keeps_absolute_coordinates_for_other_models(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: wait briefly",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[ToolCall(
+                id="call-2",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "Open Settings"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Open Settings", max_retries=1)
+
+    assert result.success
+    assert result.trace_path is not None
+
+    trace_path = Path(result.trace_path) / "trace.jsonl"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    step_event = next(event for event in events if event["event"] == "step")
+
+    assert step_event["prompt"]["task"] == "Open Settings"
+    assert step_event["prompt"]["messages"][0]["role"] == "system"
+    assert step_event["prompt"]["current_observation"]["foreground_app"] == "DryRun"
+    assert step_event["model_output"]["raw_content"] == "Action: wait briefly"
+    assert step_event["model_output"]["tool_calls"][0]["arguments"]["duration_ms"] == 1
+    assert step_event["model_output"]["parsed_action"]["action_type"] == "wait"
+    assert step_event["execution"]["tool_result"] == "[dry-run] wait 1 ms"
+    image_blocks = [
+        block
+        for message in step_event["prompt"]["messages"]
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "image_url"
+    ]
+    assert image_blocks
+    assert image_blocks[0]["image_url"]["url"] == "<omitted:image-data-url>"
+
+
+@pytest.mark.asyncio
 async def test_adb_backend_scrolls_horizontally_from_center(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -180,6 +236,48 @@ async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:
     assert result.steps_taken == 1
     assert result.trace_path is not None
     assert Path(result.trace_path).exists()
+
+
+@pytest.mark.asyncio
+async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) -> None:
+    class _FlakyLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("provider exploded")
+            return LLMResponse(
+                content="Action: done",
+                tool_calls=[ToolCall(
+                    id="call-2",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            )
+
+    recorder = _make_recorder(tmp_path, "retry task")
+    agent = GuiAgent(
+        _FlakyLLM(),
+        DryRunBackend(),
+        trajectory_recorder=recorder,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+    )
+
+    result = await agent.run("retry task", max_retries=2)
+
+    assert result.success
+    assert recorder.path is not None
+    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
+    types = [event["type"] for event in events]
+    assert "attempt_start" in types
+    assert "attempt_exception" in types
+    assert "retry" in types
+    attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
+    assert attempt_exception["error_type"] == "RuntimeError"
+    assert attempt_exception["error_message"] == "provider exploded"
 
 
 @pytest.mark.asyncio
