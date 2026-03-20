@@ -156,7 +156,7 @@ Plans:
 
 - [x] **Phase 9: Virtual Display Protocol** - Define VirtualDisplayManager protocol, DisplayInfo dataclass, NoOp and Xvfb implementations (completed 2026-03-20)
 - [x] **Phase 10: Background Backend Wrapper** - BackgroundDesktopBackend decorator that injects DISPLAY, applies coordinate offsets, and manages display lifecycle (completed 2026-03-20)
-- [ ] **Phase 11: Integration & Tests** - Wire --background flag into CLI and nanobot GuiConfig, plus full CI-safe test suite with mocked subprocess
+- [x] **Phase 11: Integration & Tests** - Wire --background flag into CLI and nanobot GuiConfig, plus full CI-safe test suite with mocked subprocess (completed 2026-03-20)
 
 ### Phase 9: Virtual Display Protocol
 **Goal**: The codebase has a well-defined, testable abstraction for virtual displays — with a no-op implementation for Android/tests and a working Xvfb implementation for Linux CI and production
@@ -225,4 +225,4 @@ v1.1: 9 → 10 → 11
 | 8. Dead Export Cleanup | v1.0 | 3/3 | Complete | 2026-03-19 |
 | 9. Virtual Display Protocol | v1.1 | 3/3 | Complete | 2026-03-20 |
 | 10. Background Backend Wrapper | 2/2 | Complete    | 2026-03-20 | - |
-| 11. Integration & Tests | 1/2 | In Progress|  | - |
+| 11. Integration & Tests | 2/2 | Complete   | 2026-03-20 | - |

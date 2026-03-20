@@ -86,9 +86,9 @@ Requirements for milestone v1.1: Background Execution.
 
 ### Integration
 
-- [ ] **INTG-01**: CLI --background flag with display_num, width, height config
+- [x] **INTG-01**: CLI --background flag with display_num, width, height config
 - [x] **INTG-02**: GuiConfig.background fields in nanobot config schema
-- [ ] **INTG-03**: build_backend wraps LocalDesktopBackend when background=true (CLI)
+- [x] **INTG-03**: build_backend wraps LocalDesktopBackend when background=true (CLI)
 - [x] **INTG-04**: _build_backend wraps LocalDesktopBackend when background=true (nanobot)
 
 ### Testing
@@ -149,9 +149,9 @@ Requirements for milestone v1.1: Background Execution.
 | BGND-02 | Phase 10 | Complete |
 | BGND-03 | Phase 10 | Complete |
 | BGND-04 | Phase 10 | Complete |
-| INTG-01 | Phase 11 | Pending |
+| INTG-01 | Phase 11 | Complete |
 | INTG-02 | Phase 11 | Complete |
-| INTG-03 | Phase 11 | Pending |
+| INTG-03 | Phase 11 | Complete |
 | INTG-04 | Phase 11 | Complete |
 | TEST-V11-01 | Phase 11 | Complete |
 
