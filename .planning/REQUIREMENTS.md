@@ -87,13 +87,13 @@ Requirements for milestone v1.1: Background Execution.
 ### Integration
 
 - [ ] **INTG-01**: CLI --background flag with display_num, width, height config
-- [ ] **INTG-02**: GuiConfig.background fields in nanobot config schema
+- [x] **INTG-02**: GuiConfig.background fields in nanobot config schema
 - [ ] **INTG-03**: build_backend wraps LocalDesktopBackend when background=true (CLI)
-- [ ] **INTG-04**: _build_backend wraps LocalDesktopBackend when background=true (nanobot)
+- [x] **INTG-04**: _build_backend wraps LocalDesktopBackend when background=true (nanobot)
 
 ### Testing
 
-- [ ] **TEST-V11-01**: Full test suite with mocked subprocess (no real Xvfb in CI)
+- [x] **TEST-V11-01**: Full test suite with mocked subprocess (no real Xvfb in CI)
 
 ## v2 Requirements
 
@@ -150,10 +150,10 @@ Requirements for milestone v1.1: Background Execution.
 | BGND-03 | Phase 10 | Complete |
 | BGND-04 | Phase 10 | Complete |
 | INTG-01 | Phase 11 | Pending |
-| INTG-02 | Phase 11 | Pending |
+| INTG-02 | Phase 11 | Complete |
 | INTG-03 | Phase 11 | Pending |
-| INTG-04 | Phase 11 | Pending |
-| TEST-V11-01 | Phase 11 | Pending |
+| INTG-04 | Phase 11 | Complete |
+| TEST-V11-01 | Phase 11 | Complete |
 
 **v1 Coverage:**
 - v1 requirements: 28 total

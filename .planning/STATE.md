@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Background Execution
-status: unknown
-stopped_at: Phase 11 context gathered
-last_updated: "2026-03-20T10:50:07.533Z"
+status: executing
+stopped_at: "Completed Phase 11 Plan 02 (11-02-PLAN.md)"
+last_updated: "2026-03-20T11:14:00.000Z"
 progress:
   total_phases: 3
   completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  total_plans: 7
+  completed_plans: 6
 ---
 
 # Project State
@@ -19,12 +19,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 10 — background-backend-wrapper
+**Current focus:** Phase 11 — integration-tests
 
 ## Current Position
 
-Phase: 10 (background-backend-wrapper) — EXECUTING
-Plan: 1 of 2
+Phase: 11 (integration-tests) — EXECUTING
+Plan: 2 of 2 (COMPLETE)
 
 ## Performance Metrics
 
@@ -46,6 +46,7 @@ Plan: 1 of 2
 | Phase 09-virtual-display-protocol P02 | 5min | 2 tasks | 3 files |
 | Phase 10-background-backend-wrapper P01 | 229s | 1 tasks | 1 files |
 | Phase 10-background-backend-wrapper P02 | 3min | 1 tasks | 1 files |
+| Phase 11-integration-tests P02 | 155s | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -68,6 +69,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 10-background-backend-wrapper]: _SENTINEL: object = object() with explicit type annotation used for DISPLAY env save/restore state tracking
 - [Phase 10-background-backend-wrapper]: DeviceBackend imported under TYPE_CHECKING only — eliminates type:ignore[union-attr] without circular import risk
 - [Phase 10-background-backend-wrapper]: shutdown() catches Exception broadly for best-effort cleanup — unknown Xvfb crash exceptions suppressed, _stopped=True always set
+- [Phase 11-integration-tests P02]: GuiConfig.background=True raises ValidationError for non-local backends at config load time via model_validator
+- [Phase 11-integration-tests P02]: execute() extracts _run_task() helper to avoid duplicating 20+ lines across wrapped and unwrapped paths
+- [Phase 11-integration-tests P02]: BackgroundDesktopBackend and XvfbDisplayManager imported lazily inside execute() — avoids import-time cost on non-Linux
+- [Phase 11-integration-tests P02]: Non-Linux fallback runs task in foreground with WARNING log containing 'Linux-only' — no exception raised
 
 ### Pending Todos
 
@@ -79,6 +84,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T10:50:07.526Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-integration-tests/11-CONTEXT.md
+Last session: 2026-03-20T11:14:00.000Z
+Stopped at: Completed Phase 11 Plan 02 (11-02-PLAN.md)
+Resume file: .planning/phases/11-integration-tests/11-02-SUMMARY.md
