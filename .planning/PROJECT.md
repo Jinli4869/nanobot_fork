@@ -18,16 +18,22 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 - ✓ **CORE-04**: DryRun backend for testing — P0
 - ✓ **CORE-05**: GuiAgent vision-action loop with Mobile-Agent-style prompting — P0
 - ✓ **CORE-06**: History window with sliding image context + text summaries for older steps — P0
+- ✓ **P1-01**: Memory (FAISS+BM25), skills (library+extractor+executor), trajectory (recorder+summarizer) — v1.0
+- ✓ **P1-02**: Agent loop integration with memory/skills/trajectory — v1.0
+- ✓ **P1-03**: Nanobot subagent (GuiSubagentTool + adapters) — v1.0
+- ✓ **P1-04**: Desktop backend (pyautogui + pyperclip for macOS/Linux/Windows) — v1.0
+- ✓ **P1-05**: Standalone CLI entry point — v1.0
+- ✓ **P1-06**: Integration wiring, dead export cleanup — v1.0
 
 ### Active
 
-- [ ] P1 modules: memory (FAISS+BM25), skills (library+extractor+executor with valid_state), trajectory (recorder+summarizer)
-- [ ] P1 unit test coverage for all new modules
-- [ ] Agent loop integration: wire memory/skills/trajectory into GuiAgent.run()
-- [ ] Nanobot subagent: GuiSubagentTool + LLM adapter
-- [ ] Desktop backend: pyautogui + pyperclip for macOS/Linux/Windows
-- [ ] Standalone CLI entry point
-- [ ] Other claw adapters (openclaw, nanoclaw, zeroclaw)
+- [ ] Background GUI execution: VirtualDisplayManager protocol + platform implementations
+- [ ] Linux Xvfb virtual display manager
+- [ ] BackgroundDesktopBackend decorator wrapping any DeviceBackend
+- [ ] CLI --background flag and GuiConfig.background integration
+- [ ] macOS CGVirtualDisplay implementation (deferred to v1.2)
+- [ ] Windows CreateDesktop implementation (deferred to v1.2)
+- [ ] Intervention detection and user handoff (deferred to v1.2)
 
 ### Out of Scope
 
@@ -38,13 +44,24 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 - SQLite storage — JSON files sufficient for current scale
 - Multi-stage vision grounding (UITARS/Phi-V) — single LLM approach for now
 
+## Current Milestone: v1.1 Background Execution
+
+**Goal:** Enable GUI automation to run in the background on a virtual display, freeing the user's screen.
+
+**Target features:**
+- VirtualDisplayManager protocol with DisplayInfo data type
+- Linux Xvfb implementation (production-ready, CI-testable)
+- BackgroundDesktopBackend decorator pattern (wraps any DeviceBackend)
+- CLI `--background` flag and nanobot GuiConfig.background integration
+- Full test suite with mocked subprocess (no real Xvfb needed in CI)
+
 ## Context
 
-- **Brownfield**: opengui/ already exists with P0 (core) and P1 (memory/skills/trajectory) code
+- **Brownfield**: opengui/ has complete P0+P1 code with 29+ passing tests
 - **Reference projects**: KnowAct (skill lifecycle + memory layers), CUA-Skill (parameter grounding), Mobile-Agent-v3.5 (prompt patterns)
 - **Host agent**: nanobot is the primary integration target (layered agent-bus-channel architecture with tool registry)
-- **P0 verified**: MockLLM → GuiAgent → DryRunBackend → trace.jsonl passes end-to-end
-- **8 existing tests** pass; P1 modules need dedicated test coverage before integration
+- **v1.0 complete**: All 8 phases shipped — core, tests, agent loop, subagent, desktop backend, CLI, wiring fixes, cleanup
+- **Background research**: Xvfb (Linux), CGVirtualDisplay (macOS 13+), CreateDesktop (Windows), ADB naturally background
 
 ## Constraints
 
@@ -67,5 +84,8 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously �
 | EmbeddingProvider as protocol | Pluggable: qwen3-vl-embedding or any future provider | — Pending |
 | KnowAct-style valid_state per step | LLM-based screen verification before each skill step | — Pending |
 
+| Decorator pattern for BackgroundDesktopBackend | Thin wrapper + DISPLAY env var; zero coordinate offset for Xvfb | — Pending |
+| Xvfb subprocess management | No Python deps; invoke Xvfb binary via asyncio.subprocess | — Pending |
+
 ---
-*Last updated: 2026-03-17 after project initialization*
+*Last updated: 2026-03-20 after milestone v1.1 start*
