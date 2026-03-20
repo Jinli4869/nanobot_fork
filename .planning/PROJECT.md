@@ -16,12 +16,14 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Verification state:** Full regression suite passes at milestone close (`678 passed`)
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
 
-## Next Milestone Goals
+## Current Milestone: v1.2 Cross-Platform Background Execution
 
-- macOS background execution via CGVirtualDisplay
-- Windows background execution via CreateDesktop or equivalent desktop session isolation
-- User-intervention detection and clean foreground handoff during background execution
-- Refresh milestone-scoped requirements and roadmap before resuming implementation
+**Goal:** Extend background execution beyond Linux so host agents can run desktop automation off-screen on macOS and Windows, then hand control to the user safely when automation reaches sensitive or blocked states.
+
+**Target features:**
+- macOS background execution via `CGVirtualDisplay` or an equivalent supported virtual-display path
+- Windows background execution via `CreateDesktop` or equivalent desktop session isolation
+- User-intervention detection and clean foreground handoff during background runs
 
 ## Requirements
 
@@ -63,7 +65,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Brownfield status:** The codebase now includes shipped P0, v1.0, and v1.1 functionality.
 - **Host integration:** nanobot remains the primary host-agent target.
 - **Testing posture:** Background execution paths are designed to be CI-safe by mocking subprocess boundaries instead of requiring real Xvfb.
-- **Deferred platform work:** Linux is production-ready for background execution; macOS and Windows remain milestone candidates.
+- **Deferred platform work:** Linux is production-ready for background execution; v1.2 is intended to close the remaining macOS and Windows platform gap.
 
 ## Key Decisions
 
@@ -87,4 +89,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Memory and skill persistence remain file-backed JSON/markdown stores for now.
 
 ---
-*Last updated: 2026-03-20 after v1.1 milestone completion*
+*Last updated: 2026-03-20 after v1.2 milestone initialization*
