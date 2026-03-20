@@ -1193,6 +1193,71 @@ def test_run_cli_uses_windows_isolated_desktop_backend_for_windows_isolated_mode
     assert agent_backend_ref == [wrapped_backend_ref[0]]
 
 
+def test_run_cli_passes_target_app_class_to_windows_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    inner_backend = _FakeBackend(platform="windows")
+    probe_calls: list[dict[str, Any]] = []
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    async def fake_execute_agent(
+        args: Any,
+        loaded_config: Any,
+        backend: Any,
+        provider: Any,
+        task: str,
+    ) -> AgentResult:
+        assert backend is inner_backend
+        assert loaded_config is config
+        assert task == "Open Settings"
+        return AgentResult(
+            success=True,
+            summary="done",
+            model_summary=None,
+            trace_path=None,
+            steps_taken=1,
+            error=None,
+        )
+
+    def fake_probe(**kwargs: Any) -> runtime.IsolationProbeResult:
+        probe_calls.append(kwargs)
+        return runtime.IsolationProbeResult(
+            supported=False,
+            reason_code="platform_unsupported",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        )
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
+    monkeypatch.setattr(cli, "_execute_agent", fake_execute_agent)
+    monkeypatch.setattr(cli, "probe_isolated_background_support", fake_probe)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    asyncio.run(cli.run_cli(cli.parse_args(["--background", "--target-app-class", "uwp", "--task", "Open Settings"])))
+    asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
+
+    assert probe_calls[0] == {"sys_platform": "win32", "target_app_class": "uwp"}
+    assert probe_calls[1] == {"sys_platform": "win32", "target_app_class": "classic-win32"}
+
+
 def test_run_cli_warns_for_windows_unsupported_app_class_before_agent_start() -> None:
     from opengui.agent import AgentResult
     import opengui.cli as cli
