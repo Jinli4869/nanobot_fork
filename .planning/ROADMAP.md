@@ -50,12 +50,12 @@ Plans:
 
 **Depends on:** Phase 17
 **Requirements:** CHAT-01, CHAT-02, CHAT-03
-**Plans:** 2/3 plans complete
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 18-01-PLAN.md — Reuse nanobot session state through chat-focused FastAPI endpoints
 - [x] 18-02-PLAN.md — Add streaming transport for assistant output and progress events
-- [ ] 18-03-PLAN.md — Verify reconnect and session recovery behavior
+- [x] 18-03-PLAN.md — Verify reconnect and session recovery behavior
 
 **Success criteria:**
 1. A browser user can start a new chat session and continue it without touching the terminal.
@@ -124,4 +124,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 18 chat workspace plan 02*
+*Last updated: 2026-03-21 after executing Phase 18 chat workspace plan 03*
