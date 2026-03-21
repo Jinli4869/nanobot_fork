@@ -477,3 +477,34 @@ async def test_windows_isolated_backend_shutdown_closes_worker_before_desktop(
     assert "cleanup_reason=cancelled" in caplog.text
     assert startup_failed_events.count("display_stop") == 1
     assert cancelled_events.count("display_stop") == 1
+
+
+@pytest.mark.asyncio
+async def test_windows_isolated_backend_exposes_handoff_target_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    windows_isolated = _load_windows_isolated_module()
+    display_info = _make_windows_display_info()
+    manager = _make_windows_manager(display_info)
+    inner = _make_windows_inner()
+    backend = windows_isolated.WindowsIsolatedBackend(inner, manager)
+
+    monkeypatch.setattr(
+        backend,
+        "_start_worker_session",
+        AsyncMock(side_effect=lambda target_display: setattr(backend, "_worker_process", object())),
+    )
+    monkeypatch.setattr(backend, "_shutdown_worker_session", AsyncMock())
+    monkeypatch.setattr(backend._display_manager, "stop", AsyncMock())
+
+    try:
+        await backend.preflight()
+        assert backend.get_intervention_target() == {
+            "display_id": "windows_isolated_desktop:OpenGUI-Background-1",
+            "desktop_name": "OpenGUI-Background-1",
+            "width": 1280,
+            "height": 720,
+            "platform": "windows",
+        }
+    finally:
+        await backend.shutdown()

@@ -100,6 +100,70 @@ def _make_gui_tool(background: bool = False, **config_kwargs: Any) -> Any:
     return tool
 
 
+class _ScriptedNanobotProvider:
+    def __init__(self, responses: list[Any]) -> None:
+        self._responses = list(responses)
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Any = None,
+        tool_choice: Any = None,
+    ) -> Any:
+        del messages, tools, tool_choice
+        if not self._responses:
+            raise AssertionError("No scripted nanobot responses left.")
+        return self._responses.pop(0)
+
+
+class _InterventionBackend:
+    platform = "linux"
+
+    def __init__(self) -> None:
+        from opengui.observation import Observation
+
+        self._Observation = Observation
+        self.preflight = AsyncMock()
+        self.execute = AsyncMock(return_value="execute should not run")
+        self.list_apps = AsyncMock(return_value=[])
+        self._observations = [
+            {
+                "foreground_app": "Payroll Login",
+                "extra": {"display_id": ":88", "session_token": "secret-session-token"},
+            },
+            {
+                "foreground_app": "Payroll Home",
+                "extra": {"display_id": ":88"},
+            },
+        ]
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Any:
+        del timeout
+        if not self._observations:
+            raise AssertionError("No scripted observations left.")
+        payload = self._observations.pop(0)
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"png")
+        return self._Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1280,
+            screen_height=720,
+            foreground_app=payload["foreground_app"],
+            platform=self.platform,
+            extra=payload["extra"],
+        )
+
+    def get_intervention_target(self) -> dict[str, Any]:
+        return {
+            "display_id": ":88",
+            "monitor_index": 1,
+            "width": 1280,
+            "height": 720,
+            "platform": "linux",
+            "session_token": "secret-session-token",
+        }
+
+
 @pytest.mark.asyncio
 async def test_gui_tool_execute_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> None:
     """On Linux, execute() with gui_config.background=True wraps backend in BackgroundDesktopBackend."""
@@ -611,3 +675,110 @@ async def test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload(
     assert payload["success"] is False
     assert "cleanup_reason=startup_failed" in payload["summary"]
     assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in payload["summary"]
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_intervention_flow_returns_structured_resume_result(
+    tmp_path: Path,
+) -> None:
+    from opengui.interfaces import InterventionResolution, LLMResponse, ToolCall
+
+    tool = _make_gui_tool(background=False)
+    tool._workspace = tmp_path
+    tool._backend = _InterventionBackend()
+    tool._llm_adapter = _ScriptedNanobotProvider(
+        [
+            LLMResponse(
+                content="request intervention",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "request_intervention",
+                            "text": "Need the user to enter OTP 123456 for the payroll login.",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="done",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
+
+    class _ResumeHandler:
+        async def request_intervention(self, request: Any) -> InterventionResolution:
+            assert request.target["display_id"] == ":88"
+            return InterventionResolution(resume_confirmed=True, note="operator resumed")
+
+    with (
+        patch.object(type(tool), "_build_intervention_handler", return_value=_ResumeHandler(), create=True),
+        patch.object(type(tool), "_summarize_trajectory", new=AsyncMock(return_value="")),
+        patch.object(type(tool), "_extract_skill", new=AsyncMock()),
+    ):
+        payload = json.loads(await tool.execute("Handle payroll login"))
+
+    assert payload["success"] is True
+    assert payload["summary"] == "Task completed after 2 step(s)."
+    assert payload["error"] is None
+    assert payload["steps_taken"] == 2
+    assert payload["trace_path"] is not None
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_intervention_trace_payload_is_scrubbed(
+    tmp_path: Path,
+) -> None:
+    from opengui.interfaces import InterventionResolution, LLMResponse, ToolCall
+
+    reason = "Need the user to enter OTP 123456 for the payroll login."
+    note = "operator typed password=Sup3rSecret and otp=123456"
+    tool = _make_gui_tool(background=False)
+    tool._workspace = tmp_path
+    tool._backend = _InterventionBackend()
+    tool._llm_adapter = _ScriptedNanobotProvider(
+        [
+            LLMResponse(
+                content="request intervention",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "request_intervention", "text": reason},
+                    )
+                ],
+            )
+        ]
+    )
+
+    class _CancelHandler:
+        async def request_intervention(self, request: Any) -> InterventionResolution:
+            assert request.target["session_token"] == "secret-session-token"
+            return InterventionResolution(resume_confirmed=False, note=note)
+
+    with (
+        patch.object(type(tool), "_build_intervention_handler", return_value=_CancelHandler(), create=True),
+        patch.object(type(tool), "_summarize_trajectory", new=AsyncMock(return_value="")),
+        patch.object(type(tool), "_extract_skill", new=AsyncMock()),
+    ):
+        payload = json.loads(await tool.execute("Handle payroll login"))
+
+    trace_text = Path(payload["trace_path"]).read_text(encoding="utf-8")
+    serialized_payload = json.dumps(payload)
+
+    assert payload["success"] is False
+    assert "intervention_cancelled" in payload["error"]
+    assert reason not in serialized_payload
+    assert note not in serialized_payload
+    assert "secret-session-token" not in serialized_payload
+    assert "<redacted:intervention_reason>" in trace_text
+    assert reason not in trace_text
+    assert "secret-session-token" not in trace_text
