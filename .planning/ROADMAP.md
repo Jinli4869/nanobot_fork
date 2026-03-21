@@ -69,11 +69,11 @@ Plans:
 
 **Depends on:** Phases 17-18
 **Requirements:** OPS-01, OPS-02, OPS-03
-**Plans:** 1/3 plans complete
+**Plans:** 2/3 plans complete
 
 Plans:
 - [x] 19-01-PLAN.md — Define status and inspection endpoints for sessions, runs, and recent failures
-- [ ] 19-02-PLAN.md — Add web-triggerable task launch flows for supported nanobot and OpenGUI actions
+- [x] 19-02-PLAN.md — Add web-triggerable task launch flows for supported nanobot and OpenGUI actions
 - [ ] 19-03-PLAN.md — Expose structured traces and logs with regression-safe filtering
 
 **Success criteria:**
@@ -124,4 +124,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 19 operations console plan 01*
+*Last updated: 2026-03-21 after executing Phase 19 operations console plan 02*
