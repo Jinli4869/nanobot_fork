@@ -21,7 +21,7 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 ### Operations Console
 
 - [x] **OPS-01**: User can inspect runtime status for sessions, background GUI runs, and recent failures from the web UI
-- [ ] **OPS-02**: User can launch supported nanobot or OpenGUI tasks from the web UI with explicit task parameters
+- [x] **OPS-02**: User can launch supported nanobot or OpenGUI tasks from the web UI with explicit task parameters
 - [ ] **OPS-03**: User can inspect structured logs or event traces for web-triggered runs without dropping to the terminal
 
 ### Isolation and Delivery
@@ -61,7 +61,7 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 | CHAT-02 | Phase 18 | Complete |
 | CHAT-03 | Phase 18 | Complete |
 | OPS-01 | Phase 19 | Complete |
-| OPS-02 | Phase 19 | Pending |
+| OPS-02 | Phase 19 | Complete |
 | OPS-03 | Phase 19 | Pending |
 | WEB-01 | Phase 20 | Pending |
 | WEB-02 | Phase 20 | Pending |
@@ -74,4 +74,4 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 
 ---
 *Requirements defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 19 operations console plan 01*
+*Last updated: 2026-03-21 after executing Phase 19 operations console plan 02*

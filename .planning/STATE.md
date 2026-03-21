@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: unknown
-stopped_at: Completed 19-01-PLAN.md
-last_updated: "2026-03-21T14:37:06.033Z"
+status: executing
+stopped_at: Completed 19-02-PLAN.md
+last_updated: "2026-03-21T14:49:43.947Z"
 progress:
   total_phases: 4
   completed_phases: 2
   total_plans: 8
-  completed_plans: 6
-  percent: 75
+  completed_plans: 7
+  percent: 88
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-03-21)
 ## Current Position
 
 Phase: 19 (operations-console) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 
 ## Performance Metrics
 
-**Progress:** [████████░░] 75%
+**Progress:** [█████████░] 88%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -39,12 +39,13 @@ Plan: 2 of 3
 | 18-02 | 10 min | 2 | 10 |
 | 18-03 | 6 min | 2 | 5 |
 | 19-01 | 8 min | 2 | 9 |
+| 19-02 | 11 min | 2 | 7 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 6
-- Average duration: 28 min
-- Total execution time: 166 min
+- Total plans completed (v1.3): 7
+- Average duration: 25 min
+- Total execution time: 177 min
 
 **By Phase:**
 
@@ -52,7 +53,7 @@ Plan: 2 of 3
 |-------|-------|-------|----------|
 | 17 | 2 | 137 min | 69 min |
 | 18 | 3 | 21 min | 7 min |
-| 19 | 1 | 8 min | 8 min |
+| 19 | 2 | 19 min | 10 min |
 | 20 | 0 | — | — |
 
 *Updated after each plan completion*
@@ -124,11 +125,14 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 18-chat-workspace]: Browser reconnect recovery remains split by concern: SessionManager supplies transcript state, while the SSE broker only replays transient transport events after Last-Event-ID.
 - [Phase 18-chat-workspace]: CLI safety stayed test-driven; tests now assert the unchanged cli:direct process_direct call shape instead of broadening nanobot/cli/commands.py.
 - [Phase 19]: RuntimeService normalizes legacy Phase 17 RuntimeInspectionContract payloads to the Phase 19 aggregate DTO shape.
+- [Phase 19]: Phase 19 keeps get_task_launch_contract() read-only while the mutable typed launch contract is injected only through get_task_launch_service().
+- [Phase 19]: Typed nanobot browser launches translate to private GuiSubagentTool task text inside nanobot/tui so no free-form task or prompt API is exposed publicly.
+- [Phase 19]: OpenGUI browser launches run through tui-local local/dry-run backend adapters instead of shelling out through opengui.cli.
 
 ### Pending Todos
 
 1. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
-2. Plan Phase 19 operations-console work on top of the completed chat/session boundary
+2. Execute Phase 19 trace/log inspection on top of the completed runtime and launch contracts
 
 ### Blockers/Concerns
 
@@ -137,6 +141,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-21T14:37:06.029Z
-Stopped at: Completed 19-01-PLAN.md
+Last session: 2026-03-21T14:49:43.947Z
+Stopped at: Completed 19-02-PLAN.md
 Resume file: None
