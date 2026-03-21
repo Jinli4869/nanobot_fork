@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from collections.abc import AsyncIterator
 
-from nanobot.tui.dependencies import get_chat_workspace_service
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.sse import EventSourceResponse
+
+from nanobot.tui.dependencies import get_chat_event_broker, get_chat_workspace_service
 from nanobot.tui.schemas import (
     ChatCreateSessionResponse,
     ChatMessageRequest,
     ChatMessageResponse,
     ChatSessionResponse,
 )
-from nanobot.tui.services import ChatWorkspaceService
+from nanobot.tui.services import ChatWorkspaceService, EventStreamBroker
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -50,3 +53,32 @@ async def send_message(
         return await service.send_message(session_id, payload.content)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="chat session not found") from exc
+
+
+@router.get("/sessions/{session_id}/events")
+async def stream_events(
+    session_id: str,
+    request: Request,
+    service: ChatWorkspaceService = Depends(get_chat_workspace_service),
+    broker: EventStreamBroker = Depends(get_chat_event_broker),
+) -> EventSourceResponse:
+    """Stream transient browser chat events over SSE."""
+
+    try:
+        service.get_session(session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="chat session not found") from exc
+
+    async def _event_iterator() -> AsyncIterator[str]:
+        async for event in broker.subscribe(session_id):
+            if await request.is_disconnected():
+                break
+            yield (
+                f"id: {event.id}\n"
+                f"event: {event.type}\n"
+                f"data: {event.model_dump_json()}\n\n"
+            )
+            if event.type == "complete":
+                break
+
+    return EventSourceResponse(_event_iterator())

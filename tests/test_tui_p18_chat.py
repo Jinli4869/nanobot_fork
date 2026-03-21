@@ -11,7 +11,7 @@ from nanobot.config.schema import Config
 from nanobot.session.manager import SessionManager
 from nanobot.tui.app import create_app
 from nanobot.tui.dependencies import get_chat_workspace_service
-from nanobot.tui.services import ChatWorkspaceService
+from nanobot.tui.services import ChatWorkspaceService, EventStreamBroker
 
 
 class FakeAgentLoop:
@@ -58,8 +58,11 @@ def _make_client(tmp_path: Path) -> tuple[TestClient, FakeAgentLoop]:
     app = create_app(config=config, include_runtime_routes=True)
     session_manager = SessionManager(tmp_path)
     runtime = FakeAgentLoop(session_manager)
+    broker = EventStreamBroker()
+    app.state.chat_event_broker = broker
     app.dependency_overrides[get_chat_workspace_service] = lambda: ChatWorkspaceService(
         session_manager=session_manager,
+        event_broker=broker,
         runtime_factory=lambda: runtime,
     )
     return TestClient(app), runtime
