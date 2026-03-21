@@ -283,3 +283,23 @@ async def test_shutdown_suppresses_stop_error() -> None:
 
     # Must not propagate the RuntimeError
     await backend.shutdown()
+
+
+async def test_background_backend_exposes_handoff_target_metadata() -> None:
+    inner = _make_mock_inner(platform="linux")
+    backend = BackgroundDesktopBackend(
+        inner,
+        _make_mock_manager(display_id=":77"),
+    )
+
+    await backend.preflight()
+    try:
+        assert backend.get_intervention_target() == {
+            "display_id": ":77",
+            "monitor_index": 1,
+            "width": 1920,
+            "height": 1080,
+            "platform": "linux",
+        }
+    finally:
+        await backend.shutdown()

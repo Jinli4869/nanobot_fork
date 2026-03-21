@@ -38,6 +38,77 @@ class _FakeBackend:
         self.preflight_calls += 1
 
 
+class _ScriptedCliProvider:
+    def __init__(self, responses: list[Any]) -> None:
+        self._responses = list(responses)
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: Any = None,
+        tool_choice: Any = None,
+    ) -> Any:
+        del messages, tools, tool_choice
+        if not self._responses:
+            raise AssertionError("No scripted CLI responses left.")
+        return self._responses.pop(0)
+
+
+class _InterventionCliBackend:
+    def __init__(self) -> None:
+        from opengui.observation import Observation
+
+        self._Observation = Observation
+        self.platform = "linux"
+        self.observe_calls: list[Path] = []
+        self._observations = [
+            {
+                "foreground_app": "Secure Login",
+                "extra": {"display_id": ":77", "session_token": "secret-session-token"},
+            },
+            {
+                "foreground_app": "Authenticated Workspace",
+                "extra": {"display_id": ":77"},
+            },
+        ]
+
+    async def preflight(self) -> None:
+        return None
+
+    async def execute(self, *_: Any, **__: Any) -> str:
+        return "execute should not run"
+
+    async def list_apps(self) -> list[str]:
+        return []
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Any:
+        del timeout
+        self.observe_calls.append(screenshot_path)
+        if not self._observations:
+            raise AssertionError("No scripted observations left.")
+        payload = self._observations.pop(0)
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"png")
+        return self._Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1280,
+            screen_height=720,
+            foreground_app=payload["foreground_app"],
+            platform=self.platform,
+            extra=payload["extra"],
+        )
+
+    def get_intervention_target(self) -> dict[str, Any]:
+        return {
+            "display_id": ":77",
+            "monitor_index": 2,
+            "width": 1440,
+            "height": 900,
+            "platform": "linux",
+            "session_token": "secret-session-token",
+        }
+
+
 def test_cli_parses_task_and_backend_flags() -> None:
     import opengui.cli as cli
 
@@ -1496,3 +1567,131 @@ def test_run_cli_logs_windows_target_surface_metadata(
     assert result.success is True
     assert "backend_name=windows_isolated_desktop" in caplog.text
     assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in caplog.text
+
+
+def test_run_cli_intervention_flow_resumes_after_confirmation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from opengui.agent import AgentResult
+    from opengui.interfaces import LLMResponse, ToolCall
+    import opengui.cli as cli
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    backend = _InterventionCliBackend()
+    reason = "Need the user to enter OTP 123456 for the payroll login."
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(
+        cli,
+        "OpenAICompatibleLLMProvider",
+        lambda **_: _ScriptedCliProvider(
+            [
+                LLMResponse(
+                    content="request intervention",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "request_intervention", "text": reason},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="done",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="computer_use",
+                            arguments={"action_type": "done", "status": "success"},
+                        )
+                    ],
+                ),
+            ]
+        ),
+    )
+    monkeypatch.setattr(cli, "build_backend", lambda backend_name, loaded_config: backend)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(cli, "DEFAULT_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "resume")
+
+    result = asyncio.run(cli.run_cli(cli.parse_args(["--task", "Complete payroll login"])))
+
+    captured = capsys.readouterr()
+    assert isinstance(result, AgentResult)
+    assert result.success is True
+    assert Path(backend.observe_calls[1]).name == "step_001.png"
+    assert "<redacted:intervention_reason>" in captured.out
+    assert reason not in captured.out
+    assert "display_id" in captured.out
+    assert "monitor_index" in captured.out
+    assert "session_token" not in captured.out
+
+
+def test_run_cli_intervention_logs_are_scrubbed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from opengui.interfaces import LLMResponse, ToolCall
+    import opengui.cli as cli
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    backend = _InterventionCliBackend()
+    reason = "Need the user to enter OTP 123456 for the payroll login."
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+    monkeypatch.setattr(
+        cli,
+        "OpenAICompatibleLLMProvider",
+        lambda **_: _ScriptedCliProvider(
+            [
+                LLMResponse(
+                    content="request intervention",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "request_intervention", "text": reason},
+                        )
+                    ],
+                )
+            ]
+        ),
+    )
+    monkeypatch.setattr(cli, "build_backend", lambda backend_name, loaded_config: backend)
+    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+    monkeypatch.setattr(cli, "DEFAULT_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr("builtins.input", lambda prompt="": "cancel")
+
+    result = asyncio.run(cli.run_cli(cli.parse_args(["--task", "Handle OTP"])))
+
+    trace_text = (Path(result.trace_path) / "trace.jsonl").read_text(encoding="utf-8")
+    captured = capsys.readouterr()
+
+    assert result.success is False
+    assert "<redacted:intervention_reason>" in captured.out
+    assert reason not in captured.out
+    assert "secret-session-token" not in captured.out
+    assert "<redacted:intervention_reason>" in trace_text
+    assert reason not in trace_text
+    assert "secret-session-token" not in trace_text
