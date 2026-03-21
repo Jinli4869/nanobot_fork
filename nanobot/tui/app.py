@@ -9,6 +9,7 @@ from nanobot.tui.routes import (
     runtime_router,
     sessions_router,
     tasks_router,
+    traces_router,
 )
 
 
@@ -31,4 +32,5 @@ def create_app(
         app.include_router(sessions_router)
         app.include_router(runtime_router)
         app.include_router(tasks_router)
+        app.include_router(traces_router)
     return app
