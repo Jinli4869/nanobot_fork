@@ -29,3 +29,12 @@ class TaskLaunchContract:
 
     describe_capability: Callable[[], dict[str, Any]]
     launch_task: Callable[[str, dict[str, Any] | None], Any] | None = None
+
+
+@dataclass(slots=True)
+class ChatWorkspaceContract:
+    """Future-facing browser chat contract for persisted session workflows."""
+
+    create_session: Callable[[], dict[str, Any]]
+    get_session: Callable[[str], dict[str, Any]]
+    send_message: Callable[[str, str], Any]
