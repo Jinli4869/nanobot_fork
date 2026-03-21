@@ -146,3 +146,10 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "pauses_backend_io: Phase 15 intervention pause semantics coverage",
+    "explicit_resume_confirmation: Phase 15 explicit resume gate coverage",
+    "fresh_observation_after_intervention: Phase 15 fresh observation resume coverage",
+    "scrub_sensitive_trace_fields: Phase 15 intervention trace scrubbing coverage",
+    "input_text_is_redacted: Phase 15 typed input trace scrubbing coverage",
+]
