@@ -1,90 +1,77 @@
 # Requirements: OpenGUI
 
-**Defined:** 2026-03-20
+**Defined:** 2026-03-21
 **Core Value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
 
 ## v1 Requirements
 
-Requirements for milestone v1.2: Cross-Platform Background Execution.
+Requirements for milestone v1.3: Nanobot Web Workspace.
 
-### Background Runtime
+### Web App Shell
 
-- [x] **BGND-05**: User can start a background desktop run only after the runtime probes whether isolated execution is supported on the current host
-- [x] **BGND-06**: User is told explicitly whether the run will be isolated, downgraded with warning, or blocked before automation begins
-- [x] **BGND-07**: Background desktop execution rejects or serializes overlapping desktop background runs on the same host to avoid shared global-state interference
+- [ ] **WEB-01**: User can open a browser-based nanobot workspace served from the local app instead of relying on terminal-only interaction
+- [ ] **WEB-02**: User can switch between chat and operations views inside one web app without losing the active workspace context
 
-### macOS Background Execution
+### Chat Workspace
 
-- [x] **MAC-01**: User can run desktop automation on macOS in an isolated background target when the OS version and permissions support it
-- [x] **MAC-02**: User receives actionable remediation when macOS background execution cannot start because required permissions or platform capabilities are missing
-- [x] **MAC-03**: User actions on macOS isolated runs land on the correct target surface across display offsets and scale factors
+- [ ] **CHAT-01**: User can start a new nanobot conversation and send follow-up messages from the web UI
+- [ ] **CHAT-02**: User sees streamed assistant responses and progress updates in the web UI as they happen
+- [ ] **CHAT-03**: User can refresh or reconnect the page and recover recent session history from backend state
 
-### Windows Background Execution
+### Operations Console
 
-- [x] **WIN-01**: User can run desktop automation on Windows inside an alternate isolated desktop within the interactive user session
-- [x] **WIN-02**: User receives a clear warning or block when the Windows launch context or target app class cannot support isolated desktop execution
-- [x] **WIN-03**: Windows isolated-desktop resources are cleaned up on success, failure, and cancellation without leaving orphaned desktops or leaked handles
+- [ ] **OPS-01**: User can inspect runtime status for sessions, background GUI runs, and recent failures from the web UI
+- [ ] **OPS-02**: User can launch supported nanobot or OpenGUI tasks from the web UI with explicit task parameters
+- [ ] **OPS-03**: User can inspect structured logs or event traces for web-triggered runs without dropping to the terminal
 
-### Intervention and Handoff
+### Isolation and Delivery
 
-- [x] **SAFE-01**: Agent can request user intervention explicitly when it reaches a sensitive, blocked, or uncertain state
-- [x] **SAFE-02**: Background runs pause autonomous input and screenshot capture while waiting for user intervention
-- [x] **SAFE-03**: User can switch into the automation target, complete the manual step, and resume the run from a fresh observation
-- [x] **SAFE-04**: Intervention events are recorded with scrubbed trace data that does not leak sensitive input
-
-### Host Integration and Verification
-
-- [ ] **INTG-05**: CLI background execution exposes consistent configuration, capability messaging, and mode reporting for macOS and Windows
-- [ ] **INTG-06**: Nanobot background execution exposes the same behavior and capability messaging as the CLI path
-- [ ] **TEST-V12-01**: Regression coverage verifies capability handling, lifecycle cleanup, and intervention pause/resume behavior without regressing Linux Xvfb support
+- [ ] **ISO-01**: The web backend lives under `nanobot/tui` and reaches existing nanobot or OpenGUI behavior through thin adapter boundaries instead of broad core-runtime refactors
+- [ ] **ISO-02**: The first web release defaults to local-first safe access patterns such as localhost binding and explicit config, without adding mandatory cloud dependencies
+- [ ] **SHIP-01**: User can start the web workspace through documented development and packaged entrypoints without breaking existing CLI usage
 
 ## v2 Requirements
 
-### Notifications and Remote Operation
+### Multi-User and Remote Access
 
-- **NOTIFY-01**: User can route intervention requests through pluggable notification transports beyond terminal output
-- **NOTIFY-02**: Remote operators can acknowledge or resume intervention flows without direct local terminal access
+- **AUTH-01**: User can protect the web workspace with first-class authentication suitable for non-local or multi-user deployment
+- **AUTH-02**: Operators can manage multiple users or roles inside the same web workspace instance
 
-### Expanded Background Surfaces
+### Richer Browser Operations
 
-- **ANDROID-01**: Android runs can use the same intervention notification and resume semantics as desktop runs
-- **OBS-01**: Operators can attach a live viewer or observer stream to a background run without taking foreground focus
+- **OBS-01**: User can watch a live browser-rendered viewer for active GUI runs instead of relying only on status and logs
+- **TRACE-01**: User can replay completed runs visually with screenshots, actions, and tool events
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Automatic password, payment, or OTP entry after intervention detection | Violates the milestone safety boundary and increases credential-handling risk |
-| Full live VNC / remote viewer stack | Expands v1.2 into remote-observer infrastructure instead of background execution core |
-| Universal guarantee for every Windows app class in hidden desktops | Rendering behavior varies by app class; v1.2 will ship capability checks and documented limits instead |
-| Silent fallback from background mode to foreground execution | Breaks user trust; the runtime must report degraded behavior explicitly |
+| Replacing the existing CLI and chat-channel surfaces | The web workspace is an added surface, not a rewrite of proven host entry points |
+| Broadly refactoring core nanobot or OpenGUI runtime modules to fit the web UI | Violates the isolation goal for work under `nanobot/tui` |
+| Multi-user auth, internet-facing hosting, or cloud tenancy in v1.3 | Expands scope beyond the requested local-first web milestone |
+| A full live remote desktop viewer in the browser | Better treated as a later milestone after chat and operations basics ship |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| BGND-05 | Phase 12 | Complete |
-| BGND-06 | Phase 12 | Complete |
-| BGND-07 | Phase 12 | Complete |
-| MAC-01 | Phase 13 | Complete |
-| MAC-02 | Phase 13 | Complete |
-| MAC-03 | Phase 13 | Complete |
-| WIN-01 | Phase 14 | Complete |
-| WIN-02 | Phase 14 | Complete |
-| WIN-03 | Phase 14 | Complete |
-| SAFE-01 | Phase 15 | Complete |
-| SAFE-02 | Phase 15 | Complete |
-| SAFE-03 | Phase 15 | Complete |
-| SAFE-04 | Phase 15 | Complete |
-| INTG-05 | Phase 16 | Pending |
-| INTG-06 | Phase 16 | Pending |
-| TEST-V12-01 | Phase 16 | Pending |
+| ISO-01 | Phase 17 | Pending |
+| ISO-02 | Phase 17 | Pending |
+| CHAT-01 | Phase 18 | Pending |
+| CHAT-02 | Phase 18 | Pending |
+| CHAT-03 | Phase 18 | Pending |
+| OPS-01 | Phase 19 | Pending |
+| OPS-02 | Phase 19 | Pending |
+| OPS-03 | Phase 19 | Pending |
+| WEB-01 | Phase 20 | Pending |
+| WEB-02 | Phase 20 | Pending |
+| SHIP-01 | Phase 20 | Pending |
 
 **Coverage:**
-- v1 requirements: 16 total
-- Mapped to phases: 16
+- v1 requirements: 11 total
+- Mapped to phases: 11
 - Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-03-20*
-*Last updated: 2026-03-21 after Phase 15 Plan 02 completion*
+*Requirements defined: 2026-03-21*
+*Last updated: 2026-03-21 after starting milestone v1.3 planning*

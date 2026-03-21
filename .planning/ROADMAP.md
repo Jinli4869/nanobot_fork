@@ -2,125 +2,111 @@
 
 ## Overview
 
-OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI subagent core, and v1.1 added Linux background desktop execution through a virtual display abstraction and integration-safe wrappers. Milestone v1.2 extends that work into true cross-platform background execution and intervention-safe handoff.
+OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI subagent core, and v1.1 added Linux background desktop execution through a virtual display abstraction and integration-safe wrappers. Milestone v1.2 closes the remaining cross-platform background-execution work, and milestone v1.3 expands the nanobot host surface with an isolated local web workspace.
 
 ## Milestones
 
 - ✅ **v1.0 Core Foundations** — Phases 1-8 (shipped 2026-03-19)
 - ✅ **v1.1 Background Execution** — Phases 9-11 (shipped 2026-03-20) — [Archive](/Users/jinli/Documents/Personal/nanobot_fork/.planning/milestones/v1.1-ROADMAP.md)
-- ◆ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (planned)
+- ○ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (closeout in progress)
+- ◆ **v1.3 Nanobot Web Workspace** — Phases 17-20 (planned)
 
-## Current Milestone: v1.2 Cross-Platform Background Execution
+## Current Milestone: v1.3 Nanobot Web Workspace
 
-**Goal:** Extend background execution beyond Linux so macOS and Windows runs can execute off-screen with explicit capability checks and safe user-intervention handoff.
+**Goal:** Add a local-first browser workspace for nanobot that combines chat and operations in one app while keeping the new FastAPI + React + Vite stack isolated under `nanobot/tui`.
 
-**Requirements:** 16 mapped / 16 total
+**Requirements:** 11 mapped / 11 total
 
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
-| 12 | Background Runtime Contracts | The shared background-execution runtime can determine whether a host supports isolated execution, expose that mode decision clearly, and prevent overlapping desktop runs from corrupting process-global state. | BGND-05, BGND-06, BGND-07 | 4 |
-| 13 | macOS Background Execution | macOS background runs execute against an isolated target surface when supported, fail with actionable permission/capability messaging when not supported, and maintain correct coordinate routing across offsets and scale factors. | MAC-01, MAC-02, MAC-03 | 4 |
-| 14 | 6/6 | Complete   | 2026-03-20 | 4 |
-| 15 | 4/4 | Complete   | 2026-03-21 | 5 |
-| 16 | 4/4 | Complete   | 2026-03-21 | 4 |
+| 17 | Web Runtime Boundary | Establish an isolated FastAPI service shell, local-first web runtime defaults, and adapter contracts under `nanobot/tui` without destabilizing existing nanobot or OpenGUI flows. | ISO-01, ISO-02 | 4 |
+| 18 | Chat Workspace | Expose session-backed chat APIs and streaming updates so the browser can create, continue, and recover nanobot conversations. | CHAT-01, CHAT-02, CHAT-03 | 4 |
+| 19 | Operations Console | Surface task launch, runtime status, and trace/log inspection for supported nanobot and OpenGUI workflows. | OPS-01, OPS-02, OPS-03 | 4 |
+| 20 | Web App Integration and Verification | Deliver the React/Vite workspace shell, unify chat and operations navigation, and ship runnable entrypoints and regression coverage. | WEB-01, WEB-02, SHIP-01 | 4 |
 
 ## Phase Details
 
-### Phase 12: Background Runtime Contracts
+### Phase 17: Web Runtime Boundary
 
-**Goal:** The shared background-execution runtime can determine whether a host supports isolated execution, expose that mode decision clearly, and prevent overlapping desktop runs from corrupting process-global state.
+**Goal:** Establish an isolated FastAPI service shell, local-first web runtime defaults, and adapter contracts under `nanobot/tui` without destabilizing existing nanobot or OpenGUI flows.
 
-**Depends on:** Phase 11
-**Requirements:** BGND-05, BGND-06, BGND-07
-**Plans:** 4/4 plans complete
-
-Plans:
-- [x] 12-01-PLAN.md — Seed Wave 0 tests and implement shared runtime contracts
-- [x] 12-02-PLAN.md — Wire the CLI through probe, resolved-mode logging, and strict isolation blocking
-- [x] 12-03-PLAN.md — Wire nanobot through fallback acknowledgement and serialized busy metadata
-- [x] 12-04-PLAN.md — Run the full phase regression suite and mark validation green
-
-**Success criteria:**
-1. Background startup performs explicit capability checks before launching automation.
-2. CLI/backend logs report whether a run is isolated, warned fallback, or blocked.
-3. Shared runtime contracts are strong enough to support macOS and Windows without mutating Linux behavior.
-4. Concurrent desktop background runs are rejected or serialized deterministically.
-
-### Phase 13: macOS Background Execution
-
-**Goal:** macOS background runs execute against an isolated target surface when supported, fail with actionable permission/capability messaging when not supported, and maintain correct coordinate routing across offsets and scale factors.
-
-**Depends on:** Phase 12
-**Requirements:** MAC-01, MAC-02, MAC-03
-**Plans:** 4/4 plans complete
+**Depends on:** Phase 16
+**Requirements:** ISO-01, ISO-02
+**Plans:** 0/0 plans complete
 
 Plans:
-- [x] 13-01-PLAN.md — Establish macOS capability probing, remediation, and CGVirtualDisplayManager
-- [x] 13-02-PLAN.md — Route observe/execute through one target-surface contract
-- [x] 13-03-PLAN.md — Expose macOS isolated mode through CLI and nanobot wiring
-- [x] 13-04-PLAN.md — Run regression closeout and real-host smoke checklist
+- [ ] 17-01-PLAN.md — Define `nanobot/tui` package layout, FastAPI app shell, and shared adapter contracts
+- [ ] 17-02-PLAN.md — Add local-first config, startup wiring, and regression-safe integration seams
 
 **Success criteria:**
-1. Supported macOS environments can create and tear down an isolated background target for desktop automation.
-2. Unsupported OS versions or missing permissions fail with actionable remediation instead of silent degradation.
-3. Observe/execute paths target the same macOS background surface across display offsets and scale factors.
-4. Linux background execution continues to behave exactly as before.
+1. Web backend code lives primarily under `nanobot/tui` with only thin shared shims elsewhere when truly necessary.
+2. FastAPI startup, shutdown, and config loading can run without breaking the current CLI and channel entry points.
+3. Local-first defaults bind safely and document the boundary between browser UI, web API, and existing runtime code.
+4. Adapter contracts for chat, task launch, and runtime inspection are explicit enough to support the React app without deep imports.
 
-### Phase 14: Windows Isolated Desktop Execution
+### Phase 18: Chat Workspace
 
-**Goal:** Windows background runs use an alternate isolated desktop inside the interactive session, advertise when the launch context or app class is unsupported, and always clean up desktop resources safely.
+**Goal:** Expose session-backed chat APIs and streaming updates so the browser can create, continue, and recover nanobot conversations.
 
-**Depends on:** Phase 12
-**Requirements:** WIN-01, WIN-02, WIN-03
-**Plans:** 6/6 plans complete
+**Depends on:** Phase 17
+**Requirements:** CHAT-01, CHAT-02, CHAT-03
+**Plans:** 0/0 plans complete
 
 Plans:
-- [x] 14-01-PLAN.md — Establish the Windows runtime probe taxonomy and `Win32DesktopManager` contract
-- [x] 14-02-PLAN.md — Implement the Windows isolated execution seam with cleanup-safe lifecycle ownership
-- [x] 14-03-PLAN.md — Wire CLI and nanobot through the Windows isolated backend path
-- [x] 14-04-PLAN.md — Run regression closeout and add the real-host Windows smoke checklist
-- [x] 14-05-PLAN.md — Replace stubbed Windows desktop IO with real handle ownership and worker-routed execution
+- [ ] 18-01-PLAN.md — Reuse nanobot session state through chat-focused FastAPI endpoints
+- [ ] 18-02-PLAN.md — Add streaming transport for assistant output and progress events
+- [ ] 18-03-PLAN.md — Verify reconnect and session recovery behavior
 
 **Success criteria:**
-1. Supported Windows runs launch automation inside an isolated desktop/session target.
-2. Unsupported launch contexts or incompatible app classes are blocked or warned explicitly.
-3. Cleanup closes isolated-desktop resources on success, failure, and cancellation.
-4. Background-run traces expose enough metadata to diagnose target-surface ownership issues.
+1. A browser user can start a new chat session and continue it without touching the terminal.
+2. Assistant text and progress events stream incrementally into the web client instead of appearing only at the end.
+3. Refreshing or reconnecting the page preserves recent session history from backend state.
+4. Existing CLI chat behavior remains intact and testable.
 
-### Phase 15: Intervention Safety and Handoff
+### Phase 19: Operations Console
 
-**Goal:** The agent can request intervention explicitly, pause autonomous behavior safely, hand the user into the automation target, and resume from a fresh observation with scrubbed trace data.
+**Goal:** Surface task launch, runtime status, and trace/log inspection for supported nanobot and OpenGUI workflows.
 
-**Depends on:** Phases 13-14
-**Requirements:** SAFE-01, SAFE-02, SAFE-03, SAFE-04
-**Plans:** 4/4 plans complete
+**Depends on:** Phases 17-18
+**Requirements:** OPS-01, OPS-02, OPS-03
+**Plans:** 0/0 plans complete
 
-**Success criteria:**
-1. Agent/runtime can emit an explicit intervention request for sensitive, blocked, or uncertain states.
-2. Input execution and screenshot capture pause while intervention is pending.
-3. User can enter the automation target, complete the manual step, and resume from a new observation.
-4. Sensitive handoff events are recorded without leaking credential-like input.
-5. Resume requires explicit confirmation instead of timing out back into automation.
-
-### Phase 16: Host Integration and Verification
-
-**Goal:** CLI and nanobot expose the same cross-platform background behavior, and the milestone closes with regression coverage for capability handling, lifecycle cleanup, and intervention flows.
-
-**Depends on:** Phases 13-15
-**Requirements:** INTG-05, INTG-06, TEST-V12-01
+Plans:
+- [ ] 19-01-PLAN.md — Define status and inspection endpoints for sessions, runs, and recent failures
+- [ ] 19-02-PLAN.md — Add web-triggerable task launch flows for supported nanobot and OpenGUI actions
+- [ ] 19-03-PLAN.md — Expose structured traces and logs with regression-safe filtering
 
 **Success criteria:**
-1. CLI exposes macOS/Windows background configuration and mode messaging consistent with runtime behavior.
-2. Nanobot integration exposes the same capability checks, warnings, and lifecycle semantics as CLI.
-3. Regression tests cover capability handling, lifecycle cleanup, and intervention pause/resume without regressing Linux Xvfb support.
-4. The milestone ends with a verification pass that shows all v1.2 requirements mapped and test-backed.
+1. The browser can show current runtime state for sessions, background runs, and recent failures.
+2. Users can launch supported tasks from the operations console with explicit, validated parameters.
+3. Web-triggered runs expose logs or traces that are useful for diagnosis without requiring terminal access.
+4. Sensitive or noisy internals stay filtered behind stable inspection contracts.
+
+### Phase 20: Web App Integration and Verification
+
+**Goal:** Deliver the React/Vite workspace shell, unify chat and operations navigation, and ship runnable entrypoints and regression coverage.
+
+**Depends on:** Phases 18-19
+**Requirements:** WEB-01, WEB-02, SHIP-01
+**Plans:** 0/0 plans complete
+
+Plans:
+- [ ] 20-01-PLAN.md — Build the React/Vite shell for chat and operations navigation
+- [ ] 20-02-PLAN.md — Wire the production/dev entrypoints between FastAPI and the frontend build
+- [ ] 20-03-PLAN.md — Add end-to-end smoke coverage and documentation for web startup
+
+**Success criteria:**
+1. A user can open a single web app and move between chat and operations without losing context.
+2. The React/Vite frontend and FastAPI backend can run in development and packaged modes with documented commands.
+3. Regression coverage proves the web surface works without regressing existing CLI-first behavior.
+4. The milestone closes with a verification pass and manual smoke path for local browser usage.
 
 ## Phase Ordering Rationale
 
-- Phase 12 comes first because the current Linux wrapper is not sufficient by itself for macOS or Windows; the shared runtime contract must be hardened before platform-specific work begins.
-- macOS and Windows are separate phases because they have different technical risks: macOS centers on permission and geometry routing, while Windows centers on interactive-session desktop ownership and cleanup.
-- Intervention safety follows platform implementation so the handoff flow can use real background targets rather than speculative stubs.
-- Host integration and verification are last so they exercise the final behavior rather than an intermediate abstraction.
+- Phase 17 comes first because the web surface needs a clean boundary under `nanobot/tui` before any UI code or API growth begins.
+- Chat comes before operations because browser chat is the narrowest host-facing vertical slice and reuses more existing session behavior.
+- Operations follows once the web runtime and chat transport are stable enough to support broader task launch and inspection flows.
+- Integration and verification are last so the React/Vite shell and packaged entrypoints validate the final contracts rather than an intermediate prototype.
 
 ## Archived Phase Ranges
 
@@ -133,8 +119,9 @@ Plans:
 |-----------|-------------|--------|---------|
 | v1.0 Core Foundations | 1-8 | Complete | 2026-03-19 |
 | v1.1 Background Execution | 9-11 | Complete | 2026-03-20 |
-| v1.2 Cross-Platform Background Execution | 12-16 | In Progress | — |
+| v1.2 Cross-Platform Background Execution | 12-16 | Closeout In Progress | — |
+| v1.3 Nanobot Web Workspace | 17-20 | Planned | — |
 
 ---
-*Roadmap defined: 2026-03-20*
-*Last updated: 2026-03-21 after Phase 15 Plan 04 completion*
+*Roadmap defined: 2026-03-21*
+*Last updated: 2026-03-21 after starting milestone v1.3 planning*
