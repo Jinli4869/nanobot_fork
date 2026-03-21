@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Cross-Platform Background Execution
-current_phase: 14 (windows-isolated-desktop-execution)
-current_plan: 6
-status: verifying
-stopped_at: Completed 14-06-PLAN.md
-last_updated: "2026-03-20T18:27:49.014Z"
-last_activity: 2026-03-20
+current_phase: 15 (intervention-safety-and-handoff)
+current_plan: 2
+status: executing
+stopped_at: Completed 15-01-PLAN.md
+last_updated: "2026-03-21T03:00:41.570Z"
+last_activity: 2026-03-21
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 14
-  completed_plans: 14
-  percent: 100
+  total_plans: 18
+  completed_plans: 15
+  percent: 83
 ---
 
 # Project State
@@ -23,26 +23,29 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-20)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 14 — windows-isolated-desktop-execution
+**Current focus:** Phase 15 — intervention-safety-and-handoff
 
 ## Current Position
 
-**Current Phase:** 14 (windows-isolated-desktop-execution)
-**Current Plan:** 6
-**Total Plans in Phase:** 6
-**Status:** Phase complete — ready for verification
-**Last Activity:** 2026-03-20
+**Current Phase:** 15 (intervention-safety-and-handoff)
+**Current Plan:** 2
+**Total Plans in Phase:** 4
+**Status:** Ready to execute
+**Last Activity:** 2026-03-21
+
+Phase: 15 (intervention-safety-and-handoff) — READY TO EXECUTE
+Plan: 2 of 4
 
 ## Performance Metrics
 
-**Progress:** [██████████] 100%
+**Progress:** [████████░░] 83%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
 
 **Velocity:**
 
-- Total plans completed (v1.2): 14
+- Total plans completed (v1.2): 15
 - Average duration: —
 - Total execution time: —
 
@@ -53,6 +56,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | 12 | 4 | — | — |
 | 13 | 4 | 25min | 6.25min |
 | 14 | 6 | 24min | 4min |
+| 15 | 1 | 4min | 4min |
 
 *Updated after each plan completion*
 | Phase 13 P01 | 12min | 2 tasks | 5 files |
@@ -65,6 +69,7 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 | Phase 14 P04 | 4min | 2 tasks | 1 files |
 | Phase 14 P05 | 4min | 2 tasks | 4 files |
 | Phase 14 P06 | 3min | 2 tasks | 4 files |
+| Phase 15 P01 | 4min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -116,6 +121,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 14]: CLI and nanobot now default omitted Windows app-class hints to classic-win32 only for background local runs on win32 hosts.
 - [Phase 14]: Unsupported Windows app classes stay on the shared remediation path: CLI warns before agent start, while nanobot returns its existing JSON failure shape before any task execution.
 - [Phase 14]: The Phase 14 regression fix stayed in test code because the failing Windows metadata check was a stale worker fixture, not a runtime defect.
+- [Phase 15]: Intervention is a first-class action_type instead of overloading done or assistant free text.
 
 ### Pending Todos
 
@@ -127,6 +133,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-20T18:27:49.009Z
-Stopped at: Completed 14-06-PLAN.md
+Last session: 2026-03-21T03:00:41.566Z
+Stopped at: Completed 15-01-PLAN.md
 Resume file: None
