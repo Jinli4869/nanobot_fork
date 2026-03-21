@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Cross-Platform Background Execution
 current_phase: 15 (intervention-safety-and-handoff)
-current_plan: 3
+current_plan: 4
 status: executing
-stopped_at: Completed 15-02-PLAN.md
-last_updated: "2026-03-21T03:14:10.349Z"
+stopped_at: Completed 15-03-PLAN.md
+last_updated: "2026-03-21T03:30:37.160Z"
 last_activity: 2026-03-21
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 18
-  completed_plans: 16
-  percent: 89
+  completed_plans: 17
+  percent: 94
 ---
 
 # Project State
@@ -28,24 +28,24 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 ## Current Position
 
 **Current Phase:** 15 (intervention-safety-and-handoff)
-**Current Plan:** 3
+**Current Plan:** 4
 **Total Plans in Phase:** 4
 **Status:** Ready to execute
 **Last Activity:** 2026-03-21
 
 Phase: 15 (intervention-safety-and-handoff) — READY TO EXECUTE
-Plan: 3 of 4
+Plan: 4 of 4
 
 ## Performance Metrics
 
-**Progress:** [█████████░] 89%
+**Progress:** [█████████░] 94%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
 
 **Velocity:**
 
-- Total plans completed (v1.2): 16
+- Total plans completed (v1.2): 17
 - Average duration: —
 - Total execution time: —
 
@@ -56,7 +56,7 @@ Plan: 3 of 4
 | 12 | 4 | — | — |
 | 13 | 4 | 25min | 6.25min |
 | 14 | 6 | 24min | 4min |
-| 15 | 2 | 9min | 4.5min |
+| 15 | 3 | 13min | 4.33min |
 
 *Updated after each plan completion*
 | Phase 13 P01 | 12min | 2 tasks | 5 files |
@@ -71,6 +71,7 @@ Plan: 3 of 4
 | Phase 14 P06 | 3min | 2 tasks | 4 files |
 | Phase 15 P01 | 4min | 2 tasks | 4 files |
 | Phase 15 P02 | 5min | 2 tasks | 4 files |
+| Phase 15 P03 | 4min | 2 tasks | 9 files |
 
 ## Accumulated Context
 
@@ -126,6 +127,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15]: GuiAgent owns the intervention pause boundary so request_intervention stops both execute() and observe() before backend IO.
 - [Phase 15]: Resume always reacquires a fresh observation at the next step screenshot path before the model continues.
 - [Phase 15]: Trace and trajectory artifacts scrub input_text, intervention reasons, and credential-like keys before write.
+- [Phase 15]: CLI intervention now requires an exact `resume` acknowledgement before automation continues.
+- [Phase 15]: Host-visible handoff data is filtered to safe target-surface keys instead of raw observation extras.
+- [Phase 15]: Cancelled intervention runs are terminal and do not re-enter the standard retry loop.
 
 ### Pending Todos
 
@@ -137,6 +141,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-21T03:14:10.345Z
-Stopped at: Completed 15-02-PLAN.md
+Last session: 2026-03-21T03:30:37.157Z
+Stopped at: Completed 15-03-PLAN.md
 Resume file: None
