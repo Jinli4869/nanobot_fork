@@ -8,6 +8,7 @@ from typing import Any
 from collections.abc import AsyncIterator, Callable
 
 from nanobot.tui.schemas.tasks import LaunchRunResponse, TaskLaunchRequest
+from nanobot.tui.schemas.traces import LogInspectionResponse, TraceInspectionResponse
 
 
 @dataclass(slots=True)
@@ -38,6 +39,14 @@ class TaskLaunchContract:
 
     describe_capability: Callable[[], dict[str, Any]]
     launch_task: Callable[[TaskLaunchRequest], LaunchRunResponse] | None = None
+
+
+@dataclass(slots=True)
+class TraceInspectionContract:
+    """Lazy contract for browser-safe run trace and log inspection."""
+
+    inspect_trace: Callable[[str], TraceInspectionResponse]
+    inspect_logs: Callable[[str], LogInspectionResponse]
 
 
 @dataclass(slots=True)
