@@ -15,6 +15,7 @@ import numpy as np
 
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
+from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 
 if TYPE_CHECKING:
     from nanobot.config.schema import GuiConfig
@@ -22,6 +23,9 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+_SAFE_INTERVENTION_TARGET_KEYS = frozenset(
+    {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
+)
 WindowsIsolatedBackend = None
 probe_isolated_background_support = None
 resolve_run_mode = None
@@ -212,22 +216,28 @@ class GuiSubagentTool(Tool):
             max_steps=self._gui_config.max_steps,
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
+            intervention_handler=self._build_intervention_handler(active_backend, task),
         )
 
         result = await agent.run(task=task)
+        summary = result.summary
+        error = result.error
+        if error and error.startswith("intervention_cancelled:"):
+            summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
+            error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
-        summary = await self._summarize_trajectory(trace_path)
-        if summary:
-            logger.info("Trajectory summary: %s", summary[:200])
+        trajectory_summary = await self._summarize_trajectory(trace_path)
+        if trajectory_summary:
+            logger.info("Trajectory summary: %s", trajectory_summary[:200])
         await self._extract_skill(trace_path, result.success, skill_library)
 
         return json.dumps(
             {
                 "success": result.success,
-                "summary": result.summary,
+                "summary": summary,
                 "trace_path": str(trace_path) if trace_path is not None else result.trace_path,
                 "steps_taken": result.steps_taken,
-                "error": result.error,
+                "error": error,
             },
             ensure_ascii=False,
         )
@@ -423,3 +433,52 @@ class GuiSubagentTool(Tool):
             },
             ensure_ascii=False,
         )
+
+    def _build_intervention_handler(self, active_backend: Any, task: str) -> InterventionHandler:
+        return _GuiToolInterventionHandler(active_backend=active_backend, task=task)
+
+
+class _GuiToolInterventionHandler:
+    def __init__(self, *, active_backend: Any, task: str) -> None:
+        self._active_backend = active_backend
+        self._task = task
+
+    async def request_intervention(
+        self,
+        request: InterventionRequest,
+    ) -> InterventionResolution:
+        payload = {
+            "task": self._task,
+            "reason": request.reason,
+            "target": self._resolve_target(request),
+        }
+        scrubbed = self._scrub_payload(payload)
+        logger.warning(
+            "gui intervention requested: task=%s reason=%s target=%s",
+            scrubbed["task"],
+            scrubbed["reason"],
+            json.dumps(scrubbed["target"], ensure_ascii=False, sort_keys=True),
+        )
+        return InterventionResolution(
+            resume_confirmed=False,
+            note="resume_not_confirmed",
+        )
+
+    def _resolve_target(self, request: InterventionRequest) -> dict[str, Any]:
+        target = dict(request.target)
+        get_target = getattr(self._active_backend, "get_intervention_target", None)
+        if callable(get_target):
+            backend_target = get_target() or {}
+            if isinstance(backend_target, dict):
+                target.update(backend_target)
+        return {
+            key: value
+            for key, value in target.items()
+            if key in _SAFE_INTERVENTION_TARGET_KEYS
+        }
+
+    @staticmethod
+    def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        from opengui.agent import GuiAgent
+
+        return GuiAgent._scrub_for_log(payload)
