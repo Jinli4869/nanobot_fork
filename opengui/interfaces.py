@@ -37,6 +37,26 @@ class LLMResponse:
     raw: typing.Any = dataclasses.field(default=None, compare=False)
 
 
+@dataclasses.dataclass(frozen=True)
+class InterventionRequest:
+    """Structured request sent to a host when automation must pause."""
+
+    task: str
+    reason: str
+    step_index: int
+    platform: str
+    foreground_app: str | None
+    target: dict[str, typing.Any]
+
+
+@dataclasses.dataclass(frozen=True)
+class InterventionResolution:
+    """Host response indicating whether automation may resume."""
+
+    resume_confirmed: bool
+    note: str | None = None
+
+
 @typing.runtime_checkable
 class LLMProvider(typing.Protocol):
     """Structural interface for LLM providers.
@@ -80,6 +100,16 @@ class DeviceBackend(typing.Protocol):
 
     @property
     def platform(self) -> str: ...
+
+
+@typing.runtime_checkable
+class InterventionHandler(typing.Protocol):
+    """Host callback that coordinates a human intervention handoff."""
+
+    async def request_intervention(
+        self,
+        request: InterventionRequest,
+    ) -> InterventionResolution: ...
 
 
 ProgressCallback = typing.Callable[[str], typing.Awaitable[None]]

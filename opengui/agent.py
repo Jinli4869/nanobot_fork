@@ -22,7 +22,14 @@ from pathlib import Path
 from typing import Any
 
 from opengui.action import Action, ActionError, describe_action, parse_action
-from opengui.interfaces import DeviceBackend, LLMProvider, LLMResponse, ProgressCallback
+from opengui.interfaces import (
+    DeviceBackend,
+    InterventionHandler,
+    InterventionRequest,
+    LLMProvider,
+    LLMResponse,
+    ProgressCallback,
+)
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
@@ -46,6 +53,7 @@ class StepResult:
     prompt_snapshot: dict[str, Any] | None = None
     model_snapshot: dict[str, Any] | None = None
     execution_snapshot: dict[str, Any] | None = None
+    intervention_requested: bool = False
     done: bool = False
 
 
@@ -158,6 +166,7 @@ class GuiAgent:
         memory_top_k: int = 5,
         skill_threshold: float = 0.6,
         installed_apps: list[str] | None = None,
+        intervention_handler: InterventionHandler | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -175,6 +184,7 @@ class GuiAgent:
         self._memory_top_k = memory_top_k
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
+        self._intervention_handler = intervention_handler
 
     # ------------------------------------------------------------------
     # Public API
@@ -383,28 +393,103 @@ class GuiAgent:
 
             steps_taken = step_index
 
+            intervention_cancelled = False
+            if result.intervention_requested:
+                request = InterventionRequest(
+                    task=task,
+                    reason=result.action.text or "",
+                    step_index=step_index,
+                    platform=self.backend.platform,
+                    foreground_app=obs.foreground_app,
+                    target=dict(obs.extra),
+                )
+                await self._log_attempt_event(
+                    run_dir,
+                    "intervention_requested",
+                    step_index=step_index,
+                    platform=request.platform,
+                    foreground_app=request.foreground_app,
+                    reason=request.reason,
+                    target=request.target,
+                )
+                if self._intervention_handler is None:
+                    intervention_cancelled = True
+                    cancellation_note = "missing_intervention_handler"
+                else:
+                    resolution = await self._intervention_handler.request_intervention(request)
+                    if resolution.resume_confirmed:
+                        await self._log_attempt_event(
+                            run_dir,
+                            "intervention_resumed",
+                            step_index=step_index,
+                            note=resolution.note,
+                        )
+                        next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+                        next_observation = await self.backend.observe(
+                            next_screenshot,
+                            timeout=self.step_timeout,
+                        )
+                        result = replace(
+                            result,
+                            tool_result="intervention_resumed",
+                            next_observation=next_observation,
+                            execution_snapshot={
+                                "tool_result": "intervention_resumed",
+                                "intervention": {
+                                    "requested": True,
+                                    "note": resolution.note,
+                                },
+                                "next_observation": self._serialize_observation(next_observation),
+                                "done": False,
+                            },
+                        )
+                    else:
+                        intervention_cancelled = True
+                        cancellation_note = resolution.note or "resume_not_confirmed"
+
+                if intervention_cancelled:
+                    await self._log_attempt_event(
+                        run_dir,
+                        "intervention_cancelled",
+                        step_index=step_index,
+                        note=cancellation_note,
+                    )
+                    result = replace(
+                        result,
+                        tool_result="intervention_cancelled",
+                        execution_snapshot={
+                            "tool_result": "intervention_cancelled",
+                            "intervention": {
+                                "requested": True,
+                                "note": cancellation_note,
+                            },
+                            "next_observation": None,
+                            "done": False,
+                        },
+                    )
+
             # Write trace entry
-            await self._write_trace(run_dir / "trace.jsonl", {
+            await self._write_trace(run_dir / "trace.jsonl", self._scrub_for_log({
                 "event": "step",
                 "step_index": step_index,
-                "action": describe_action(result.action),
+                "action": self._serialize_action(result.action),
                 "action_debug": result.action_debug,
                 "prompt": result.prompt_snapshot,
                 "model_output": result.model_snapshot,
                 "execution": result.execution_snapshot,
-                "tool_result": result.tool_result,
+                "tool_result": self._scrub_text_for_action(result.tool_result, result.action),
                 "screenshot_path": (
                     result.next_observation.screenshot_path
                     if result.next_observation else None
                 ),
                 "done": result.done,
                 "timestamp": time.time(),
-            })
+            }))
 
             # Record trajectory step
             self._trajectory_recorder.record_step(
-                action=self._serialize_action(result.action),
-                model_output=result.action_summary,
+                action=self._scrub_for_log(self._serialize_action(result.action)),
+                model_output=self._scrub_text_for_action(result.action_summary, result.action) or "",
                 screenshot_path=(
                     str(result.next_observation.screenshot_path)
                     if result.next_observation and result.next_observation.screenshot_path
@@ -414,6 +499,16 @@ class GuiAgent:
                 model_response=result.model_snapshot,
                 execution=result.execution_snapshot,
             )
+
+            if intervention_cancelled:
+                return AgentResult(
+                    success=False,
+                    summary=f"Task cancelled during intervention after {steps_taken} step(s).",
+                    model_summary=result.action_summary,
+                    trace_path=str(run_dir),
+                    steps_taken=steps_taken,
+                    error=f"intervention_cancelled: {cancellation_note}",
+                )
 
             if result.done:
                 success = result.action.status == "success"
@@ -431,13 +526,19 @@ class GuiAgent:
                 HistoryTurn(
                     step_index=step_index,
                     observation=obs,
-                    assistant_message=result.assistant_message,
+                    assistant_message=self._scrub_assistant_message_for_log(
+                        result.assistant_message,
+                        result.action,
+                    ),
                     tool_result_message={
                         "role": "tool",
                         "tool_call_id": result.tool_call_id,
-                        "content": result.tool_result,
+                        "content": self._scrub_text_for_action(result.tool_result, result.action),
                     },
-                    action_summary=result.action_summary,
+                    action_summary=(
+                        self._scrub_text_for_action(result.action_summary, result.action)
+                        or result.action_summary
+                    ),
                 )
             )
 
@@ -555,6 +656,23 @@ class GuiAgent:
                     done=True,
                 )
 
+            if action.action_type == "request_intervention":
+                return StepResult(
+                    action=action,
+                    tool_call_id=tool_call.id,
+                    tool_result="intervention_requested",
+                    assistant_message=assistant_message,
+                    action_summary=self._action_summary(action_text),
+                    prompt_snapshot=prompt_snapshot,
+                    model_snapshot=model_snapshot,
+                    execution_snapshot={
+                        "tool_result": "intervention_requested",
+                        "next_observation": None,
+                        "done": False,
+                    },
+                    intervention_requested=True,
+                )
+
             # Execute action on backend
             try:
                 result_text = await self.backend.execute(action, timeout=self.step_timeout)
@@ -582,7 +700,7 @@ class GuiAgent:
                 prompt_snapshot=prompt_snapshot,
                 model_snapshot=model_snapshot,
                 execution_snapshot={
-                    "tool_result": result_text,
+                    "tool_result": self._scrub_text_for_action(result_text, action),
                     "next_observation": self._serialize_observation(next_observation),
                     "done": False,
                 },
@@ -821,7 +939,7 @@ class GuiAgent:
         action_text: str,
     ) -> dict[str, Any]:
         return {
-            "raw_content": response.content,
+            "raw_content": self._scrub_text_for_action(response.content, action),
             "tool_calls": [
                 {
                     "id": tool_call.id,
@@ -830,10 +948,10 @@ class GuiAgent:
                 }
                 for tool_call in (response.tool_calls or [])
             ],
-            "assistant_message": self._scrub_for_log(assistant_message),
-            "parsed_action": self._serialize_action(action),
-            "action_text": action_text,
-            "action_summary": self._action_summary(action_text),
+            "assistant_message": self._scrub_assistant_message_for_log(assistant_message, action),
+            "parsed_action": self._scrub_for_log(self._serialize_action(action)),
+            "action_text": self._scrub_text_for_action(action_text, action),
+            "action_summary": self._scrub_text_for_action(self._action_summary(action_text), action),
         }
 
     @staticmethod
@@ -888,15 +1006,61 @@ class GuiAgent:
     def _scrub_for_log(value: Any) -> Any:
         if isinstance(value, dict):
             scrubbed: dict[str, Any] = {}
+            action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
             for key, item in value.items():
                 if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
                     scrubbed[key] = "<omitted:image-data-url>"
+                elif action_type == "input_text" and key == "text":
+                    scrubbed[key] = "<redacted:input_text>"
+                elif (action_type == "request_intervention" and key == "text") or key == "reason":
+                    scrubbed[key] = "<redacted:intervention_reason>"
+                elif any(token in key.lower() for token in ("password", "secret", "token", "otp", "credential")):
+                    scrubbed[key] = "<redacted:sensitive_field>"
                 else:
                     scrubbed[key] = GuiAgent._scrub_for_log(item)
             return scrubbed
         if isinstance(value, list):
             return [GuiAgent._scrub_for_log(item) for item in value]
         return value
+
+    @staticmethod
+    def _scrub_text_for_action(text: str | None, action: Action) -> str | None:
+        if text is None:
+            return None
+        scrubbed = text
+        if action.action_type == "input_text" and action.text:
+            scrubbed = scrubbed.replace(action.text, "<redacted:input_text>")
+        if action.action_type == "request_intervention" and action.text:
+            scrubbed = scrubbed.replace(action.text, "<redacted:intervention_reason>")
+        return scrubbed
+
+    @classmethod
+    def _scrub_assistant_message_for_log(
+        cls,
+        assistant_message: dict[str, Any],
+        action: Action,
+    ) -> dict[str, Any]:
+        scrubbed = cls._scrub_for_log(assistant_message)
+        content = scrubbed.get("content")
+        if isinstance(content, str):
+            scrubbed["content"] = cls._scrub_text_for_action(content, action)
+        for tool_call in scrubbed.get("tool_calls", []):
+            if not isinstance(tool_call, dict):
+                continue
+            function_payload = tool_call.get("function")
+            if not isinstance(function_payload, dict):
+                continue
+            arguments = function_payload.get("arguments")
+            if not isinstance(arguments, str):
+                continue
+            try:
+                function_payload["arguments"] = json.dumps(
+                    cls._scrub_for_log(json.loads(arguments)),
+                    ensure_ascii=False,
+                )
+            except json.JSONDecodeError:
+                function_payload["arguments"] = cls._scrub_text_for_action(arguments, action)
+        return scrubbed
 
     # ------------------------------------------------------------------
     # Run directory and trace
@@ -925,12 +1089,13 @@ class GuiAgent:
         event: str,
         **payload: Any,
     ) -> None:
+        scrubbed_payload = self._scrub_for_log(payload)
         await self._write_trace(run_dir / "trace.jsonl", {
             "event": event,
             "timestamp": time.time(),
-            **payload,
+            **scrubbed_payload,
         })
-        self._trajectory_recorder.record_event(event, **payload)
+        self._trajectory_recorder.record_event(event, **scrubbed_payload)
 
     # ------------------------------------------------------------------
     # Memory / skill / trajectory helpers
