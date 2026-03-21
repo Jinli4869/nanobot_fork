@@ -14,6 +14,7 @@ from nanobot.tui.schemas import (
     ChatSessionResponse,
     ChatSessionSummary,
 )
+from nanobot.tui.services.event_stream import EventStreamBroker
 
 
 class DirectChatRuntime(Protocol):
@@ -25,7 +26,7 @@ class DirectChatRuntime(Protocol):
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
-        on_progress: Callable[[str], Awaitable[None]] | None = None,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
     ) -> str:
         ...
 
@@ -40,9 +41,11 @@ class ChatWorkspaceService:
         self,
         *,
         session_manager: SessionManager,
+        event_broker: EventStreamBroker,
         runtime_factory: Callable[[], DirectChatRuntime],
     ) -> None:
         self._session_manager = session_manager
+        self._event_broker = event_broker
         self._runtime_factory = runtime_factory
 
     @staticmethod
@@ -92,15 +95,53 @@ class ChatWorkspaceService:
         if not self._session_exists(session_key):
             raise KeyError(session_id)
 
+        run_id = uuid4().hex
         runtime = self._runtime_factory()
         try:
+            await self._event_broker.publish(
+                event_type="message.accepted",
+                session_id=session_id,
+                run_id=run_id,
+                payload={"content": content},
+            )
             reply = await runtime.process_direct(
                 content,
                 session_key=session_key,
                 channel="tui",
                 chat_id=session_id,
-                on_progress=self._silent_progress,
+                on_progress=lambda update, **kwargs: self._publish_progress(
+                    session_id,
+                    run_id,
+                    update,
+                    **kwargs,
+                ),
             )
+            await self._event_broker.publish(
+                event_type="assistant.final",
+                session_id=session_id,
+                run_id=run_id,
+                payload={"content": reply},
+            )
+            await self._event_broker.publish(
+                event_type="complete",
+                session_id=session_id,
+                run_id=run_id,
+                payload={"status": "ok"},
+            )
+        except Exception as exc:
+            await self._event_broker.publish(
+                event_type="error",
+                session_id=session_id,
+                run_id=run_id,
+                payload={"message": str(exc)},
+            )
+            await self._event_broker.publish(
+                event_type="complete",
+                session_id=session_id,
+                run_id=run_id,
+                payload={"status": "error"},
+            )
+            raise
         finally:
             await runtime.close_mcp()
 
@@ -110,6 +151,16 @@ class ChatWorkspaceService:
             reply=ChatMessage(role="assistant", content=reply),
         )
 
-    @staticmethod
-    async def _silent_progress(_content: str) -> None:
-        return None
+    async def _publish_progress(
+        self,
+        session_id: str,
+        run_id: str,
+        content: str,
+        **_kwargs: object,
+    ) -> None:
+        await self._event_broker.publish(
+            event_type="progress",
+            session_id=session_id,
+            run_id=run_id,
+            payload={"content": content},
+        )

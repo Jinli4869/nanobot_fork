@@ -24,6 +24,7 @@ from nanobot.tui.contracts import (
 )
 from nanobot.tui.services import (
     ChatWorkspaceService,
+    EventStreamBroker,
     RuntimeService,
     SessionService,
     TaskLaunchService,
@@ -153,8 +154,20 @@ def get_chat_workspace_service(request: Request) -> ChatWorkspaceService:
     session_manager = SessionManager(config.workspace_path)
     return ChatWorkspaceService(
         session_manager=session_manager,
+        event_broker=get_chat_event_broker(request),
         runtime_factory=get_chat_runtime_factory(
             config=config,
             session_manager=session_manager,
         ),
     )
+
+
+def get_chat_event_broker(request: Request) -> EventStreamBroker:
+    """Return the shared in-process broker for browser chat SSE events."""
+
+    broker = getattr(request.app.state, "chat_event_broker", None)
+    if isinstance(broker, EventStreamBroker):
+        return broker
+    broker = EventStreamBroker()
+    request.app.state.chat_event_broker = broker
+    return broker

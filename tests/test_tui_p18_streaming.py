@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from nanobot.config.schema import Config
@@ -13,7 +13,7 @@ from nanobot.session.manager import SessionManager
 from nanobot.tui.app import create_app
 from nanobot.tui.dependencies import get_chat_workspace_service
 from nanobot.tui.schemas import ChatEvent
-from nanobot.tui.services import ChatWorkspaceService
+from nanobot.tui.services import ChatWorkspaceService, EventStreamBroker
 
 
 class FakeStreamingAgentLoop:
@@ -41,7 +41,7 @@ class FakeStreamingAgentLoop:
         return None
 
 
-def _make_client(tmp_path: Path) -> TestClient:
+def _make_app(tmp_path: Path) -> FastAPI:
     config = Config.model_validate(
         {
             "agents": {"defaults": {"workspace": str(tmp_path)}},
@@ -50,41 +50,40 @@ def _make_client(tmp_path: Path) -> TestClient:
     app = create_app(config=config, include_runtime_routes=True)
     session_manager = SessionManager(tmp_path)
     runtime = FakeStreamingAgentLoop(session_manager)
+    broker = EventStreamBroker()
+    app.state.chat_event_broker = broker
     app.dependency_overrides[get_chat_workspace_service] = lambda: ChatWorkspaceService(
         session_manager=session_manager,
+        event_broker=broker,
         runtime_factory=lambda: runtime,
     )
-    return TestClient(app)
+    return app
 
 
 def test_sse_stream_emits_progress_and_final_reply_events(tmp_path: Path) -> None:
-    client = _make_client(tmp_path)
-    created = client.post("/chat/sessions")
-    session_id = created.json()["session"]["session_id"]
+    app = _make_app(tmp_path)
     events: list[dict[str, object]] = []
 
-    def _submit_message() -> None:
-        response = client.post(
+    with TestClient(app) as setup_client:
+        created = setup_client.post("/chat/sessions")
+        session_id = created.json()["session"]["session_id"]
+
+    with TestClient(app) as stream_client:
+        submission = stream_client.post(
             f"/chat/sessions/{session_id}/messages",
             json={"content": "hello from browser"},
         )
-        assert response.status_code == 200
-
-    sender = threading.Thread(target=_submit_message)
-    sender.start()
-
-    with client.stream("GET", f"/chat/sessions/{session_id}/events") as response:
+        assert submission.status_code == 200
+        response = stream_client.get(f"/chat/sessions/{session_id}/events")
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
-        for line in response.iter_lines():
+        for line in response.text.splitlines():
             if not line.startswith("data: "):
                 continue
             event = ChatEvent.model_validate_json(line.removeprefix("data: "))
             events.append(event.model_dump())
             if event.type == "complete":
                 break
-
-    sender.join(timeout=1)
 
     assert [event["type"] for event in events] == [
         "message.accepted",
@@ -100,26 +99,29 @@ def test_sse_stream_emits_progress_and_final_reply_events(tmp_path: Path) -> Non
 
 
 def test_stream_transport_preserves_event_order_for_progress_and_final_message(tmp_path: Path) -> None:
-    client = _make_client(tmp_path)
-    created = client.post("/chat/sessions")
-    session_id = created.json()["session"]["session_id"]
+    app = _make_app(tmp_path)
 
-    with client.stream("GET", f"/chat/sessions/{session_id}/events") as response:
+    with TestClient(app) as client:
+        created = client.post("/chat/sessions")
+        session_id = created.json()["session"]["session_id"]
+
+        submission = client.post(
+            f"/chat/sessions/{session_id}/messages",
+            json={"content": "transport contract"},
+        )
+        assert submission.status_code == 200
+
+        response = client.get(f"/chat/sessions/{session_id}/events")
         assert response.request.method == "GET"
         assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
 
-    submission = client.post(
-        f"/chat/sessions/{session_id}/messages",
-        json={"content": "transport contract"},
-    )
-    assert submission.status_code == 200
-
-    history = client.get(f"/chat/sessions/{session_id}")
-    assert history.status_code == 200
-    assert [message["content"] for message in history.json()["messages"]] == [
-        "transport contract",
-        "assistant:transport contract",
-    ]
+        history = client.get(f"/chat/sessions/{session_id}")
+        assert history.status_code == 200
+        assert [message["content"] for message in history.json()["messages"]] == [
+            "transport contract",
+            "assistant:transport contract",
+        ]
 
     progress_event = ChatEvent(
         id="evt-progress",
