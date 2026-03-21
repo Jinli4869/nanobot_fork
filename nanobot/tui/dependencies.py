@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import Request
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.gui import GuiSubagentTool
 from nanobot.bus.queue import MessageBus
 from nanobot.config.loader import load_config
 from nanobot.config.schema import Config
@@ -30,6 +31,7 @@ from nanobot.tui.services import (
     SessionService,
     TaskLaunchService,
 )
+from nanobot.tui.services.tasks import run_nanobot_launch, run_opengui_launch
 
 
 def _resolve_workspace_path(
@@ -130,7 +132,7 @@ def _build_runtime_service(
         session_contract,
         registry,
         artifacts_root=artifacts_root,
-        task_launch_available=False,
+        task_launch_available=True,
     )
 
 
@@ -142,10 +144,55 @@ def get_runtime_service(request: Request) -> RuntimeService:
     return _build_runtime_service(config=config, registry=registry)
 
 
-def get_task_launch_service() -> TaskLaunchService:
-    """Build the read-only task capability service."""
+def get_task_launch_service(request: Request) -> TaskLaunchService:
+    """Build the typed task-launch service."""
 
-    return TaskLaunchService(get_task_launch_contract())
+    config = _resolve_runtime_config(request)
+    registry = get_operations_registry(request)
+
+    gui_config = config.gui
+    provider = _make_provider(config) if gui_config is not None else None
+
+    def _gui_tool() -> Any:
+        if gui_config is None or provider is None:
+            raise RuntimeError("nanobot gui launches require gui config")
+        return GuiSubagentTool(
+            gui_config=gui_config,
+            provider=provider,
+            model=config.agents.defaults.model,
+            workspace=config.workspace_path,
+        )
+
+    async def _nanobot_runner(payload: Any) -> dict[str, Any]:
+        result = await run_nanobot_launch(payload, gui_tool=_gui_tool())
+        return {
+            "summary": result.summary,
+            "steps_taken": result.steps_taken,
+            "trace_ref": result.trace_ref,
+        }
+
+    async def _opengui_runner(payload: Any) -> dict[str, Any]:
+        result = await run_opengui_launch(payload)
+        return {
+            "summary": result.summary,
+            "steps_taken": result.steps_taken,
+            "trace_ref": result.trace_ref,
+        }
+
+    return TaskLaunchService(
+        TaskLaunchContract(
+            describe_capability=lambda: {
+                "name": "task-launch",
+                "mutable": True,
+                "phase": 19,
+                "status": "typed-allowlist",
+            },
+            launch_task=None,
+        ),
+        registry,
+        nanobot_runner=_nanobot_runner,
+        opengui_runner=_opengui_runner,
+    )
 
 
 def get_chat_runtime_factory(
