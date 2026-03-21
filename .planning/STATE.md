@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: executing
-stopped_at: Phase 17 execution complete; verification not started
-last_updated: "2026-03-21T12:57:31Z"
+status: unknown
+stopped_at: Completed 18-chat-workspace-01-PLAN.md
+last_updated: "2026-03-21T13:35:55.200Z"
 progress:
   total_phases: 4
-  completed_phases: 0
-  total_plans: 2
-  completed_plans: 2
-  percent: 100
+  completed_phases: 1
+  total_plans: 5
+  completed_plans: 3
+  percent: 60
 ---
 
 # Project State
@@ -20,34 +20,35 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 17 verification and Phase 18 planning
+**Current focus:** Phase 18 — chat-workspace
 
 ## Current Position
 
-Phase: 17 (web-runtime-boundary) — EXECUTED
-Plan: 2 of 2 complete
+Phase: 18 (chat-workspace) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
-**Progress:** [##########] 100%
+**Progress:** [██████░░░░] 60%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
 | 17-01 | 99 min | 2 | 19 |
 | 17-02 | 38 min | 2 | 5 |
+| 18-01 | 5 min | 2 | 10 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 2
-- Average duration: 69 min
-- Total execution time: 137 min
+- Total plans completed (v1.3): 3
+- Average duration: 47 min
+- Total execution time: 142 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 17 | 2 | 137 min | 69 min |
-| 18 | 0 | — | — |
+| 18 | 1 | 5 min | 5 min |
 | 19 | 0 | — | — |
 | 20 | 0 | — | — |
 
@@ -118,7 +119,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-1. Plan the chat workspace APIs for browser session create/continue/recover flows in Phase 18
+1. Implement the streaming transport for Phase 18 plan 02 on top of the new `tui:` chat session API
 2. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
 
 ### Blockers/Concerns
@@ -128,6 +129,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-21T12:57:31Z
-Stopped at: Phase 17 execution complete; verification not started
+Last session: 2026-03-21T13:35:55.191Z
+Stopped at: Completed 18-chat-workspace-01-PLAN.md
 Resume file: None

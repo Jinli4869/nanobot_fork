@@ -50,10 +50,10 @@ Plans:
 
 **Depends on:** Phase 17
 **Requirements:** CHAT-01, CHAT-02, CHAT-03
-**Plans:** 0/3 plans complete
+**Plans:** 1/3 plans complete
 
 Plans:
-- [ ] 18-01-PLAN.md — Reuse nanobot session state through chat-focused FastAPI endpoints
+- [x] 18-01-PLAN.md — Reuse nanobot session state through chat-focused FastAPI endpoints
 - [ ] 18-02-PLAN.md — Add streaming transport for assistant output and progress events
 - [ ] 18-03-PLAN.md — Verify reconnect and session recovery behavior
 
@@ -124,4 +124,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 17 web runtime boundary*
+*Last updated: 2026-03-21 after executing Phase 18 chat workspace plan 01*
