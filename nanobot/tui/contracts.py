@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any
 from collections.abc import AsyncIterator, Callable
 
+from nanobot.tui.schemas.tasks import LaunchRunResponse, TaskLaunchRequest
+
 
 @dataclass(slots=True)
 class SessionContract:
@@ -35,7 +37,7 @@ class TaskLaunchContract:
     """Future-facing task launch contract kept non-executing in Phase 17."""
 
     describe_capability: Callable[[], dict[str, Any]]
-    launch_task: Callable[[str, dict[str, Any] | None], Any] | None = None
+    launch_task: Callable[[TaskLaunchRequest], LaunchRunResponse] | None = None
 
 
 @dataclass(slots=True)

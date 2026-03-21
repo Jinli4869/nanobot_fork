@@ -16,7 +16,15 @@ from nanobot.tui.schemas.runtime import (
     RuntimeSessionStats,
 )
 from nanobot.tui.schemas.sessions import SessionListResponse, SessionSummary
-from nanobot.tui.schemas.tasks import TaskContractResponse
+from nanobot.tui.schemas.tasks import (
+    LaunchRunResponse,
+    NanobotOpenSettingsLaunchRequest,
+    NanobotOpenUrlLaunchRequest,
+    OpenGuiLaunchAppRequest,
+    OpenGuiOpenSettingsRequest,
+    TaskContractResponse,
+    TaskLaunchRequest,
+)
 
 __all__ = [
     "ChatCreateSessionResponse",
@@ -32,5 +40,11 @@ __all__ = [
     "RuntimeSessionStats",
     "SessionListResponse",
     "SessionSummary",
+    "LaunchRunResponse",
+    "NanobotOpenSettingsLaunchRequest",
+    "NanobotOpenUrlLaunchRequest",
+    "OpenGuiLaunchAppRequest",
+    "OpenGuiOpenSettingsRequest",
     "TaskContractResponse",
+    "TaskLaunchRequest",
 ]
