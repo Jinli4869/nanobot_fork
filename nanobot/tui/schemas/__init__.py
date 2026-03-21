@@ -9,7 +9,12 @@ from nanobot.tui.schemas.chat import (
     ChatSessionResponse,
     ChatSessionSummary,
 )
-from nanobot.tui.schemas.runtime import RuntimeInspectionResponse
+from nanobot.tui.schemas.runtime import (
+    RuntimeFailureSummary,
+    RuntimeInspectionResponse,
+    RuntimeRunSummary,
+    RuntimeSessionStats,
+)
 from nanobot.tui.schemas.sessions import SessionListResponse, SessionSummary
 from nanobot.tui.schemas.tasks import TaskContractResponse
 
@@ -21,7 +26,10 @@ __all__ = [
     "ChatMessageResponse",
     "ChatSessionResponse",
     "ChatSessionSummary",
+    "RuntimeFailureSummary",
     "RuntimeInspectionResponse",
+    "RuntimeRunSummary",
+    "RuntimeSessionStats",
     "SessionListResponse",
     "SessionSummary",
     "TaskContractResponse",
