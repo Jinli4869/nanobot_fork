@@ -11,7 +11,8 @@ try:
     from fastapi.testclient import TestClient
 
     from nanobot.tui.app import create_app
-    from nanobot.tui.contracts import RuntimeInspectionContract
+    from nanobot.tui.contracts import RuntimeInspectionContract, SessionContract
+    from nanobot.tui.services import OperationsRegistry
     from nanobot.tui.dependencies import get_runtime_service
     from nanobot.tui.services import RuntimeService
 
@@ -21,6 +22,8 @@ except Exception as exc:  # pragma: no cover - Wave 0 guard until Task 1 lands
     TestClient = None
     create_app = None
     RuntimeInspectionContract = None
+    SessionContract = None
+    OperationsRegistry = None
     get_runtime_service = None
     RuntimeService = None
     _IMPORTS_OK = False
@@ -142,7 +145,7 @@ def test_runtime_recent_failures_are_filtered_to_browser_safe_fields() -> None:
     }
 
 
-def test_runtime_route_stays_import_safe_and_does_not_boot_cli_runtime() -> None:
+def test_runtime_route_stays_import_safe_and_does_not_boot_cli_runtime(tmp_path: Path) -> None:
     _require_imports()
 
     with (
@@ -151,6 +154,15 @@ def test_runtime_route_stays_import_safe_and_does_not_boot_cli_runtime() -> None
         patch("nanobot.agent.loop.AgentLoop") as agent_loop,
     ):
         app = create_app(include_runtime_routes=True)
+        app.dependency_overrides[get_runtime_service] = lambda: RuntimeService(
+            SessionContract(
+                workspace_path=tmp_path,
+                list_sessions=lambda: [],
+            ),
+            OperationsRegistry(),
+            artifacts_root=tmp_path / "gui_runs",
+            task_launch_available=False,
+        )
         client = TestClient(app)
         response = client.get("/runtime")
 
