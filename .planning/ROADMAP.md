@@ -50,7 +50,7 @@ Plans:
 
 **Depends on:** Phase 17
 **Requirements:** CHAT-01, CHAT-02, CHAT-03
-**Plans:** 0/0 plans complete
+**Plans:** 0/3 plans complete
 
 Plans:
 - [ ] 18-01-PLAN.md — Reuse nanobot session state through chat-focused FastAPI endpoints
