@@ -4,16 +4,16 @@ milestone: v1.2
 milestone_name: Cross-Platform Background Execution
 current_phase: 15 (intervention-safety-and-handoff)
 current_plan: 4
-status: executing
-stopped_at: Completed 15-03-PLAN.md
-last_updated: "2026-03-21T03:30:37.160Z"
+status: verifying
+stopped_at: Completed 15-04-PLAN.md
+last_updated: "2026-03-21T03:48:39.296Z"
 last_activity: 2026-03-21
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 18
-  completed_plans: 17
-  percent: 94
+  completed_plans: 18
+  percent: 100
 ---
 
 # Project State
@@ -30,22 +30,22 @@ See: .planning/PROJECT.md (updated 2026-03-20)
 **Current Phase:** 15 (intervention-safety-and-handoff)
 **Current Plan:** 4
 **Total Plans in Phase:** 4
-**Status:** Ready to execute
+**Status:** Phase complete — ready for verification
 **Last Activity:** 2026-03-21
 
-Phase: 15 (intervention-safety-and-handoff) — READY TO EXECUTE
+Phase: 15 (intervention-safety-and-handoff) — READY FOR VERIFICATION
 Plan: 4 of 4
 
 ## Performance Metrics
 
-**Progress:** [█████████░] 94%
+**Progress:** [██████████] 100%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
 
 **Velocity:**
 
-- Total plans completed (v1.2): 17
+- Total plans completed (v1.2): 18
 - Average duration: —
 - Total execution time: —
 
@@ -56,7 +56,7 @@ Plan: 4 of 4
 | 12 | 4 | — | — |
 | 13 | 4 | 25min | 6.25min |
 | 14 | 6 | 24min | 4min |
-| 15 | 3 | 13min | 4.33min |
+| 15 | 4 | 21min | 5.25min |
 
 *Updated after each plan completion*
 | Phase 13 P01 | 12min | 2 tasks | 5 files |
@@ -72,6 +72,7 @@ Plan: 4 of 4
 | Phase 15 P01 | 4min | 2 tasks | 4 files |
 | Phase 15 P02 | 5min | 2 tasks | 4 files |
 | Phase 15 P03 | 4min | 2 tasks | 9 files |
+| Phase 15 P04 | 8min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -130,6 +131,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15]: CLI intervention now requires an exact `resume` acknowledgement before automation continues.
 - [Phase 15]: Host-visible handoff data is filtered to safe target-surface keys instead of raw observation extras.
 - [Phase 15]: Cancelled intervention runs are terminal and do not re-enter the standard retry loop.
+- [Phase 15]: Real-host intervention, explicit resume, and artifact-scrubbing validation stay phase-local in 15-MANUAL-SMOKE.md.
+- [Phase 15]: Phase 15 closeout records a clean regression rerun as its own atomic test commit instead of touching already-green coverage.
 
 ### Pending Todos
 
@@ -141,6 +144,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-21T03:30:37.157Z
-Stopped at: Completed 15-03-PLAN.md
+Last session: 2026-03-21T03:47:40.184Z
+Stopped at: Completed 15-04-PLAN.md
 Resume file: None
