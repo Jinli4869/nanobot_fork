@@ -1,4 +1,10 @@
+import { StrictMode } from "react";
 import ReactDOM from "react-dom/client";
+
+import { RouterProvider } from "react-router";
+
+import { AppProviders } from "./app/providers";
+import { createWorkspaceRouter } from "./app/router";
 
 const root = document.getElementById("root");
 
@@ -6,13 +12,12 @@ if (!root) {
   throw new Error("Missing root element");
 }
 
-function App() {
-  return (
-    <main>
-      <h1>Nanobot Workspace</h1>
-      <p>Frontend shell bootstrap in progress.</p>
-    </main>
-  );
-}
+const router = createWorkspaceRouter();
 
-ReactDOM.createRoot(root).render(<App />);
+ReactDOM.createRoot(root).render(
+  <StrictMode>
+    <AppProviders>
+      <RouterProvider router={router} />
+    </AppProviders>
+  </StrictMode>,
+);
