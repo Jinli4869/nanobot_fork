@@ -16,7 +16,7 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 
 - [x] **CHAT-01**: User can start a new nanobot conversation and send follow-up messages from the web UI
 - [x] **CHAT-02**: User sees streamed assistant responses and progress updates in the web UI as they happen
-- [ ] **CHAT-03**: User can refresh or reconnect the page and recover recent session history from backend state
+- [x] **CHAT-03**: User can refresh or reconnect the page and recover recent session history from backend state
 
 ### Operations Console
 
@@ -59,7 +59,7 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 | ISO-02 | Phase 17 | Pending |
 | CHAT-01 | Phase 18 | Complete |
 | CHAT-02 | Phase 18 | Complete |
-| CHAT-03 | Phase 18 | Pending |
+| CHAT-03 | Phase 18 | Complete |
 | OPS-01 | Phase 19 | Pending |
 | OPS-02 | Phase 19 | Pending |
 | OPS-03 | Phase 19 | Pending |
@@ -74,4 +74,4 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 
 ---
 *Requirements defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 18 chat workspace plan 02*
+*Last updated: 2026-03-21 after executing Phase 18 chat workspace plan 03*

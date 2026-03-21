@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: executing
-stopped_at: Completed 18-chat-workspace-02-PLAN.md
-last_updated: "2026-03-21T13:45:54Z"
+status: planning
+stopped_at: Completed 18-chat-workspace-03-PLAN.md
+last_updated: "2026-03-21T13:53:32.770Z"
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 18 — chat-workspace
+**Current focus:** Phase 19 — operations-console
 
 ## Current Position
 
-Phase: 18 (chat-workspace) — EXECUTING
-Plan: 3 of 3
+Phase: 19 (operations-console) — READY
+Plan: 0 of 3
 
 ## Performance Metrics
 
-**Progress:** [████████░░] 80%
+**Progress:** [██████████] 100%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -37,19 +37,20 @@ Plan: 3 of 3
 | 17-02 | 38 min | 2 | 5 |
 | 18-01 | 5 min | 2 | 10 |
 | 18-02 | 10 min | 2 | 10 |
+| 18-03 | 6 min | 2 | 5 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 4
-- Average duration: 38 min
-- Total execution time: 152 min
+- Total plans completed (v1.3): 5
+- Average duration: 32 min
+- Total execution time: 158 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 17 | 2 | 137 min | 69 min |
-| 18 | 2 | 15 min | 8 min |
+| 18 | 3 | 21 min | 7 min |
 | 19 | 0 | — | — |
 | 20 | 0 | — | — |
 
@@ -119,11 +120,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 17]: The new web runtime uses a dedicated `tui` config section with `127.0.0.1` defaults instead of reusing `gateway.host` or `gateway.port`.
 - [Phase 18]: Browser chat streaming stays inside `nanobot/tui` via a transient in-process broker, while `SessionManager` remains the durable transcript source.
 - [Phase 18]: Chat mutations stay POST-driven and browser updates arrive over `GET /chat/sessions/{session_id}/events` SSE instead of WebSockets or POST-streaming.
+- [Phase 18-chat-workspace]: Browser reconnect recovery remains split by concern: SessionManager supplies transcript state, while the SSE broker only replays transient transport events after Last-Event-ID.
+- [Phase 18-chat-workspace]: CLI safety stayed test-driven; tests now assert the unchanged cli:direct process_direct call shape instead of broadening nanobot/cli/commands.py.
 
 ### Pending Todos
 
-1. Verify reconnect and session recovery behavior for Phase 18 plan 03 on top of the new SSE transport
-2. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
+1. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
+2. Plan Phase 19 operations-console work on top of the completed chat/session boundary
 
 ### Blockers/Concerns
 
@@ -132,6 +135,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-21T13:45:54Z
-Stopped at: Completed 18-chat-workspace-02-PLAN.md
+Last session: 2026-03-21T13:53:32.768Z
+Stopped at: Completed 18-chat-workspace-03-PLAN.md
 Resume file: None
