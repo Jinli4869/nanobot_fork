@@ -2,6 +2,7 @@
 
 from nanobot.tui.schemas.chat import (
     ChatCreateSessionResponse,
+    ChatEvent,
     ChatMessage,
     ChatMessageRequest,
     ChatMessageResponse,
@@ -14,6 +15,7 @@ from nanobot.tui.schemas.tasks import TaskContractResponse
 
 __all__ = [
     "ChatCreateSessionResponse",
+    "ChatEvent",
     "ChatMessage",
     "ChatMessageRequest",
     "ChatMessageResponse",
