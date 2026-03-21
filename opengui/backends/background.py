@@ -135,6 +135,18 @@ class BackgroundDesktopBackend:
     async def list_apps(self) -> list[str]:
         return await self._inner.list_apps()
 
+    def get_intervention_target(self) -> dict[str, Any]:
+        info = self._display_info
+        if info is None:
+            return {}
+        return {
+            "display_id": info.display_id,
+            "monitor_index": info.monitor_index,
+            "width": info.width,
+            "height": info.height,
+            "platform": self.platform,
+        }
+
     async def shutdown(self) -> None:
         """Stop the virtual display and restore the DISPLAY env var.
 

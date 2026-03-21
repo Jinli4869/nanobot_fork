@@ -21,7 +21,13 @@ from openai import AsyncOpenAI
 from opengui.agent import AgentResult, GuiAgent
 from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
-from opengui.interfaces import LLMResponse, ToolCall
+from opengui.interfaces import (
+    InterventionHandler,
+    InterventionRequest,
+    InterventionResolution,
+    LLMResponse,
+    ToolCall,
+)
 from opengui.memory.retrieval import MemoryRetriever
 from opengui.memory.store import MemoryStore
 from opengui.skills.executor import LLMStateValidator, SkillExecutor
@@ -36,6 +42,9 @@ resolve_run_mode = None
 log_mode_resolution = None
 
 logger = logging.getLogger(__name__)
+_SAFE_INTERVENTION_TARGET_KEYS = frozenset(
+    {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
+)
 
 DEFAULT_CONFIG_PATH = Path.home() / ".opengui" / "config.yaml"
 DEFAULT_MEMORY_DIR = Path.home() / ".opengui" / "memory"
@@ -420,6 +429,7 @@ async def _execute_agent(
         skill_library=skill_library,
         skill_executor=skill_executor,
         installed_apps=installed_apps,
+        intervention_handler=_build_intervention_handler(backend),
     )
     return await agent.run(task)
 
@@ -554,9 +564,64 @@ def _build_isolated_display_manager(args: argparse.Namespace, probe: Any) -> Any
 
 def _make_progress_printer(*, json_output: bool) -> Any:
     async def _progress(message: str) -> None:
-        print(message, file=sys.stderr if json_output else sys.stdout)
+        print(_scrub_progress_message(message), file=sys.stderr if json_output else sys.stdout)
 
     return _progress
+
+
+class _CliInterventionHandler:
+    def __init__(self, backend: Any) -> None:
+        self._backend = backend
+
+    async def request_intervention(
+        self,
+        request: InterventionRequest,
+    ) -> InterventionResolution:
+        payload = {
+            "reason": request.reason,
+            "target": _resolve_intervention_target(self._backend, request),
+        }
+        scrubbed = _scrub_intervention_payload(payload)
+        print("intervention requested")
+        print(f"reason: {scrubbed['reason']}")
+        if scrubbed["target"]:
+            print(f"target: {json.dumps(scrubbed['target'], ensure_ascii=False, sort_keys=True)}")
+        response = await asyncio.to_thread(input, "type 'resume' to continue: ")
+        if response == "resume":
+            return InterventionResolution(resume_confirmed=True)
+        return InterventionResolution(resume_confirmed=False, note="resume_not_confirmed")
+
+
+def _build_intervention_handler(backend: Any) -> InterventionHandler:
+    return _CliInterventionHandler(backend)
+
+
+def _resolve_intervention_target(backend: Any, request: InterventionRequest) -> dict[str, Any]:
+    target = dict(request.target)
+    get_target = getattr(backend, "get_intervention_target", None)
+    if callable(get_target):
+        backend_target = get_target() or {}
+        if isinstance(backend_target, dict):
+            target.update(backend_target)
+    return {
+        key: value
+        for key, value in target.items()
+        if key in _SAFE_INTERVENTION_TARGET_KEYS
+    }
+
+
+def _scrub_intervention_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return GuiAgent._scrub_for_log(payload)
+
+
+def _scrub_progress_message(message: str) -> str:
+    if "request intervention:" in message:
+        prefix, _separator, _rest = message.partition("request intervention:")
+        return f"{prefix}request intervention: <redacted:intervention_reason>"
+    if "input text:" in message:
+        prefix, _separator, _rest = message.partition("input text:")
+        return f"{prefix}input text: <redacted:input_text>"
+    return message
 
 
 def _sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

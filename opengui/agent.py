@@ -271,6 +271,8 @@ class GuiAgent:
                 last_model_summary = result.model_summary
                 last_trace_path = result.trace_path or last_trace_path
                 last_steps_taken = result.steps_taken
+                if result.error and result.error.startswith("intervention_cancelled"):
+                    break
                 if attempt < max_retries - 1:
                     await self._log_attempt_event(
                         run_dir,
@@ -1021,18 +1023,28 @@ class GuiAgent:
             return scrubbed
         if isinstance(value, list):
             return [GuiAgent._scrub_for_log(item) for item in value]
+        if isinstance(value, str):
+            return GuiAgent._scrub_sensitive_text(value)
         return value
 
     @staticmethod
     def _scrub_text_for_action(text: str | None, action: Action) -> str | None:
         if text is None:
             return None
-        scrubbed = text
+        scrubbed = GuiAgent._scrub_sensitive_text(text)
         if action.action_type == "input_text" and action.text:
             scrubbed = scrubbed.replace(action.text, "<redacted:input_text>")
         if action.action_type == "request_intervention" and action.text:
             scrubbed = scrubbed.replace(action.text, "<redacted:intervention_reason>")
         return scrubbed
+
+    @staticmethod
+    def _scrub_sensitive_text(text: str) -> str:
+        return re.sub(
+            r"(?i)(\b[\w-]*(?:password|secret|token|otp|credential)[\w-]*\b\s*[:=]\s*)([^\s,}\]]+)",
+            r"\1<redacted:sensitive_field>",
+            text,
+        )
 
     @classmethod
     def _scrub_assistant_message_for_log(

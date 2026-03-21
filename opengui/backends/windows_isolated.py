@@ -151,6 +151,18 @@ class WindowsIsolatedBackend:
             await self.shutdown("cancelled")
             raise
 
+    def get_intervention_target(self) -> dict[str, Any]:
+        info = self._display_info
+        if info is None:
+            return {}
+        return {
+            "display_id": info.display_id,
+            "desktop_name": self._display_manager.desktop_name,
+            "width": info.width,
+            "height": info.height,
+            "platform": self.platform,
+        }
+
     async def shutdown(self, cleanup_reason: str = "normal") -> None:
         if self._stopped:
             return
