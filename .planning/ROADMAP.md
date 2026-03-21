@@ -92,8 +92,8 @@ Plans:
 
 Plans:
 - [ ] 20-01-PLAN.md — Build the React/Vite shell for chat and operations navigation
-- [ ] 20-02-PLAN.md — Wire the production/dev entrypoints between FastAPI and the frontend build
-- [ ] 20-03-PLAN.md — Add end-to-end smoke coverage and documentation for web startup
+- [ ] 20-02-PLAN.md — Wire the FastAPI static/dev bridge and typed frontend route integration
+- [ ] 20-03-PLAN.md — Preserve packaged startup seams, then add end-to-end smoke coverage and documentation
 
 **Success criteria:**
 1. A user can open a single web app and move between chat and operations without losing context.
