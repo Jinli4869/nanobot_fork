@@ -90,7 +90,7 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
                         "tap", "double_tap", "long_press", "swipe", "drag",
                         "input_text", "hotkey", "scroll",
                         "wait", "open_app", "close_app",
-                        "back", "home", "done",
+                        "back", "home", "done", "request_intervention",
                     ],
                 },
                 "x": {"type": "number", "description": "Primary X coordinate."},
@@ -101,7 +101,8 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
                     "type": "string",
                     "description": (
                         "Text for input_text, direction for scroll, or app identifier "
-                        "for open_app/close_app. On Android, use package names."
+                        "for open_app/close_app. Use a short reason for "
+                        "request_intervention. On Android, use package names."
                     ),
                 },
                 "key": {"type": "array", "items": {"type": "string"}, "description": "Keys for hotkey."},

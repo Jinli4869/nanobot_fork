@@ -23,6 +23,7 @@ VALID_ACTION_TYPES: frozenset[str] = frozenset({
     "tap", "long_press", "double_tap", "drag", "swipe", "scroll",
     "input_text", "hotkey", "screenshot", "wait",
     "open_app", "close_app", "back", "home", "done",
+    "request_intervention",
 })
 
 _ACTION_ALIASES: dict[str, str] = {
@@ -162,6 +163,11 @@ def describe_action(action: Action) -> str:
         return f"open app {action.text!r}"
     if t == "close_app":
         return f"close app {action.text!r}"
+    if t == "request_intervention":
+        preview = (action.text or "").strip()[:40]
+        if len((action.text or "").strip()) > 40:
+            preview += "..."
+        return f"request intervention: {preview}"
     if t == "screenshot":
         return "take screenshot"
     if t == "wait":
@@ -240,6 +246,8 @@ def _validate(
         raise ActionError("Action 'hotkey' requires the 'key' field.")
     if action_type == "input_text" and text is None:
         raise ActionError("Action 'input_text' requires the 'text' field.")
+    if action_type == "request_intervention" and (text is None or not text.strip()):
+        raise ActionError("Action 'request_intervention' requires a non-empty 'text' field.")
     if action_type == "scroll":
         if pixels is None:
             raise ActionError("Action 'scroll' requires the 'pixels' field.")
