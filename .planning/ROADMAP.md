@@ -69,7 +69,7 @@ Plans:
 
 **Depends on:** Phases 17-18
 **Requirements:** OPS-01, OPS-02, OPS-03
-**Plans:** 0/0 plans complete
+**Plans:** 0/3 plans complete
 
 Plans:
 - [ ] 19-01-PLAN.md — Define status and inspection endpoints for sessions, runs, and recent failures
