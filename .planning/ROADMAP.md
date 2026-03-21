@@ -88,7 +88,7 @@ Plans:
 
 **Depends on:** Phases 18-19
 **Requirements:** WEB-01, WEB-02, SHIP-01
-**Plans:** 0/0 plans complete
+**Plans:** 0/3 plans complete
 
 Plans:
 - [ ] 20-01-PLAN.md — Build the React/Vite shell for chat and operations navigation
