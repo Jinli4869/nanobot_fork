@@ -7,7 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from nanobot.bus.events import OutboundMessage
-from nanobot.cli.commands import _make_provider, app
+from nanobot.cli.commands import _load_runtime_config, _make_provider, app
 from nanobot.config.schema import Config
 from nanobot.providers.litellm_provider import LiteLLMProvider
 from nanobot.providers.openai_codex_provider import _strip_model_prefix
@@ -354,6 +354,113 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["base_url"] == "https://example.com/v1"
     assert kwargs["default_headers"]["APP-Code"] == "demo-app"
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
+
+
+def test_gateway_keeps_gateway_port_default_when_tui_config_exists(monkeypatch):
+    config = Config.model_validate(
+        {
+            "gateway": {"port": 24567},
+            "tui": {"port": 29999},
+        }
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _config: object())
+    monkeypatch.setattr("nanobot.cli.commands.sync_workspace_templates", lambda _workspace: None)
+
+    class _FakeSessionManager:
+        def __init__(self, _workspace: Path):
+            pass
+
+        def list_sessions(self) -> list[dict[str, str]]:
+            return []
+
+    class _FakeCronService:
+        def __init__(self, *_args, **_kwargs):
+            self.on_job = None
+
+        def status(self) -> dict[str, int]:
+            return {"jobs": 0}
+
+        async def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeChannelManager:
+        def __init__(self, *_args, **_kwargs):
+            self.enabled_channels: list[str] = []
+
+        async def start_all(self) -> None:
+            return None
+
+        async def stop_all(self) -> None:
+            return None
+
+    class _FakeHeartbeatService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeAgentLoop:
+        def __init__(self, *_args, **_kwargs):
+            self.model = "test-model"
+            self.tools: dict[str, object] = {}
+
+        async def run(self) -> None:
+            return None
+
+        async def close_mcp(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeMessageBus:
+        pass
+
+    def _skip_asyncio_run(coro):
+        coro.close()
+        return None
+
+    monkeypatch.setattr("nanobot.session.manager.SessionManager", _FakeSessionManager)
+    monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
+    monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
+    monkeypatch.setattr("nanobot.heartbeat.service.HeartbeatService", _FakeHeartbeatService)
+    monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.bus.queue.MessageBus", _FakeMessageBus)
+    monkeypatch.setattr("nanobot.cli.commands.asyncio.run", _skip_asyncio_run)
+
+    result = runner.invoke(app, ["gateway"])
+
+    assert result.exit_code == 0
+    assert "on port 24567" in _strip_ansi(result.stdout)
+
+
+def test_load_runtime_config_preserves_tui_section(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "gateway": {"port": 24567},
+                "tui": {"host": "127.0.0.1", "port": 29999, "reload": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_runtime_config(str(config_path))
+
+    assert config.gateway.port == 24567
+    assert config.tui.host == "127.0.0.1"
+    assert config.tui.port == 29999
+    assert config.tui.reload is True
 
 
 @pytest.fixture
