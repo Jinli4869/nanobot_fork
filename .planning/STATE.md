@@ -1,42 +1,44 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Cross-Platform Background Execution
-status: unknown
-stopped_at: Completed 15-04-PLAN.md
-last_updated: "2026-03-21T04:47:27.324Z"
+milestone: v1.3
+milestone_name: Nanobot Web Workspace
+status: planning
+stopped_at: Milestone v1.3 initialized
+last_updated: "2026-03-21T10:30:00Z"
 progress:
-  total_phases: 5
-  completed_phases: 4
-  total_plans: 22
-  completed_plans: 18
-  percent: 100
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-20)
+See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 16 — host-integration-and-verification
+**Current focus:** Milestone v1.3 requirements and roadmap definition
 
 ## Current Position
 
-Phase: 16 (host-integration-and-verification) — EXECUTING
-Plan: 1 of 4
+Phase: Not started (defining requirements)
+Plan: -
+Status: Defining requirements
+Last activity: 2026-03-21 — Milestone v1.3 started for a local-first nanobot web workspace
 
 ## Performance Metrics
 
-**Progress:** [██████████] 100%
+**Progress:** [----------] 0%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
 
 **Velocity:**
 
-- Total plans completed (v1.2): 18
+- Total plans completed (v1.3): 0
 - Average duration: —
 - Total execution time: —
 
@@ -44,26 +46,13 @@ Plan: 1 of 4
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 12 | 4 | — | — |
-| 13 | 4 | 25min | 6.25min |
-| 14 | 6 | 24min | 4min |
-| 15 | 4 | 21min | 5.25min |
+| 17 | 0 | — | — |
+| 18 | 0 | — | — |
+| 19 | 0 | — | — |
+| 20 | 0 | — | — |
 
 *Updated after each plan completion*
-| Phase 13 P01 | 12min | 2 tasks | 5 files |
-| Phase 13 P02 | 5min | 2 tasks | 4 files |
-| Phase 13 P03 | 4min | 2 tasks | 4 files |
-| Phase 13 P04 | 4min | 2 tasks | 4 files |
-| Phase 14 P01 | 3min | 2 tasks | 4 files |
-| Phase 14 P02 | 6min | 2 tasks | 3 files |
-| Phase 14 P03 | 4min | 2 tasks | 4 files |
-| Phase 14 P04 | 4min | 2 tasks | 1 files |
-| Phase 14 P05 | 4min | 2 tasks | 4 files |
-| Phase 14 P06 | 3min | 2 tasks | 4 files |
-| Phase 15 P01 | 4min | 2 tasks | 4 files |
-| Phase 15 P02 | 5min | 2 tasks | 4 files |
-| Phase 15 P03 | 4min | 2 tasks | 9 files |
-| Phase 15 P04 | 8min | 2 tasks | 5 files |
+(No plans completed yet for v1.3)
 
 ## Accumulated Context
 
@@ -127,14 +116,16 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-1. Background GUI execution with user intervention handoff (deferred to v1.2)
+1. Define isolated backend/frontend boundaries for the `nanobot/tui` web workspace
+2. Plan the chat workspace and operations console without regressing CLI-first flows
 
 ### Blockers/Concerns
 
-(None)
+- v1.2 closeout artifacts still exist in `.planning/phases/16-host-integration-and-verification/` and should not be overwritten during v1.3 work.
+- The web milestone must avoid broad runtime refactors that would entangle `nanobot`, `opengui`, and the new frontend.
 
 ## Session Continuity
 
-Last session: 2026-03-21T03:47:40.184Z
-Stopped at: Completed 15-04-PLAN.md
+Last session: 2026-03-21T10:30:00Z
+Stopped at: Milestone v1.3 initialized
 Resume file: None
