@@ -25,6 +25,12 @@ from nanobot.tui.schemas.tasks import (
     TaskContractResponse,
     TaskLaunchRequest,
 )
+from nanobot.tui.schemas.traces import (
+    LogInspectionResponse,
+    TraceEventSummary,
+    TraceInspectionResponse,
+    TraceLogLine,
+)
 
 __all__ = [
     "ChatCreateSessionResponse",
@@ -47,4 +53,8 @@ __all__ = [
     "OpenGuiOpenSettingsRequest",
     "TaskContractResponse",
     "TaskLaunchRequest",
+    "LogInspectionResponse",
+    "TraceEventSummary",
+    "TraceInspectionResponse",
+    "TraceLogLine",
 ]
