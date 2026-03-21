@@ -108,7 +108,10 @@ msteams = [
     "PyJWT>=2.0,<3.0",
     "cryptography>=41.0",
 ]
-
+web = [
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+]
 matrix = [
     "matrix-nio[e2e]>=0.25.2; sys_platform != 'win32'",
     "matrix-nio>=0.25.2; sys_platform == 'win32'",
@@ -147,6 +150,8 @@ dev = [
     "aiohttp>=3.9.0,<4.0.0",
     "pytest-cov>=6.0.0,<7.0.0",
     "ruff>=0.1.0",
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
     "pymupdf>=1.25.0",
     "pypdf>=5.0.0,<6.0.0",
     "python-docx>=1.1.0,<2.0.0",
