@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from nanobot.config.schema import Config
 from nanobot.tui.routes import (
+    chat_router,
     health_router,
     runtime_router,
     sessions_router,
@@ -26,6 +27,7 @@ def create_app(
         app.state.nanobot_config = config
     app.include_router(health_router)
     if include_runtime_routes:
+        app.include_router(chat_router)
         app.include_router(sessions_router)
         app.include_router(runtime_router)
         app.include_router(tasks_router)
