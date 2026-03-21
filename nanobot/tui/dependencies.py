@@ -30,6 +30,7 @@ from nanobot.tui.services import (
     RuntimeService,
     SessionService,
     TaskLaunchService,
+    TraceInspectionService,
 )
 from nanobot.tui.services.tasks import run_nanobot_launch, run_opengui_launch
 
@@ -142,6 +143,18 @@ def get_runtime_service(request: Request) -> RuntimeService:
     config = _resolve_runtime_config(request)
     registry = get_operations_registry(request)
     return _build_runtime_service(config=config, registry=registry)
+
+
+def get_trace_inspection_service(request: Request) -> TraceInspectionService:
+    """Build the browser-safe trace and log inspection service."""
+
+    config = _resolve_runtime_config(request)
+    registry = get_operations_registry(request)
+    artifacts_root = config.workspace_path / config.gui.artifacts_dir
+    return TraceInspectionService(
+        registry=registry,
+        artifacts_root=artifacts_root,
+    )
 
 
 def get_task_launch_service(request: Request) -> TaskLaunchService:

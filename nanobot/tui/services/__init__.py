@@ -6,6 +6,7 @@ from nanobot.tui.services.operations_registry import OperationsRegistry
 from nanobot.tui.services.runtime import RuntimeService
 from nanobot.tui.services.sessions import SessionService
 from nanobot.tui.services.tasks import TaskLaunchService
+from nanobot.tui.services.traces import TraceInspectionService
 
 __all__ = [
     "ChatWorkspaceService",
@@ -14,4 +15,5 @@ __all__ = [
     "RuntimeService",
     "SessionService",
     "TaskLaunchService",
+    "TraceInspectionService",
 ]
