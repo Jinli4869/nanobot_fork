@@ -28,9 +28,9 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 ### Intervention and Handoff
 
 - [x] **SAFE-01**: Agent can request user intervention explicitly when it reaches a sensitive, blocked, or uncertain state
-- [ ] **SAFE-02**: Background runs pause autonomous input and screenshot capture while waiting for user intervention
-- [ ] **SAFE-03**: User can switch into the automation target, complete the manual step, and resume the run from a fresh observation
-- [ ] **SAFE-04**: Intervention events are recorded with scrubbed trace data that does not leak sensitive input
+- [x] **SAFE-02**: Background runs pause autonomous input and screenshot capture while waiting for user intervention
+- [x] **SAFE-03**: User can switch into the automation target, complete the manual step, and resume the run from a fresh observation
+- [x] **SAFE-04**: Intervention events are recorded with scrubbed trace data that does not leak sensitive input
 
 ### Host Integration and Verification
 
@@ -73,9 +73,9 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 | WIN-02 | Phase 14 | Complete |
 | WIN-03 | Phase 14 | Complete |
 | SAFE-01 | Phase 15 | Complete |
-| SAFE-02 | Phase 15 | Pending |
-| SAFE-03 | Phase 15 | Pending |
-| SAFE-04 | Phase 15 | Pending |
+| SAFE-02 | Phase 15 | Complete |
+| SAFE-03 | Phase 15 | Complete |
+| SAFE-04 | Phase 15 | Complete |
 | INTG-05 | Phase 16 | Pending |
 | INTG-06 | Phase 16 | Pending |
 | TEST-V12-01 | Phase 16 | Pending |
@@ -87,4 +87,4 @@ Requirements for milestone v1.2: Cross-Platform Background Execution.
 
 ---
 *Requirements defined: 2026-03-20*
-*Last updated: 2026-03-21 after Phase 15 Plan 01 completion*
+*Last updated: 2026-03-21 after Phase 15 Plan 02 completion*
