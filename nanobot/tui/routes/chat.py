@@ -69,8 +69,13 @@ async def stream_events(
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="chat session not found") from exc
 
+    last_event_id = request.headers.get("last-event-id")
+
     async def _event_iterator() -> AsyncIterator[str]:
-        async for event in broker.subscribe(session_id):
+        async for event in broker.subscribe(
+            session_id,
+            after_event_id=last_event_id,
+        ):
             if await request.is_disconnected():
                 break
             yield (

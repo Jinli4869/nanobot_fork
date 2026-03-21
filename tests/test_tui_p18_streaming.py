@@ -142,3 +142,52 @@ def test_stream_transport_preserves_event_order_for_progress_and_final_message(t
     assert final_event.type == "assistant.final"
     assert progress_event.model_dump()["payload"]["content"] == "thinking"
     assert final_event.model_dump()["payload"]["content"] == "assistant:transport contract"
+
+
+def test_sse_reconnect_replays_events_after_last_event_id_only(tmp_path: Path) -> None:
+    app = _make_app(tmp_path)
+    events: list[ChatEvent] = []
+
+    with TestClient(app) as client:
+        created = client.post("/chat/sessions")
+        session_id = created.json()["session"]["session_id"]
+
+        submission = client.post(
+            f"/chat/sessions/{session_id}/messages",
+            json={"content": "resume stream"},
+        )
+        assert submission.status_code == 200
+
+        initial_response = client.get(f"/chat/sessions/{session_id}/events")
+        assert initial_response.status_code == 200
+        for line in initial_response.text.splitlines():
+            if not line.startswith("data: "):
+                continue
+            events.append(ChatEvent.model_validate_json(line.removeprefix("data: ")))
+
+        assert [event.type for event in events] == [
+            "message.accepted",
+            "progress",
+            "progress",
+            "assistant.final",
+            "complete",
+        ]
+
+        reconnect = client.get(
+            f"/chat/sessions/{session_id}/events",
+            headers={"Last-Event-ID": events[1].id},
+        )
+        assert reconnect.status_code == 200
+
+    resumed: list[ChatEvent] = []
+    for line in reconnect.text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        resumed.append(ChatEvent.model_validate_json(line.removeprefix("data: ")))
+
+    assert [event.id for event in resumed] == [event.id for event in events[2:]]
+    assert [event.type for event in resumed] == [
+        "progress",
+        "assistant.final",
+        "complete",
+    ]
