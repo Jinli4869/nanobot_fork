@@ -678,6 +678,199 @@ async def test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload(
 
 
 @pytest.mark.asyncio
+async def test_gui_tool_background_decision_tokens_stay_consistent_across_supported_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import opengui.backends.background_runtime as runtime
+
+    class _SimpleBackgroundWrapper:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+
+        @property
+        def platform(self) -> str:
+            return self._inner.platform
+
+        async def shutdown(self) -> None:
+            return None
+
+    async def _supported_case() -> str:
+        tool = _make_gui_tool(background=True)
+        monkeypatch.setattr(sys, "platform", "win32")
+        with (
+            patch(
+                "opengui.backends.background_runtime.probe_isolated_background_support",
+                return_value=runtime.IsolationProbeResult(
+                    supported=True,
+                    reason_code="windows_isolated_desktop_available",
+                    retryable=False,
+                    host_platform="windows",
+                    backend_name="windows_isolated_desktop",
+                    sys_platform="win32",
+                ),
+            ),
+            patch("opengui.backends.displays.win32desktop.Win32DesktopManager", lambda *args, **kwargs: object()),
+            patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", _SimpleBackgroundWrapper, create=True),
+            patch(
+                "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+                new=AsyncMock(
+                    return_value=json.dumps(
+                        {"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None}
+                    )
+                ),
+            ),
+        ):
+            return await tool.execute("test task", acknowledge_background_fallback=True)
+
+    async def _fallback_case() -> str:
+        tool = _make_gui_tool(background=True)
+        monkeypatch.setattr(sys, "platform", "linux")
+        with patch(
+            "opengui.backends.background_runtime.probe_isolated_background_support",
+            return_value=runtime.IsolationProbeResult(
+                supported=False,
+                reason_code="xvfb_missing",
+                retryable=True,
+                host_platform="linux",
+                backend_name="xvfb",
+                sys_platform="linux",
+            ),
+        ):
+            return await tool.execute("test task")
+
+    async def _blocked_case() -> str:
+        tool = _make_gui_tool(background=True)
+        monkeypatch.setattr(sys, "platform", "win32")
+        with patch(
+            "opengui.backends.background_runtime.probe_isolated_background_support",
+            return_value=runtime.IsolationProbeResult(
+                supported=False,
+                reason_code="windows_app_class_unsupported",
+                retryable=False,
+                host_platform="windows",
+                backend_name="windows_isolated_desktop",
+                sys_platform="win32",
+            ),
+        ):
+            return await tool.execute("test task")
+
+    with caplog.at_level(logging.INFO, logger="nanobot.agent.tools.gui"):
+        supported_payload = json.loads(await _supported_case())
+        fallback_payload = json.loads(await _fallback_case())
+        blocked_payload = json.loads(await _blocked_case())
+
+    assert supported_payload["success"] is True
+    assert fallback_payload["success"] is False
+    assert "acknowledge_background_fallback=true" in fallback_payload["summary"]
+    assert blocked_payload["success"] is False
+    assert "windows_app_class_unsupported" in blocked_payload["summary"]
+    assert any(
+        "owner=nanobot" in record.message
+        and "mode=isolated" in record.message
+        and "reason=windows_isolated_desktop_available" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "owner=nanobot" in record.message and "mode=fallback" in record.message and "reason=xvfb_missing" in record.message
+        for record in caplog.records
+    )
+    assert any(
+        "owner=nanobot" in record.message
+        and "mode=fallback" in record.message
+        and "reason=windows_app_class_unsupported" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_preserves_cleanup_and_intervention_tokens_in_structured_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from opengui.interfaces import InterventionRequest
+    import opengui.backends.background_runtime as runtime
+    from nanobot.agent.tools.gui import _GuiToolInterventionHandler
+
+    tool = _make_gui_tool(background=True)
+    inner_backend = tool._backend
+    inner_backend.platform = "windows"
+
+    class FakeWin32DesktopManager:
+        def __init__(self, width: int = 1280, height: int = 720) -> None:
+            self.width = width
+            self.height = height
+
+    class FakeWindowsIsolatedBackend:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+            self._manager = manager
+            self._run_metadata = run_metadata
+            self.shutdown = AsyncMock()
+            self.platform = "windows"
+
+        def get_intervention_target(self) -> dict[str, Any]:
+            return {
+                "display_id": "windows_isolated_desktop:OpenGUI-Background-1",
+                "desktop_name": "OpenGUI-Background-1",
+                "session_token": "top-secret",
+            }
+
+    failure_message = (
+        "worker startup failed cleanup_reason=startup_failed "
+        "display_id=windows_isolated_desktop:OpenGUI-Background-1 "
+        "desktop_name=OpenGUI-Background-1"
+    )
+
+    with (
+        patch(
+            "opengui.backends.background_runtime.probe_isolated_background_support",
+            return_value=runtime.IsolationProbeResult(
+                supported=True,
+                reason_code="windows_isolated_desktop_available",
+                retryable=False,
+                host_platform="windows",
+                backend_name="windows_isolated_desktop",
+                sys_platform="win32",
+            ),
+        ),
+        patch("opengui.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
+        patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
+        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(side_effect=RuntimeError(failure_message))),
+    ):
+        monkeypatch.setattr(sys, "platform", "win32")
+        payload = json.loads(await tool.execute("test task"))
+
+    with caplog.at_level(logging.WARNING, logger="nanobot.agent.tools.gui"):
+        resolution = await _GuiToolInterventionHandler(
+            active_backend=FakeWindowsIsolatedBackend(inner_backend, object()),
+            task="Handle payroll login",
+        ).request_intervention(
+            InterventionRequest(
+                task="Handle payroll login",
+                reason="Need the user to enter OTP 123456 for the payroll login.",
+                step_index=1,
+                platform="windows",
+                foreground_app=None,
+                target={
+                    "display_id": "windows_isolated_desktop:OpenGUI-Background-1",
+                    "desktop_name": "OpenGUI-Background-1",
+                    "session_token": "top-secret",
+                },
+            )
+        )
+
+    assert payload["success"] is False
+    assert "cleanup_reason=startup_failed" in payload["summary"]
+    assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in payload["summary"]
+    assert "desktop_name=OpenGUI-Background-1" in payload["summary"]
+    assert resolution.resume_confirmed is False
+    assert any("<redacted:intervention_reason>" in record.message for record in caplog.records)
+    assert not any("OTP 123456" in record.message for record in caplog.records)
+    assert not any("top-secret" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_gui_tool_intervention_flow_returns_structured_resume_result(
     tmp_path: Path,
 ) -> None:

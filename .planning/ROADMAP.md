@@ -22,7 +22,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 | 13 | macOS Background Execution | macOS background runs execute against an isolated target surface when supported, fail with actionable permission/capability messaging when not supported, and maintain correct coordinate routing across offsets and scale factors. | MAC-01, MAC-02, MAC-03 | 4 |
 | 14 | 6/6 | Complete   | 2026-03-20 | 4 |
 | 15 | 4/4 | Complete   | 2026-03-21 | 5 |
-| 16 | Host Integration and Verification | Align CLI and nanobot behavior and close the milestone with regression coverage | INTG-05, INTG-06, TEST-V12-01 | 4 |
+| 16 | 4/4 | Complete   | 2026-03-21 | 4 |
 
 ## Phase Details
 

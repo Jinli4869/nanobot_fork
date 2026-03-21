@@ -1434,6 +1434,164 @@ def test_run_cli_warns_for_windows_unsupported_app_class_before_agent_start() ->
     assert "UWP, DirectX, and GPU-heavy surfaces" in log_messages[0]
 
 
+def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hosts() -> None:
+    from opengui.agent import AgentResult
+    import opengui.cli as cli
+    import opengui.backends.background_runtime as runtime
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        )
+    )
+    log_messages: list[str] = []
+
+    class FakeProvider:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
+        return None, None, None
+
+    class FakeBackgroundBackend:
+        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+            self._inner = inner
+
+        @property
+        def platform(self) -> str:
+            return self._inner.platform
+
+        async def shutdown(self) -> None:
+            return None
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            self._backend = kwargs["backend"]
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            return AgentResult(
+                success=True,
+                summary=f"done {task}",
+                model_summary=None,
+                trace_path=None,
+                steps_taken=1,
+                error=None,
+            )
+
+    class _EventHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if "background runtime resolved:" in record.getMessage():
+                log_messages.append(record.getMessage())
+
+    def run_case(
+        *,
+        sys_platform: str,
+        probe_result: runtime.IsolationProbeResult,
+        argv: list[str],
+    ) -> str:
+        monkeypatch = pytest.MonkeyPatch()
+        handler = _EventHandler()
+        cli_logger = logging.getLogger("opengui.cli")
+        previous_level = cli_logger.level
+        cli_logger.setLevel(logging.INFO)
+        cli_logger.addHandler(handler)
+        try:
+            monkeypatch.setattr(cli, "load_config", lambda path=None: config)
+            monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
+            monkeypatch.setattr(
+                cli,
+                "build_backend",
+                lambda backend_name, cfg: _FakeBackend(
+                    platform=(
+                        "macos"
+                        if sys_platform == "darwin"
+                        else "windows"
+                        if sys_platform == "win32"
+                        else "linux"
+                    )
+                ),
+            )
+            monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
+            monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+            monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
+            monkeypatch.setattr(cli, "probe_isolated_background_support", lambda **_: probe_result)
+            monkeypatch.setattr(cli, "TrajectoryRecorder", lambda *args, **kwargs: types.SimpleNamespace(path=None))
+            monkeypatch.setattr(sys, "platform", sys_platform)
+
+            if probe_result.backend_name == "cgvirtualdisplay":
+                import opengui.backends.displays.cgvirtualdisplay as cgvd_mod
+
+                monkeypatch.setattr(cgvd_mod, "CGVirtualDisplayManager", lambda *args, **kwargs: object())
+            elif probe_result.backend_name == "windows_isolated_desktop":
+                import opengui.backends.displays.win32desktop as win32_mod
+
+                monkeypatch.setattr(win32_mod, "Win32DesktopManager", lambda *args, **kwargs: object())
+
+            try:
+                asyncio.run(cli.run_cli(cli.parse_args(argv)))
+            except RuntimeError as exc:
+                return str(exc)
+            return ""
+        finally:
+            cli_logger.removeHandler(handler)
+            cli_logger.setLevel(previous_level)
+            monkeypatch.undo()
+
+    blocked_error = run_case(
+        sys_platform="linux",
+        probe_result=runtime.IsolationProbeResult(
+            supported=False,
+            reason_code="xvfb_missing",
+            retryable=True,
+            host_platform="linux",
+            backend_name="xvfb",
+            sys_platform="linux",
+        ),
+        argv=["--background", "--require-isolation", "--task", "Open Settings"],
+    )
+    run_case(
+        sys_platform="darwin",
+        probe_result=runtime.IsolationProbeResult(
+            supported=True,
+            reason_code="macos_virtual_display_available",
+            retryable=False,
+            host_platform="macos",
+            backend_name="cgvirtualdisplay",
+            sys_platform="darwin",
+        ),
+        argv=["--background", "--task", "Open Settings"],
+    )
+    run_case(
+        sys_platform="win32",
+        probe_result=runtime.IsolationProbeResult(
+            supported=False,
+            reason_code="windows_app_class_unsupported",
+            retryable=False,
+            host_platform="windows",
+            backend_name="windows_isolated_desktop",
+            sys_platform="win32",
+        ),
+        argv=["--background", "--task", "Open Settings"],
+    )
+
+    assert "xvfb_missing" in blocked_error
+    assert any("owner=cli" in message and "mode=blocked" in message and "reason=xvfb_missing" in message for message in log_messages)
+    assert any(
+        "owner=cli" in message
+        and "mode=isolated" in message
+        and "reason=macos_virtual_display_available" in message
+        for message in log_messages
+    )
+    assert any(
+        "owner=cli" in message
+        and "mode=fallback" in message
+        and "reason=windows_app_class_unsupported" in message
+        for message in log_messages
+    )
+
+
 def test_run_cli_logs_windows_target_surface_metadata(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -1567,6 +1725,67 @@ def test_run_cli_logs_windows_target_surface_metadata(
     assert result.success is True
     assert "backend_name=windows_isolated_desktop" in caplog.text
     assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in caplog.text
+
+
+def test_run_cli_handoff_and_cleanup_tokens_stay_visible_without_leaking_sensitive_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from opengui.interfaces import InterventionRequest
+    import opengui.cli as cli
+
+    class _FakeInterventionBackend:
+        def get_intervention_target(self) -> dict[str, Any]:
+            return {
+                "display_id": "windows_isolated_desktop:OpenGUI-Background-1",
+                "desktop_name": "OpenGUI-Background-1",
+                "session_token": "top-secret",
+            }
+
+    handler = cli._CliInterventionHandler(_FakeInterventionBackend())
+    request = InterventionRequest(
+        task="Complete payroll login",
+        reason="Need the user to enter OTP 123456 for the payroll login.",
+        step_index=1,
+        platform="windows",
+        foreground_app=None,
+        target={
+            "display_id": "windows_isolated_desktop:OpenGUI-Background-1",
+            "desktop_name": "OpenGUI-Background-1",
+            "session_token": "top-secret",
+        },
+    )
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr("builtins.input", lambda prompt="": "cancel")
+        resolution = asyncio.run(handler.request_intervention(request))
+    finally:
+        monkeypatch.undo()
+
+    cli._print_human_result(
+        cli.AgentResult(
+            success=False,
+            summary="CLI execution failed.",
+            model_summary=None,
+            trace_path=None,
+            steps_taken=0,
+            error=(
+                "RuntimeError: worker startup failed cleanup_reason=startup_failed "
+                "display_id=windows_isolated_desktop:OpenGUI-Background-1 "
+                "desktop_name=OpenGUI-Background-1"
+            ),
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert resolution.resume_confirmed is False
+    assert "<redacted:intervention_reason>" in captured.out
+    assert "OTP 123456" not in captured.out
+    assert "display_id" in captured.out
+    assert "desktop_name" in captured.out
+    assert "session_token" not in captured.out
+    assert "cleanup_reason=startup_failed" in captured.out
+    assert "display_id=windows_isolated_desktop:OpenGUI-Background-1" in captured.out
 
 
 def test_run_cli_intervention_flow_resumes_after_confirmation(
