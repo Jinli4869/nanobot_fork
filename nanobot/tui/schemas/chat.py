@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -51,3 +51,13 @@ class ChatMessageResponse(BaseModel):
 
     session: ChatSessionSummary
     reply: ChatMessage
+
+
+class ChatEvent(BaseModel):
+    """Typed chat event envelope published over SSE."""
+
+    id: str
+    type: Literal["message.accepted", "progress", "assistant.final", "error", "complete"]
+    session_id: str
+    run_id: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 
 @dataclass(slots=True)
@@ -38,3 +38,10 @@ class ChatWorkspaceContract:
     create_session: Callable[[], dict[str, Any]]
     get_session: Callable[[str], dict[str, Any]]
     send_message: Callable[[str, str], Any]
+
+
+@dataclass(slots=True)
+class ChatEventStreamContract:
+    """Transient event-stream contract for browser chat SSE subscriptions."""
+
+    subscribe: Callable[[str], AsyncIterator[dict[str, Any]]]
