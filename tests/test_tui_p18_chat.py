@@ -136,3 +136,28 @@ def test_chat_history_route_reads_persisted_session_state(tmp_path: Path) -> Non
         "persisted hello",
         "persisted reply",
     ]
+
+
+def test_reconnect_recovers_recent_session_history_from_persisted_state(tmp_path: Path) -> None:
+    client, _runtime = _make_client(tmp_path)
+
+    created = client.post("/chat/sessions")
+    session_id = created.json()["session"]["session_id"]
+
+    submission = client.post(
+        f"/chat/sessions/{session_id}/messages",
+        json={"content": "recover me"},
+    )
+
+    assert submission.status_code == 200
+
+    refreshed = client.get(f"/chat/sessions/{session_id}")
+
+    assert refreshed.status_code == 200
+    payload = refreshed.json()
+    assert payload["session"]["session_id"] == session_id
+    assert payload["session"]["message_count"] == 2
+    assert [message["content"] for message in payload["messages"]] == [
+        "recover me",
+        "assistant:recover me",
+    ]

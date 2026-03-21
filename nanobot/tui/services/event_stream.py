@@ -40,10 +40,30 @@ class EventStreamBroker:
             await queue.put(event)
         return event
 
-    async def subscribe(self, session_id: str) -> AsyncIterator[ChatEvent]:
+    @staticmethod
+    def _replay_backlog(
+        backlog: list[ChatEvent],
+        after_event_id: str | None,
+    ) -> list[ChatEvent]:
+        if after_event_id is None:
+            return backlog
+        for index, event in enumerate(backlog):
+            if event.id == after_event_id:
+                return backlog[index + 1 :]
+        return backlog
+
+    async def subscribe(
+        self,
+        session_id: str,
+        *,
+        after_event_id: str | None = None,
+    ) -> AsyncIterator[ChatEvent]:
         queue: asyncio.Queue[ChatEvent] = asyncio.Queue()
         async with self._lock:
-            backlog = list(self._events.get(session_id, ()))
+            backlog = self._replay_backlog(
+                list(self._events.get(session_id, ())),
+                after_event_id,
+            )
             self._subscribers[session_id].add(queue)
         try:
             for event in backlog:
