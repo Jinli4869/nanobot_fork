@@ -25,7 +25,7 @@ def _default_tool_definition() -> dict[str, Any]:
                             "tap", "double_tap", "long_press", "swipe", "drag",
                             "input_text", "hotkey", "scroll",
                             "wait", "open_app", "close_app",
-                            "back", "home", "done",
+                            "back", "home", "done", "request_intervention",
                         ],
                     },
                     "x": {"type": "number"},
@@ -37,11 +37,11 @@ def _default_tool_definition() -> dict[str, Any]:
                     "pixels": {"type": "integer"},
                     "duration_ms": {"type": "integer"},
                     "relative": {"type": "boolean"},
-                    "status": {
-                        "type": "string",
-                        "enum": ["success", "failure"],
-                    },
+                "status": {
+                    "type": "string",
+                    "enum": ["success", "failure"],
                 },
+            },
                 "required": ["action_type"],
             },
         },
@@ -133,7 +133,8 @@ def build_system_prompt(
         "- Output exactly one short `Action:` line in assistant text.",
         "- Put structured arguments only in the native tool call, not in assistant text.",
         "- Execute one action per step.",
-        "- If the task is complete or unsafe to continue, call `computer_use` with `action_type=\"done\"` and the appropriate status.",
+        "- If the task is complete, call `computer_use` with `action_type=\"done\"` and the appropriate status.",
+        "- If the task reaches a sensitive, blocked, or unsafe state, call `computer_use` with `action_type=\"request_intervention\"` and a short reason instead of continuing or using `done`.",
     ])
 
     return "\n".join(sections)
