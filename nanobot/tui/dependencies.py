@@ -25,6 +25,7 @@ from nanobot.tui.contracts import (
 from nanobot.tui.services import (
     ChatWorkspaceService,
     EventStreamBroker,
+    OperationsRegistry,
     RuntimeService,
     SessionService,
     TaskLaunchService,
@@ -63,20 +64,6 @@ def get_session_contract(
     )
 
 
-def get_runtime_inspection_contract() -> RuntimeInspectionContract:
-    """Return a lazy runtime-inspection contract without booting the agent runtime."""
-
-    def _inspect_runtime() -> dict[str, Any]:
-        return {
-            "status": "not_started",
-            "channel_runtime_booted": False,
-            "agent_loop_booted": False,
-            "task_launch_available": False,
-        }
-
-    return RuntimeInspectionContract(inspect_runtime=_inspect_runtime)
-
-
 def get_task_launch_contract() -> TaskLaunchContract:
     """Return a future task-launch contract kept non-mutating for Phase 17."""
 
@@ -94,16 +81,65 @@ def get_task_launch_contract() -> TaskLaunchContract:
     )
 
 
+def get_runtime_inspection_contract() -> RuntimeInspectionContract:
+    """Return a lazy runtime-inspection contract without booting the agent runtime."""
+
+    def _inspect_runtime() -> dict[str, Any]:
+        return {
+            "status": "idle",
+            "channel_runtime_booted": False,
+            "agent_loop_booted": False,
+            "task_launch_available": False,
+            "session_stats": {
+                "total": 0,
+                "active": 0,
+                "most_recent_session_id": None,
+            },
+            "active_runs": [],
+            "recent_failures": [],
+        }
+
+    return RuntimeInspectionContract(inspect_runtime=_inspect_runtime)
+
+
 def get_session_service() -> SessionService:
     """Build the read-only session service for browser-facing routes."""
 
     return SessionService(get_session_contract())
 
 
-def get_runtime_service() -> RuntimeService:
+def get_operations_registry(request: Request) -> OperationsRegistry:
+    """Return the shared process-local operations registry."""
+
+    registry = getattr(request.app.state, "operations_registry", None)
+    if isinstance(registry, OperationsRegistry):
+        return registry
+    registry = OperationsRegistry()
+    request.app.state.operations_registry = registry
+    return registry
+
+
+def _build_runtime_service(
+    *,
+    config: Config,
+    registry: OperationsRegistry,
+) -> RuntimeService:
+    session_contract = get_session_contract(workspace=config.workspace_path)
+    artifacts_root = session_contract.workspace_path / config.gui.artifacts_dir
+    return RuntimeService(
+        session_contract,
+        registry,
+        artifacts_root=artifacts_root,
+        task_launch_available=False,
+    )
+
+
+def get_runtime_service(request: Request) -> RuntimeService:
     """Build the read-only runtime inspection service."""
 
-    return RuntimeService(get_runtime_inspection_contract())
+    config = _resolve_runtime_config(request)
+    registry = get_operations_registry(request)
+    return _build_runtime_service(config=config, registry=registry)
 
 
 def get_task_launch_service() -> TaskLaunchService:
