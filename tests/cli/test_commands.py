@@ -14,7 +14,7 @@ from typer.testing import CliRunner
 from nanobot.agent.memory import MemoryStore
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.cli import commands as cli_commands
-from nanobot.cli.commands import app
+from nanobot.cli.commands import _load_runtime_config, app
 from nanobot.config.schema import Config
 from nanobot.cron.service import CronJobSkippedError
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
@@ -1038,7 +1038,6 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["default_headers"]["APP-Code"] == "demo-app"
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
 
-
 def test_make_provider_treats_dynamic_custom_provider_as_direct():
     config = Config.model_validate(
         {
@@ -1196,6 +1195,26 @@ def test_make_provider_rejects_auto_dynamic_custom_prefix_without_api_base():
 
     with pytest.raises(ValueError, match="Provider 'companyProxy' requires api_base"):
         make_provider(config)
+
+
+def test_load_runtime_config_preserves_tui_section(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "gateway": {"port": 24567},
+                "tui": {"host": "127.0.0.1", "port": 29999, "reload": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_runtime_config(str(config_path))
+
+    assert config.gateway.port == 24567
+    assert config.tui.host == "127.0.0.1"
+    assert config.tui.port == 29999
+    assert config.tui.reload is True
 
 
 @pytest.fixture
@@ -2508,10 +2527,11 @@ def test_migrate_cron_store_skips_when_workspace_file_exists(tmp_path: Path) -> 
     assert workspace_cron.read_text() == '{"new": true}'
 
 
-def test_gateway_uses_configured_port_when_cli_flag_is_missing(monkeypatch, tmp_path: Path) -> None:
+def test_gateway_uses_gateway_port_when_tui_config_exists(monkeypatch, tmp_path: Path) -> None:
     config_file = _write_instance_config(tmp_path)
     config = Config()
     config.gateway.port = 18791
+    config.tui.port = 29999
 
     _patch_cli_command_runtime(
         monkeypatch,

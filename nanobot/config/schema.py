@@ -331,6 +331,15 @@ class GatewayConfig(Base):
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
 
 
+class TuiConfig(Base):
+    """Local-first configuration for the isolated TUI web runtime."""
+
+    host: str = "127.0.0.1"
+    port: int = 18791
+    reload: bool = False
+    log_level: Literal["critical", "error", "warning", "info", "debug", "trace"] = "info"
+
+
 class MCPServerConfig(Base):
     """MCP server connection configuration (stdio or HTTP)."""
 
@@ -427,6 +436,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
+    tui: TuiConfig = Field(default_factory=TuiConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
     gui: GuiConfig | None = None
     model_presets: dict[str, ModelPresetConfig] = Field(
