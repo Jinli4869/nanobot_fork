@@ -9,7 +9,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 - ✅ **v1.0 Core Foundations** — Phases 1-8 (shipped 2026-03-19)
 - ✅ **v1.1 Background Execution** — Phases 9-11 (shipped 2026-03-20) — [Archive](/Users/jinli/Documents/Personal/nanobot_fork/.planning/milestones/v1.1-ROADMAP.md)
 - ○ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (closeout in progress)
-- ◆ **v1.3 Nanobot Web Workspace** — Phases 17-20 (planned)
+- ○ **v1.3 Nanobot Web Workspace** — Phases 17-20 (in progress)
 
 ## Current Milestone: v1.3 Nanobot Web Workspace
 
@@ -32,11 +32,11 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 
 **Depends on:** Phase 16
 **Requirements:** ISO-01, ISO-02
-**Plans:** 0/0 plans complete
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 17-01-PLAN.md — Define `nanobot/tui` package layout, FastAPI app shell, and shared adapter contracts
-- [ ] 17-02-PLAN.md — Add local-first config, startup wiring, and regression-safe integration seams
+- [x] 17-01-PLAN.md — Define `nanobot/tui` package layout, FastAPI app shell, and shared adapter contracts
+- [x] 17-02-PLAN.md — Add local-first config, startup wiring, and regression-safe integration seams
 
 **Success criteria:**
 1. Web backend code lives primarily under `nanobot/tui` with only thin shared shims elsewhere when truly necessary.
@@ -120,8 +120,8 @@ Plans:
 | v1.0 Core Foundations | 1-8 | Complete | 2026-03-19 |
 | v1.1 Background Execution | 9-11 | Complete | 2026-03-20 |
 | v1.2 Cross-Platform Background Execution | 12-16 | Closeout In Progress | — |
-| v1.3 Nanobot Web Workspace | 17-20 | Planned | — |
+| v1.3 Nanobot Web Workspace | 17-20 | In Progress | — |
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-21 after starting milestone v1.3 planning*
+*Last updated: 2026-03-21 after executing Phase 17 web runtime boundary*
