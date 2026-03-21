@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: planning
-stopped_at: Milestone v1.3 initialized
-last_updated: "2026-03-21T10:30:00Z"
+status: executing
+stopped_at: Phase 17 execution complete; verification not started
+last_updated: "2026-03-21T12:57:31Z"
 progress:
   total_phases: 4
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_plans: 2
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State
@@ -20,39 +20,38 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Milestone v1.3 requirements and roadmap definition
+**Current focus:** Phase 17 verification and Phase 18 planning
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: -
-Status: Defining requirements
-Last activity: 2026-03-21 — Milestone v1.3 started for a local-first nanobot web workspace
+Phase: 17 (web-runtime-boundary) — EXECUTED
+Plan: 2 of 2 complete
 
 ## Performance Metrics
 
-**Progress:** [----------] 0%
+**Progress:** [##########] 100%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
+| 17-01 | 99 min | 2 | 19 |
+| 17-02 | 38 min | 2 | 5 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 0
-- Average duration: —
-- Total execution time: —
+- Total plans completed (v1.3): 2
+- Average duration: 69 min
+- Total execution time: 137 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 17 | 0 | — | — |
+| 17 | 2 | 137 min | 69 min |
 | 18 | 0 | — | — |
 | 19 | 0 | — | — |
 | 20 | 0 | — | — |
 
 *Updated after each plan completion*
-(No plans completed yet for v1.3)
 
 ## Accumulated Context
 
@@ -113,11 +112,14 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 15]: Cancelled intervention runs are terminal and do not re-enter the standard retry loop.
 - [Phase 15]: Real-host intervention, explicit resume, and artifact-scrubbing validation stay phase-local in 15-MANUAL-SMOKE.md.
 - [Phase 15]: Phase 15 closeout records a clean regression rerun as its own atomic test commit instead of touching already-green coverage.
+- [Phase 17]: `nanobot.tui.create_app()` stays health-only by default; the runnable module entry opts into read-only browser routes explicitly.
+- [Phase 17]: Browser-facing routes depend on typed contract-backed services so the web layer can reuse `SessionManager` metadata without booting `AgentLoop`, channels, or GUI startup.
+- [Phase 17]: The new web runtime uses a dedicated `tui` config section with `127.0.0.1` defaults instead of reusing `gateway.host` or `gateway.port`.
 
 ### Pending Todos
 
-1. Define isolated backend/frontend boundaries for the `nanobot/tui` web workspace
-2. Plan the chat workspace and operations console without regressing CLI-first flows
+1. Plan the chat workspace APIs for browser session create/continue/recover flows in Phase 18
+2. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
 
 ### Blockers/Concerns
 
@@ -126,6 +128,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-21T10:30:00Z
-Stopped at: Milestone v1.3 initialized
+Last session: 2026-03-21T12:57:31Z
+Stopped at: Phase 17 execution complete; verification not started
 Resume file: None
