@@ -24,6 +24,13 @@ class RuntimeInspectionContract:
 
 
 @dataclass(slots=True)
+class RuntimeRunLookupContract:
+    """Lazy contract for reading one browser-safe run summary by run id."""
+
+    get_run: Callable[[str], dict[str, Any] | None]
+
+
+@dataclass(slots=True)
 class TaskLaunchContract:
     """Future-facing task launch contract kept non-executing in Phase 17."""
 
