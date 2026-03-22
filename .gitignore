@@ -101,3 +101,9 @@ exp/
 .playwright-mcp/
 opengui_runs/
 bridge/node_modules/
+
+# TUI web generated artifacts
+nanobot/tui/web/node_modules/
+nanobot/tui/web/dist/
+nanobot/tui/web/.vite/
+nanobot/tui/web/coverage/
