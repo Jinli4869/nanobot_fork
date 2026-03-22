@@ -174,11 +174,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260322-krq | Fix planner decomposition logging to print the real tree.to_dict() output instead of the literal %s placeholder | 2026-03-22 | 82386a7 | [260322-krq-fix-planner-decomposition-logging-to-pri](./quick/260322-krq-fix-planner-decomposition-logging-to-pri/) |
 | 260322-kvk | Add a human-friendly indented tree representation for planner decomposition logs while preserving structured plan visibility | 2026-03-22 | eef711b | [260322-kvk-add-a-human-friendly-indented-tree-repre](./quick/260322-kvk-add-a-human-friendly-indented-tree-repre/) |
 | 260322-l7j | Design capability-aware planning and routing so planner can see live routes, use memory-derived routing hints, and drive real tool/MCP router dispatch; update roadmap and design docs for v1.4 | 2026-03-22 | cd1f90c | [260322-l7j-design-capability-aware-planning-and-rou](./quick/260322-l7j-design-capability-aware-planning-and-rou/) |
+| 260322-otm | Add PlanNode.params field and update router dispatch to prefer structured params over instruction fallback; enables multi-param tools (write_file, edit_file) to be dispatched by the planner | 2026-03-22 | 76e6b2b | [260322-otm-planner](./quick/260322-otm-planner/) |
 
 ## Session Continuity
 
 Last activity: 2026-03-22
 
-Last session: 2026-03-22T09:30:31.338Z
-Stopped at: Completed 22-02-PLAN.md
+Last session: 2026-03-22T09:57:20Z
+Stopped at: Completed quick/260322-otm
 Resume file: None
