@@ -42,6 +42,14 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 - **OBS-01**: User can watch a live browser-rendered viewer for active GUI runs instead of relying only on status and logs
 - **TRACE-01**: User can replay completed runs visually with screenshots, actions, and tool events
 
+### Capability-Aware Planning And Routing
+
+- **CAP-01**: Planner can see a compact summary of currently available GUI, tool, shell/exec, and MCP routes instead of reasoning from coarse capability labels alone
+- **CAP-02**: Planner context can include routing-relevant memory hints about previously successful routes without dumping unrelated memory into the prompt
+- **CAP-03**: Router can execute `tool` plan nodes through real dispatch instead of placeholder-only success responses
+- **CAP-04**: Router can execute `mcp` plan nodes through real dispatch with route validation and fallback behavior
+- **CAP-05**: The system can learn from successful route selections and improve future capability choice on representative mixed-capability tasks
+
 ## Out of Scope
 
 | Feature | Reason |
@@ -74,4 +82,4 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 
 ---
 *Requirements defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 19 operations console plan 03*
+*Last updated: 2026-03-22 after adding v1.4 capability-aware planning and routing requirements*

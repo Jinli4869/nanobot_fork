@@ -16,6 +16,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
 - **Verification state:** Milestone v1.2 implementation is in host-integration closeout while planning begins for the next host-facing surface
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
+- **Known planning gap:** the current planner sees coarse capability classes but not the live tool/MCP route inventory, so GUI is often chosen even when a safer non-GUI path exists
 
 ## Current Milestone: v1.3 Nanobot Web Workspace
 
@@ -25,6 +26,16 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Browser chat workspace with streaming replies, recent sessions, and recovery after refresh
 - Operations console for launching and monitoring supported nanobot/OpenGUI tasks
 - Thin FastAPI adapter layer and React/Vite frontend packaged under `nanobot/tui`
+
+## Next Milestone: v1.4 Capability-Aware Planning And Routing
+
+**Goal:** Make nanobot planning and execution capability-aware so route selection can prefer shell/tool/MCP paths when they are more appropriate than GUI automation.
+
+**Target features:**
+- Compact planner-time capability catalog built from the live tool registry and MCP inventory
+- Memory-derived routing hints so previous successful routes influence future planning
+- Route-aware router execution for `tool` and `mcp` nodes instead of placeholder-only dispatch
+- Verification scenarios that prove capability choice improves on mixed host tasks such as system toggles and local automation
 
 ## Requirements
 
@@ -89,6 +100,9 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 | Process-wide runtime lease coordinator | Prevent overlapping background runs from corrupting global desktop state | ✓ Good |
 | Keep the web stack under `nanobot/tui` | Minimize pollution of the existing nanobot and OpenGUI modules while adding a new surface area | — Pending |
 | Use FastAPI + React + Vite for v1.3 | Match the desired local-first stack and keep backend/frontend responsibilities cleanly separated | — Pending |
+| Planner should consume a compact live capability catalog instead of guessing from coarse labels alone | Improves capability selection without overwhelming the prompt with raw schema dumps | — Proposed |
+| Memory should contribute routing hints, not full conversational context, to planning | Reuses prior successful tool choices while keeping planner prompts focused and bounded | — Proposed |
+| Router should dispatch by explicit route identity, not only by coarse capability type | Makes tool and MCP routes executable and inspectable in logs/traces | — Proposed |
 
 ## Constraints
 
@@ -101,4 +115,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-03-21 after starting milestone v1.3 planning*
+*Last updated: 2026-03-22 after designing the v1.4 capability-aware planning and routing milestone*
