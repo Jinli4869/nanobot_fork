@@ -2,12 +2,13 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: human_needed
-stopped_at: Completed 19-03-PLAN.md
-last_updated: "2026-03-22T07:16:15Z"
+status: executing
+stopped_at: Completed 21-01-PLAN.md
+last_updated: "2026-03-22T07:56:18.011Z"
+last_activity: 2026-03-22
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 11
   completed_plans: 11
   percent: 100
@@ -20,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 20 — manual verification for web-app-integration-and-verification
+**Current focus:** Phase 21 — capability-catalog-and-planner-context
 
 ## Current Position
 
-Phase: 20 (web-app-integration-and-verification) — HUMAN VERIFICATION NEEDED
-Plan: 3 of 3
+Phase: 21 (capability-catalog-and-planner-context) — EXECUTING
+Plan: 2 of 2
 
 ## Performance Metrics
 
@@ -59,6 +60,7 @@ Plan: 3 of 3
 | 18 | 3 | 21 min | 7 min |
 | 19 | 3 | 28 min | 9 min |
 | 20 | 3 | 46 min | 15 min |
+| 21 | 1 | 24 min | 24 min |
 
 *Updated after each plan completion*
 
@@ -138,6 +140,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 20]: Built frontend serving remains opt-in behind `serve_frontend=True`, and both fetch and SSE clients share one explicit API base-resolution contract.
 - [Phase 20]: `python -m nanobot.tui` remains the canonical packaged seam, with `nanobot-tui` added as an alias while the existing `nanobot` CLI stays unchanged.
 - [Phase 20]: Packaged frontend assets resolve through `nanobot.tui.web` package resources instead of cwd-relative paths.
+- [Phase 21]: PlanningContext now wraps planner-only inputs so future memory hints can extend planning without another planner API break.
+- [Phase 21]: Capability catalogs are built from an allowlisted live route inventory instead of dumping raw tool schemas into the planner prompt.
+- [Phase 21]: Route metadata stays optional on PlanNode and is exposed in logs only; router dispatch behavior remains unchanged until Phase 22.
 
 ### Pending Todos
 
@@ -160,8 +165,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last activity: 2026-03-22 - Designed quick task 260322-l7j: Capability-aware planning and routing follow-on milestone with memory-informed route selection
+Last activity: 2026-03-22
 
-Last session: 2026-03-21T14:58:22.588Z
-Stopped at: Completed 19-03-PLAN.md
+Last session: 2026-03-22T07:56:18.009Z
+Stopped at: Completed 21-01-PLAN.md
 Resume file: None
