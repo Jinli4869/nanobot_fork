@@ -653,3 +653,204 @@ async def test_multi_param_route_falls_back() -> None:
     assert result.success is True
     assert "GUI wrote the file" in result.output
     mock_gui.run.assert_awaited_once_with("write hello to test.txt", max_retries=1)
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 OTM: node.params-preferring dispatch tests
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_atom_with_params(
+    route_id: str | None,
+    params: dict | None = None,
+    instruction: str = "test instruction",
+) -> PlanNode:
+    """Create a tool-capability ATOM PlanNode with optional structured params."""
+    return PlanNode(
+        node_type="atom",
+        instruction=instruction,
+        capability="tool",
+        route_id=route_id,
+        params=params,
+    )
+
+
+def _make_mcp_atom_with_params(
+    route_id: str | None,
+    params: dict | None = None,
+    instruction: str = "test mcp instruction",
+) -> PlanNode:
+    """Create an mcp-capability ATOM PlanNode with optional structured params."""
+    return PlanNode(
+        node_type="atom",
+        instruction=instruction,
+        capability="mcp",
+        route_id=route_id,
+        params=params,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_tool_prefers_node_params() -> None:
+    """_run_tool dispatches node.params dict directly when params is set."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(return_value="hi")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_tool_atom_with_params(
+        route_id="tool.exec_shell",
+        params={"command": "echo hi"},
+        instruction="say hello",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("exec", {"command": "echo hi"})
+
+
+@pytest.mark.asyncio
+async def test_run_tool_falls_back_to_instruction_when_no_params() -> None:
+    """_run_tool falls back to {param_key: instruction} when params is None."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(return_value="ok")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_tool_atom_with_params(
+        route_id="tool.exec_shell",
+        params=None,
+        instruction="ls -la",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("exec", {"command": "ls -la"})
+
+
+@pytest.mark.asyncio
+async def test_run_tool_multi_param_with_params_succeeds() -> None:
+    """Multi-param route (write_file) dispatches successfully when params is set."""
+    registry = _make_mock_registry(["write_file"])
+    registry.execute = AsyncMock(return_value="written")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_tool_atom_with_params(
+        route_id="tool.filesystem.write",
+        params={"path": "out.txt", "content": "hello"},
+        instruction="write hello to out.txt",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("write_file", {"path": "out.txt", "content": "hello"})
+
+
+@pytest.mark.asyncio
+async def test_run_tool_multi_param_without_params_fails() -> None:
+    """Multi-param route (write_file) with params=None returns structured failure."""
+    registry = _make_mock_registry(["write_file"])
+
+    router = TreeRouter()
+    node = _make_tool_atom_with_params(
+        route_id="tool.filesystem.write",
+        params=None,
+        instruction="write hello to out.txt",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is False
+    assert result.error is not None
+    assert "structured parameters" in result.error
+
+
+@pytest.mark.asyncio
+async def test_run_mcp_prefers_node_params() -> None:
+    """_run_mcp dispatches node.params dict directly when params is set."""
+    registry = _make_mock_registry(["mcp_demo_lookup"])
+    registry.execute = AsyncMock(return_value="mcp result")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_mcp_atom_with_params(
+        route_id="mcp.demo.lookup",
+        params={"query": "user 42"},
+        instruction="find user 42",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_mcp(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("mcp_demo_lookup", {"query": "user 42"})
+
+
+@pytest.mark.asyncio
+async def test_run_mcp_falls_back_to_instruction_when_no_params() -> None:
+    """_run_mcp falls back to {input: instruction} when params is None."""
+    registry = _make_mock_registry(["mcp_demo_lookup"])
+    registry.execute = AsyncMock(return_value="found")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_mcp_atom_with_params(
+        route_id="mcp.demo.lookup",
+        params=None,
+        instruction="find user 42",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_mcp(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("mcp_demo_lookup", {"input": "find user 42"})
+
+
+@pytest.mark.asyncio
+async def test_dispatch_with_fallback_uses_params() -> None:
+    """_dispatch_with_fallback dispatches node.params when params is set on primary route."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(return_value="ok")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = PlanNode(
+        node_type="atom",
+        instruction="echo hello",
+        capability="tool",
+        route_id="tool.exec_shell",
+        fallback_route_ids=("gui.desktop",),
+        params={"command": "echo hello"},
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("exec", {"command": "echo hello"})
+
+
+@pytest.mark.asyncio
+async def test_dispatch_with_fallback_multi_param_with_params_succeeds() -> None:
+    """_dispatch_with_fallback: multi-param route (write_file) succeeds when params is set."""
+    registry = _make_mock_registry(["write_file"])
+    registry.execute = AsyncMock(return_value="written")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = PlanNode(
+        node_type="atom",
+        instruction="write hello to out.txt",
+        capability="tool",
+        route_id="tool.filesystem.write",
+        fallback_route_ids=("gui.desktop",),
+        params={"path": "out.txt", "content": "hello"},
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    registry.execute.assert_awaited_once_with("write_file", {"path": "out.txt", "content": "hello"})
