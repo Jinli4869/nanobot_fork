@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pytest
@@ -299,13 +299,17 @@ async def test_router_dispatches_gui_and_tool_atoms(tmp_path: Path) -> None:
 
     mock_tool_registry = object()  # just needs to be non-None
 
+    async def fake_run_tool(node: Any, context: RouterContext) -> NodeResult:  # noqa: ARG001
+        return NodeResult(success=True, output=f"tool:{node.instruction}")
+
     router = TreeRouter()
     ctx = RouterContext(
         task="Turn on Wi-Fi and check weather",
         gui_agent=mock_gui, tool_registry=mock_tool_registry,
     )
 
-    result = await router.execute(plan, ctx)
+    with patch.object(TreeRouter, "_run_tool", side_effect=fake_run_tool):
+        result = await router.execute(plan, ctx)
 
     assert result.success
     assert "Turn on Wi-Fi" in ctx.completed

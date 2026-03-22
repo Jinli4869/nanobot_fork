@@ -322,11 +322,11 @@ async def test_router_dispatches_planner_atoms_by_capability() -> None:
 		),
 	)
 
-	async def fake_tool(instruction: str, context: RouterContext) -> NodeResult:  # noqa: ARG001
-		return NodeResult(success=True, output=f"tool:{instruction}")
+	async def fake_tool(node: Any, context: RouterContext) -> NodeResult:  # noqa: ARG001
+		return NodeResult(success=True, output=f"tool:{node.instruction}")
 
-	async def fake_mcp(instruction: str, context: RouterContext) -> NodeResult:  # noqa: ARG001
-		return NodeResult(success=True, output=f"mcp:{instruction}")
+	async def fake_mcp(node: Any, context: RouterContext) -> NodeResult:  # noqa: ARG001
+		return NodeResult(success=True, output=f"mcp:{node.instruction}")
 
 	async def fake_gui(instruction: str, context: RouterContext) -> NodeResult:  # noqa: ARG001
 		return NodeResult(success=True, output=f"gui:{instruction}")
