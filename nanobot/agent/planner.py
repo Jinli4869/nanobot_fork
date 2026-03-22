@@ -34,6 +34,9 @@ class PlanNode:
     node_type: NodeType
     instruction: str = ""               # populated for ATOM nodes only
     capability: CapabilityType = "tool"  # populated for ATOM nodes only
+    route_id: str | None = None
+    route_reason: str = ""
+    fallback_route_ids: tuple[str, ...] = ()
     children: tuple[PlanNode, ...] = field(default_factory=tuple)  # populated for AND/OR only
 
     def to_dict(self) -> dict[str, Any]:
@@ -42,6 +45,12 @@ class PlanNode:
         if self.node_type == "atom":
             d["instruction"] = self.instruction
             d["capability"] = self.capability
+            if self.route_id:
+                d["route_id"] = self.route_id
+            if self.route_reason:
+                d["route_reason"] = self.route_reason
+            if self.fallback_route_ids:
+                d["fallback_route_ids"] = list(self.fallback_route_ids)
         else:
             d["children"] = [child.to_dict() for child in self.children]
         return d
@@ -55,6 +64,9 @@ class PlanNode:
                 node_type="atom",
                 instruction=data.get("instruction", ""),
                 capability=data.get("capability", "tool"),
+                route_id=data.get("route_id"),
+                route_reason=data.get("route_reason", ""),
+                fallback_route_ids=tuple(data.get("fallback_route_ids", [])),
             )
         children = tuple(cls.from_dict(child) for child in data.get("children", []))
         return cls(node_type=node_type, children=children)
