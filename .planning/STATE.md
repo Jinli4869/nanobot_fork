@@ -4,7 +4,7 @@ milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: human_needed
 stopped_at: Completed 19-03-PLAN.md
-last_updated: "2026-03-22T06:57:16Z"
+last_updated: "2026-03-22T07:01:53Z"
 progress:
   total_phases: 4
   completed_phases: 3
@@ -155,10 +155,11 @@ Decisions are logged in PROJECT.md Key Decisions table.
 |---|-------------|------|--------|-----------|
 | 260322-kjf | Implement planner fallback so forced create_plan tool_choice automatically retries with auto on unsupported thinking-mode tool_choice errors, preserving diagnostics and tests | 2026-03-22 | 4da2b40 | [260322-kjf-implement-planner-fallback-so-forced-cre](./quick/260322-kjf-implement-planner-fallback-so-forced-cre/) |
 | 260322-krq | Fix planner decomposition logging to print the real tree.to_dict() output instead of the literal %s placeholder | 2026-03-22 | 82386a7 | [260322-krq-fix-planner-decomposition-logging-to-pri](./quick/260322-krq-fix-planner-decomposition-logging-to-pri/) |
+| 260322-kvk | Add a human-friendly indented tree representation for planner decomposition logs while preserving structured plan visibility | 2026-03-22 | eef711b | [260322-kvk-add-a-human-friendly-indented-tree-repre](./quick/260322-kvk-add-a-human-friendly-indented-tree-repre/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-22 - Completed quick task 260322-krq: Fix planner decomposition logging to print the real tree.to_dict() output instead of the literal %s placeholder
+Last activity: 2026-03-22 - Completed quick task 260322-kvk: Add a human-friendly indented tree representation for planner decomposition logs while preserving structured plan visibility
 
 Last session: 2026-03-21T14:58:22.588Z
 Stopped at: Completed 19-03-PLAN.md
