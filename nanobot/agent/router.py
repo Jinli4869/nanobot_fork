@@ -389,9 +389,9 @@ class TreeRouter:
                 continue
 
             tool_name, param_key = resolved
-            if param_key is None:
+            if param_key is None and node.params is None:
                 logger.warning(
-                    "Dispatch: route %s requires structured parameters, skipping",
+                    "Dispatch: route %s requires structured parameters and no params provided, skipping",
                     route_id,
                 )
                 tried.append(f"{route_id}(multi-param)")
@@ -400,7 +400,10 @@ class TreeRouter:
             logger.info(
                 "Dispatch: resolved_route=%s tool=%s", route_id, tool_name,
             )
-            params = {param_key: node.instruction}
+            if node.params is not None:
+                params = dict(node.params)
+            else:
+                params = {param_key: node.instruction}
             output = await context.tool_registry.execute(tool_name, params)
             output_str = str(output) if output is not None else ""
             if output_str.startswith("Error"):
@@ -460,7 +463,11 @@ class TreeRouter:
             )
 
         tool_name, param_key = resolved
-        if param_key is None:
+        if node.params is not None:
+            params = dict(node.params)
+        elif param_key is not None:
+            params = {param_key: node.instruction}
+        else:
             logger.warning(
                 "Dispatch: route %s requires structured parameters, cannot dispatch from instruction alone",
                 node.route_id,
@@ -477,7 +484,6 @@ class TreeRouter:
             "Dispatch: planned_route=%s resolved_route=%s tool=%s",
             node.route_id, node.route_id, tool_name,
         )
-        params = {param_key: node.instruction}
         output = await context.tool_registry.execute(tool_name, params)
         output_str = str(output) if output is not None else ""
         if output_str.startswith("Error"):
@@ -525,7 +531,11 @@ class TreeRouter:
             "Dispatch: planned_route=%s resolved_route=%s tool=%s",
             node.route_id, node.route_id, tool_name,
         )
-        params = {param_key: node.instruction}
+        if node.params is not None:
+            params = dict(node.params)
+        else:
+            # MCP routes always have param_key="input"; fall back to instruction-based dispatch
+            params = {param_key: node.instruction}
         output = await context.tool_registry.execute(tool_name, params)
         output_str = str(output) if output is not None else ""
         if output_str.startswith("Error"):

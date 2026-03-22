@@ -92,8 +92,8 @@ _CREATE_PLAN_TOOL: dict[str, Any] = {
             "AND nodes execute all children sequentially. "
             "OR nodes try children until one succeeds. "
             "ATOM nodes are leaf tasks with a capability type (gui/tool/mcp/api), "
-            "and may optionally include route_id, route_reason, "
-            "fallback_route_ids, and params (a dict of concrete executable "
+            "and may optionally include route_id (e.g. gui.desktop or tool.exec_shell), "
+            "route_reason, fallback_route_ids, and params (a dict of concrete executable "
             "parameter values for the routed tool)."
         ),
         "parameters": {
@@ -270,15 +270,12 @@ class TaskPlanner:
             "- When a concrete route is available, include route_id and a short route_reason.",
             "- Add fallback_route_ids for host operations that can safely fall back to GUI.",
             "- When route_id points to a concrete tool or MCP route, include 'params' with the exact "
-            "executable parameter values the tool expects.  For example:",
-            "  - tool.exec_shell: params={\"command\": \"ls -la /tmp\"}",
-            "  - tool.filesystem.read: params={\"path\": \"/etc/hosts\"}",
-            "  - tool.filesystem.list: params={\"path\": \"/Users/jinli/project\"}",
-            "  - tool.filesystem.write: params={\"path\": \"out.txt\", \"content\": \"hello\"}",
-            "  - tool.filesystem.edit: params={\"path\": \"main.py\", \"old_text\": \"foo\", \"new_text\": \"bar\"}",
-            "  - tool.web.search: params={\"query\": \"python asyncio tutorial\"}",
-            "  - tool.web.fetch: params={\"url\": \"https://example.com\"}",
-            "  - mcp.{server}.{tool}: params={\"input\": \"the input value\"} or tool-specific keys",
+            "executable parameter values the tool expects.  For example, route 'tool.exec_shell' "
+            "uses params={\"command\": \"ls -la /tmp\"}, route 'tool.filesystem.read' uses "
+            "params={\"path\": \"/etc/hosts\"}, route 'tool.filesystem.write' uses "
+            "params={\"path\": \"out.txt\", \"content\": \"hello\"}, route 'tool.web.search' "
+            "uses params={\"query\": \"python asyncio tutorial\"}, and MCP routes use "
+            "params={\"input\": \"value\"} or tool-specific keys.",
             "- 'instruction' stays as the human-readable description; 'params' holds machine-executable values.",
             "- For gui capability, params is not needed (the GUI subagent interprets instruction directly).",
         ]
