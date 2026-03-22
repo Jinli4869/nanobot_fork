@@ -124,7 +124,7 @@ Plans:
 
 Plans:
 - [x] 21-01-PLAN.md — Build compact capability catalog summaries from ToolRegistry, MCP inventory, and host/runtime availability
-- [ ] 21-02-PLAN.md — Inject routing-relevant memory hints into planner context with prompt-size guardrails
+- [x] 21-02-PLAN.md — Inject routing-relevant memory hints into planner context with prompt-size guardrails
 
 **Success criteria:**
 1. Planner receives a bounded catalog of currently available routes rather than only coarse capability labels.
