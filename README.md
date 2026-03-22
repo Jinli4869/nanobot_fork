@@ -96,6 +96,7 @@
 - [Features](#-features)
 - [Install](#-install)
 - [Quick Start](#-quick-start)
+- [Web Workspace](#-web-workspace)
 - [Chat Apps](#-chat-apps)
 - [Agent Social Network](#-agent-social-network)
 - [Configuration](#️-configuration)
@@ -219,6 +220,43 @@ Configure these **two parts** in your config (other options have defaults).
   }
 }
 ```
+
+## 🌐 Web Workspace
+
+The browser workspace is local-first and optional. Existing `nanobot` CLI usage is unchanged.
+
+**Development mode**
+
+Start the backend:
+
+```bash
+python -m nanobot.tui
+```
+
+Start the frontend dev server in a second terminal:
+
+```bash
+npm --prefix nanobot/tui/web run dev
+```
+
+This serves the React app through Vite while proxying API traffic to `127.0.0.1:18791`.
+
+**Built/local mode**
+
+Build the frontend bundle:
+
+```bash
+npm --prefix nanobot/tui/web run build
+```
+
+Then start the packaged backend shell with either command:
+
+```bash
+python -m nanobot.tui
+nanobot-tui
+```
+
+The built app will be served from the same local FastAPI runtime, and the existing `nanobot` CLI commands continue to work as before.
 
 **3. Chat**
 

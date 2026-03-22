@@ -14,6 +14,7 @@ from nanobot.tui.dependencies import (
     get_task_launch_service,
 )
 from nanobot.tui.services import RuntimeService, TaskLaunchService
+from nanobot.tui.static import frontend_dist_path
 
 
 def _write_frontend_bundle(dist_path: Path) -> None:
@@ -105,14 +106,24 @@ def test_root_serves_built_index_when_frontend_assets_are_present(monkeypatch, t
     assert "data-app='nanobot-tui'" in response.text
 
 
+def test_frontend_dist_path_points_at_packaged_web_dist_directory() -> None:
+    dist_path = frontend_dist_path()
+
+    assert dist_path.name == "dist"
+    assert dist_path.parent.name == "web"
+
+
 def test_chat_and_operations_deep_links_return_the_spa_shell(monkeypatch, tmp_path: Path) -> None:
     client = _make_static_test_client(monkeypatch, tmp_path, with_bundle=True)
 
+    chat_root_response = client.get("/chat")
     chat_response = client.get("/chat/demo-session")
     operations_response = client.get("/operations?runId=run-123")
 
+    assert chat_root_response.status_code == 200
     assert chat_response.status_code == 200
     assert operations_response.status_code == 200
+    assert "data-app='nanobot-tui'" in chat_root_response.text
     assert "data-app='nanobot-tui'" in chat_response.text
     assert "data-app='nanobot-tui'" in operations_response.text
 
