@@ -24,6 +24,8 @@ import pytest
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.planner import PlanNode
 from nanobot.agent.router import NodeResult, RouterContext, TreeRouter
+from nanobot.agent.tools.base import Tool
+from nanobot.agent.tools.registry import ToolRegistry
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +51,26 @@ def _or(*children: PlanNode) -> PlanNode:
 def _make_ctx(**kwargs: Any) -> RouterContext:
     """Create a RouterContext with sensible defaults."""
     return RouterContext(task="test task", **kwargs)
+
+
+class _StaticTool(Tool):
+    def __init__(self, name: str) -> None:
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def description(self) -> str:
+        return self._name
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    async def execute(self, **kwargs: Any) -> str:
+        return "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -561,8 +583,18 @@ async def test_complexity_gate_exception_falls_back(tmp_path: Path) -> None:
 async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
     """_plan_and_execute logs the decomposed plan tree via logger.info."""
     loop = _make_agent_loop(tmp_path)
+    loop.tools = ToolRegistry()
+    for tool_name in ("gui_task", "exec", "read_file", "web_search", "mcp_demo_lookup"):
+        loop.tools.register(_StaticTool(tool_name))
 
-    atom_node = PlanNode(node_type="atom", instruction="open browser", capability="gui")
+    atom_node = PlanNode(
+        node_type="atom",
+        instruction="disable bluetooth",
+        capability="tool",
+        route_id="tool.exec_shell",
+        route_reason="Local shell route can toggle host settings directly",
+        fallback_route_ids=("gui.desktop",),
+    )
 
     mock_planner = AsyncMock()
     mock_planner.plan = AsyncMock(return_value=atom_node)
@@ -587,9 +619,24 @@ async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
                 "Open the browser and search for something complex"
             )
 
-    expected_tree_text = "- GUI: open browser"
+    planning_context = mock_planner.plan.await_args.kwargs["planning_context"]
+    route_ids = [route.route_id for route in planning_context.catalog.routes]
+    assert route_ids == [
+        "gui.desktop",
+        "tool.exec_shell",
+        "tool.filesystem.read",
+        "tool.web.search",
+        "mcp.demo.lookup",
+    ]
+
     info_calls = [call.args for call in mock_logger.info.call_args_list]
-    assert any(args and args[0] == "Decomposed plan:\n{}" and args[1] == expected_tree_text for args in info_calls), (
+    assert any(
+        args
+        and args[0] == "Decomposed plan:\n{}"
+        and "via tool.exec_shell" in args[1]
+        and "fallback -> gui.desktop" in args[1]
+        for args in info_calls
+    ), (
         f"Expected 'Decomposed plan' in logger.info calls, got: {info_calls}"
     )
     debug_calls = [call.args for call in mock_logger.debug.call_args_list]
