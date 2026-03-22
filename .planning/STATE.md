@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed 21-02-PLAN.md
-last_updated: "2026-03-22T08:10:26.353Z"
+stopped_at: Completed 22-01-PLAN.md
+last_updated: "2026-03-22T09:21:23.810Z"
 last_activity: 2026-03-22
 progress:
   total_phases: 4
@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 21 — capability-catalog-and-planner-context
+**Current focus:** Phase 22 — route-aware-tool-and-mcp-dispatch
 
 ## Current Position
 
-Phase: 21 (capability-catalog-and-planner-context) — COMPLETE
-Plan: 2 of 2 (completed)
+Phase: 22 (route-aware-tool-and-mcp-dispatch) — EXECUTING
+Plan: 1 of 2
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Plan: 2 of 2 (completed)
 | 21 | 2 | 31 min | 16 min |
 
 *Updated after each plan completion*
+| Phase 22 P01 | 4 | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -147,6 +148,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 21]: Routing memory stays planner-only and read-only by extracting compact DTOs from MemoryStore instead of reusing ContextBuilder or get_memory_context().
 - [Phase 21]: Planner prompts render routing memory in a separate capped section with explicit omission text once hint count or budget limits are hit.
 - [Phase 21]: AgentLoop builds routing hints immediately before planning so the live catalog and memory evidence stay aligned without changing router dispatch behavior.
+- [Phase 22]: Route resolution uses _ROUTE_ID_TO_TOOL_NAME + _INSTRUCTION_PARAM tables; multi-param tools return None param_key from _resolve_route() to prevent instruction-only dispatch
+- [Phase 22]: MCP dispatch routes through context.tool_registry (not mcp_client) since MCPToolWrapper pre-registers mcp_{server}_{tool} keys; mcp_client retained for backward compatibility
+- [Phase 22]: _run_tool and _run_mcp accept full PlanNode (not instruction string) so route_id and fallback_route_ids are available at dispatch time
 
 ### Pending Todos
 
@@ -171,6 +175,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-03-22
 
-Last session: 2026-03-22T08:05:35.410Z
-Stopped at: Completed 21-02-PLAN.md
+Last session: 2026-03-22T09:21:23.806Z
+Stopped at: Completed 22-01-PLAN.md
 Resume file: None
