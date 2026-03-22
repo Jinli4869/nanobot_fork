@@ -88,4 +88,4 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 
 ---
 *Requirements defined: 2026-03-21*
-*Last updated: 2026-03-22 after adding v1.4 capability-aware planning and routing requirements*
+*Last updated: 2026-03-22 after completing Phase 21 capability-aware planner context requirements*
