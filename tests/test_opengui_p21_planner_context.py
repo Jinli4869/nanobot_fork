@@ -92,3 +92,44 @@ def test_planning_context_wraps_catalog() -> None:
 
     assert planning_context.catalog is catalog
     assert planning_context.catalog.routes[0].route_id == "tool.exec_shell"
+
+
+def test_task_planner_catalog_prompt_mentions_route_metadata() -> None:
+    from nanobot.agent.capabilities import CapabilityCatalog, PlanningContext, RouteSummary
+    from nanobot.agent.planner import TaskPlanner, _CREATE_PLAN_TOOL
+
+    planner = TaskPlanner(llm=object())
+    planning_context = PlanningContext(
+        catalog=CapabilityCatalog(
+            routes=(
+                RouteSummary(
+                    route_id="tool.exec_shell",
+                    capability="tool",
+                    kind="shell",
+                    summary="Run local shell commands",
+                    use_for=("system toggles",),
+                    avoid_for=("visual workflows",),
+                    availability="ready",
+                ),
+                RouteSummary(
+                    route_id="gui.desktop",
+                    capability="gui",
+                    kind="desktop",
+                    summary="Operate apps through the GUI subagent",
+                    use_for=("visual workflows",),
+                    avoid_for=("direct host commands",),
+                    availability="ready",
+                ),
+            )
+        )
+    )
+
+    prompt = planner._build_system_prompt(planning_context=planning_context)
+
+    assert "tool.exec_shell" in prompt
+    assert "gui.desktop" in prompt
+    assert "route_id" in prompt
+    assert "route_reason" in prompt
+    assert "fallback_route_ids" in prompt
+    assert "tool.exec_shell" in str(_CREATE_PLAN_TOOL)
+    assert "route_id" in str(_CREATE_PLAN_TOOL)
