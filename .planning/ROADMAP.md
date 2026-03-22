@@ -111,7 +111,7 @@ Plans:
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
 | 21 | Capability Catalog And Planner Context | Give the planner a compact live route inventory and routing-relevant memory hints so capability choice is grounded in real runtime options. | CAP-01, CAP-02 | 4 |
-| 22 | Route-Aware Tool And MCP Dispatch | Turn `tool` and `mcp` plan nodes into real executable routes with validation, observability, and fallback behavior. | CAP-03, CAP-04 | 4 |
+| 22 | 1/2 | In Progress|  | 4 |
 | 23 | Routing Memory Feedback And Verification | Learn from route outcomes and prove that mixed-capability tasks choose better routes than the current GUI-biased default. | CAP-05 | 4 |
 
 ### Phase 21: Capability Catalog And Planner Context
@@ -138,7 +138,7 @@ Plans:
 
 **Depends on:** Phase 21
 **Requirements:** CAP-03, CAP-04
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 22-01-PLAN.md — Add route resolver and replace placeholder _run_tool/_run_mcp with real ToolRegistry dispatch
