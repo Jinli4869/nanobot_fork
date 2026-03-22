@@ -22,7 +22,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 | 17 | Web Runtime Boundary | Establish an isolated FastAPI service shell, local-first web runtime defaults, and adapter contracts under `nanobot/tui` without destabilizing existing nanobot or OpenGUI flows. | ISO-01, ISO-02 | 4 |
 | 18 | Chat Workspace | Expose session-backed chat APIs and streaming updates so the browser can create, continue, and recover nanobot conversations. | CHAT-01, CHAT-02, CHAT-03 | 4 |
 | 19 | Operations Console | Surface task launch, runtime status, and trace/log inspection for supported nanobot and OpenGUI workflows. | OPS-01, OPS-02, OPS-03 | 4 |
-| 20 | Web App Integration and Verification | Deliver the React/Vite workspace shell, unify chat and operations navigation, and ship runnable entrypoints and regression coverage. | WEB-01, WEB-02, SHIP-01 | 4 |
+| 20 | 2/3 | In Progress|  | 4 |
 
 ## Phase Details
 
@@ -88,7 +88,7 @@ Plans:
 
 **Depends on:** Phases 18-19
 **Requirements:** WEB-01, WEB-02, SHIP-01
-**Plans:** 0/3 plans complete
+**Plans:** 2/3 plans executed
 
 Plans:
 - [ ] 20-01-PLAN.md — Build the React/Vite shell for chat and operations navigation

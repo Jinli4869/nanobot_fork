@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: planning
+status: executing
 stopped_at: Completed 19-03-PLAN.md
-last_updated: "2026-03-21T14:58:22.592Z"
+last_updated: "2026-03-22T02:33:55Z"
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
-  percent: 100
+  total_plans: 11
+  completed_plans: 10
+  percent: 91
 ---
 
 # Project State
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-03-21)
 
 ## Current Position
 
-Phase: 20 (web-app-integration-and-verification) — PLANNING
-Plan: 0 of 0
+Phase: 20 (web-app-integration-and-verification) — EXECUTING
+Plan: 3 of 3
 
 ## Performance Metrics
 
-**Progress:** [██████████] 100%
+**Progress:** [█████████░] 91%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -41,12 +41,14 @@ Plan: 0 of 0
 | 19-01 | 8 min | 2 | 9 |
 | 19-02 | 11 min | 2 | 7 |
 | 19-03 | 9 min | 2 | 10 |
+| 20-01 | 22 min | 2 | 12 |
+| 20-02 | 18 min | 2 | 12 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 8
+- Total plans completed (v1.3): 10
 - Average duration: 23 min
-- Total execution time: 186 min
+- Total execution time: 226 min
 
 **By Phase:**
 
@@ -55,7 +57,7 @@ Plan: 0 of 0
 | 17 | 2 | 137 min | 69 min |
 | 18 | 3 | 21 min | 7 min |
 | 19 | 3 | 28 min | 9 min |
-| 20 | 0 | — | — |
+| 20 | 2 | 40 min | 20 min |
 
 *Updated after each plan completion*
 
@@ -131,6 +133,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 19]: OpenGUI browser launches run through tui-local local/dry-run backend adapters instead of shelling out through opengui.cli.
 - [Phase 19]: Public diagnostics stay run_id-addressed only; TraceInspectionService resolves artifact directories internally from the shared registry or artifacts root.
 - [Phase 19]: Trace and log payloads are allowlist-based and sanitize prompt/path leakage by dropping unsafe fields and redacting prompt/path text in summaries or messages.
+- [Phase 20]: The browser workspace lives in a dedicated `nanobot/tui/web` React/Vite app, while session and run identity stay encoded in the URL for cross-view continuity.
+- [Phase 20]: Built frontend serving remains opt-in behind `serve_frontend=True`, and both fetch and SSE clients share one explicit API base-resolution contract.
 
 ### Pending Todos
 
