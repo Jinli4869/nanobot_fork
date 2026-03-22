@@ -138,11 +138,11 @@ Plans:
 
 **Depends on:** Phase 21
 **Requirements:** CAP-03, CAP-04
-**Plans:** 0/2 plans complete
+**Plans:** 2 plans
 
 Plans:
-- [ ] 22-01-PLAN.md — Extend plan-node and router contracts with explicit route identifiers, route reasons, and fallback metadata
-- [ ] 22-02-PLAN.md — Implement concrete dispatch for local tool routes and MCP-backed routes, including validation and fallback handling
+- [ ] 22-01-PLAN.md — Add route resolver and replace placeholder _run_tool/_run_mcp with real ToolRegistry dispatch
+- [ ] 22-02-PLAN.md — Implement fallback chain dispatch, GUI fallback delegation, and regression test updates
 
 **Success criteria:**
 1. Router can execute `tool` atoms through real local dispatch instead of placeholder success responses.
@@ -192,4 +192,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-22 after completing Phase 21 capability catalog and planner context*
+*Last updated: 2026-03-22 after planning Phase 22 route-aware tool and MCP dispatch*
