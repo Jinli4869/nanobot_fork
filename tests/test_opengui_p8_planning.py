@@ -714,3 +714,88 @@ def test_plan_node_route_metadata_legacy_payload_still_parses() -> None:
 
     assert node == PlanNode(node_type="atom", instruction="open obsidian", capability="gui")
     assert node.to_dict() == payload
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 OTM: PlanNode.params field round-trip tests
+# ---------------------------------------------------------------------------
+
+
+def test_plan_node_params_defaults_to_none() -> None:
+    """PlanNode().params is None by default (backward compatible)."""
+    node = PlanNode(node_type="atom", instruction="list files")
+    assert node.params is None
+
+
+def test_plan_node_params_stores_dict() -> None:
+    """PlanNode(params={"path": "/tmp"}).params returns the dict unchanged."""
+    node = PlanNode(
+        node_type="atom",
+        instruction="list /tmp",
+        capability="tool",
+        route_id="tool.filesystem.list",
+        params={"path": "/tmp"},
+    )
+    assert node.params == {"path": "/tmp"}
+
+
+def test_plan_node_params_to_dict_includes_params_when_set() -> None:
+    """to_dict() serialises params into the output dict when params is set."""
+    node = PlanNode(
+        node_type="atom",
+        instruction="list /tmp",
+        capability="tool",
+        route_id="tool.filesystem.list",
+        params={"path": "/tmp"},
+    )
+    d = node.to_dict()
+    assert d["params"] == {"path": "/tmp"}
+
+
+def test_plan_node_params_to_dict_omits_params_when_none() -> None:
+    """to_dict() does not include a 'params' key when params is None."""
+    node = PlanNode(node_type="atom", instruction="list files", capability="tool")
+    d = node.to_dict()
+    assert "params" not in d
+
+
+def test_plan_node_params_from_dict_restores_params() -> None:
+    """from_dict() populates params when the serialised payload includes it."""
+    payload = {
+        "type": "atom",
+        "instruction": "list /tmp",
+        "capability": "tool",
+        "route_id": "tool.filesystem.list",
+        "params": {"path": "/tmp"},
+    }
+    node = PlanNode.from_dict(payload)
+    assert node.params == {"path": "/tmp"}
+
+
+def test_plan_node_params_from_dict_none_when_absent() -> None:
+    """from_dict() leaves params as None when the payload omits the key."""
+    payload = {"type": "atom", "instruction": "list files", "capability": "tool"}
+    node = PlanNode.from_dict(payload)
+    assert node.params is None
+
+
+def test_plan_node_params_round_trip() -> None:
+    """to_dict -> from_dict round-trip preserves params exactly."""
+    node = PlanNode(
+        node_type="atom",
+        instruction="write output",
+        capability="tool",
+        route_id="tool.filesystem.write",
+        params={"path": "out.txt", "content": "hello"},
+    )
+    assert PlanNode.from_dict(node.to_dict()) == node
+
+
+def test_plan_node_params_round_trip_without_params() -> None:
+    """Round-trip of a node without params still equals the original (backward compat)."""
+    node = PlanNode(
+        node_type="atom",
+        instruction="open obsidian",
+        capability="gui",
+    )
+    assert PlanNode.from_dict(node.to_dict()) == node
