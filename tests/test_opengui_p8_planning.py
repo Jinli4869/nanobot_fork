@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from nanobot.agent.loop import AgentLoop
 from nanobot.agent.planner import PlanNode
 from nanobot.agent.router import NodeResult, RouterContext, TreeRouter
 
@@ -586,9 +587,40 @@ async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
                 "Open the browser and search for something complex"
             )
 
-    # logger.info must be called with "Decomposed plan" at some point
+    expected_tree_text = "- GUI: open browser"
     info_calls = [call.args for call in mock_logger.info.call_args_list]
-    assert any(args and args[0] == "Decomposed plan: {}" and args[1] == atom_node.to_dict() for args in info_calls), (
+    assert any(args and args[0] == "Decomposed plan:\n{}" and args[1] == expected_tree_text for args in info_calls), (
         f"Expected 'Decomposed plan' in logger.info calls, got: {info_calls}"
     )
+    debug_calls = [call.args for call in mock_logger.debug.call_args_list]
+    assert any(args and args[0] == "Decomposed plan (raw): {}" and args[1] == atom_node.to_dict() for args in debug_calls), (
+        f"Expected raw decomposed plan in logger.debug calls, got: {debug_calls}"
+    )
     assert output == "done"
+
+
+def test_format_plan_tree_renders_indented_human_readable_outline() -> None:
+    """Plan formatting should favor a readable tree for humans scanning logs."""
+    plan = PlanNode(
+        node_type="and",
+        children=(
+            PlanNode(node_type="atom", instruction="open obsidian", capability="gui"),
+            PlanNode(
+                node_type="or",
+                children=(
+                    PlanNode(node_type="atom", instruction="pause music from menu bar", capability="gui"),
+                    PlanNode(node_type="atom", instruction="pause music with media key", capability="gui"),
+                ),
+            ),
+        ),
+    )
+
+    rendered = AgentLoop._format_plan_tree(plan)
+
+    assert rendered == (
+        "AND\n"
+        "  - GUI: open obsidian\n"
+        "  OR\n"
+        "    - GUI: pause music from menu bar\n"
+        "    - GUI: pause music with media key"
+    )

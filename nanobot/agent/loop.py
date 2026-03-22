@@ -771,6 +771,26 @@ class AgentLoop:
         budget = self.context_window_tokens - max(1, reserved_output) - 1024
         return budget if budget > 0 else max(128, self.context_window_tokens // 2)
 
+    @staticmethod
+    def _format_plan_tree(node: Any, *, indent: int = 0) -> str:
+        """Render a plan tree into a human-readable indented outline."""
+        prefix = "  " * indent
+        node_type = getattr(node, "node_type", "unknown")
+        if node_type == "atom":
+            capability = getattr(node, "capability", "unknown")
+            instruction = getattr(node, "instruction", "")
+            return f"{prefix}- {str(capability).upper()}: {instruction}"
+
+        header = f"{prefix}{str(node_type).upper()}"
+        children = getattr(node, "children", ()) or ()
+        if not children:
+            return header
+        rendered_children = [
+            AgentLoop._format_plan_tree(child, indent=indent + 1)
+            for child in children
+        ]
+        return "\n".join([header, *rendered_children])
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -1060,7 +1080,8 @@ class AgentLoop:
 
         planner = TaskPlanner(llm=self.provider)
         tree = await planner.plan(task)
-        logger.info("Decomposed plan: {}", tree.to_dict())
+        logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))
+        logger.debug("Decomposed plan (raw): {}", tree.to_dict())
 
         raw_gui_tool = self.tools.get("gui_task")
         gui_agent = _GuiDispatchAdapter(raw_gui_tool) if raw_gui_tool is not None else None
