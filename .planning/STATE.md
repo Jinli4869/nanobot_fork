@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed 22-01-PLAN.md
-last_updated: "2026-03-22T09:21:23.810Z"
+stopped_at: Completed 22-02-PLAN.md
+last_updated: "2026-03-22T09:30:31.342Z"
 last_activity: 2026-03-22
 progress:
   total_phases: 4
@@ -65,6 +65,7 @@ Plan: 1 of 2
 
 *Updated after each plan completion*
 | Phase 22 P01 | 4 | 2 tasks | 2 files |
+| Phase 22 P02 | 7 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -151,6 +152,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 22]: Route resolution uses _ROUTE_ID_TO_TOOL_NAME + _INSTRUCTION_PARAM tables; multi-param tools return None param_key from _resolve_route() to prevent instruction-only dispatch
 - [Phase 22]: MCP dispatch routes through context.tool_registry (not mcp_client) since MCPToolWrapper pre-registers mcp_{server}_{tool} keys; mcp_client retained for backward compatibility
 - [Phase 22]: _run_tool and _run_mcp accept full PlanNode (not instruction string) so route_id and fallback_route_ids are available at dispatch time
+- [Phase 22]: _dispatch_with_fallback is shared between _run_tool and _run_mcp: capability boundary advisory when fallbacks declared
+- [Phase 22]: gui.desktop is a sentinel route_id that delegates to _run_gui, skipped with diagnostic when gui_agent is None
+- [Phase 22]: _run_tool/_run_mcp delegate to _dispatch_with_fallback only when fallback_route_ids is non-empty to preserve simple direct-dispatch path
 
 ### Pending Todos
 
@@ -175,6 +179,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-03-22
 
-Last session: 2026-03-22T09:21:23.806Z
-Stopped at: Completed 22-01-PLAN.md
+Last session: 2026-03-22T09:30:31.338Z
+Stopped at: Completed 22-02-PLAN.md
 Resume file: None
