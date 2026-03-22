@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: executing
-stopped_at: Completed 21-01-PLAN.md
-last_updated: "2026-03-22T07:56:18.011Z"
+stopped_at: Completed 21-02-PLAN.md
+last_updated: "2026-03-22T08:06:16Z"
 last_activity: 2026-03-22
 progress:
   total_phases: 4
@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-03-21)
 
 ## Current Position
 
-Phase: 21 (capability-catalog-and-planner-context) — EXECUTING
-Plan: 2 of 2
+Phase: 21 (capability-catalog-and-planner-context) — COMPLETE
+Plan: 2 of 2 (completed)
 
 ## Performance Metrics
 
@@ -45,12 +45,13 @@ Plan: 2 of 2
 | 20-01 | 22 min | 2 | 12 |
 | 20-02 | 18 min | 2 | 12 |
 | 20-03 | 6 min | 2 | 10 |
+| 21-02 | 7 min | 2 | 6 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 11
-- Average duration: 21 min
-- Total execution time: 232 min
+- Total plans completed (tracked): 12
+- Average duration: 20 min
+- Total execution time: 239 min
 
 **By Phase:**
 
@@ -60,7 +61,7 @@ Plan: 2 of 2
 | 18 | 3 | 21 min | 7 min |
 | 19 | 3 | 28 min | 9 min |
 | 20 | 3 | 46 min | 15 min |
-| 21 | 1 | 24 min | 24 min |
+| 21 | 2 | 31 min | 16 min |
 
 *Updated after each plan completion*
 
@@ -143,6 +144,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 21]: PlanningContext now wraps planner-only inputs so future memory hints can extend planning without another planner API break.
 - [Phase 21]: Capability catalogs are built from an allowlisted live route inventory instead of dumping raw tool schemas into the planner prompt.
 - [Phase 21]: Route metadata stays optional on PlanNode and is exposed in logs only; router dispatch behavior remains unchanged until Phase 22.
+- [Phase 21]: Routing memory stays planner-only and read-only by extracting compact DTOs from MemoryStore instead of reusing ContextBuilder or get_memory_context().
+- [Phase 21]: Planner prompts render routing memory in a separate capped section with explicit omission text once hint count or budget limits are hit.
+- [Phase 21]: AgentLoop builds routing hints immediately before planning so the live catalog and memory evidence stay aligned without changing router dispatch behavior.
 
 ### Pending Todos
 
@@ -167,6 +171,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-03-22
 
-Last session: 2026-03-22T07:56:18.009Z
-Stopped at: Completed 21-01-PLAN.md
+Last session: 2026-03-22T08:05:35.410Z
+Stopped at: Completed 21-02-PLAN.md
 Resume file: None

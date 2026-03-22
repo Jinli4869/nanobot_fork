@@ -120,7 +120,7 @@ Plans:
 
 **Depends on:** Phase 20
 **Requirements:** CAP-01, CAP-02
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [x] 21-01-PLAN.md — Build compact capability catalog summaries from ToolRegistry, MCP inventory, and host/runtime availability
