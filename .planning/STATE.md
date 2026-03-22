@@ -176,11 +176,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260322-l7j | Design capability-aware planning and routing so planner can see live routes, use memory-derived routing hints, and drive real tool/MCP router dispatch; update roadmap and design docs for v1.4 | 2026-03-22 | cd1f90c | [260322-l7j-design-capability-aware-planning-and-rou](./quick/260322-l7j-design-capability-aware-planning-and-rou/) |
 | 260322-otm | Add PlanNode.params field and update router dispatch to prefer structured params over instruction fallback; enables multi-param tools (write_file, edit_file) to be dispatched by the planner | 2026-03-22 | 76e6b2b | [260322-otm-planner](./quick/260322-otm-planner/) |
 | 260322-ptr | Replace debug-card ChatWorkspaceRoute with full chat UI: Tailwind v4 earth-tone styling, SSE streaming, session sidebar with localStorage persistence, message bubbles and input | 2026-03-22 | a6a56da | [260322-ptr-web-chat-ui-mvp](./quick/260322-ptr-web-chat-ui-mvp/) |
+| 260322-uqf | Fix CJK IME composing Enter bug in MessageInput and clean up shell header/operations debug UI; all 5 frontend tests pass | 2026-03-22 | a61f88b | [260322-uqf-composing-enter-bug](./quick/260322-uqf-composing-enter-bug/) |
 
 ## Session Continuity
 
 Last activity: 2026-03-22
 
-Last session: 2026-03-22T10:20:00Z
-Stopped at: Completed quick/260322-ptr
+Last session: 2026-03-22T14:13:40Z
+Stopped at: Completed quick/260322-uqf
 Resume file: None
