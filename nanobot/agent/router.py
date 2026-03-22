@@ -120,8 +120,8 @@ class TreeRouter:
     Dispatch table (by :pyattr:`PlanNode.capability`):
 
     * **gui** — ``GuiAgent.run(instruction)`` with ``max_retries=1``
-    * **tool** — placeholder (full wiring in Phase 3)
-    * **mcp** — placeholder (full wiring in Phase 3)
+    * **tool** — ``ToolRegistry.execute(tool_name, params)`` via route resolution
+    * **mcp** — ``ToolRegistry.execute(mcp_{server}_{tool}, params)`` via route resolution
     * **api** — not yet implemented
 
     AND nodes execute children in parallel via :func:`asyncio.gather`, bounded
@@ -323,9 +323,9 @@ class TreeRouter:
             if capability == "gui":
                 return await self._run_gui(instruction, context)
             if capability == "tool":
-                return await self._run_tool(instruction, context)
+                return await self._run_tool(node, context)
             if capability == "mcp":
-                return await self._run_mcp(instruction, context)
+                return await self._run_mcp(node, context)
             if capability == "api":
                 return NodeResult(success=False, error="API capability not yet implemented")
             return NodeResult(success=False, error=f"Unknown capability: {capability}")
@@ -345,17 +345,101 @@ class TreeRouter:
             trace_paths=[result.trace_path] if getattr(result, "trace_path", None) else [],
         )
 
-    async def _run_tool(self, instruction: str, context: RouterContext) -> NodeResult:
-        """Dispatch to ToolRegistry — placeholder until Phase 3."""
+    async def _run_tool(self, node: Any, context: RouterContext) -> NodeResult:
+        """Dispatch a tool atom through ToolRegistry using route resolution.
+
+        Resolves the node's ``route_id`` to a registry tool name and single
+        primary parameter key, then calls ``ToolRegistry.execute()``.  Returns
+        a structured failure when:
+
+        * ``context.tool_registry`` is absent
+        * ``node.route_id`` is ``None``
+        * the route cannot be found in the registry
+        * the route requires structured multi-parameter input (param_key is ``None``)
+        * the registry returns an error string starting with ``"Error"``
+        """
         if context.tool_registry is None:
             return NodeResult(success=False, error="No ToolRegistry configured for tool dispatch")
-        return NodeResult(success=True, output=f"Tool executed: {instruction}")
 
-    async def _run_mcp(self, instruction: str, context: RouterContext) -> NodeResult:
-        """Dispatch to MCP client — placeholder until Phase 3."""
-        if context.mcp_client is None:
-            return NodeResult(success=False, error="No MCP client configured")
-        return NodeResult(success=True, output=f"MCP executed: {instruction}")
+        if node.route_id is None:
+            logger.warning("Dispatch: no route_id on tool atom, instruction=%r", node.instruction)
+            return NodeResult(
+                success=False,
+                error=f"No route_id specified for tool atom: {node.instruction!r}",
+            )
+
+        resolved = _resolve_route(node.route_id, context.tool_registry)
+        if resolved is None:
+            logger.warning("Dispatch: route unavailable route_id=%s", node.route_id)
+            return NodeResult(
+                success=False,
+                error=f"Route unavailable: {node.route_id} (tool not in registry)",
+            )
+
+        tool_name, param_key = resolved
+        if param_key is None:
+            logger.warning(
+                "Dispatch: route %s requires structured parameters, cannot dispatch from instruction alone",
+                node.route_id,
+            )
+            return NodeResult(
+                success=False,
+                error=(
+                    f"Route {node.route_id} requires structured parameters; "
+                    "instruction-only dispatch not supported"
+                ),
+            )
+
+        logger.info(
+            "Dispatch: planned_route=%s resolved_route=%s tool=%s",
+            node.route_id, node.route_id, tool_name,
+        )
+        params = {param_key: node.instruction}
+        output = await context.tool_registry.execute(tool_name, params)
+        output_str = str(output) if output is not None else ""
+        if output_str.startswith("Error"):
+            return NodeResult(success=False, error=output_str, output=output_str)
+        return NodeResult(success=True, output=output_str)
+
+    async def _run_mcp(self, node: Any, context: RouterContext) -> NodeResult:
+        """Dispatch an MCP atom through ToolRegistry using route resolution.
+
+        MCP tools are registered under ``mcp_{server}_{tool}`` keys by
+        MCPToolWrapper; this method resolves the planner's ``mcp.{server}.{tool}``
+        route_id to that registry key and dispatches via ``ToolRegistry.execute()``.
+
+        Note: ``context.mcp_client`` is retained for backward compatibility but is
+        not used here — all MCP dispatch goes through the shared ToolRegistry.
+        """
+        if context.tool_registry is None:
+            return NodeResult(success=False, error="No ToolRegistry configured for MCP dispatch")
+
+        if node.route_id is None:
+            logger.warning("Dispatch: no route_id on mcp atom, instruction=%r", node.instruction)
+            return NodeResult(
+                success=False,
+                error=f"No route_id specified for mcp atom: {node.instruction!r}",
+            )
+
+        resolved = _resolve_route(node.route_id, context.tool_registry)
+        if resolved is None:
+            logger.warning("Dispatch: MCP route unavailable route_id=%s", node.route_id)
+            return NodeResult(
+                success=False,
+                error=f"MCP route unavailable: {node.route_id} (tool not in registry)",
+            )
+
+        tool_name, param_key = resolved
+        logger.info(
+            "Dispatch: planned_route=%s resolved_route=%s tool=%s",
+            node.route_id, node.route_id, tool_name,
+        )
+        params = {param_key: node.instruction}
+        output = await context.tool_registry.execute(tool_name, params)
+        output_str = str(output) if output is not None else ""
+        if output_str.startswith("Error"):
+            return NodeResult(success=False, error=output_str, output=output_str)
+        return NodeResult(success=True, output=output_str)
 
     # ------------------------------------------------------------------
     # Replan helpers
