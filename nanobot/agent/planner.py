@@ -7,6 +7,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from nanobot.agent.capabilities import PlanningContext
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -84,7 +86,9 @@ _CREATE_PLAN_TOOL: dict[str, Any] = {
             "Decompose a user task into an AND/OR/ATOM execution tree. "
             "AND nodes execute all children sequentially. "
             "OR nodes try children until one succeeds. "
-            "ATOM nodes are leaf tasks with a capability type (gui/tool/mcp/api)."
+            "ATOM nodes are leaf tasks with a capability type (gui/tool/mcp/api), "
+            "and may optionally include route_id, route_reason, and "
+            "fallback_route_ids such as gui.desktop or tool.exec_shell."
         ),
         "parameters": {
             "type": "object",
@@ -95,7 +99,9 @@ _CREATE_PLAN_TOOL: dict[str, Any] = {
                         "Root node.  Each node has 'type' (and/or/atom). "
                         "AND/OR nodes have a 'children' array.  "
                         "ATOM nodes have 'instruction' (string) and "
-                        "'capability' (gui/tool/mcp/api)."
+                        "'capability' (gui/tool/mcp/api), and may optionally "
+                        "include 'route_id', 'route_reason', and "
+                        "'fallback_route_ids' when selecting a concrete route."
                     ),
                 }
             },
@@ -136,7 +142,13 @@ class TaskPlanner:
     # Public API
     # ------------------------------------------------------------------
 
-    async def plan(self, task: str, *, context: str = "") -> PlanNode:
+    async def plan(
+        self,
+        task: str,
+        *,
+        context: str = "",
+        planning_context: PlanningContext | None = None,
+    ) -> PlanNode:
         """Decompose *task* into an execution tree.
 
         Args:
@@ -152,7 +164,7 @@ class TaskPlanner:
             the method falls back to a single ATOM node with capability ``gui``
             so that execution can always proceed.
         """
-        system_prompt = self._build_system_prompt()
+        system_prompt = self._build_system_prompt(planning_context=planning_context)
         user_prompt = self._build_user_prompt(task, context)
 
         messages = [
@@ -226,7 +238,7 @@ class TaskPlanner:
     # Prompt helpers
     # ------------------------------------------------------------------
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, *, planning_context: PlanningContext | None = None) -> str:
         """Build the planner system prompt, injecting the capability registry."""
         lines = [
             "You are a task planner. Decompose the user's task into an AND/OR/ATOM execution tree.",
@@ -249,7 +261,26 @@ class TaskPlanner:
             "- Use OR for tasks with alternative approaches.",
             "- Each ATOM instruction should be a clear, focused, single-step subgoal.",
             "- Choose the capability type based on the available capabilities listed below.",
+            "- When a concrete route is available, include route_id and a short route_reason.",
+            "- Add fallback_route_ids for host operations that can safely fall back to GUI.",
         ]
+
+        if planning_context is not None and planning_context.catalog.routes:
+            lines.extend(
+                [
+                    "",
+                    "Available routes right now:",
+                    *planning_context.catalog.to_prompt_lines(),
+                ]
+            )
+        if planning_context is not None and planning_context.memory_hints:
+            lines.extend(
+                [
+                    "",
+                    "Routing hints:",
+                    *[f"- {hint}" for hint in planning_context.memory_hints],
+                ]
+            )
 
         # Inject summary lines from SKILL.md files when a loader is available.
         if self._skills_loader is not None:
@@ -267,7 +298,13 @@ class TaskPlanner:
             except Exception as exc:  # pragma: no cover — graceful degradation
                 logger.warning("Failed to load skills for planner prompt: %s", exc)
 
-        lines.extend(["", "Call the create_plan tool with your decomposition."])
+        lines.extend(
+            [
+                "",
+                "Call the create_plan tool with your decomposition.",
+                "For ATOM nodes, include route_id, route_reason, and fallback_route_ids when the route choice matters.",
+            ]
+        )
         return "\n".join(lines)
 
     def _build_user_prompt(self, task: str, context: str) -> str:
