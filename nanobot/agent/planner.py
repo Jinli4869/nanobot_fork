@@ -40,6 +40,7 @@ class PlanNode:
     route_id: str | None = None
     route_reason: str = ""
     fallback_route_ids: tuple[str, ...] = ()
+    params: dict[str, Any] | None = None  # structured executable params for the routed tool (ATOM only)
     children: tuple[PlanNode, ...] = field(default_factory=tuple)  # populated for AND/OR only
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +55,8 @@ class PlanNode:
                 d["route_reason"] = self.route_reason
             if self.fallback_route_ids:
                 d["fallback_route_ids"] = list(self.fallback_route_ids)
+            if self.params is not None:
+                d["params"] = self.params
         else:
             d["children"] = [child.to_dict() for child in self.children]
         return d
@@ -70,6 +73,7 @@ class PlanNode:
                 route_id=data.get("route_id"),
                 route_reason=data.get("route_reason", ""),
                 fallback_route_ids=tuple(data.get("fallback_route_ids", [])),
+                params=data.get("params"),
             )
         children = tuple(cls.from_dict(child) for child in data.get("children", []))
         return cls(node_type=node_type, children=children)
@@ -88,8 +92,9 @@ _CREATE_PLAN_TOOL: dict[str, Any] = {
             "AND nodes execute all children sequentially. "
             "OR nodes try children until one succeeds. "
             "ATOM nodes are leaf tasks with a capability type (gui/tool/mcp/api), "
-            "and may optionally include route_id, route_reason, and "
-            "fallback_route_ids such as gui.desktop or tool.exec_shell."
+            "and may optionally include route_id, route_reason, "
+            "fallback_route_ids, and params (a dict of concrete executable "
+            "parameter values for the routed tool)."
         ),
         "parameters": {
             "type": "object",
@@ -99,10 +104,10 @@ _CREATE_PLAN_TOOL: dict[str, Any] = {
                     "description": (
                         "Root node.  Each node has 'type' (and/or/atom). "
                         "AND/OR nodes have a 'children' array.  "
-                        "ATOM nodes have 'instruction' (string) and "
-                        "'capability' (gui/tool/mcp/api), and may optionally "
-                        "include 'route_id', 'route_reason', and "
-                        "'fallback_route_ids' when selecting a concrete route."
+                        "ATOM nodes have 'instruction' (human-readable description of what to do) and "
+                        "'capability' (gui/tool/mcp/api), and may optionally include 'route_id', "
+                        "'route_reason', 'fallback_route_ids', and 'params' (dict of concrete "
+                        "executable parameter values for the routed tool)."
                     ),
                 }
             },
@@ -264,6 +269,18 @@ class TaskPlanner:
             "- Choose the capability type based on the available capabilities listed below.",
             "- When a concrete route is available, include route_id and a short route_reason.",
             "- Add fallback_route_ids for host operations that can safely fall back to GUI.",
+            "- When route_id points to a concrete tool or MCP route, include 'params' with the exact "
+            "executable parameter values the tool expects.  For example:",
+            "  - tool.exec_shell: params={\"command\": \"ls -la /tmp\"}",
+            "  - tool.filesystem.read: params={\"path\": \"/etc/hosts\"}",
+            "  - tool.filesystem.list: params={\"path\": \"/Users/jinli/project\"}",
+            "  - tool.filesystem.write: params={\"path\": \"out.txt\", \"content\": \"hello\"}",
+            "  - tool.filesystem.edit: params={\"path\": \"main.py\", \"old_text\": \"foo\", \"new_text\": \"bar\"}",
+            "  - tool.web.search: params={\"query\": \"python asyncio tutorial\"}",
+            "  - tool.web.fetch: params={\"url\": \"https://example.com\"}",
+            "  - mcp.{server}.{tool}: params={\"input\": \"the input value\"} or tool-specific keys",
+            "- 'instruction' stays as the human-readable description; 'params' holds machine-executable values.",
+            "- For gui capability, params is not needed (the GUI subagent interprets instruction directly).",
         ]
 
         if planning_context is not None and planning_context.catalog.routes:
