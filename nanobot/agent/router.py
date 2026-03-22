@@ -345,6 +345,81 @@ class TreeRouter:
             trace_paths=[result.trace_path] if getattr(result, "trace_path", None) else [],
         )
 
+    async def _dispatch_with_fallback(
+        self, node: Any, context: RouterContext,
+    ) -> NodeResult:
+        """Try primary route_id, then each fallback_route_id in order.
+
+        Handles three special cases:
+
+        * ``gui.desktop`` fallback — delegates to :meth:`_run_gui` when
+          ``gui_agent`` is available; skips with a diagnostic when it is absent.
+        * Multi-parameter routes (``param_key`` is ``None``) — skipped with a
+          warning so the chain can continue to the next fallback.
+        * All routes exhausted — returns a structured failure listing every
+          route that was tried.
+
+        The fallback chain is intentionally shared between ``_run_tool`` and
+        ``_run_mcp``: once fallbacks are present, the capability boundary is
+        treated as advisory and the best available route wins.
+        """
+        route_ids = list(filter(None, [node.route_id])) + list(node.fallback_route_ids or ())
+        logger.info(
+            "Dispatch: planned_route=%s fallbacks=%s instruction=%r",
+            node.route_id, list(node.fallback_route_ids), node.instruction,
+        )
+        tried: list[str] = []
+
+        for route_id in route_ids:
+            # gui.desktop is a special sentinel: delegate to the GUI subagent
+            if route_id == "gui.desktop":
+                if context.gui_agent is None:
+                    logger.warning("Dispatch: gui.desktop fallback unavailable (no gui_agent)")
+                    tried.append(f"{route_id}(unavailable:no_gui_agent)")
+                    continue
+                logger.info(
+                    "Dispatch: fallback_taken=gui.desktop (primary was %s)", node.route_id,
+                )
+                return await self._run_gui(node.instruction, context)
+
+            resolved = _resolve_route(route_id, context.tool_registry)
+            if resolved is None:
+                logger.warning("Dispatch: route unavailable route_id=%s", route_id)
+                tried.append(f"{route_id}(unavailable)")
+                continue
+
+            tool_name, param_key = resolved
+            if param_key is None:
+                logger.warning(
+                    "Dispatch: route %s requires structured parameters, skipping",
+                    route_id,
+                )
+                tried.append(f"{route_id}(multi-param)")
+                continue
+
+            logger.info(
+                "Dispatch: resolved_route=%s tool=%s", route_id, tool_name,
+            )
+            params = {param_key: node.instruction}
+            output = await context.tool_registry.execute(tool_name, params)
+            output_str = str(output) if output is not None else ""
+            if output_str.startswith("Error"):
+                logger.warning("Dispatch: route %s failed: %s", route_id, output_str[:120])
+                tried.append(f"{route_id}(error)")
+                continue
+
+            if route_id != node.route_id:
+                logger.info("Dispatch: fallback_taken=%s (primary was %s)", route_id, node.route_id)
+            return NodeResult(success=True, output=output_str)
+
+        return NodeResult(
+            success=False,
+            error=(
+                f"All routes failed for {node.capability} atom: "
+                f"{node.instruction!r} (tried: {tried})"
+            ),
+        )
+
     async def _run_tool(self, node: Any, context: RouterContext) -> NodeResult:
         """Dispatch a tool atom through ToolRegistry using route resolution.
 
@@ -357,6 +432,10 @@ class TreeRouter:
         * the route cannot be found in the registry
         * the route requires structured multi-parameter input (param_key is ``None``)
         * the registry returns an error string starting with ``"Error"``
+
+        When ``fallback_route_ids`` is non-empty, delegates to
+        :meth:`_dispatch_with_fallback` which chains through all alternatives
+        before reporting failure.
         """
         if context.tool_registry is None:
             return NodeResult(success=False, error="No ToolRegistry configured for tool dispatch")
@@ -367,6 +446,10 @@ class TreeRouter:
                 success=False,
                 error=f"No route_id specified for tool atom: {node.instruction!r}",
             )
+
+        # Delegate to fallback chain when alternatives are declared
+        if node.fallback_route_ids:
+            return await self._dispatch_with_fallback(node, context)
 
         resolved = _resolve_route(node.route_id, context.tool_registry)
         if resolved is None:
@@ -410,6 +493,10 @@ class TreeRouter:
 
         Note: ``context.mcp_client`` is retained for backward compatibility but is
         not used here — all MCP dispatch goes through the shared ToolRegistry.
+
+        When ``fallback_route_ids`` is non-empty, delegates to
+        :meth:`_dispatch_with_fallback` which chains through all alternatives
+        before reporting failure.
         """
         if context.tool_registry is None:
             return NodeResult(success=False, error="No ToolRegistry configured for MCP dispatch")
@@ -420,6 +507,10 @@ class TreeRouter:
                 success=False,
                 error=f"No route_id specified for mcp atom: {node.instruction!r}",
             )
+
+        # Delegate to fallback chain when alternatives are declared
+        if node.fallback_route_ids:
+            return await self._dispatch_with_fallback(node, context)
 
         resolved = _resolve_route(node.route_id, context.tool_registry)
         if resolved is None:
