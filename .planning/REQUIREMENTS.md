@@ -44,11 +44,11 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 
 ### Capability-Aware Planning And Routing
 
-- **CAP-01**: Planner can see a compact summary of currently available GUI, tool, shell/exec, and MCP routes instead of reasoning from coarse capability labels alone
-- **CAP-02**: Planner context can include routing-relevant memory hints about previously successful routes without dumping unrelated memory into the prompt
-- **CAP-03**: Router can execute `tool` plan nodes through real dispatch instead of placeholder-only success responses
-- **CAP-04**: Router can execute `mcp` plan nodes through real dispatch with route validation and fallback behavior
-- **CAP-05**: The system can learn from successful route selections and improve future capability choice on representative mixed-capability tasks
+- [x] **CAP-01**: Planner can see a compact summary of currently available GUI, tool, shell/exec, and MCP routes instead of reasoning from coarse capability labels alone
+- [x] **CAP-02**: Planner context can include routing-relevant memory hints about previously successful routes without dumping unrelated memory into the prompt
+- [ ] **CAP-03**: Router can execute `tool` plan nodes through real dispatch instead of placeholder-only success responses
+- [ ] **CAP-04**: Router can execute `mcp` plan nodes through real dispatch with route validation and fallback behavior
+- [ ] **CAP-05**: The system can learn from successful route selections and improve future capability choice on representative mixed-capability tasks
 
 ## Out of Scope
 
@@ -74,10 +74,16 @@ Requirements for milestone v1.3: Nanobot Web Workspace.
 | WEB-01 | Phase 20 | Pending |
 | WEB-02 | Phase 20 | Pending |
 | SHIP-01 | Phase 20 | Pending |
+| CAP-01 | Phase 21 | Complete |
+| CAP-02 | Phase 21 | Complete |
+| CAP-03 | Phase 22 | Pending |
+| CAP-04 | Phase 22 | Pending |
+| CAP-05 | Phase 23 | Pending |
 
 **Coverage:**
 - v1 requirements: 11 total
-- Mapped to phases: 11
+- v2 requirements: 7 total
+- Mapped to phases: 16
 - Unmapped: 0 ✓
 
 ---
