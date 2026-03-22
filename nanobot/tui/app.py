@@ -1,8 +1,11 @@
 """FastAPI app factory for the isolated TUI backend."""
 
+from __future__ import annotations
+
 from fastapi import FastAPI
 
 from nanobot.config.schema import Config
+from nanobot.tui.static import install_frontend_routes
 from nanobot.tui.routes import (
     chat_router,
     health_router,
@@ -17,6 +20,7 @@ def create_app(
     *,
     config: Config | None = None,
     include_runtime_routes: bool = False,
+    serve_frontend: bool = False,
 ) -> FastAPI:
     """Create the Phase 17 TUI backend app without booting the CLI runtime."""
 
@@ -33,4 +37,6 @@ def create_app(
         app.include_router(runtime_router)
         app.include_router(tasks_router)
         app.include_router(traces_router)
+        if serve_frontend:
+            install_frontend_routes(app)
     return app
