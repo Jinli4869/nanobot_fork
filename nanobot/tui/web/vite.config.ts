@@ -10,11 +10,10 @@ export default defineConfig({
     port: 4173,
     strictPort: true,
     proxy: {
-      "/health": backendTarget,
-      "/sessions": backendTarget,
-      "/chat": backendTarget,
-      "/runtime": backendTarget,
-      "/tasks": backendTarget,
+      "/api": {
+        target: backendTarget,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+      },
     },
   },
   test: {
