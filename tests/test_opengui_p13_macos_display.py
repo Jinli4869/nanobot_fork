@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock
 import pytest
 
 import opengui.backends.background_runtime as runtime
+import opengui.backends.displays.cgvirtualdisplay as cgvirtualdisplay
 from opengui.action import Action
 from opengui.backends.background import BackgroundDesktopBackend
 from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
@@ -82,6 +83,37 @@ def test_probe_reports_actionable_permission_remediation() -> None:
     assert decision.reason_code == "macos_screen_recording_denied"
     assert "System Settings" in decision.message
     assert "Screen Recording" in decision.message
+
+
+def test_accessibility_probe_uses_quartz_symbol_when_available() -> None:
+    class QuartzStub:
+        @staticmethod
+        def AXIsProcessTrusted() -> bool:
+            return True
+
+    assert cgvirtualdisplay._accessibility_allowed(QuartzStub) is True
+
+
+def test_accessibility_probe_falls_back_to_ctypes_when_quartz_symbol_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class QuartzStub:
+        pass
+
+    monkeypatch.setattr(cgvirtualdisplay, "_accessibility_allowed_via_ctypes", lambda: True)
+
+    assert cgvirtualdisplay._accessibility_allowed(QuartzStub) is True
+
+
+def test_accessibility_probe_returns_false_when_fallback_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class QuartzStub:
+        pass
+
+    monkeypatch.setattr(cgvirtualdisplay, "_accessibility_allowed_via_ctypes", lambda: False)
+
+    assert cgvirtualdisplay._accessibility_allowed(QuartzStub) is False
 
 
 @pytest.mark.asyncio

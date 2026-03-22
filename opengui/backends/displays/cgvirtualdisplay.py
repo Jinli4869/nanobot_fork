@@ -6,6 +6,7 @@ collection remains safe even when PyObjC is not installed.
 
 from __future__ import annotations
 
+import ctypes
 import dataclasses
 import logging
 import platform
@@ -217,9 +218,27 @@ def _screen_recording_allowed(quartz_module: Any) -> bool:
 
 def _accessibility_allowed(quartz_module: Any) -> bool:
     check = getattr(quartz_module, "AXIsProcessTrusted", None)
+    if check is not None:
+        try:
+            return bool(check())
+        except Exception:
+            pass
+    return _accessibility_allowed_via_ctypes()
+
+
+def _accessibility_allowed_via_ctypes() -> bool:
+    try:
+        application_services = ctypes.cdll.LoadLibrary(
+            "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
+        )
+    except Exception:
+        return False
+
+    check = getattr(application_services, "AXIsProcessTrusted", None)
     if check is None:
         return False
     try:
+        check.restype = ctypes.c_bool
         return bool(check())
     except Exception:
         return False
