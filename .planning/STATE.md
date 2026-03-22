@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
-status: executing
+status: human_needed
 stopped_at: Completed 19-03-PLAN.md
-last_updated: "2026-03-22T02:33:55Z"
+last_updated: "2026-03-22T02:38:00Z"
 progress:
   total_phases: 4
   completed_phases: 3
   total_plans: 11
-  completed_plans: 10
-  percent: 91
+  completed_plans: 11
+  percent: 100
 ---
 
 # Project State
@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-03-21)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 20 — web-app-integration-and-verification
+**Current focus:** Phase 20 — manual verification for web-app-integration-and-verification
 
 ## Current Position
 
-Phase: 20 (web-app-integration-and-verification) — EXECUTING
+Phase: 20 (web-app-integration-and-verification) — HUMAN VERIFICATION NEEDED
 Plan: 3 of 3
 
 ## Performance Metrics
 
-**Progress:** [█████████░] 91%
+**Progress:** [██████████] 100%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -43,12 +43,13 @@ Plan: 3 of 3
 | 19-03 | 9 min | 2 | 10 |
 | 20-01 | 22 min | 2 | 12 |
 | 20-02 | 18 min | 2 | 12 |
+| 20-03 | 6 min | 2 | 10 |
 
 **Velocity:**
 
-- Total plans completed (v1.3): 10
-- Average duration: 23 min
-- Total execution time: 226 min
+- Total plans completed (v1.3): 11
+- Average duration: 21 min
+- Total execution time: 232 min
 
 **By Phase:**
 
@@ -57,7 +58,7 @@ Plan: 3 of 3
 | 17 | 2 | 137 min | 69 min |
 | 18 | 3 | 21 min | 7 min |
 | 19 | 3 | 28 min | 9 min |
-| 20 | 2 | 40 min | 20 min |
+| 20 | 3 | 46 min | 15 min |
 
 *Updated after each plan completion*
 
@@ -135,6 +136,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 19]: Trace and log payloads are allowlist-based and sanitize prompt/path leakage by dropping unsafe fields and redacting prompt/path text in summaries or messages.
 - [Phase 20]: The browser workspace lives in a dedicated `nanobot/tui/web` React/Vite app, while session and run identity stay encoded in the URL for cross-view continuity.
 - [Phase 20]: Built frontend serving remains opt-in behind `serve_frontend=True`, and both fetch and SSE clients share one explicit API base-resolution contract.
+- [Phase 20]: `python -m nanobot.tui` remains the canonical packaged seam, with `nanobot-tui` added as an alias while the existing `nanobot` CLI stays unchanged.
+- [Phase 20]: Packaged frontend assets resolve through `nanobot.tui.web` package resources instead of cwd-relative paths.
 
 ### Pending Todos
 
