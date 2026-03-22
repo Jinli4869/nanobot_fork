@@ -1,105 +1,126 @@
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { useLocation } from "react-router";
 
-import { getChatSession } from "../../lib/api/client";
-import { connectChatEvents, type ChatEvent } from "../../lib/chat-events";
+import {
+  createChatSession,
+  sendChatMessage,
+  getChatSession,
+  type ChatMessage,
+} from "../../lib/api/client";
 import { readWorkspaceState } from "../../lib/workspace-state";
+import { MessageList } from "./components/MessageList";
+import { MessageInput } from "./components/MessageInput";
+import { SessionSidebar } from "./components/SessionSidebar";
+import { useChatStream } from "./hooks/useChatStream";
+import { useSessionManager } from "./hooks/useSessionManager";
 
 export function ChatWorkspaceRoute() {
   const location = useLocation();
+  const navigate = useNavigate();
   const workspaceState = readWorkspaceState(location.pathname, location.search);
-  const [latestEvent, setLatestEvent] = useState<ChatEvent | null>(null);
+  const sessionId = workspaceState.sessionId;
 
+  const { sessions, addSession, updateSessionTitle } = useSessionManager();
+  const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
+  const [isSending, setIsSending] = useState(false);
+
+  // Load session messages from backend
   const sessionQuery = useQuery({
-    queryKey: ["chat-session", workspaceState.sessionId],
-    queryFn: () => getChatSession(workspaceState.sessionId!),
-    enabled: Boolean(workspaceState.sessionId),
+    queryKey: ["chat-session", sessionId],
+    queryFn: () => getChatSession(sessionId!),
+    enabled: Boolean(sessionId),
     retry: false,
   });
 
+  // Sync local messages when query data arrives
   useEffect(() => {
-    if (!workspaceState.sessionId) {
-      return () => undefined;
+    if (sessionQuery.data) {
+      setLocalMessages(sessionQuery.data.messages);
+    }
+  }, [sessionQuery.data]);
+
+  // Reset local messages when session changes
+  useEffect(() => {
+    setLocalMessages([]);
+  }, [sessionId]);
+
+  // Stable callback for SSE assistant messages
+  const onAssistantMessage = useCallback((msg: ChatMessage) => {
+    setLocalMessages((prev) => [...prev, msg]);
+  }, []);
+
+  const { streamingContent } = useChatStream({ sessionId, onAssistantMessage });
+
+  async function onSend(content: string) {
+    if (!sessionId) return;
+
+    setIsSending(true);
+
+    // Optimistically append user message
+    const userMessage: ChatMessage = { role: "user", content };
+    setLocalMessages((prev) => [...prev, userMessage]);
+
+    // Update title if this is the first user message
+    const isFirstMessage = localMessages.length === 0;
+    if (isFirstMessage) {
+      updateSessionTitle(sessionId, content.slice(0, 40));
     }
 
-    return connectChatEvents(workspaceState.sessionId, setLatestEvent);
-  }, [workspaceState.sessionId]);
+    try {
+      // Fire and forget — the SSE "assistant.final" event will deliver the reply
+      void sendChatMessage(sessionId, content);
+    } catch {
+      setLocalMessages((prev) => [
+        ...prev,
+        { role: "assistant", content: "[Error] Failed to send message." },
+      ]);
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  async function onNewSession() {
+    try {
+      const result = await createChatSession();
+      const newId = result.session.session_id;
+      addSession(newId, "New Chat");
+      void navigate(`/chat/${newId}`);
+    } catch {
+      // Silently ignore — UI stays stable
+    }
+  }
+
+  function onSelectSession(id: string) {
+    void navigate(`/chat/${id}`);
+  }
 
   return (
-    <WorkspaceRouteCard
-      title="Chat workspace"
-      description="Session-backed chat now reads through the typed frontend client and keeps the SSE transport ready for the next phase of live message wiring."
-      sections={[
-        ["Active session", workspaceState.sessionId ?? "Start or resume a browser session to lock chat context."],
-        [
-          "Transcript status",
-          sessionQuery.data
-            ? `${sessionQuery.data.messages.length} messages loaded`
-            : sessionQuery.isError
-              ? "Session fetch pending backend connectivity"
-              : workspaceState.sessionId
-                ? "Loading current transcript"
-                : "No session selected yet",
-        ],
-        [
-          "Latest event",
-          latestEvent
-            ? `${latestEvent.type} (${latestEvent.run_id ?? "no run id"})`
-            : "Waiting for EventSource activity",
-        ],
-      ]}
-      footer={`Current route: ${location.pathname}${location.search}`}
-    />
-  );
-}
-
-function WorkspaceRouteCard({
-  title,
-  description,
-  sections,
-  footer,
-}: {
-  title: string;
-  description: string;
-  sections: Array<[string, string]>;
-  footer: string;
-}) {
-  return (
-    <div style={{ display: "grid", gap: "16px" }}>
-      <div>
-        <h2 style={{ margin: "0 0 8px", fontSize: "1.55rem" }}>{title}</h2>
-        <p style={{ margin: 0, lineHeight: 1.6 }}>{description}</p>
-      </div>
-      <dl
-        style={{
-          display: "grid",
-          gap: "12px",
-          margin: 0,
-          padding: 0,
-          gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-        }}
-      >
-        {sections.map(([label, value]) => (
-          <div
-            key={label}
-            style={{
-              padding: "16px",
-              borderRadius: "18px",
-              background: "rgba(246, 248, 245, 0.95)",
-              border: "1px solid rgba(94, 109, 82, 0.14)",
-            }}
-          >
-            <dt style={{ fontSize: "0.82rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              {label}
-            </dt>
-            <dd style={{ margin: "8px 0 0", lineHeight: 1.5 }}>{value}</dd>
+    <div className="-m-7 rounded-3xl overflow-hidden flex min-h-[600px] h-[calc(100vh-320px)]">
+      <SessionSidebar
+        sessions={sessions}
+        activeSessionId={sessionId}
+        onSelectSession={onSelectSession}
+        onNewSession={onNewSession}
+      />
+      <div className="flex flex-col flex-1 min-w-0">
+        {sessionId ? (
+          <>
+            <MessageList messages={localMessages} streamingContent={streamingContent} />
+            <MessageInput onSend={onSend} disabled={isSending} />
+          </>
+        ) : (
+          <div className="flex flex-col flex-1 items-center justify-center gap-4 text-earth-muted">
+            <p className="text-sm">Select a session or start a new chat</p>
+            <button
+              onClick={onNewSession}
+              className="rounded-xl bg-earth-accent text-white px-6 py-2.5 text-sm hover:opacity-90 font-medium"
+            >
+              New Chat
+            </button>
           </div>
-        ))}
-      </dl>
-      <p data-testid="route-debug" style={{ margin: 0, color: "rgb(82 91 84)" }}>
-        {footer}
-      </p>
+        )}
+      </div>
     </div>
   );
 }
