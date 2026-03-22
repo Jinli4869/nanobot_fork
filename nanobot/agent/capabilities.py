@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from nanobot.agent.tools.registry import ToolRegistry
@@ -28,6 +28,19 @@ class CapabilityCatalog:
     """Bounded set of currently available planner routes."""
 
     routes: tuple[RouteSummary, ...] = ()
+
+    def to_prompt_lines(self) -> tuple[str, ...]:
+        """Render compact planner-facing summaries without leaking raw schemas."""
+        lines: list[str] = []
+        for route in self.routes:
+            lines.append(
+                f"- {route.route_id} [{route.capability}/{route.kind}] {route.availability}: {route.summary}"
+            )
+            if route.use_for:
+                lines.append(f"  use_for: {', '.join(route.use_for)}")
+            if route.avoid_for:
+                lines.append(f"  avoid_for: {', '.join(route.avoid_for)}")
+        return tuple(lines)
 
 
 @dataclass(frozen=True)

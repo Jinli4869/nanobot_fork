@@ -19,6 +19,7 @@ from nanobot.agent import context as agent_context
 from nanobot.agent import model_presets as preset_helpers
 from nanobot.agent.autocompact import AutoCompact
 from nanobot.agent.automation_turns import publish_next_deferred_turn
+from nanobot.agent.capabilities import CapabilityCatalogBuilder, PlanningContext
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
@@ -779,7 +780,20 @@ class AgentLoop:
         if node_type == "atom":
             capability = getattr(node, "capability", "unknown")
             instruction = getattr(node, "instruction", "")
-            return f"{prefix}- {str(capability).upper()}: {instruction}"
+            route_id = getattr(node, "route_id", None)
+            route_reason = getattr(node, "route_reason", "")
+            fallback_route_ids = tuple(getattr(node, "fallback_route_ids", ()) or ())
+
+            line = f"{prefix}- {str(capability).upper()}: {instruction}"
+            if route_id:
+                line += f" via {route_id}"
+
+            lines = [line]
+            if route_reason:
+                lines.append(f"{prefix}  why: {route_reason}")
+            for fallback_route_id in fallback_route_ids:
+                lines.append(f"{prefix}  fallback -> {fallback_route_id}")
+            return "\n".join(lines)
 
         header = f"{prefix}{str(node_type).upper()}"
         children = getattr(node, "children", ()) or ()
@@ -1079,11 +1093,18 @@ class AgentLoop:
                 )
 
         planner = TaskPlanner(llm=self.provider)
-        tree = await planner.plan(task)
+        raw_gui_tool = self.tools.get("gui_task")
+        planning_context = PlanningContext(
+            catalog=CapabilityCatalogBuilder().build(
+                tool_registry=self.tools,
+                gui_available=raw_gui_tool is not None,
+                exec_enabled=self.exec_config.enable,
+            )
+        )
+        tree = await planner.plan(task, planning_context=planning_context)
         logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))
         logger.debug("Decomposed plan (raw): {}", tree.to_dict())
 
-        raw_gui_tool = self.tools.get("gui_task")
         gui_agent = _GuiDispatchAdapter(raw_gui_tool) if raw_gui_tool is not None else None
 
         ctx = RouterContext(
