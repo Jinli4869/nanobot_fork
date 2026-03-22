@@ -103,6 +103,7 @@ dev = [
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"
+nanobot-tui = "nanobot.tui.__main__:main"
 opengui = "opengui.cli:main"
 
 [build-system]
@@ -119,6 +120,7 @@ include = [
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
+    "nanobot/tui/web/index.html",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -130,12 +132,16 @@ packages = ["nanobot", "opengui"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "bridge" = "nanobot/bridge"
+"nanobot/tui/web/dist" = "nanobot/tui/web/dist"
+"nanobot/tui/web/index.html" = "nanobot/tui/web/index.html"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
     "opengui/",
     "bridge/",
+    "nanobot/tui/web/index.html",
+    "nanobot/tui/web/dist/",
     "README.md",
     "LICENSE",
 ]

@@ -80,7 +80,11 @@ def test_tui_startup_wiring_uses_create_app_and_local_runtime_config() -> None:
         tui_main.main()
 
     load_config_mock.assert_called_once_with(None)
-    create_app_mock.assert_called_once_with(config=config, include_runtime_routes=True)
+    create_app_mock.assert_called_once_with(
+        config=config,
+        include_runtime_routes=True,
+        serve_frontend=True,
+    )
     uvicorn_run.assert_called_once_with(
         fake_app,
         host="127.0.0.1",

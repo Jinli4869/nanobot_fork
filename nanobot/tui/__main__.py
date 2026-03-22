@@ -21,7 +21,11 @@ def main(config_path: str | Path | None = None) -> None:
 
     config = load_config(resolved_config_path)
     runtime = resolve_tui_runtime_config(config)
-    app = create_app(config=config, include_runtime_routes=True)
+    app = create_app(
+        config=config,
+        include_runtime_routes=True,
+        serve_frontend=True,
+    )
     uvicorn.run(
         app,
         host=runtime.host,
