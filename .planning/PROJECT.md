@@ -16,7 +16,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
 - **Verification state:** Milestone v1.2 implementation is in host-integration closeout while planning begins for the next host-facing surface
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
-- **Planner status:** Phase 21 closed the planner-context gap by adding a live route catalog plus bounded routing-memory hints; Phase 22 still needs real route-aware `tool` and `mcp` dispatch
+- **Planner status:** Phase 21 added a live route catalog plus bounded routing-memory hints; Phase 22 completed real route-aware `tool` and `mcp` dispatch with fallback chains and observability logging
 
 ## Current Milestone: v1.3 Nanobot Web Workspace
 
@@ -61,6 +61,8 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **BGND-07**: Overlapping background desktop runs serialize with explicit busy metadata — v1.2 Phase 12
 - ✓ **CAP-01**: Planner sees a compact summary of currently available GUI, tool, shell/exec, and MCP routes — v1.4 Phase 21
 - ✓ **CAP-02**: Planner context can include routing-relevant memory hints without dumping unrelated memory — v1.4 Phase 21
+- ✓ **CAP-03**: Router can execute `tool` plan nodes through real dispatch instead of placeholder-only success responses — v1.4 Phase 22
+- ✓ **CAP-04**: Router can execute `mcp` plan nodes through real dispatch with route validation and fallback behavior — v1.4 Phase 22
 
 ### Active
 
@@ -104,7 +106,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 | Use FastAPI + React + Vite for v1.3 | Match the desired local-first stack and keep backend/frontend responsibilities cleanly separated | — Pending |
 | Planner should consume a compact live capability catalog instead of guessing from coarse labels alone | Improves capability selection without overwhelming the prompt with raw schema dumps | — Proposed |
 | Memory should contribute routing hints, not full conversational context, to planning | Reuses prior successful tool choices while keeping planner prompts focused and bounded | — Proposed |
-| Router should dispatch by explicit route identity, not only by coarse capability type | Makes tool and MCP routes executable and inspectable in logs/traces | — Proposed |
+| Router should dispatch by explicit route identity, not only by coarse capability type | Makes tool and MCP routes executable and inspectable in logs/traces | ✓ Good |
 
 ## Constraints
 
@@ -117,4 +119,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-03-22 after completing Phase 21 capability-aware planner context work*
+*Last updated: 2026-03-22 after completing Phase 22 route-aware tool and MCP dispatch*
