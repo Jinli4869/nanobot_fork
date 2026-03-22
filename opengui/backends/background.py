@@ -99,6 +99,10 @@ class BackgroundDesktopBackend:
 
     async def preflight(self) -> None:
         """Start the virtual display and prepare the inner backend."""
+        if self._display_info is not None and not self._stopped:
+            return
+
+        self._stopped = False
         self._lease_cm = self.runtime_coordinator.lease(self._run_metadata, logger=logger)
         await self._lease_cm.__aenter__()
         try:

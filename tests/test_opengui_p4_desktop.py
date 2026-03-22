@@ -252,6 +252,47 @@ async def test_observe_defaults_to_primary_monitor_when_target_display_missing(
     assert obs.screen_height == 900
 
 
+@pytest.mark.asyncio
+async def test_observe_falls_back_to_primary_monitor_when_configured_index_unavailable(
+    tmp_path: Path,
+) -> None:
+    screenshot_path = tmp_path / "monitor-fallback.png"
+    backend = _make_backend("macos")
+    backend.configure_target_display(
+        DisplayInfo(
+            display_id="macos:42",
+            width=1440,
+            height=900,
+            offset_x=200,
+            offset_y=120,
+            monitor_index=3,
+        )
+    )
+
+    primary_monitor = {"width": 1440, "height": 900}
+    second_monitor = {"width": 1600, "height": 1000}
+    mock_mss = _build_mss_mock(
+        1440,
+        900,
+        1440,
+        900,
+        additional_monitors=[second_monitor],
+    )
+    mock_pil_img = MagicMock()
+    mock_pil_img.resize.return_value = mock_pil_img
+
+    with (
+        patch("opengui.backends.desktop.mss.mss", mock_mss),
+        patch("opengui.backends.desktop.Image.frombytes", return_value=mock_pil_img),
+        patch.object(backend, "_query_foreground_app", AsyncMock(return_value="Finder")),
+    ):
+        obs = await backend.observe(screenshot_path)
+
+    mock_mss.return_value.grab.assert_called_once_with(primary_monitor)
+    assert obs.screen_width == 1440
+    assert obs.screen_height == 900
+
+
 # ---------------------------------------------------------------------------
 # execute() — coordinate actions
 # ---------------------------------------------------------------------------
