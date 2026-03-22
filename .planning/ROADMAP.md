@@ -2,7 +2,7 @@
 
 ## Overview
 
-OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI subagent core, and v1.1 added Linux background desktop execution through a virtual display abstraction and integration-safe wrappers. Milestone v1.2 closes the remaining cross-platform background-execution work, and milestone v1.3 expands the nanobot host surface with an isolated local web workspace.
+OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI subagent core, and v1.1 added Linux background desktop execution through a virtual display abstraction and integration-safe wrappers. Milestone v1.2 closes the remaining cross-platform background-execution work, milestone v1.3 expands the nanobot host surface with an isolated local web workspace, and the next milestone v1.4 upgrades nanobot's planner and router to be capability-aware instead of GUI-biased by default.
 
 ## Milestones
 
@@ -10,6 +10,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 - ✅ **v1.1 Background Execution** — Phases 9-11 (shipped 2026-03-20) — [Archive](/Users/jinli/Documents/Personal/nanobot_fork/.planning/milestones/v1.1-ROADMAP.md)
 - ○ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (closeout in progress)
 - ○ **v1.3 Nanobot Web Workspace** — Phases 17-20 (in progress)
+- ○ **v1.4 Capability-Aware Planning And Routing** — Phases 21-23 (planned)
 
 ## Current Milestone: v1.3 Nanobot Web Workspace
 
@@ -101,6 +102,72 @@ Plans:
 3. Regression coverage proves the web surface works without regressing existing CLI-first behavior.
 4. The milestone closes with a verification pass and manual smoke path for local browser usage.
 
+## Upcoming Milestone: v1.4 Capability-Aware Planning And Routing
+
+**Goal:** Upgrade nanobot planning and execution so mixed tasks can prefer live shell/tool/MCP routes when they are more appropriate than GUI automation, while retaining GUI as a reliable fallback.
+
+**Requirements:** 5 mapped / 5 total
+
+| Phase | Name | Goal | Requirements | Success Criteria |
+|-------|------|------|--------------|------------------|
+| 21 | Capability Catalog And Planner Context | Give the planner a compact live route inventory and routing-relevant memory hints so capability choice is grounded in real runtime options. | CAP-01, CAP-02 | 4 |
+| 22 | Route-Aware Tool And MCP Dispatch | Turn `tool` and `mcp` plan nodes into real executable routes with validation, observability, and fallback behavior. | CAP-03, CAP-04 | 4 |
+| 23 | Routing Memory Feedback And Verification | Learn from route outcomes and prove that mixed-capability tasks choose better routes than the current GUI-biased default. | CAP-05 | 4 |
+
+### Phase 21: Capability Catalog And Planner Context
+
+**Goal:** Give the planner a compact live route inventory and routing-relevant memory hints so capability choice is grounded in real runtime options.
+
+**Depends on:** Phase 20
+**Requirements:** CAP-01, CAP-02
+**Plans:** 0/2 plans complete
+
+Plans:
+- [ ] 21-01-PLAN.md — Build compact capability catalog summaries from ToolRegistry, MCP inventory, and host/runtime availability
+- [ ] 21-02-PLAN.md — Inject routing-relevant memory hints into planner context with prompt-size guardrails
+
+**Success criteria:**
+1. Planner receives a bounded catalog of currently available routes rather than only coarse capability labels.
+2. Planner prompt includes routing-relevant memory summaries without dumping raw `memory.md` content.
+3. Planned ATOM nodes can express route identity and fallback metadata in addition to capability type.
+4. Planner logs expose both the human-readable tree and the chosen route metadata for inspection.
+
+### Phase 22: Route-Aware Tool And MCP Dispatch
+
+**Goal:** Turn `tool` and `mcp` plan nodes into real executable routes with validation, observability, and fallback behavior.
+
+**Depends on:** Phase 21
+**Requirements:** CAP-03, CAP-04
+**Plans:** 0/2 plans complete
+
+Plans:
+- [ ] 22-01-PLAN.md — Extend plan-node and router contracts with explicit route identifiers, route reasons, and fallback metadata
+- [ ] 22-02-PLAN.md — Implement concrete dispatch for local tool routes and MCP-backed routes, including validation and fallback handling
+
+**Success criteria:**
+1. Router can execute `tool` atoms through real local dispatch instead of placeholder success responses.
+2. Router can execute `mcp` atoms through real route resolution and invocation logic.
+3. Invalid or unavailable routes surface structured diagnostics and can fall back safely when the plan allows it.
+4. Execution logs and traces show planned route, resolved route, and any fallback that occurred.
+
+### Phase 23: Routing Memory Feedback And Verification
+
+**Goal:** Learn from route outcomes and prove that mixed-capability tasks choose better routes than the current GUI-biased default.
+
+**Depends on:** Phase 22
+**Requirements:** CAP-05
+**Plans:** 0/2 plans complete
+
+Plans:
+- [ ] 23-01-PLAN.md — Persist normalized route success and failure summaries as future planning hints
+- [ ] 23-02-PLAN.md — Add verification coverage for representative mixed-capability tasks and route-quality outcomes
+
+**Success criteria:**
+1. Successful route selections produce reusable planning hints that can bias later planning decisions.
+2. Failed routes record enough structured context to inform future fallbacks without poisoning unrelated tasks.
+3. Mixed-capability regression scenarios demonstrate fewer unnecessary GUI choices on host-side operations.
+4. The milestone closes with both automated verification and a manual sanity pass over representative planner outputs.
+
 ## Phase Ordering Rationale
 
 - Phase 17 comes first because the web surface needs a clean boundary under `nanobot/tui` before any UI code or API growth begins.
@@ -121,7 +188,8 @@ Plans:
 | v1.1 Background Execution | 9-11 | Complete | 2026-03-20 |
 | v1.2 Cross-Platform Background Execution | 12-16 | Closeout In Progress | — |
 | v1.3 Nanobot Web Workspace | 17-20 | In Progress | — |
+| v1.4 Capability-Aware Planning And Routing | 21-23 | Planned | — |
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-21 after executing Phase 19 operations console plan 03*
+*Last updated: 2026-03-22 after designing the v1.4 capability-aware planning and routing follow-on milestone*
