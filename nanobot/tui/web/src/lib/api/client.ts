@@ -87,3 +87,18 @@ export function getChatSession(sessionId: string, env?: ApiEnv) {
 export function getRuntimeInspection(env?: ApiEnv) {
   return fetchJson<RuntimeInspectionResponse>("/runtime", undefined, env);
 }
+
+export type ChatCreateSessionResponse = { session: ChatSessionSummary; messages: ChatMessage[] };
+export type ChatMessageResponse = { session: ChatSessionSummary; reply: ChatMessage };
+
+export function createChatSession(env?: ApiEnv) {
+  return fetchJson<ChatCreateSessionResponse>("/chat/sessions", { method: "POST" }, env);
+}
+
+export function sendChatMessage(sessionId: string, content: string, env?: ApiEnv) {
+  return fetchJson<ChatMessageResponse>(`/chat/sessions/${sessionId}/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  }, env);
+}
