@@ -18,6 +18,68 @@ _CAPABILITY_PRIORITY: dict[str, int] = {"mcp": 0, "tool": 1, "gui": 2, "api": 3}
 
 
 # ---------------------------------------------------------------------------
+# Route resolution tables
+# ---------------------------------------------------------------------------
+
+# Maps planner route_id (tool.* form) to the ToolRegistry key used at dispatch.
+_ROUTE_ID_TO_TOOL_NAME: dict[str, str] = {
+    "tool.exec_shell":       "exec",
+    "tool.filesystem.read":  "read_file",
+    "tool.filesystem.write": "write_file",
+    "tool.filesystem.edit":  "edit_file",
+    "tool.filesystem.list":  "list_dir",
+    "tool.web.search":       "web_search",
+    "tool.web.fetch":        "web_fetch",
+}
+
+# Maps registry tool name to the single instruction-derived parameter key.
+# Tools absent from this map require structured multi-parameter input and
+# cannot be driven from an instruction string alone (e.g. write_file, edit_file).
+_INSTRUCTION_PARAM: dict[str, str] = {
+    "exec":       "command",
+    "read_file":  "path",
+    "list_dir":   "path",
+    "web_search": "query",
+    "web_fetch":  "url",
+}
+
+
+def _resolve_route(
+    route_id: str,
+    registry: Any,
+) -> tuple[str, str | None] | None:
+    """Map a planner route_id to (registry_tool_name, primary_param_key).
+
+    Returns ``None`` when the route_id is unrecognized or the required tool is
+    absent from the registry.  Returns ``(tool_name, None)`` for multi-parameter
+    tools (write_file, edit_file) that cannot be driven by instruction text alone.
+
+    Local tool routes follow the ``tool.*`` prefix convention.
+    MCP routes follow the ``mcp.{server}.{tool}`` convention and resolve to the
+    registry key ``mcp_{server}_{tool}`` with ``"input"`` as the primary parameter.
+    """
+    # Local tool routes
+    if route_id in _ROUTE_ID_TO_TOOL_NAME:
+        tool_name = _ROUTE_ID_TO_TOOL_NAME[route_id]
+        if not registry.has(tool_name):
+            return None
+        param_key = _INSTRUCTION_PARAM.get(tool_name)  # None for multi-param tools
+        return (tool_name, param_key)
+
+    # MCP routes: mcp.{server}.{tool} -> mcp_{server}_{tool}
+    if route_id.startswith("mcp."):
+        suffix = route_id[4:]
+        parts = suffix.split(".", 1)
+        if len(parts) == 2:
+            tool_name = f"mcp_{parts[0]}_{parts[1]}"
+            if not registry.has(tool_name):
+                return None
+            return (tool_name, "input")
+
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Result / context data structures
 # ---------------------------------------------------------------------------
 
