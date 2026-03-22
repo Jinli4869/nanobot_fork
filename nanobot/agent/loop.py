@@ -451,7 +451,7 @@ class AgentLoop:
 
         planner = TaskPlanner(llm=self.provider)
         tree = await planner.plan(task)
-        logger.info("Decomposed plan: %s", tree.to_dict())
+        logger.info("Decomposed plan: {}", tree.to_dict())
 
         raw_gui_tool = self.tools.get("gui_task")
         gui_agent = _GuiDispatchAdapter(raw_gui_tool) if raw_gui_tool is not None else None
