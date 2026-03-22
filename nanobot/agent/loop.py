@@ -24,6 +24,7 @@ from nanobot.agent.context import ContextBuilder
 from nanobot.agent.cron_turns import CronTurnCoordinator
 from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
+from nanobot.agent.planning_memory import PlanningMemoryHintExtractor
 from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
@@ -1094,12 +1095,18 @@ class AgentLoop:
 
         planner = TaskPlanner(llm=self.provider)
         raw_gui_tool = self.tools.get("gui_task")
+        catalog = CapabilityCatalogBuilder().build(
+            tool_registry=self.tools,
+            gui_available=raw_gui_tool is not None,
+            exec_enabled=self.exec_config.enable,
+        )
+        memory_hints = PlanningMemoryHintExtractor(self.workspace).build(
+            task=task,
+            catalog=catalog,
+        )
         planning_context = PlanningContext(
-            catalog=CapabilityCatalogBuilder().build(
-                tool_registry=self.tools,
-                gui_available=raw_gui_tool is not None,
-                exec_enabled=self.exec_config.enable,
-            )
+            catalog=catalog,
+            memory_hints=memory_hints,
         )
         tree = await planner.plan(task, planning_context=planning_context)
         logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))
