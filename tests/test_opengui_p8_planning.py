@@ -624,3 +624,29 @@ def test_format_plan_tree_renders_indented_human_readable_outline() -> None:
         "    - GUI: pause music from menu bar\n"
         "    - GUI: pause music with media key"
     )
+
+
+def test_plan_node_route_metadata_round_trip() -> None:
+    node = PlanNode(
+        node_type="atom",
+        instruction="disable bluetooth",
+        capability="tool",
+        route_id="tool.exec_shell",
+        route_reason="Direct host route is safer than GUI",
+        fallback_route_ids=("gui.desktop",),
+    )
+
+    assert PlanNode.from_dict(node.to_dict()) == node
+
+
+def test_plan_node_route_metadata_legacy_payload_still_parses() -> None:
+    payload = {
+        "type": "atom",
+        "instruction": "open obsidian",
+        "capability": "gui",
+    }
+
+    node = PlanNode.from_dict(payload)
+
+    assert node == PlanNode(node_type="atom", instruction="open obsidian", capability="gui")
+    assert node.to_dict() == payload
