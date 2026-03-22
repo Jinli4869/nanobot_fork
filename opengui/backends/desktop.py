@@ -16,6 +16,7 @@ Design notes:
 from __future__ import annotations
 
 import asyncio
+import logging
 import platform
 import sys
 from asyncio.subprocess import PIPE
@@ -38,6 +39,9 @@ try:
 except ImportError:  # pragma: no cover
     pyautogui = None  # type: ignore[assignment]
     pyperclip = None  # type: ignore[assignment]
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +149,17 @@ class LocalDesktopBackend:
             monitor_index = 1
             if self._target_display is not None:
                 monitor_index = self._target_display.monitor_index
+            available_monitor_count = max(0, len(sct.monitors) - 1)
+            if available_monitor_count == 0:
+                raise RuntimeError("No desktop monitors detected for screenshot capture")
+            if monitor_index < 1 or monitor_index > available_monitor_count:
+                logger.warning(
+                    "Configured monitor index %s unavailable; falling back to primary monitor. "
+                    "available_monitors=%s",
+                    monitor_index,
+                    available_monitor_count,
+                )
+                monitor_index = 1
             monitor = sct.monitors[monitor_index]
             logical_w: int = monitor["width"]
             logical_h: int = monitor["height"]

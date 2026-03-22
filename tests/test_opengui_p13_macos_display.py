@@ -203,6 +203,38 @@ async def test_background_wrapper_configures_target_display_before_preflight() -
 
 
 @pytest.mark.asyncio
+async def test_background_wrapper_preflight_is_idempotent() -> None:
+    display_info = DisplayInfo(
+        display_id="macos:42",
+        width=1440,
+        height=900,
+        offset_x=200,
+        offset_y=120,
+        monitor_index=2,
+    )
+
+    manager = AsyncMock()
+    manager.start = AsyncMock(return_value=display_info)
+    manager.stop = AsyncMock()
+
+    inner = AsyncMock()
+    type(inner).platform = PropertyMock(return_value="macos")
+    inner.configure_target_display = MagicMock()
+    inner.preflight = AsyncMock()
+    inner.observe = AsyncMock()
+    inner.execute = AsyncMock(return_value="ok")
+
+    backend = BackgroundDesktopBackend(inner, manager)
+    await backend.preflight()
+    await backend.preflight()
+
+    assert manager.start.await_count == 1
+    assert inner.preflight.await_count == 1
+
+    await backend.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_macos_target_surface_routing_keeps_observe_and_execute_aligned(
     tmp_path: Path,
 ) -> None:
