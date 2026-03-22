@@ -16,7 +16,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
 - **Verification state:** Milestone v1.2 implementation is in host-integration closeout while planning begins for the next host-facing surface
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
-- **Known planning gap:** the current planner sees coarse capability classes but not the live tool/MCP route inventory, so GUI is often chosen even when a safer non-GUI path exists
+- **Planner status:** Phase 21 closed the planner-context gap by adding a live route catalog plus bounded routing-memory hints; Phase 22 still needs real route-aware `tool` and `mcp` dispatch
 
 ## Current Milestone: v1.3 Nanobot Web Workspace
 
@@ -59,6 +59,8 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **BGND-05**: Background runtime probes isolated support before any desktop background run starts — v1.2 Phase 12
 - ✓ **BGND-06**: Background runtime reports isolated, fallback, or blocked mode before automation begins — v1.2 Phase 12
 - ✓ **BGND-07**: Overlapping background desktop runs serialize with explicit busy metadata — v1.2 Phase 12
+- ✓ **CAP-01**: Planner sees a compact summary of currently available GUI, tool, shell/exec, and MCP routes — v1.4 Phase 21
+- ✓ **CAP-02**: Planner context can include routing-relevant memory hints without dumping unrelated memory — v1.4 Phase 21
 
 ### Active
 
@@ -115,4 +117,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-03-22 after designing the v1.4 capability-aware planning and routing milestone*
+*Last updated: 2026-03-22 after completing Phase 21 capability-aware planner context work*

@@ -192,4 +192,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-22 after designing the v1.4 capability-aware planning and routing follow-on milestone*
+*Last updated: 2026-03-22 after completing Phase 21 capability catalog and planner context*
