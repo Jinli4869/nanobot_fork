@@ -390,3 +390,266 @@ async def test_dispatch_logging_resolved_route(caplog: pytest.LogCaptureFixture)
     assert any("tool=exec" in msg for msg in messages), (
         f"Expected 'tool=exec' in log messages, got: {messages}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 1 (Plan 02): _dispatch_with_fallback — fallback chain dispatch
+# ---------------------------------------------------------------------------
+
+
+def _make_fallback_atom(
+    route_id: str | None,
+    fallback_route_ids: tuple[str, ...] = (),
+    capability: str = "tool",
+    instruction: str = "test instruction",
+) -> PlanNode:
+    """Shorthand: create a PlanNode with fallback_route_ids."""
+    return PlanNode(
+        node_type="atom",
+        instruction=instruction,
+        capability=capability,
+        route_id=route_id,
+        fallback_route_ids=fallback_route_ids,
+    )
+
+
+def _make_ctx_with_gui(
+    tool_registry: Any = None,
+    gui_agent: Any = None,
+) -> RouterContext:
+    """Create a RouterContext with both tool_registry and gui_agent."""
+    return RouterContext(task="test task", tool_registry=tool_registry, gui_agent=gui_agent)
+
+
+@pytest.mark.asyncio
+async def test_fallback_primary_succeeds() -> None:
+    """Primary route succeeds: fallback is never tried."""
+    registry = _make_mock_registry(["exec", "web_search"])
+    registry.execute = AsyncMock(return_value="exec output")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="ls -la",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    assert "exec output" in result.output
+    # Should only call execute once (for exec, not web_search)
+    registry.execute.assert_awaited_once_with("exec", {"command": "ls -la"})
+
+
+@pytest.mark.asyncio
+async def test_fallback_primary_fails_secondary_succeeds() -> None:
+    """Primary route returns error string: fallback web_search succeeds."""
+    registry = _make_mock_registry(["exec", "web_search"])
+
+    call_log: list[str] = []
+
+    async def execute_side_effect(tool_name: str, params: dict) -> str:
+        call_log.append(tool_name)
+        if tool_name == "exec":
+            return "Error: command not found"
+        return "search results"
+
+    registry.execute = AsyncMock(side_effect=execute_side_effect)  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="list processes",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    assert "search results" in result.output
+    assert call_log == ["exec", "web_search"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_primary_unavailable_secondary_succeeds() -> None:
+    """Primary MCP route not in registry: falls through to exec tool."""
+    # Only exec is registered; mcp_demo_lookup is absent
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(return_value="exec ok")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = PlanNode(
+        node_type="atom",
+        instruction="do something",
+        capability="mcp",
+        route_id="mcp.demo.lookup",
+        fallback_route_ids=("tool.exec_shell",),
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_mcp(node, ctx)
+
+    assert result.success is True
+    assert "exec ok" in result.output
+    registry.execute.assert_awaited_once_with("exec", {"command": "do something"})
+
+
+@pytest.mark.asyncio
+async def test_fallback_all_fail() -> None:
+    """All routes fail: NodeResult(success=False) listing all tried routes."""
+    registry = _make_mock_registry(["exec", "web_search"])
+    registry.execute = AsyncMock(return_value="Error: everything failed")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="do impossible thing",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is False
+    assert result.error is not None
+    # Error message should mention tried routes
+    assert "tool.exec_shell" in result.error or "tried" in result.error
+
+
+@pytest.mark.asyncio
+async def test_fallback_gui_desktop_delegates_to_run_gui() -> None:
+    """gui.desktop fallback delegates to _run_gui when gui_agent is available."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(return_value="Error: shell failed")  # type: ignore[method-assign]
+
+    mock_gui_result = MagicMock()
+    mock_gui_result.success = True
+    mock_gui_result.summary = "GUI did the task"
+    mock_gui_result.error = None
+    mock_gui_result.trace_path = None
+
+    mock_gui = AsyncMock()
+    mock_gui.run = AsyncMock(return_value=mock_gui_result)
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("gui.desktop",),
+        instruction="open browser",
+    )
+    ctx = _make_ctx_with_gui(tool_registry=registry, gui_agent=mock_gui)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    assert "GUI did the task" in result.output
+    mock_gui.run.assert_awaited_once_with("open browser", max_retries=1)
+
+
+@pytest.mark.asyncio
+async def test_fallback_gui_desktop_skipped_when_no_gui_agent() -> None:
+    """gui.desktop fallback is skipped with diagnostic when gui_agent is None."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(return_value="Error: shell failed")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("gui.desktop",),
+        instruction="open browser",
+    )
+    ctx = _make_ctx(tool_registry=registry)  # no gui_agent
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is False
+    assert result.error is not None
+    # Error should mention GUI unavailability or list tried routes
+    assert "gui" in result.error.lower() or "tried" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_fallback_logging_fallback_taken(caplog: pytest.LogCaptureFixture) -> None:
+    """When fallback route succeeds, log entry contains 'fallback_taken='."""
+    registry = _make_mock_registry(["exec", "web_search"])
+
+    async def execute_side_effect(tool_name: str, params: dict) -> str:
+        if tool_name == "exec":
+            return "Error: failed"
+        return "fallback output"
+
+    registry.execute = AsyncMock(side_effect=execute_side_effect)  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="search for something",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    with caplog.at_level(logging.INFO, logger="nanobot.agent.router"):
+        result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    messages = [record.message for record in caplog.records]
+    assert any("fallback_taken=" in msg for msg in messages), (
+        f"Expected 'fallback_taken=' in log messages, got: {messages}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_fallback_logging_all_tried(caplog: pytest.LogCaptureFixture) -> None:
+    """When all routes fail, log entries show each route attempted."""
+    registry = _make_mock_registry(["exec", "web_search"])
+    registry.execute = AsyncMock(return_value="Error: all broken")  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="impossible task",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    with caplog.at_level(logging.INFO, logger="nanobot.agent.router"):
+        result = await router._run_tool(node, ctx)
+
+    assert result.success is False
+    messages = [record.message for record in caplog.records]
+    # Should have logged attempts for both routes
+    assert any("tool.exec_shell" in msg for msg in messages), (
+        f"Expected 'tool.exec_shell' in logs, got: {messages}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_param_route_falls_back() -> None:
+    """Multi-param route (write_file) is skipped and falls back to gui.desktop."""
+    registry = _make_mock_registry(["write_file"])
+
+    mock_gui_result = MagicMock()
+    mock_gui_result.success = True
+    mock_gui_result.summary = "GUI wrote the file"
+    mock_gui_result.error = None
+    mock_gui_result.trace_path = None
+
+    mock_gui = AsyncMock()
+    mock_gui.run = AsyncMock(return_value=mock_gui_result)
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.filesystem.write",
+        fallback_route_ids=("gui.desktop",),
+        instruction="write hello to test.txt",
+    )
+    ctx = _make_ctx_with_gui(tool_registry=registry, gui_agent=mock_gui)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+    assert "GUI wrote the file" in result.output
+    mock_gui.run.assert_awaited_once_with("write hello to test.txt", max_retries=1)
