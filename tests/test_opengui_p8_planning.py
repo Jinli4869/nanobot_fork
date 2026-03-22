@@ -582,6 +582,18 @@ async def test_complexity_gate_exception_falls_back(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
     """_plan_and_execute logs the decomposed plan tree via logger.info."""
+    memory_dir = tmp_path / "memory"
+    memory_dir.mkdir()
+    (memory_dir / "MEMORY.md").write_text(
+        "tool.exec_shell worked for disabling bluetooth on macOS.\n"
+        "User prefers concise updates.\n",
+        encoding="utf-8",
+    )
+    (memory_dir / "HISTORY.md").write_text(
+        "[2026-03-22 09:00] fallback to gui.desktop when shell failed to open System Settings.",
+        encoding="utf-8",
+    )
+
     loop = _make_agent_loop(tmp_path)
     loop.tools = ToolRegistry()
     for tool_name in ("gui_task", "exec", "read_file", "web_search", "mcp_demo_lookup"):
@@ -628,6 +640,11 @@ async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
         "tool.web.search",
         "mcp.demo.lookup",
     ]
+    assert [hint.route_id for hint in planning_context.memory_hints] == [
+        "tool.exec_shell",
+        "gui.desktop",
+    ]
+    assert all("concise updates" not in hint.to_prompt_line() for hint in planning_context.memory_hints)
 
     info_calls = [call.args for call in mock_logger.info.call_args_list]
     assert any(

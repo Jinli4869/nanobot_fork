@@ -209,3 +209,31 @@ def test_memory_hint_extractor_returns_empty_tuple_without_route_evidence(tmp_pa
     )
 
     assert hints == ()
+
+
+def test_task_planner_memory_hint_prompt_guardrail_section() -> None:
+    from nanobot.agent.capabilities import PlanningContext
+    from nanobot.agent.planner import TaskPlanner
+    from nanobot.agent.planning_memory import PlanningMemoryHint
+
+    planner = TaskPlanner(llm=object())
+    planning_context = PlanningContext(
+        catalog=_catalog(),
+        memory_hints=tuple(
+            PlanningMemoryHint(
+                route_id="tool.exec_shell",
+                note=f"tool.exec_shell worked for bluetooth toggle attempt {index}: " + ("x" * 220),
+            )
+            for index in range(7)
+        ),
+    )
+
+    prompt = planner._build_system_prompt(planning_context=planning_context)
+    prompt_without_hints = planner._build_system_prompt(
+        planning_context=PlanningContext(catalog=_catalog(), memory_hints=())
+    )
+
+    assert "Routing memory hints:" in prompt
+    assert "additional routing hints omitted for brevity" in prompt
+    assert prompt.count("tool.exec_shell:") <= 5
+    assert "Routing memory hints:" not in prompt_without_hints
