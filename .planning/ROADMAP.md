@@ -111,7 +111,7 @@ Plans:
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
 | 21 | Capability Catalog And Planner Context | Give the planner a compact live route inventory and routing-relevant memory hints so capability choice is grounded in real runtime options. | CAP-01, CAP-02 | 4 |
-| 22 | 2/2 | Complete   | 2026-03-22 | 4 |
+| 22 | 2/2 | Complete    | 2026-03-22 | 4 |
 | 23 | Routing Memory Feedback And Verification | Learn from route outcomes and prove that mixed-capability tasks choose better routes than the current GUI-biased default. | CAP-05 | 4 |
 
 ### Phase 21: Capability Catalog And Planner Context
