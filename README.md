@@ -299,6 +299,43 @@ The WebUI is served by the WebSocket channel on port `8765` by default. The gate
 > [!TIP]
 > Working on the WebUI itself? Check out [`webui/README.md`](./webui/README.md) for the source-tree, Vite dev server, build, and test workflow.
 
+## 🌐 Web Workspace
+
+The isolated TUI web runtime is local-first and optional. Existing `nanobot` CLI usage is unchanged.
+
+**Development mode**
+
+Start the backend:
+
+```bash
+python -m nanobot.tui
+```
+
+Start the frontend dev server in a second terminal:
+
+```bash
+npm --prefix nanobot/tui/web run dev
+```
+
+This serves the React app through Vite while proxying API traffic to `127.0.0.1:18791`.
+
+**Built/local mode**
+
+Build the frontend bundle:
+
+```bash
+npm --prefix nanobot/tui/web run build
+```
+
+Then start the packaged backend shell with either command:
+
+```bash
+python -m nanobot.tui
+nanobot-tui
+```
+
+The built app is served from the same local FastAPI runtime, and the existing `nanobot` CLI commands continue to work as before.
+
 ## 🏗️ Architecture
 
 <p align="center">

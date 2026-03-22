@@ -84,6 +84,7 @@ describe("WorkspaceShell", () => {
 
     screen.getByText("Chat workspace");
     screen.getAllByText("session-123");
+    screen.getAllByText("run-9");
     screen.getByText(/Current route: \/chat\/session-123\?runId=run-9&panel=trace/);
   });
 });
