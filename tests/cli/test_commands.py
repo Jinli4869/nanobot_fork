@@ -3,6 +3,7 @@ import json
 import re
 import shutil
 import signal
+import tomllib
 from contextlib import suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -1215,6 +1216,15 @@ def test_load_runtime_config_preserves_tui_section(tmp_path):
     assert config.tui.host == "127.0.0.1"
     assert config.tui.port == 29999
     assert config.tui.reload is True
+
+
+def test_pyproject_keeps_existing_cli_scripts_when_tui_script_is_added():
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    scripts = pyproject["project"]["scripts"]
+
+    assert scripts["nanobot"] == "nanobot.cli.commands:app"
+    assert scripts["nanobot-tui"] == "nanobot.tui.__main__:main"
+    assert scripts["opengui"] == "opengui.cli:main"
 
 
 @pytest.fixture

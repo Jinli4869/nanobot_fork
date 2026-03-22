@@ -170,6 +170,7 @@ dev = [
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"
+nanobot-tui = "nanobot.tui.__main__:main"
 opengui = "opengui.cli:main"
 
 # Third-party tool plugins register here.  Built-in tools are discovered
@@ -195,12 +196,14 @@ include = [
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
     "nanobot/web/dist/**/*",
+    "nanobot/tui/web/index.html",
 ]
 # nanobot/web/dist/ is produced by `cd webui && bun run build` and is
 # git-ignored. List it as an artifact so hatch ships it in both wheel and
 # sdist even though VCS does not track it.
 artifacts = [
     "nanobot/web/dist/**/*",
+    "nanobot/tui/web/dist/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -217,6 +220,8 @@ include = [
     "bridge/",
     "nanobot/web/dist/",
     "hatch_build.py",
+    "nanobot/tui/web/index.html",
+    "nanobot/tui/web/dist/",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

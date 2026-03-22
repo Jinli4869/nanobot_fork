@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 def frontend_dist_path() -> Path:
     """Return the packaged dist directory for the TUI web frontend."""
 
-    return Path(str(resources.files("nanobot.tui").joinpath("web", "dist")))
+    return Path(str(resources.files("nanobot.tui.web").joinpath("dist")))
 
 
 def frontend_index_path() -> Path:
