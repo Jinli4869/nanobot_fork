@@ -3,6 +3,52 @@ export type ApiEnv = {
   VITE_NANOBOT_API_BASE?: string;
 };
 
+export type ChatMessage = {
+  role: string;
+  content: string;
+  timestamp?: string | null;
+};
+
+export type ChatSessionSummary = {
+  session_id: string;
+  session_key: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  metadata: Record<string, unknown>;
+  message_count: number;
+};
+
+export type ChatSessionResponse = {
+  session: ChatSessionSummary;
+  messages: ChatMessage[];
+};
+
+export type RuntimeSessionStats = {
+  total: number;
+  active: number;
+  most_recent_session_id?: string | null;
+};
+
+export type RuntimeRunSummary = {
+  run_id: string;
+  task_kind: string;
+  status: string;
+  summary?: string | null;
+  steps_taken: number;
+  started_at?: string | null;
+  finished_at?: string | null;
+};
+
+export type RuntimeInspectionResponse = {
+  status: string;
+  channel_runtime_booted: boolean;
+  agent_loop_booted: boolean;
+  task_launch_available: boolean;
+  session_stats: RuntimeSessionStats;
+  active_runs: RuntimeRunSummary[];
+  recent_failures: RuntimeRunSummary[];
+};
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -20,12 +66,24 @@ export function resolveApiPath(path: string, env?: ApiEnv): string {
   return `${resolveApiBase(env)}${normalizedPath}`;
 }
 
+export function resolveApiUrl(path: string, env?: ApiEnv): string {
+  return new URL(resolveApiPath(path, env), window.location.origin).toString();
+}
+
 export async function fetchJson<T>(path: string, init?: RequestInit, env?: ApiEnv): Promise<T> {
-  const response = await fetch(resolveApiPath(path, env), init);
+  const response = await fetch(resolveApiUrl(path, env), init);
 
   if (!response.ok) {
     throw new Error(`Request failed with status ${response.status}`);
   }
 
   return (await response.json()) as T;
+}
+
+export function getChatSession(sessionId: string, env?: ApiEnv) {
+  return fetchJson<ChatSessionResponse>(`/chat/sessions/${sessionId}`, undefined, env);
+}
+
+export function getRuntimeInspection(env?: ApiEnv) {
+  return fetchJson<RuntimeInspectionResponse>("/runtime", undefined, env);
 }
