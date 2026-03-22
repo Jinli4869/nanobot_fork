@@ -457,8 +457,15 @@ class SkillLibrary:
         if not self.store_dir.exists():
             return
         for skills_file in self.store_dir.rglob("skills.json"):
-            with open(skills_file, encoding="utf-8") as f:
-                data = json.load(f)
+            try:
+                with open(skills_file, encoding="utf-8") as f:
+                    data = json.load(f)
+            except json.JSONDecodeError as exc:
+                logger.warning("Skipping invalid skill store %s: %s", skills_file, exc)
+                continue
+            if not isinstance(data, dict):
+                logger.warning("Skipping malformed skill store %s: expected JSON object", skills_file)
+                continue
             for skill_data in data.get("skills", []):
                 skill = Skill.from_dict(skill_data)
                 self._skills[skill.skill_id] = skill
