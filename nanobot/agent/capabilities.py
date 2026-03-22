@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from nanobot.agent.tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from nanobot.agent.planning_memory import PlanningMemoryHint
 
 CapabilityType = Literal["gui", "tool", "mcp", "api"]
 
@@ -48,7 +51,7 @@ class PlanningContext:
     """Planner-only wrapper for context that should not change the entrypoint shape again."""
 
     catalog: CapabilityCatalog
-    memory_hints: tuple[str, ...] = ()
+    memory_hints: tuple["PlanningMemoryHint", ...] = ()
 
 
 class CapabilityCatalogBuilder:

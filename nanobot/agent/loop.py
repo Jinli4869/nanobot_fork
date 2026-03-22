@@ -16,6 +16,7 @@ from loguru import logger
 from nanobot.agent.capabilities import CapabilityCatalogBuilder, PlanningContext
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryConsolidator
+from nanobot.agent.planning_memory import PlanningMemoryHintExtractor
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
@@ -485,12 +486,18 @@ class AgentLoop:
 
         planner = TaskPlanner(llm=self.provider)
         raw_gui_tool = self.tools.get("gui_task")
+        catalog = CapabilityCatalogBuilder().build(
+            tool_registry=self.tools,
+            gui_available=raw_gui_tool is not None,
+            exec_enabled=self.exec_config.enable,
+        )
+        memory_hints = PlanningMemoryHintExtractor(self.workspace).build(
+            task=task,
+            catalog=catalog,
+        )
         planning_context = PlanningContext(
-            catalog=CapabilityCatalogBuilder().build(
-                tool_registry=self.tools,
-                gui_available=raw_gui_tool is not None,
-                exec_enabled=self.exec_config.enable,
-            )
+            catalog=catalog,
+            memory_hints=memory_hints,
         )
         tree = await planner.plan(task, planning_context=planning_context)
         logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))

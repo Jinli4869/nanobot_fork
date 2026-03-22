@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from nanobot.agent.capabilities import PlanningContext
+from nanobot.agent.planning_memory import serialize_memory_hints
 
 logger = logging.getLogger(__name__)
 
@@ -274,13 +275,16 @@ class TaskPlanner:
                 ]
             )
         if planning_context is not None and planning_context.memory_hints:
+            rendered_hints = serialize_memory_hints(planning_context.memory_hints)
             lines.extend(
                 [
                     "",
-                    "Routing hints:",
-                    *[f"- {hint}" for hint in planning_context.memory_hints],
+                    "Routing memory hints:",
+                    *[f"- {line}" for line in rendered_hints],
                 ]
             )
+            if len(rendered_hints) < len(planning_context.memory_hints):
+                lines.append("- ... additional routing hints omitted for brevity")
 
         # Inject summary lines from SKILL.md files when a loader is available.
         if self._skills_loader is not None:
