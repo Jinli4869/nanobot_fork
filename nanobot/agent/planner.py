@@ -150,14 +150,13 @@ class TaskPlanner:
 
         logger.debug("Requesting plan for task: %r", task)
 
-        response = await self._llm.chat(
-            messages=messages,
-            tools=[_CREATE_PLAN_TOOL],
-            tool_choice={"type": "function", "function": {"name": "create_plan"}},
-        )
+        response = await self._request_plan(messages)
 
         if not response.tool_calls:
-            logger.warning("LLM did not call create_plan; falling back to single ATOM node")
+            logger.warning(
+                "LLM did not call create_plan; falling back to single ATOM node. %s",
+                self._format_planner_response_diagnostics(response),
+            )
             return PlanNode(node_type="atom", instruction=task, capability="gui")
 
         args = response.tool_calls[0].arguments
@@ -165,14 +164,21 @@ class TaskPlanner:
             try:
                 args = json.loads(args)
             except json.JSONDecodeError:
-                logger.warning("create_plan arguments are not valid JSON; using fallback ATOM")
+                logger.warning(
+                    "create_plan arguments are not valid JSON; using fallback ATOM. %s",
+                    self._format_planner_response_diagnostics(response),
+                )
                 return PlanNode(node_type="atom", instruction=task, capability="gui")
 
         tree_data = args.get("tree", {"type": "atom", "instruction": task, "capability": "gui"})
         try:
             return PlanNode.from_dict(tree_data)
         except (KeyError, TypeError) as exc:
-            logger.warning("Failed to parse plan tree: %s; using fallback ATOM", exc)
+            logger.warning(
+                "Failed to parse plan tree: %s; using fallback ATOM. %s",
+                exc,
+                self._format_planner_response_diagnostics(response),
+            )
             return PlanNode(node_type="atom", instruction=task, capability="gui")
 
     async def replan(
@@ -258,3 +264,67 @@ class TaskPlanner:
         if context:
             parts.extend(["", "Context:", context])
         return "\n".join(parts)
+
+    async def _request_plan(self, messages: list[dict[str, Any]]) -> Any:
+        """Request a plan, retrying with auto tool choice when forced choice is unsupported."""
+        forced_tool_choice = {"type": "function", "function": {"name": "create_plan"}}
+        response = await self._llm.chat(
+            messages=messages,
+            tools=[_CREATE_PLAN_TOOL],
+            tool_choice=forced_tool_choice,
+        )
+        if self._should_retry_with_auto_tool_choice(response):
+            logger.warning(
+                "Planner forced create_plan tool_choice unsupported; retrying with auto. %s",
+                self._format_planner_response_diagnostics(response),
+            )
+            response = await self._llm.chat(
+                messages=messages,
+                tools=[_CREATE_PLAN_TOOL],
+                tool_choice="auto",
+            )
+        return response
+
+    @staticmethod
+    def _should_retry_with_auto_tool_choice(response: Any) -> bool:
+        """Return True when the provider rejects forced tool choice in thinking mode."""
+        finish_reason = getattr(response, "finish_reason", None)
+        if finish_reason != "error":
+            return False
+        content = getattr(response, "content", None)
+        if not isinstance(content, str):
+            return False
+        normalized = content.lower()
+        return (
+            "tool_choice" in normalized
+            and "thinking mode" in normalized
+            and ("does not support" in normalized or "unsupported" in normalized)
+        )
+
+    @staticmethod
+    def _format_planner_response_diagnostics(response: Any) -> str:
+        """Summarize the planner model response for failure diagnostics."""
+        finish_reason = getattr(response, "finish_reason", None)
+        content = getattr(response, "content", None)
+        tool_calls = getattr(response, "tool_calls", None)
+
+        content_preview = ""
+        if isinstance(content, str) and content.strip():
+            content_preview = " ".join(content.split())[:240]
+
+        tool_call_names: list[str] = []
+        if isinstance(tool_calls, list):
+            for tool_call in tool_calls[:5]:
+                name = getattr(tool_call, "name", None)
+                if isinstance(name, str) and name:
+                    tool_call_names.append(name)
+
+        parts = [
+            f"finish_reason={finish_reason!r}",
+            f"tool_call_count={len(tool_calls) if isinstance(tool_calls, list) else 0}",
+        ]
+        if tool_call_names:
+            parts.append(f"tool_call_names={tool_call_names}")
+        if content_preview:
+            parts.append(f"content_preview={content_preview!r}")
+        return " ".join(parts)
