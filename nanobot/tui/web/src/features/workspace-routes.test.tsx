@@ -18,6 +18,8 @@ class MockEventSource {
 
 describe("workspace routes", () => {
   beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+
     fetchMock.mockImplementation(async (input) => {
       const url = String(input);
       if (url.includes("/chat/sessions/session-123")) {
@@ -81,7 +83,7 @@ describe("workspace routes", () => {
       true,
     );
     expect(eventSourceInstances[0]?.url).toContain("/chat/sessions/session-123/events");
-    await screen.findByText("2 messages loaded");
+    await screen.findByText("hello");
 
     await router.navigate("/operations?sessionId=session-123&runId=run-9&panel=logs");
 

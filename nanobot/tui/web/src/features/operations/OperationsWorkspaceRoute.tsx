@@ -17,10 +17,6 @@ export function OperationsWorkspaceRoute() {
     <div style={{ display: "grid", gap: "16px" }}>
       <div>
         <h2 style={{ margin: "0 0 8px", fontSize: "1.55rem" }}>Operations console</h2>
-        <p style={{ margin: 0, lineHeight: 1.6 }}>
-          Operations now reads runtime status through the same typed client seam that packaged mode
-          will use, while the selected run and diagnostics panel remain anchored in the URL.
-        </p>
       </div>
       <dl
         style={{
@@ -60,9 +56,6 @@ export function OperationsWorkspaceRoute() {
           </div>
         ))}
       </dl>
-      <p data-testid="route-debug" style={{ margin: 0, color: "rgb(82 91 84)" }}>
-        {`Current route: ${location.pathname}${location.search}`}
-      </p>
     </div>
   );
 }

@@ -40,13 +40,6 @@ const shellStyles = {
     lineHeight: 1,
     margin: 0,
   },
-  subtitle: {
-    margin: 0,
-    maxWidth: "62ch",
-    fontSize: "1.02rem",
-    lineHeight: 1.6,
-    color: "rgb(72 79 74)",
-  },
   nav: {
     display: "flex",
     flexWrap: "wrap" as const,
@@ -66,21 +59,6 @@ const shellStyles = {
     background: "rgb(55 76 61)",
     color: "rgb(251 248 241)",
     border: "1px solid rgb(55 76 61)",
-  },
-  contextRow: {
-    display: "flex",
-    flexWrap: "wrap" as const,
-    gap: "10px",
-  },
-  badge: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "8px",
-    padding: "9px 12px",
-    borderRadius: "999px",
-    background: "rgba(232, 240, 232, 0.9)",
-    border: "1px solid rgba(94, 109, 82, 0.18)",
-    fontSize: "0.9rem",
   },
   section: {
     marginTop: "22px",
@@ -103,21 +81,11 @@ export function WorkspaceShell() {
       <div style={shellStyles.frame}>
         <section style={shellStyles.hero}>
           <p style={shellStyles.eyebrow}>Nanobot Workspace</p>
-          <h1 style={shellStyles.title}>One browser workspace for chat and operations.</h1>
-          <p style={shellStyles.subtitle}>
-            Phase 20 starts by turning the backend contracts from Phases 17-19 into a single
-            route-backed app shell. The active session and selected run stay visible in the URL so
-            navigation does not reset the operator&apos;s context.
-          </p>
+          <h1 style={shellStyles.title}>Nanobot Workspace</h1>
           <nav aria-label="Workspace views" style={shellStyles.nav}>
             <WorkspaceNavLink label="Chat" to={chatHref} />
             <WorkspaceNavLink label="Operations" to={operationsHref} />
           </nav>
-          <div style={shellStyles.contextRow}>
-            <ContextBadge label="Session" value={workspaceState.sessionId ?? "Not selected"} />
-            <ContextBadge label="Run" value={workspaceState.runId ?? "Not selected"} />
-            <ContextBadge label="Panel" value={workspaceState.panel ?? "overview"} />
-          </div>
         </section>
         <section style={shellStyles.section}>
           <Outlet />
@@ -138,13 +106,5 @@ function WorkspaceNavLink({ label, to }: { label: string; to: string }) {
     >
       {label}
     </NavLink>
-  );
-}
-
-function ContextBadge({ label, value }: { label: string; value: string }) {
-  return (
-    <span style={shellStyles.badge}>
-      <strong>{label}:</strong> {value}
-    </span>
   );
 }
