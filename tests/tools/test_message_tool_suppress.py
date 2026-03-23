@@ -1,5 +1,6 @@
 """Test message tool suppress logic for final replies."""
 
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -114,6 +115,35 @@ class TestMessageToolSuppressLogic:
             ("Visible", False),
             ('read_file("foo.txt")', True),
         ]
+
+    @pytest.mark.asyncio
+    async def test_successful_gui_task_short_circuits_final_reply(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        gui_call = ToolCallRequest(
+            id="call1",
+            name="gui_task",
+            arguments={"task": "打开 B 站并播放第一个视频"},
+        )
+        loop.provider.chat_with_retry = AsyncMock(
+            return_value=LLMResponse(content="", tool_calls=[gui_call])
+        )
+        loop.tools.get_definitions = MagicMock(return_value=[])
+        loop.tools.execute = AsyncMock(return_value=json.dumps({
+            "success": True,
+            "summary": "Task completed after 3 step(s).",
+            "model_summary": "任务已完成，视频已成功播放",
+            "trace_path": None,
+            "steps_taken": 3,
+            "error": None,
+        }, ensure_ascii=False))
+
+        msg = InboundMessage(channel="telegram", sender_id="user1", chat_id="chat123", content="播放热门视频")
+        result = await loop._process_message(msg)
+
+        assert result is not None
+        assert result.content == "任务已完成，视频已成功播放。"
+        loop.provider.chat_with_retry.assert_awaited_once()
+        loop.tools.execute.assert_awaited_once()
 
 
 class TestMessageToolTurnTracking:

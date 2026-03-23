@@ -356,6 +356,7 @@ class AgentLoop:
                     thinking_blocks=response.thinking_blocks,
                 )
 
+                immediate_final: str | None = None
                 for tc in response.tool_calls:
                     tools_used.append(tc.name)
                     args_str = json.dumps(tc.arguments, ensure_ascii=False)
@@ -380,6 +381,16 @@ class AgentLoop:
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    if len(response.tool_calls) == 1:
+                        immediate_final = self._maybe_finalize_successful_gui_task(
+                            tool_call.name,
+                            result,
+                        )
+
+                if immediate_final is not None:
+                    messages = self.context.add_assistant_message(messages, immediate_final)
+                    final_content = immediate_final
+                    break
             else:
                 if on_stream and on_stream_end:
                     await on_stream_end(resuming=False)
@@ -405,6 +416,29 @@ class AgentLoop:
             )
 
         return final_content, tools_used, messages
+
+    @staticmethod
+    def _maybe_finalize_successful_gui_task(tool_name: str, result: Any) -> str | None:
+        if tool_name != "gui_task" or not isinstance(result, str):
+            return None
+
+        try:
+            payload = json.loads(result)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(payload, dict) or not payload.get("success"):
+            return None
+
+        candidate = payload.get("model_summary") or payload.get("summary") or "GUI task completed successfully."
+        if not isinstance(candidate, str):
+            candidate = str(candidate)
+        candidate = candidate.strip()
+        if not candidate:
+            return "GUI task completed successfully."
+        if candidate[-1] not in ".!?。！？":
+            candidate += "。"
+        return candidate
 
     async def _needs_planning(self, task: str) -> bool:
         """One LLM call to assess whether a task warrants multi-step decomposition.

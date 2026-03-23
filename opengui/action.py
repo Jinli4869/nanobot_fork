@@ -96,6 +96,8 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     if not isinstance(payload, dict):
         raise ActionError(f"Expected dict payload, got {type(payload).__name__!r}.")
 
+    payload = _normalize_coordinate_payload(payload)
+
     # 1. Normalise action_type
     raw_type = payload.get("action_type") or payload.get("action") or ""
     if not raw_type:
@@ -191,6 +193,40 @@ def _fmt_coord(action: Action) -> str:
     if action.relative:
         return f"({action.x}/{_RELATIVE_GRID_MAX}, {action.y}/{_RELATIVE_GRID_MAX})"
     return f"({action.x}, {action.y})"
+
+
+def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    normalized = dict(payload)
+    _normalize_coordinate_pair(normalized, "x", "y")
+    _normalize_coordinate_pair(normalized, "x2", "y2")
+    return normalized
+
+
+def _normalize_coordinate_pair(
+    payload: dict[str, typing.Any],
+    primary_key: str,
+    secondary_key: str,
+) -> None:
+    primary = payload.get(primary_key)
+    secondary = payload.get(secondary_key)
+
+    primary_items = _coerce_coordinate_sequence(primary)
+    secondary_items = _coerce_coordinate_sequence(secondary)
+
+    if primary_items is not None:
+        if len(primary_items) == 1:
+            payload[primary_key] = primary_items[0]
+        elif len(primary_items) == 2 and secondary in (None, [], ()):
+            payload[primary_key], payload[secondary_key] = primary_items
+
+    if secondary_items is not None and len(secondary_items) == 1:
+        payload[secondary_key] = secondary_items[0]
+
+
+def _coerce_coordinate_sequence(value: typing.Any) -> tuple[typing.Any, ...] | None:
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return None
 
 
 def _optional_float(payload: dict, key: str, action_type: str) -> float | None:
