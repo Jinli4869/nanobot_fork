@@ -14,6 +14,7 @@ import asyncio
 import base64
 import dataclasses
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass, replace
@@ -33,6 +34,8 @@ from opengui.interfaces import (
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -1141,8 +1144,55 @@ class GuiAgent:
 
         memory_entries = policies + others
         if not memory_entries:
+            logger.info("Memory retrieval: no hits for task=%r", task)
+            self._trajectory_recorder.record_event(
+                "memory_retrieval",
+                task=task,
+                hit_count=0,
+                hits=[],
+                context="",
+            )
             return None
-        return self._memory_retriever.format_context(memory_entries)
+        context = self._memory_retriever.format_context(memory_entries)
+        self._log_memory_retrieval(task, memory_entries, context)
+        return context
+
+    def _log_memory_retrieval(
+        self,
+        task: str,
+        memory_entries: list[tuple[Any, float]],
+        context: str,
+    ) -> None:
+        hits: list[dict[str, Any]] = []
+        logger.info("Memory retrieval: %d hit(s) for task=%r", len(memory_entries), task)
+        for entry, score in memory_entries:
+            preview = re.sub(r"\s+", " ", entry.content).strip()[:160]
+            hit = {
+                "entry_id": entry.entry_id,
+                "memory_type": entry.memory_type.value,
+                "platform": entry.platform,
+                "app": entry.app,
+                "score": round(float(score), 4),
+                "content_preview": preview,
+            }
+            hits.append(hit)
+            logger.info(
+                "Memory hit id=%s type=%s score=%.4f platform=%s app=%s content=%s",
+                entry.entry_id,
+                entry.memory_type.value,
+                float(score),
+                entry.platform,
+                entry.app or "-",
+                preview,
+            )
+
+        self._trajectory_recorder.record_event(
+            "memory_retrieval",
+            task=task,
+            hit_count=len(hits),
+            hits=hits,
+            context=context,
+        )
 
     async def _search_skill(self, task: str) -> tuple[Any, float] | None:
         """Search skill library and return (skill, final_score) if above threshold."""
