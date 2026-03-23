@@ -716,6 +716,23 @@ def test_plan_node_route_metadata_legacy_payload_still_parses() -> None:
     assert node.to_dict() == payload
 
 
+def test_plan_node_from_dict_normalizes_uppercase_node_types() -> None:
+    payload = {
+        "type": "AND",
+        "children": [
+            {"type": "ATOM", "instruction": "open obsidian", "capability": "gui"},
+            {"type": "ATOM", "instruction": "list files", "capability": "tool"},
+        ],
+    }
+
+    node = PlanNode.from_dict(payload)
+
+    assert node.node_type == "and"
+    assert [child.node_type for child in node.children] == ["atom", "atom"]
+    assert node.children[0].instruction == "open obsidian"
+    assert node.children[1].capability == "tool"
+
+
 # ---------------------------------------------------------------------------
 # Phase 22 OTM: PlanNode.params field round-trip tests
 # ---------------------------------------------------------------------------

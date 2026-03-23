@@ -345,3 +345,34 @@ async def test_router_dispatches_planner_atoms_by_capability() -> None:
 	assert "mcp:do-mcp" in result.output
 	assert "gui:do-gui" in result.output
 	assert ctx.completed == ["do-tool", "do-mcp", "do-gui"]
+
+
+@pytest.mark.asyncio
+async def test_router_executes_uppercase_plan_node_types() -> None:
+	"""Router should tolerate legacy/uppercase node_type values instead of failing."""
+	plan = PlanNode(
+		node_type="AND",  # type: ignore[arg-type]
+		children=(
+			PlanNode(node_type="ATOM", instruction="do-tool", capability="tool"),  # type: ignore[arg-type]
+			PlanNode(node_type="ATOM", instruction="do-gui", capability="gui"),  # type: ignore[arg-type]
+		),
+	)
+
+	async def fake_tool(node: Any, context: RouterContext) -> NodeResult:  # noqa: ARG001
+		return NodeResult(success=True, output=f"tool:{node.instruction}")
+
+	async def fake_gui(instruction: str, context: RouterContext) -> NodeResult:  # noqa: ARG001
+		return NodeResult(success=True, output=f"gui:{instruction}")
+
+	with (
+		patch.object(TreeRouter, "_run_tool", side_effect=fake_tool),
+		patch.object(TreeRouter, "_run_gui", side_effect=fake_gui),
+	):
+		router = TreeRouter(max_concurrency=1)
+		ctx = RouterContext(task="task", tool_registry=object(), mcp_client=object(), gui_agent=object())
+		result = await router.execute(plan, ctx)
+
+	assert result.success
+	assert "tool:do-tool" in result.output
+	assert "gui:do-gui" in result.output
+	assert ctx.completed == ["do-tool", "do-gui"]

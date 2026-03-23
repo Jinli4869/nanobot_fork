@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 NodeType = Literal["and", "or", "atom"]
 CapabilityType = Literal["gui", "tool", "mcp", "api"]
 
+_VALID_NODE_TYPES = {"and", "or", "atom"}
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
@@ -64,7 +66,14 @@ class PlanNode:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PlanNode:
         """Deserialize from a JSON dict produced by :meth:`to_dict`."""
-        node_type: NodeType = data["type"]
+        raw_node_type = data["type"]
+        if not isinstance(raw_node_type, str):
+            raise TypeError(f"Plan node type must be a string, got {type(raw_node_type)}")
+
+        node_type = raw_node_type.strip().lower()
+        if node_type not in _VALID_NODE_TYPES:
+            raise ValueError(f"Unsupported plan node type: {raw_node_type!r}")
+
         if node_type == "atom":
             return cls(
                 node_type="atom",
@@ -203,7 +212,7 @@ class TaskPlanner:
         tree_data = args.get("tree", {"type": "atom", "instruction": task, "capability": "gui"})
         try:
             return PlanNode.from_dict(tree_data)
-        except (KeyError, TypeError) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "Failed to parse plan tree: %s; using fallback ATOM. %s",
                 exc,
