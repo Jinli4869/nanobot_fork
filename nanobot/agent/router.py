@@ -170,11 +170,13 @@ class TreeRouter:
         if not isinstance(node, PlanNode):
             return NodeResult(success=False, error=f"Expected PlanNode, got {type(node)}")
 
-        if node.node_type == "atom":
+        node_type = str(node.node_type).lower()
+
+        if node_type == "atom":
             return await self._dispatch_atom(node, context)
-        if node.node_type == "and":
+        if node_type == "and":
             return await self._execute_and(node, context)
-        if node.node_type == "or":
+        if node_type == "or":
             return await self._execute_or(node, context)
         return NodeResult(success=False, error=f"Unknown node type: {node.node_type}")
 
@@ -218,7 +220,7 @@ class TreeRouter:
                 all_traces[idx] = list(result.trace_paths)
                 if result.success:
                     all_outputs[idx] = result.output
-                    if child.node_type == "atom":
+                    if str(child.node_type).lower() == "atom":
                         child_completed[idx].append(child.instruction)
 
         await asyncio.gather(
@@ -282,7 +284,7 @@ class TreeRouter:
             result = await self.execute(child, context)
             all_traces.extend(result.trace_paths)
             if result.success:
-                if child.node_type == "atom":
+                if str(child.node_type).lower() == "atom":
                     context.completed.append(child.instruction)
                 return NodeResult(success=True, output=result.output, trace_paths=all_traces)
             last_error = result.error
@@ -562,11 +564,11 @@ class TreeRouter:
         """
         self._replan_count += 1
         remaining = [
-            c.instruction for c in node.children[failed_index + 1:] if c.node_type == "atom"
+            c.instruction for c in node.children[failed_index + 1:] if str(c.node_type).lower() == "atom"
         ]
         failed_instruction = (
             failed_child.instruction
-            if failed_child.node_type == "atom"
+            if str(failed_child.node_type).lower() == "atom"
             else str(failed_child.to_dict())
         )
         try:
