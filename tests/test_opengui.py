@@ -62,6 +62,33 @@ def test_parse_scroll_rejects_partial_coordinates() -> None:
         })
 
 
+def test_parse_action_unwraps_singleton_coordinate_lists() -> None:
+    action = parse_action({
+        "action": "tap",
+        "x": [417],
+        "y": [129],
+        "relative": True,
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 417.0
+    assert action.y == 129.0
+    assert action.relative is True
+
+
+def test_parse_action_splits_paired_coordinates_from_x_list() -> None:
+    action = parse_action({
+        "action": "tap",
+        "x": [498, 441],
+        "relative": True,
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 498.0
+    assert action.y == 441.0
+    assert action.relative is True
+
+
 def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
     prompt = build_system_prompt(
         platform="android",

@@ -235,6 +235,7 @@ class GuiSubagentTool(Tool):
             {
                 "success": result.success,
                 "summary": summary,
+                "model_summary": result.model_summary,
                 "trace_path": str(trace_path) if trace_path is not None else result.trace_path,
                 "steps_taken": result.steps_taken,
                 "error": error,

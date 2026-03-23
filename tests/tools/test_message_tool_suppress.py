@@ -1,12 +1,14 @@
 """Test message tool suppress logic for final replies."""
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nanobot.agent.loop import AgentLoop
+from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
@@ -18,6 +20,33 @@ def _make_loop(tmp_path: Path) -> AgentLoop:
     provider = MagicMock()
     provider.get_default_model.return_value = "test-model"
     return AgentLoop(bus=bus, provider=provider, workspace=tmp_path, model="test-model")
+
+
+class _FakeGuiTaskTool(Tool):
+    def __init__(self, result: str) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    @property
+    def name(self) -> str:
+        return "gui_task"
+
+    @property
+    def description(self) -> str:
+        return "Run a GUI task."
+
+    @property
+    def parameters(self) -> dict[str, object]:
+        return {
+            "type": "object",
+            "properties": {"task": {"type": "string"}},
+            "required": ["task"],
+            "additionalProperties": False,
+        }
+
+    async def execute(self, **kwargs: object) -> str:
+        self.calls.append(dict(kwargs))
+        return self.result
 
 
 class TestMessageToolSuppressLogic:
@@ -151,6 +180,35 @@ class TestMessageToolSuppressLogic:
             ("Visible", False),
             ('read foo.txt', True),
         ]
+
+    @pytest.mark.asyncio
+    async def test_successful_gui_task_short_circuits_final_reply(self, tmp_path: Path) -> None:
+        loop = _make_loop(tmp_path)
+        gui_call = ToolCallRequest(
+            id="call1",
+            name="gui_task",
+            arguments={"task": "打开 B 站并播放第一个视频"},
+        )
+        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="", tool_calls=[gui_call]))
+        loop.tools.get_definitions = MagicMock(return_value=[])
+        gui_tool = _FakeGuiTaskTool(json.dumps({
+            "success": True,
+            "summary": "Task completed after 3 step(s).",
+            "model_summary": "任务已完成，视频已成功播放",
+            "trace_path": None,
+            "steps_taken": 3,
+            "error": None,
+        }, ensure_ascii=False))
+        loop.tools.register(gui_tool)
+
+        msg = InboundMessage(channel="telegram", sender_id="user1", chat_id="chat123", content="播放热门视频")
+        result = await loop._process_message(msg)
+
+        assert result is not None
+        assert result.content == "任务已完成，视频已成功播放。"
+        loop.provider.chat_with_retry.assert_awaited_once()
+        assert gui_tool.calls == [{"task": "打开 B 站并播放第一个视频"}]
+
 
 class TestMessageToolTurnTracking:
 
