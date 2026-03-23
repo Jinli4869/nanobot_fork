@@ -807,6 +807,11 @@ class AgentLoop:
         ]
         return "\n".join([header, *rendered_children])
 
+    @classmethod
+    def _build_plan_preview(cls, tree: Any) -> str:
+        """Render a user-facing plan preview message for the current channel."""
+        return "执行计划预览：\n```text\n" + cls._format_plan_tree(tree) + "\n```"
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -1079,7 +1084,12 @@ class AgentLoop:
         return False  # safe default: no tool call → treat as simple
 
     async def _plan_and_execute(
-        self, task: str
+        self,
+        task: str,
+        *,
+        channel: str | None = None,
+        chat_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> tuple[str | None, list[str], list[dict]]:
         """Decompose *task* via TaskPlanner and dispatch via TreeRouter.
 
@@ -1139,6 +1149,16 @@ class AgentLoop:
         tree = await planner.plan(task, planning_context=planning_context)
         logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))
         logger.debug("Decomposed plan (raw): {}", tree.to_dict())
+        if channel is not None and chat_id is not None:
+            preview_meta = dict(metadata or {})
+            preview_meta["_progress"] = True
+            preview_meta["_plan_preview"] = True
+            await self.bus.publish_outbound(OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content=self._build_plan_preview(tree),
+                metadata=preview_meta,
+            ))
 
         gui_agent = _GuiDispatchAdapter(raw_gui_tool) if raw_gui_tool is not None else None
 
@@ -1819,7 +1839,12 @@ class AgentLoop:
                 )
 
         if use_planning:
-            final_content, tools_used, plan_messages = await self._plan_and_execute(raw_task)
+            final_content, tools_used, plan_messages = await self._plan_and_execute(
+                raw_task,
+                channel=ctx.msg.channel,
+                chat_id=ctx.msg.chat_id,
+                metadata=ctx.msg.metadata,
+            )
             ctx.final_content = final_content
             ctx.tools_used = tools_used
             ctx.all_messages = plan_messages or ctx.initial_messages + [

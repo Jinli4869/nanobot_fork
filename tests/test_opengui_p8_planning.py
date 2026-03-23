@@ -494,7 +494,7 @@ async def test_complexity_gate_skip_short_message(tmp_path: Path) -> None:
         patch.object(
             loop,
             "_run_agent_loop",
-            new=AsyncMock(return_value=("short reply", [], [])),
+            new=AsyncMock(return_value=("short reply", [], [], "completed", False)),
         ),
         patch.object(loop.context, "build_messages", return_value=[]),
     ):
@@ -513,7 +513,7 @@ async def test_complexity_gate_false_uses_agent_loop(tmp_path: Path) -> None:
         patch.object(
             loop,
             "_run_agent_loop",
-            new=AsyncMock(return_value=("agent response", [], [])),
+            new=AsyncMock(return_value=("agent response", [], [], "completed", False)),
         ) as mock_run,
         patch.object(loop.context, "build_messages", return_value=[]),
     ):
@@ -540,7 +540,7 @@ async def test_complexity_gate_true_uses_planning(tmp_path: Path) -> None:
         patch.object(
             loop,
             "_run_agent_loop",
-            new=AsyncMock(return_value=("should not be called", [], [])),
+            new=AsyncMock(return_value=("should not be called", [], [], "completed", False)),
         ) as mock_run,
         patch.object(loop.context, "build_messages", return_value=[]),
     ):
@@ -567,7 +567,7 @@ async def test_complexity_gate_exception_falls_back(tmp_path: Path) -> None:
         patch.object(
             loop,
             "_run_agent_loop",
-            new=AsyncMock(return_value=("fallback response", [], [])),
+            new=AsyncMock(return_value=("fallback response", [], [], "completed", False)),
         ) as mock_run,
         patch.object(loop.context, "build_messages", return_value=[]),
     ):
@@ -628,7 +628,10 @@ async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
 
         with patch("nanobot.agent.loop.logger") as mock_logger:
             output, tools_used, _ = await loop._plan_and_execute(
-                "Open the browser and search for something complex"
+                "Open the browser and search for something complex",
+                channel="cli",
+                chat_id="chat-1",
+                metadata={"message_id": "m-1"},
             )
 
     planning_context = mock_planner.plan.await_args.kwargs["planning_context"]
@@ -660,6 +663,14 @@ async def test_plan_and_execute_logs_tree(tmp_path: Path) -> None:
     assert any(args and args[0] == "Decomposed plan (raw): {}" and args[1] == atom_node.to_dict() for args in debug_calls), (
         f"Expected raw decomposed plan in logger.debug calls, got: {debug_calls}"
     )
+    loop.bus.publish_outbound.assert_awaited_once()
+    outbound = loop.bus.publish_outbound.await_args.args[0]
+    assert outbound.channel == "cli"
+    assert outbound.chat_id == "chat-1"
+    assert outbound.metadata["_progress"] is True
+    assert outbound.metadata["_plan_preview"] is True
+    assert "执行计划预览：" in outbound.content
+    assert "via tool.exec_shell" in outbound.content
     assert output == "done"
 
 

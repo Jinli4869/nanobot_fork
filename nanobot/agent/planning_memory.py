@@ -92,7 +92,7 @@ class PlanningMemoryHintExtractor:
         return tuple(hints)
 
     def _iter_candidate_snippets(self) -> tuple[str, ...]:
-        text_blocks = [self._store.read_long_term(), self._read_history_tail()]
+        text_blocks = [self._store.read_memory(), self._read_history_tail()]
         snippets: list[str] = []
         for text in text_blocks:
             if not text:
