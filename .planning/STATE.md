@@ -181,11 +181,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260323-q1s | 设计 desktop 真实 GUI memory 命中端到端测试并标明应查看的 run trace | 2026-03-23 | 8048c6b | [260323-q1s-desktop-gui-memory-run-trace](./quick/260323-q1s-desktop-gui-memory-run-trace/) |
 | 260323-q5j | 执行 desktop/local 真实 GUI memory 命中测试并分析实际 run trace；确认 memory 命中但执行结果仅 partial | 2026-03-23 | 464fbbc | [260323-q5j-desktop-local-gui-memory-run-trace](./quick/260323-q5j-desktop-local-gui-memory-run-trace/) |
 | 260323-qdw | 审查并提交必要的 memory 可观测性改动，然后修复 `~/.opengui/config.yaml` 的 embedding 兼容问题 | 2026-03-23 | uncommitted | [260323-qdw-memory-opengui-config-yaml-embedding](./quick/260323-qdw-memory-opengui-config-yaml-embedding/) |
+| 260323-qm7 | 构建 Android 手机 memory 文件：创建 icon_guide.md 和 policy.md，将 tmp_ 文件转换为可解析格式，并为 os_guide.md 和 app_guide.md 添加 17 条 Android OS 操作和 35 条主流中国 App 使用指南 | 2026-03-23 | 3608ed9 | [260323-qm7-build-android-phone-memory-files-for-ope](./quick/260323-qm7-build-android-phone-memory-files-for-ope/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-23 - Completed quick task 260323-qdw: 审查并提交必要的 memory 可观测性改动，然后修复 ~/.opengui/config.yaml 的 embedding 兼容问题
+Last activity: 2026-03-23 - Completed quick task 260323-qm7: 构建 Android phone memory files — 86 entries across icon_guide.md, policy.md, os_guide.md, app_guide.md; all entries parseable by MemoryStore
 
-Last session: 2026-03-23T11:10:00Z
-Stopped at: Completed quick/260323-qdw
+Last session: 2026-03-23T11:28:00Z
+Stopped at: Completed quick/260323-qm7
 Resume file: None
