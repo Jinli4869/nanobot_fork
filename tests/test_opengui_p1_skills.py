@@ -317,6 +317,43 @@ async def test_skill_library_dedup_adds_distinct(tmp_path: Path) -> None:
     assert lib.count == 2
 
 
+async def test_skill_library_merges_same_app_alias_into_one_bucket(tmp_path: Path) -> None:
+    """Alias and package-name variants for the same app deduplicate into one normalized bucket."""
+    store_dir = tmp_path / "skills_dedup_alias"
+    lib = SkillLibrary(store_dir=store_dir, merge_llm=None)
+
+    lib.add(
+        _make_skill(
+            "alias-old",
+            "Open Settings",
+            "Navigate to settings",
+            app="Settings",
+            platform="android",
+            action_types=["tap", "scroll"],
+        )
+    )
+    decision, result_id = await lib.add_or_merge(
+        _make_skill(
+            "alias-new",
+            "Open Settings",
+            "Navigate to Android settings",
+            app="com.android.settings",
+            platform="android",
+            action_types=["tap", "scroll"],
+        )
+    )
+
+    reloaded = SkillLibrary(store_dir=store_dir, merge_llm=None)
+    normalized_bucket = store_dir / "android" / "com.android.settings" / "skills.json"
+
+    assert decision in ("MERGE", "KEEP_OLD", "KEEP_NEW")
+    assert result_id is not None
+    assert lib.count == 1
+    assert normalized_bucket.is_file()
+    assert len(reloaded.list_all(platform="android", app="Settings")) == 1
+    assert reloaded.list_all(platform="android", app="com.android.settings")[0].app == "com.android.settings"
+
+
 # ---------------------------------------------------------------------------
 # SkillExecutor — tests (async)
 # ---------------------------------------------------------------------------
