@@ -494,7 +494,7 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
     )
 
     result = json.loads(await tool.execute(task="Open calculator"))
-    normalized_bucket = tmp_workspace / "gui_skills" / "dry-run" / "settings" / "skills.json"
+    normalized_bucket = tmp_workspace / "gui_skills" / "dry-run" / "skills.json"
     reloaded = tool._get_skill_library("dry-run")
     reloaded.load_all()
 

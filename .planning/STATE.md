@@ -187,11 +187,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260324-k9r | 修复技能提取：统一 gui_skills 存储根目录并规范化提取出的 app 标识，恢复 SkillLibrary 的合并与管理能力 | 2026-03-24 | 0e5ef97 | [260324-k9r-gui-skills-app-skilllibrary](./quick/260324-k9r-gui-skills-app-skilllibrary/) |
 | 260324-ltk | Add OPPO/ColorOS app mappings, filter annotate_android_apps to mapped-only, show display names without package identifiers in system prompt | 2026-03-24 | b392c90 | [260324-ltk-filter-system-prompt-to-mapped-only-apps](./quick/260324-ltk-filter-system-prompt-to-mapped-only-apps/) |
 | 260324-mzh | Fix Telegram bot not replying after GUI task: replace elif msg.channel == "cli": with else: in _dispatch so all channels receive empty OutboundMessage cleanup signal | 2026-03-24 | 5124b0d | [260324-mzh-fix-telegram-bot-not-replying-after-gui-](./quick/260324-mzh-fix-telegram-bot-not-replying-after-gui-/) |
+| 260324-oks | 简化 gui_skills 目录结构为每个平台单一 skills.json 聚合文件 | 2026-03-24 | uncommitted | [260324-oks-gui-skills-skills-json](./quick/260324-oks-gui-skills-skills-json/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-24 - Completed quick task 260324-mzh: Fix Telegram bot not replying after GUI task completion
+Last activity: 2026-03-24 - Completed quick task 260324-oks: Simplify gui_skills into per-platform aggregated skills.json files
 
 Last session: 2026-03-24T08:00:00Z
-Stopped at: Completed quick/260324-mzh
+Stopped at: Completed quick/260324-oks
 Resume file: None

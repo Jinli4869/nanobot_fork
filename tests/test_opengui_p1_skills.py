@@ -344,7 +344,7 @@ async def test_skill_library_merges_same_app_alias_into_one_bucket(tmp_path: Pat
     )
 
     reloaded = SkillLibrary(store_dir=store_dir, merge_llm=None)
-    normalized_bucket = store_dir / "android" / "com.android.settings" / "skills.json"
+    normalized_bucket = store_dir / "android" / "skills.json"
 
     assert decision in ("MERGE", "KEEP_OLD", "KEEP_NEW")
     assert result_id is not None
@@ -352,6 +352,30 @@ async def test_skill_library_merges_same_app_alias_into_one_bucket(tmp_path: Pat
     assert normalized_bucket.is_file()
     assert len(reloaded.list_all(platform="android", app="Settings")) == 1
     assert reloaded.list_all(platform="android", app="com.android.settings")[0].app == "com.android.settings"
+
+
+def test_load_all_reads_legacy_nested_skill_files_without_flat_platform_file(tmp_path: Path) -> None:
+    store_dir = tmp_path / "gui_skills"
+    legacy_bucket = store_dir / "android" / "com.android.settings"
+    legacy_bucket.mkdir(parents=True)
+    payload = {
+        "skills": [
+            _make_skill(
+                "legacy-settings",
+                "Open Settings",
+                "Navigate to Android settings",
+                app="Settings",
+                platform="android",
+                action_types=["tap"],
+            ).to_dict()
+        ]
+    }
+    (legacy_bucket / "skills.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    lib = SkillLibrary(store_dir=store_dir, merge_llm=None)
+
+    assert lib.count == 1
+    assert lib.list_all(platform="android", app="com.android.settings")[0].skill_id == "legacy-settings"
 
 
 # ---------------------------------------------------------------------------

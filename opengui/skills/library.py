@@ -119,7 +119,7 @@ Respond with ONLY a JSON object:
 
 @dataclass
 class SkillLibrary:
-    """Persistent JSON skill store organized by ``{platform}/{app}/skills.json``.
+    """Persistent JSON skill store organized by ``{platform}/skills.json``.
 
     Supports:
     - BM25 + optional FAISS hybrid retrieval
@@ -478,7 +478,7 @@ class SkillLibrary:
         self._skills.clear()
         if not self.store_dir.exists():
             return
-        for skills_file in self.store_dir.rglob("skills.json"):
+        for skills_file in self._iter_skill_files():
             try:
                 with open(skills_file, encoding="utf-8") as f:
                     data = json.load(f)
@@ -493,27 +493,51 @@ class SkillLibrary:
                 self._skills[skill.skill_id] = skill
         self._index_dirty = True
 
+    def _iter_skill_files(self) -> list[Path]:
+        files: list[Path] = []
+        flat_platforms: set[str] = set()
+
+        for platform_dir in sorted(path for path in self.store_dir.iterdir() if path.is_dir()):
+            flat_file = platform_dir / "skills.json"
+            if flat_file.is_file():
+                files.append(flat_file)
+                flat_platforms.add(platform_dir.name)
+
+        for skills_file in sorted(self.store_dir.rglob("skills.json")):
+            relative_parts = skills_file.relative_to(self.store_dir).parts
+            if len(relative_parts) <= 2:
+                continue
+            if relative_parts[0] in flat_platforms:
+                continue
+            files.append(skills_file)
+
+        return files
+
     def _upsert(self, skill: Skill, *, replace_id: str | None = None) -> None:
         skill = self._normalize_skill(skill)
         if replace_id and replace_id in self._skills:
             del self._skills[replace_id]
         self._skills[skill.skill_id] = skill
         self._index_dirty = True
-        self._save_platform_app(skill.platform, skill.app)
+        self._save_platform(skill.platform)
 
     def _remove_internal(self, skill_id: str) -> bool:
         skill = self._skills.pop(skill_id, None)
         if skill is None:
             return False
         self._index_dirty = True
-        self._save_platform_app(skill.platform, skill.app)
+        self._save_platform(skill.platform)
         return True
 
-    def _save_platform_app(self, platform: str, app: str) -> None:
-        dir_path = self.store_dir / platform / app
+    def _save_platform(self, platform: str) -> None:
+        dir_path = self.store_dir / platform
         dir_path.mkdir(parents=True, exist_ok=True)
         target = dir_path / "skills.json"
-        skills = [s for s in self._skills.values() if s.platform == platform and s.app == app]
+        skills = [s for s in self._skills.values() if s.platform == platform]
+        if not skills:
+            target.unlink(missing_ok=True)
+            self._cleanup_legacy_platform_files(platform)
+            return
         payload = {"skills": [s.to_dict() for s in skills]}
         tmp = tempfile.NamedTemporaryFile(
             mode="w", dir=dir_path, suffix=".tmp", delete=False, encoding="utf-8",
@@ -522,9 +546,21 @@ class SkillLibrary:
             json.dump(payload, tmp, ensure_ascii=False, indent=2)
             tmp.close()
             Path(tmp.name).replace(target)
+            self._cleanup_legacy_platform_files(platform)
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise
+
+    def _cleanup_legacy_platform_files(self, platform: str) -> None:
+        platform_dir = self.store_dir / platform
+        if not platform_dir.exists():
+            return
+        for legacy_file in sorted(platform_dir.glob("*/skills.json")):
+            legacy_file.unlink(missing_ok=True)
+            try:
+                legacy_file.parent.rmdir()
+            except OSError:
+                continue
 
     # -- Index management ----------------------------------------------------
 
