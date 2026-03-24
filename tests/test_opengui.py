@@ -102,6 +102,40 @@ def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
     assert "native tool-calling mechanism" in prompt
 
 
+def test_annotate_android_apps_filters_unmapped_packages() -> None:
+    from opengui.skills.normalization import annotate_android_apps
+
+    result = annotate_android_apps(["com.sankuai.meituan", "com.unknown.xyz"])
+
+    assert len(result) == 1, f"Expected 1 entry, got {len(result)}: {result}"
+    assert "美团" in result[0] or "Meituan" in result[0]
+    assert not any("com.unknown.xyz" in entry for entry in result)
+
+
+def test_build_system_prompt_android_apps_shows_display_names_only() -> None:
+    prompt = build_system_prompt(
+        platform="android",
+        installed_apps=["com.sankuai.meituan", "com.unknown.dropped"],
+    )
+
+    assert "美团/Meituan" in prompt
+    # Package name must not appear as an app list item
+    lines = prompt.splitlines()
+    app_list_lines = [ln.strip() for ln in lines if ln.strip().startswith("- ")]
+    assert not any("com.sankuai.meituan" in ln for ln in app_list_lines)
+    assert not any("com.unknown.dropped" in ln for ln in app_list_lines)
+
+
+def test_build_system_prompt_android_apps_excludes_unmapped() -> None:
+    prompt = build_system_prompt(
+        platform="android",
+        installed_apps=["com.totally.unknown"],
+    )
+
+    # With all packages unmapped, no "# Installed Apps" section should appear
+    assert "# Installed Apps" not in prompt
+
+
 @pytest.mark.asyncio
 async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch) -> None:
     backend = AdbBackend()

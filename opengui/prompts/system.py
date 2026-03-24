@@ -103,16 +103,20 @@ def build_system_prompt(
         if platform == "android":
             from opengui.skills.normalization import annotate_android_apps
 
+            # annotate_android_apps returns only mapped apps in "DisplayName: pkg" format.
+            # Extract just the display name portion for the prompt; package name lookup
+            # happens via resolve_android_package() at execution time.
             annotated = annotate_android_apps(installed_apps)
-            app_list = "\n".join(f"- {app}" for app in annotated)
-            sections.extend([
-                "",
-                "# Installed Apps",
-                "",
-                "For `open_app` and `close_app`, use the package name "
-                "(the `com.xxx.xxx` identifier):",
-                app_list,
-            ])
+            display_names = [entry.split(": ", 1)[0] for entry in annotated]
+            if display_names:
+                app_list = "\n".join(f"- {name}" for name in display_names)
+                sections.extend([
+                    "",
+                    "# Installed Apps",
+                    "",
+                    "The following apps are available on this device:",
+                    app_list,
+                ])
         else:
             app_list = "\n".join(f"- {app}" for app in installed_apps)
             sections.extend([
