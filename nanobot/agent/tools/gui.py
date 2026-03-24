@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
     {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
 )
+_GUI_SKILLS_DIRNAME = "gui_skills"
 WindowsIsolatedBackend = None
 probe_isolated_background_support = None
 resolve_run_mode = None
@@ -354,7 +355,7 @@ class GuiSubagentTool(Tool):
             from opengui.skills.library import SkillLibrary
 
             self._skill_libraries[platform] = SkillLibrary(
-                store_dir=self._workspace / "gui_skills" / platform,
+                store_dir=self._workspace / _GUI_SKILLS_DIRNAME,
                 embedding_provider=self._embedding_adapter,
                 merge_llm=self._llm_adapter,
             )

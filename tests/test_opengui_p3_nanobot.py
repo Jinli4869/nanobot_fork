@@ -274,7 +274,7 @@ def test_backend_selection(tmp_workspace: Path) -> None:
     )
 
     assert tool._backend.platform == "dry-run"
-    assert tool._skill_libraries["dry-run"].store_dir == tmp_workspace / "gui_skills" / "dry-run"
+    assert tool._skill_libraries["dry-run"].store_dir == tmp_workspace / "gui_skills"
 
 
 def test_gui_config_defaults() -> None:
