@@ -1342,7 +1342,7 @@ class AgentLoop:
                         await self.bus.publish_outbound(response)
                         completed_channel = response.channel
                         completed_chat_id = response.chat_id
-                    elif msg.channel == "cli":
+                    else:
                         await self.bus.publish_outbound(OutboundMessage(
                             channel=msg.channel, chat_id=msg.chat_id,
                             content="", metadata=msg.metadata or {},
