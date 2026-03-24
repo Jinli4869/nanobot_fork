@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -55,6 +56,7 @@ class GuiSubagentTool(Tool):
         self._llm_adapter = NanobotLLMAdapter(provider, model)
         self._embedding_adapter = self._build_embedding_adapter() if gui_config.embedding_model else None
         self._skill_libraries: dict[str, Any] = {}
+        self._background_postprocess_tasks: set[asyncio.Task[None]] = set()
 
         self._backend = self._build_backend(gui_config.backend)
         self._skill_library = self._get_skill_library(self._backend.platform)
@@ -227,10 +229,7 @@ class GuiSubagentTool(Tool):
             summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
             error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
-        trajectory_summary = await self._summarize_trajectory(trace_path)
-        if trajectory_summary:
-            logger.info("Trajectory summary: %s", trajectory_summary[:200])
-        await self._extract_skill(trace_path, result.success, skill_library)
+        self._schedule_trajectory_postprocessing(trace_path, result.success, skill_library)
 
         return json.dumps(
             {
@@ -243,6 +242,54 @@ class GuiSubagentTool(Tool):
             },
             ensure_ascii=False,
         )
+
+    def _schedule_trajectory_postprocessing(
+        self,
+        trace_path: Path | None,
+        is_success: bool,
+        skill_library: Any,
+    ) -> None:
+        if trace_path is None or not trace_path.exists():
+            return
+
+        task = asyncio.create_task(
+            self._run_trajectory_postprocessing(trace_path, is_success, skill_library),
+            name=f"gui-postprocess-{trace_path.stem}",
+        )
+        self._background_postprocess_tasks.add(task)
+        task.add_done_callback(self._handle_background_postprocess_done)
+
+    async def _run_trajectory_postprocessing(
+        self,
+        trace_path: Path,
+        is_success: bool,
+        skill_library: Any,
+    ) -> None:
+        trajectory_summary = await self._summarize_trajectory(trace_path)
+        if trajectory_summary:
+            logger.info("Trajectory summary: %s", trajectory_summary[:200])
+        await self._extract_skill(trace_path, is_success, skill_library)
+
+    async def _wait_for_pending_postprocessing(self) -> None:
+        if not self._background_postprocess_tasks:
+            return
+        await asyncio.gather(*list(self._background_postprocess_tasks), return_exceptions=True)
+
+    def _handle_background_postprocess_done(self, task: asyncio.Task[None]) -> None:
+        self._background_postprocess_tasks.discard(task)
+        if task.cancelled():
+            logger.debug("Background GUI postprocessing task was cancelled")
+            return
+        try:
+            exc = task.exception()
+        except Exception:
+            logger.warning("Background GUI postprocessing task failed", exc_info=True)
+            return
+        if exc is not None:
+            logger.warning(
+                "Background GUI postprocessing task failed",
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
 
     def _select_backend(self, backend: str | None) -> Any:
         if backend is None or backend == self._gui_config.backend:
