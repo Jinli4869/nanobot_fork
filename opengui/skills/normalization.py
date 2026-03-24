@@ -118,6 +118,28 @@ _ANDROID_PACKAGE_DISPLAY_NAMES: dict[str, str] = {
     "com.android.documentsui": "Files",
     "com.android.vending": "Play Store",
     "com.android.email": "Email",
+    # OPPO/ColorOS System
+    "com.coloros.soundrecorder": "录音/Sound Recorder",
+    "com.coloros.filemanager": "文件管理/File Manager",
+    "com.coloros.weather2": "天气/Weather",
+    "com.coloros.calendar": "日历/Calendar",
+    "com.coloros.calculator": "计算器/Calculator",
+    "com.coloros.compass2": "指南针/Compass",
+    "com.coloros.alarmclock": "闹钟/Alarm Clock",
+    "com.coloros.note": "备忘录/Notes",
+    "com.coloros.translate": "翻译/Translate",
+    "com.coloros.backuprestore": "备份与恢复/Backup",
+    "com.coloros.gallery3d": "相册/Gallery",
+    "com.coloros.camera": "相机/Camera",
+    "com.coloros.phonemanager": "手机管家/Phone Manager",
+    "com.coloros.safecenter": "安全中心/Security Center",
+    "com.coloros.oshare": "互传/OShare",
+    "com.heytap.browser": "浏览器/Browser",
+    "com.heytap.music": "音乐/Music",
+    "com.heytap.themestore": "主题商店/Theme Store",
+    "com.nearme.gamecenter": "游戏中心/Game Center",
+    "com.oppo.market": "应用商店/App Store",
+    "com.oppo.quicksearchbox": "搜索/Search",
     # Developer & Tools
     "com.github.android": "GitHub",
     "org.zotero.android": "Zotero",
@@ -236,15 +258,18 @@ def get_gui_skill_store_root(workspace: Path) -> Path:
 def annotate_android_apps(packages: list[str]) -> list[str]:
     """Annotate package names with human-readable display names.
 
-    Returns a list like ``["美团/Meituan: com.sankuai.meituan", "com.foo.bar"]``.
+    Only packages with a known display name are included; unmapped packages are
+    silently dropped.  This keeps the system prompt focused on apps the model can
+    name and launch, while ``resolve_android_package()`` handles the package name
+    lookup at execution time.
+
+    Returns a list like ``["美团/Meituan: com.sankuai.meituan"]``.
     """
     result: list[str] = []
     for pkg in packages:
         display = _ANDROID_PACKAGE_DISPLAY_NAMES.get(pkg)
         if display:
             result.append(f"{display}: {pkg}")
-        else:
-            result.append(pkg)
     return result
 
 
