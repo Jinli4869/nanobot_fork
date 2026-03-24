@@ -636,7 +636,7 @@ class AgentLoop:
                 )
                 if response is not None:
                     await self.bus.publish_outbound(response)
-                elif msg.channel == "cli":
+                else:
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel, chat_id=msg.chat_id,
                         content="", metadata=msg.metadata or {},
