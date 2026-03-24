@@ -201,6 +201,29 @@ def test_skill_library_list_all_filters_by_platform(tmp_path: Path) -> None:
     assert android_only[0].skill_id == "a1"
 
 
+def test_skill_library_normalizes_app_filter_aliases(tmp_path: Path) -> None:
+    """Package-name and natural-language app filters resolve to the same bucket."""
+    lib = SkillLibrary(store_dir=tmp_path / "skills_filter_normalized")
+
+    lib.add(
+        _make_skill(
+            "settings-1",
+            "Open Settings",
+            "Android settings",
+            app="Settings",
+            platform="android",
+        )
+    )
+
+    package_filtered = lib.list_all(platform="android", app="com.android.settings")
+    name_filtered = lib.list_all(platform="android", app="settings")
+
+    assert len(package_filtered) == 1
+    assert len(name_filtered) == 1
+    assert package_filtered[0].app == "com.android.settings"
+    assert name_filtered[0].skill_id == "settings-1"
+
+
 # ---------------------------------------------------------------------------
 # SkillLibrary — search tests (async)
 # ---------------------------------------------------------------------------
@@ -450,6 +473,41 @@ async def test_skill_extractor_parses_llm_json() -> None:
     assert skill.app == "com.android.settings"
     assert len(skill.steps) == 1
     assert skill.steps[0].action_type == "tap"
+
+
+async def test_skill_extractor_normalizes_app_identifier() -> None:
+    """SkillExtractor canonicalizes common app-name aliases before returning a skill."""
+    canned_json = json.dumps({
+        "name": "open_settings",
+        "description": "Navigate to the device settings screen",
+        "app": " Settings ",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "tap",
+                "target": "Settings app icon",
+                "parameters": {},
+                "expected_state": "Settings app is open",
+                "valid_state": "Home screen is visible",
+            }
+        ],
+    })
+
+    llm = _ScriptedLLM([canned_json])
+    extractor = SkillExtractor(llm=llm)
+
+    skill = await extractor.extract_from_steps(
+        [
+            {"type": "step", "action": "tap", "target": "icon"},
+            {"type": "step", "action": "scroll", "target": "list"},
+        ],
+        is_success=True,
+    )
+
+    assert skill is not None
+    assert skill.app == "com.android.settings"
 
 
 async def test_skill_extractor_returns_none_for_single_step() -> None:

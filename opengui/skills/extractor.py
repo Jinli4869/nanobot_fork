@@ -21,6 +21,7 @@ from typing import Any
 
 from opengui.interfaces import LLMProvider
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.normalization import normalize_app_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -216,7 +217,10 @@ class SkillExtractor:
                 skill_id=str(uuid.uuid4()),
                 name=data["name"],
                 description=data.get("description", ""),
-                app=data.get("app", ""),
+                app=normalize_app_identifier(
+                    data.get("platform", "unknown"),
+                    data.get("app", ""),
+                ),
                 platform=data.get("platform", "unknown"),
                 steps=tuple(steps),
                 parameters=tuple(data.get("parameters", ())),
