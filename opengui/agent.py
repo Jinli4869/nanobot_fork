@@ -678,6 +678,19 @@ class GuiAgent:
                     intervention_requested=True,
                 )
 
+            # Normalize app name to package name for Android open/close
+            if (
+                action.action_type in ("open_app", "close_app")
+                and action.text
+                and self.backend.platform == "android"
+            ):
+                from opengui.skills.normalization import resolve_android_package
+
+                resolved = resolve_android_package(action.text)
+                if resolved != action.text:
+                    logger.debug("Resolved app name %r -> %r", action.text, resolved)
+                    action = replace(action, text=resolved)
+
             # Execute action on backend
             try:
                 result_text = await self.backend.execute(action, timeout=self.step_timeout)

@@ -100,16 +100,21 @@ def build_system_prompt(
         sections.extend(["", "# Relevant Knowledge", "", memory_context])
 
     if installed_apps:
-        app_list = "\n".join(f"- {app}" for app in installed_apps)
         if platform == "android":
+            from opengui.skills.normalization import annotate_android_apps
+
+            annotated = annotate_android_apps(installed_apps)
+            app_list = "\n".join(f"- {app}" for app in annotated)
             sections.extend([
                 "",
-                "# Installed Apps (package names)",
+                "# Installed Apps",
                 "",
-                "Use these exact package names for `open_app` and `close_app` actions:",
+                "For `open_app` and `close_app`, use the package name "
+                "(the `com.xxx.xxx` identifier):",
                 app_list,
             ])
         else:
+            app_list = "\n".join(f"- {app}" for app in installed_apps)
             sections.extend([
                 "",
                 "# Installed Apps",
