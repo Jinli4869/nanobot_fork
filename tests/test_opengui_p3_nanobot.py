@@ -400,6 +400,7 @@ async def test_auto_skill_extraction(tmp_workspace: Path) -> None:
             workspace=tmp_workspace,
         )
         result = json.loads(await tool.execute(task="Open calculator"))
+        await tool._wait_for_pending_postprocessing()
     finally:
         monkeypatch.undo()
 
@@ -443,6 +444,7 @@ async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monke
     )
 
     result = json.loads(await tool.execute(task="Open calculator"))
+    await tool._wait_for_pending_postprocessing()
 
     assert result["success"] is True
     add_or_merge.assert_not_awaited()
@@ -494,6 +496,7 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
     )
 
     result = json.loads(await tool.execute(task="Open calculator"))
+    await tool._wait_for_pending_postprocessing()
     normalized_bucket = tmp_workspace / "gui_skills" / "dry-run" / "skills.json"
     reloaded = tool._get_skill_library("dry-run")
     reloaded.load_all()

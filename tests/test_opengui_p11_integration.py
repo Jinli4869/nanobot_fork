@@ -918,6 +918,7 @@ async def test_gui_tool_intervention_flow_returns_structured_resume_result(
         patch.object(type(tool), "_extract_skill", new=AsyncMock()),
     ):
         payload = json.loads(await tool.execute("Handle payroll login"))
+        await tool._wait_for_pending_postprocessing()
 
     assert payload["success"] is True
     assert payload["summary"] == "Task completed after 2 step(s)."
@@ -963,6 +964,7 @@ async def test_gui_tool_intervention_trace_payload_is_scrubbed(
         patch.object(type(tool), "_extract_skill", new=AsyncMock()),
     ):
         payload = json.loads(await tool.execute("Handle payroll login"))
+        await tool._wait_for_pending_postprocessing()
 
     trace_text = Path(payload["trace_path"]).read_text(encoding="utf-8")
     serialized_payload = json.dumps(payload)
@@ -975,3 +977,44 @@ async def test_gui_tool_intervention_trace_payload_is_scrubbed(
     assert "<redacted:intervention_reason>" in trace_text
     assert reason not in trace_text
     assert "secret-session-token" not in trace_text
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_returns_before_background_postprocessing_finishes(tmp_path: Path) -> None:
+    from opengui.agent import AgentResult
+
+    tool = _make_gui_tool(background=False)
+    tool._workspace = tmp_path
+
+    async def fake_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None) -> AgentResult:
+        del max_retries, app_hint
+        self._trajectory_recorder.start()
+        self._trajectory_recorder.record_step(action={"action_type": "wait"}, model_output="wait")
+        trace_path = self._trajectory_recorder.finish(success=True)
+        return AgentResult(
+            success=True,
+            summary=f"completed {task}",
+            model_summary=None,
+            trace_path=str(trace_path),
+            steps_taken=1,
+            error=None,
+        )
+
+    release_postprocess = asyncio.Event()
+    postprocess_started = asyncio.Event()
+
+    async def fake_postprocess(self, trace_path: Path, is_success: bool, skill_library: Any) -> None:
+        del self, trace_path, is_success, skill_library
+        postprocess_started.set()
+        await release_postprocess.wait()
+
+    with (
+        patch("opengui.agent.GuiAgent.run", new=fake_run),
+        patch.object(type(tool), "_run_trajectory_postprocessing", new=fake_postprocess),
+    ):
+        payload = json.loads(await tool.execute("test"))
+        await asyncio.wait_for(postprocess_started.wait(), timeout=1.0)
+        assert payload["success"] is True
+        assert tool._background_postprocess_tasks
+        release_postprocess.set()
+        await tool._wait_for_pending_postprocessing()

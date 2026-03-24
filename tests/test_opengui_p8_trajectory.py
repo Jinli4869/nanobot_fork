@@ -151,6 +151,7 @@ async def test_summarizer_called_post_run(
         return_value="Summary text",
     ) as mock_summarize:
         await tool.execute(task="test task")
+        await tool._wait_for_pending_postprocessing()
 
     mock_summarize.assert_awaited_once()
     call_arg = mock_summarize.call_args[0][0]  # first positional arg
@@ -180,6 +181,7 @@ async def test_summarizer_failure_non_fatal(
         side_effect=RuntimeError("summarizer exploded"),
     ):
         raw = await tool.execute(task="test task")
+        await tool._wait_for_pending_postprocessing()
 
     result = json.loads(raw)
     assert "success" in result, "execute() must return JSON with 'success' key"
@@ -228,6 +230,7 @@ async def test_summarizer_skipped_when_no_trace(
         new_callable=AsyncMock,
     ) as mock_summarize:
         await tool.execute(task="test task")
+        await tool._wait_for_pending_postprocessing()
 
     mock_summarize.assert_not_awaited()
 
