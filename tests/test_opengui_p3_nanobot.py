@@ -345,7 +345,7 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     result = json.loads(await tool.execute(task="Open Settings"))
 
     traces = list((tmp_workspace / "gui_runs").glob("**/*.jsonl"))
-    assert set(result) == {"success", "summary", "trace_path", "steps_taken", "error"}
+    assert set(result) == {"success", "summary", "model_summary", "trace_path", "steps_taken", "error"}
     assert result["success"] is True
     assert result["steps_taken"] == 2
     assert result["error"] is None
@@ -446,6 +446,62 @@ async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monke
 
     assert result["success"] is True
     add_or_merge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_auto_skill_extraction_persists_to_normalized_bucket(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from opengui.skills.data import Skill, SkillStep
+
+    async def fake_extract(self, trajectory_path: Path, *, is_success: bool = True):
+        return Skill(
+            skill_id="skill-settings",
+            name="open_settings",
+            description="Open settings app",
+            app=" Settings ",
+            platform="dry-run",
+            steps=(
+                SkillStep(action_type="wait", target="loading spinner"),
+                SkillStep(action_type="done", target="settings open"),
+            ),
+        )
+
+    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor.extract_from_file", fake_extract)
+    monkeypatch.setattr("nanobot.agent.tools.gui.GuiSubagentTool._summarize_trajectory", AsyncMock(return_value=""))
+
+    provider = _MockNanobotProvider(
+        [
+            _nanobot_tool_response(
+                content="Action: wait briefly",
+                arguments={"action_type": "wait", "duration_ms": 1},
+                call_id="tc_wait",
+            ),
+            _nanobot_tool_response(
+                content="Action: task complete",
+                arguments={"action_type": "done", "status": "success"},
+                call_id="tc_done",
+            ),
+        ]
+    )
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    result = json.loads(await tool.execute(task="Open calculator"))
+    normalized_bucket = tmp_workspace / "gui_skills" / "dry-run" / "settings" / "skills.json"
+    reloaded = tool._get_skill_library("dry-run")
+    reloaded.load_all()
+
+    assert result["success"] is True
+    assert normalized_bucket.is_file()
+    assert len(reloaded.list_all(platform="dry-run", app="Settings")) == 1
+    assert reloaded.list_all(platform="dry-run", app="settings")[0].app == "settings"
 
 
 @pytest.mark.asyncio
