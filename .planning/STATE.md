@@ -188,6 +188,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260324-ltk | Add OPPO/ColorOS app mappings, filter annotate_android_apps to mapped-only, show display names without package identifiers in system prompt | 2026-03-24 | b392c90 | [260324-ltk-filter-system-prompt-to-mapped-only-apps](./quick/260324-ltk-filter-system-prompt-to-mapped-only-apps/) |
 | 260324-mzh | Fix Telegram bot not replying after GUI task: replace elif msg.channel == "cli": with else: in _dispatch so all channels receive empty OutboundMessage cleanup signal | 2026-03-24 | 5124b0d | [260324-mzh-fix-telegram-bot-not-replying-after-gui-](./quick/260324-mzh-fix-telegram-bot-not-replying-after-gui-/) |
 | 260324-oks | 简化 gui_skills 目录结构为每个平台单一 skills.json 聚合文件 | 2026-03-24 | uncommitted | [260324-oks-gui-skills-skills-json](./quick/260324-oks-gui-skills-skills-json/) |
+| 260324-p41 | Make GUI trajectory summarization and skill extraction run in background after GUI agent returns | 2026-03-24 | uncommitted | [260324-p41-make-gui-trajectory-summarization-and-sk](./quick/260324-p41-make-gui-trajectory-summarization-and-sk/) |
 
 ## Session Continuity
 
