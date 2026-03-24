@@ -16,6 +16,7 @@ import numpy as np
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
 from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
+from opengui.skills.normalization import get_gui_skill_store_root
 
 if TYPE_CHECKING:
     from nanobot.config.schema import GuiConfig
@@ -26,7 +27,6 @@ logger = logging.getLogger(__name__)
 _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
     {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
 )
-_GUI_SKILLS_DIRNAME = "gui_skills"
 WindowsIsolatedBackend = None
 probe_isolated_background_support = None
 resolve_run_mode = None
@@ -355,7 +355,7 @@ class GuiSubagentTool(Tool):
             from opengui.skills.library import SkillLibrary
 
             self._skill_libraries[platform] = SkillLibrary(
-                store_dir=self._workspace / _GUI_SKILLS_DIRNAME,
+                store_dir=get_gui_skill_store_root(self._workspace),
                 embedding_provider=self._embedding_adapter,
                 merge_llm=self._llm_adapter,
             )

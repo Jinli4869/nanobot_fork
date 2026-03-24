@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
 
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
@@ -170,6 +171,7 @@ class SkillLibrary:
 
         Decisions: ``"ADD"`` | ``"MERGE"`` | ``"KEEP_OLD"`` | ``"KEEP_NEW"``.
         """
+        skill = self._normalize_skill(skill)
         conflict = self._find_best_conflict(skill)
         if conflict is None:
             self._upsert(skill)
@@ -194,7 +196,7 @@ class SkillLibrary:
 
     def add(self, skill: Skill) -> None:
         """Direct add without dedup (for bulk loading or trusted sources)."""
-        self._upsert(skill)
+        self._upsert(self._normalize_skill(skill))
 
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         """Replace a skill by ID with an updated version.
@@ -216,6 +218,7 @@ class SkillLibrary:
         """
         if skill_id not in self._skills:
             return False
+        updated_skill = self._normalize_skill(updated_skill)
         # Remove-then-upsert ensures the search index is rebuilt with any
         # changed fields (e.g. updated description or tags in addition to
         # stat counters).
@@ -235,19 +238,35 @@ class SkillLibrary:
         platform: str | None = None,
         app: str | None = None,
     ) -> list[Skill]:
+        normalized_app = self._normalize_filter_app(platform, app)
         results: list[Skill] = []
         for skill in self._skills.values():
             if platform is not None and skill.platform != platform:
                 continue
-            if app is not None and skill.app != app:
-                continue
+            if app is not None:
+                candidate_app = normalized_app or normalize_app_identifier(skill.platform, app)
+                if skill.app != candidate_app:
+                    continue
             results.append(skill)
         return results
+
+    @staticmethod
+    def _normalize_skill(skill: Skill) -> Skill:
+        return normalize_skill_app(skill)
+
+    @staticmethod
+    def _normalize_filter_app(platform: str | None, app: str | None) -> str | None:
+        if app is None:
+            return None
+        if platform is None:
+            return None
+        return normalize_app_identifier(platform, app)
 
     # -- Conflict detection --------------------------------------------------
 
     def _find_best_conflict(self, incoming: Skill) -> Skill | None:
         """Multi-factor scoring to find the best matching existing skill."""
+        incoming = self._normalize_skill(incoming)
         in_name = _normalize_name(incoming.name)
         in_sig = _action_signature(incoming)
         best: Skill | None = None
@@ -412,7 +431,10 @@ class SkillLibrary:
         if self._index_dirty:
             await self._rebuild_index()
 
-        mask = self._filter_mask(platform=platform, app=app)
+        mask = self._filter_mask(
+            platform=platform,
+            app=self._normalize_filter_app(platform, app),
+        )
         if not any(mask):
             return []
 
@@ -467,11 +489,12 @@ class SkillLibrary:
                 logger.warning("Skipping malformed skill store %s: expected JSON object", skills_file)
                 continue
             for skill_data in data.get("skills", []):
-                skill = Skill.from_dict(skill_data)
+                skill = self._normalize_skill(Skill.from_dict(skill_data))
                 self._skills[skill.skill_id] = skill
         self._index_dirty = True
 
     def _upsert(self, skill: Skill, *, replace_id: str | None = None) -> None:
+        skill = self._normalize_skill(skill)
         if replace_id and replace_id in self._skills:
             del self._skills[replace_id]
         self._skills[skill.skill_id] = skill
@@ -520,8 +543,10 @@ class SkillLibrary:
             skill = self._skills[sid]
             if platform is not None and skill.platform != platform:
                 mask[i] = False
-            elif app is not None and skill.app != app:
-                mask[i] = False
+            elif app is not None:
+                normalized_app = app if platform is not None else normalize_app_identifier(skill.platform, app)
+                if skill.app != normalized_app:
+                    mask[i] = False
         return mask
 
     @staticmethod
