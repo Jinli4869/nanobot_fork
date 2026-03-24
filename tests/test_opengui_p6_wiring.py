@@ -14,7 +14,7 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -129,6 +129,104 @@ async def test_gui_tool_skips_embedding_adapter_without_config(tmp_path: Path) -
     assert tool._embedding_adapter is None
     assert "dry-run" in tool._skill_libraries
     assert tool._skill_libraries["dry-run"].embedding_provider is None
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_builds_memory_retriever_from_default_opengui_dir(
+    tmp_path: Path,
+) -> None:
+    from nanobot.agent.tools import gui as gui_module
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    provider = _FakeProvider()
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})
+    assert config.gui is not None
+
+    memory_dir = tmp_path / "opengui-memory"
+    indexed_entries = [SimpleNamespace(entry_id="oppo-notification-memory")]
+    retriever_instance = SimpleNamespace(index=AsyncMock())
+    retriever_cls = MagicMock(return_value=retriever_instance)
+    seen_store_dirs: list[Path] = []
+
+    class FakeMemoryStore:
+        def __init__(self, store_dir: Path | str) -> None:
+            seen_store_dirs.append(Path(store_dir))
+
+        def list_all(self) -> list[Any]:
+            return indexed_entries
+
+    with (
+        patch.object(gui_module, "DEFAULT_OPENGUI_MEMORY_DIR", memory_dir),
+        patch("opengui.memory.store.MemoryStore", FakeMemoryStore),
+        patch("opengui.memory.retrieval.MemoryRetriever", retriever_cls),
+    ):
+        tool = GuiSubagentTool(
+            gui_config=config.gui,
+            provider=provider,  # type: ignore[arg-type]
+            model="test-model",
+            workspace=tmp_path,
+        )
+        retriever = await tool._build_memory_retriever()
+
+    assert retriever is retriever_instance
+    assert seen_store_dirs == [memory_dir]
+    retriever_cls.assert_called_once()
+    assert retriever_cls.call_args.kwargs["embedding_provider"] is tool._embedding_adapter
+    assert retriever_cls.call_args.kwargs["top_k"] == 5
+    retriever_instance.index.assert_awaited_once_with(indexed_entries)
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_passes_memory_retriever_to_gui_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opengui.agent import AgentResult
+
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    provider = _FakeProvider()
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    captured_kwargs: dict[str, Any] = {}
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            captured_kwargs.update(kwargs)
+
+        async def run(self, task: str) -> AgentResult:
+            del task
+            recorder = captured_kwargs["trajectory_recorder"]
+            recorder.start()
+            trace_path = recorder.finish(success=True)
+            return AgentResult(
+                success=True,
+                summary="done",
+                model_summary=None,
+                trace_path=str(trace_path),
+                steps_taken=0,
+                error=None,
+            )
+
+    memory_retriever = object()
+    monkeypatch.setattr("opengui.agent.GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(type(tool), "_build_memory_retriever", AsyncMock(return_value=memory_retriever))
+    monkeypatch.setattr(type(tool), "_schedule_trajectory_postprocessing", lambda *args, **kwargs: None)
+
+    result = await tool._run_task(tool._backend, "Open notification shade")
+
+    assert '"success": true' in result
+    assert captured_kwargs["memory_retriever"] is memory_retriever
 
 
 # ---------------------------------------------------------------------------
