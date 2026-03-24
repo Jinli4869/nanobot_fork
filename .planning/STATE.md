@@ -4,8 +4,8 @@ milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
 stopped_at: Completed 22-02-PLAN.md
-last_updated: "2026-03-23T13:57:00.000Z"
-last_activity: 2026-03-23
+last_updated: "2026-03-24T06:35:42.427Z"
+last_activity: 2026-03-24
 progress:
   total_phases: 4
   completed_phases: 4
@@ -184,11 +184,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260323-qm7 | 构建 Android 手机 memory 文件：创建 icon_guide.md 和 policy.md，将 tmp_ 文件转换为可解析格式，并为 os_guide.md 和 app_guide.md 添加 17 条 Android OS 操作和 35 条主流中国 App 使用指南 | 2026-03-23 | 3608ed9 | [260323-qm7-build-android-phone-memory-files-for-ope](./quick/260323-qm7-build-android-phone-memory-files-for-ope/) |
 | 260323-tm8 | 修复 planner 返回大写 `AND/ATOM` 时 router 报 `Unknown node type` 的问题，并补解析与执行层回归测试 | 2026-03-23 | uncommitted | [260323-tm8-planner-and-atom-router-unknown-node-typ](./quick/260323-tm8-planner-and-atom-router-unknown-node-typ/) |
 | 260323-ud4 | 在 planning 分支执行前向当前 channel 发送 plan 预览消息，并补发送行为测试 | 2026-03-23 | uncommitted | [260323-ud4-plan-channel-plan](./quick/260323-ud4-plan-channel-plan/) |
+| 260324-k9r | 修复技能提取：统一 gui_skills 存储根目录并规范化提取出的 app 标识，恢复 SkillLibrary 的合并与管理能力 | 2026-03-24 | 0e5ef97 | [260324-k9r-gui-skills-app-skilllibrary](./quick/260324-k9r-gui-skills-app-skilllibrary/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-23 - Completed quick task 260323-ud4: 在 planning 分支执行前向当前 channel 发送 plan 预览消息
+Last activity: 2026-03-24 - Completed quick task 260324-k9r: 修复技能提取：统一 gui_skills 存储根目录并规范化提取出的 app 标识，恢复 SkillLibrary 的合并与管理能力
 
-Last session: 2026-03-23T13:57:00Z
-Stopped at: Completed quick/260323-ud4
+Last session: 2026-03-24T06:35:42Z
+Stopped at: Completed quick/260324-k9r
 Resume file: None
