@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
+_EMBEDDING_BATCH_SIZE = 10
 _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
     {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
 )
@@ -329,6 +330,22 @@ class GuiSubagentTool(Tool):
         """
         embedding_model = self._gui_config.embedding_model  # guaranteed non-None by caller
 
+        direct_client = getattr(self._provider, "_client", None)
+        if direct_client is not None and hasattr(direct_client, "embeddings"):
+            direct_model = self._normalize_direct_embedding_model(embedding_model)
+
+            async def _embed_direct(texts: list[str]) -> np.ndarray:
+                async def _request_batch(batch: list[str]) -> list[list[float]]:
+                    response = await direct_client.embeddings.create(
+                        model=direct_model,
+                        input=batch,
+                    )
+                    return [item.embedding for item in response.data]
+
+                return await self._embed_texts_in_batches(texts, _request_batch)
+
+            return NanobotEmbeddingAdapter(_embed_direct)
+
         # Resolve the model name through the provider when the method is available.
         resolve = getattr(self._provider, "_resolve_model", None)
         resolved_model: str = resolve(embedding_model) if callable(resolve) else embedding_model
@@ -336,27 +353,47 @@ class GuiSubagentTool(Tool):
         provider = self._provider
 
         async def _embed(texts: list[str]) -> np.ndarray:
-            if not texts:
-                return np.zeros((0, 0), dtype=np.float32)
+            async def _request_batch(batch: list[str]) -> list[list[float]]:
+                # Collect provider credentials — only pass keys that are truthy to avoid
+                # sending empty strings that some backends reject.
+                kwargs: dict[str, Any] = {"model": resolved_model, "input": batch}
+                api_key = getattr(provider, "api_key", None)
+                if api_key:
+                    kwargs["api_key"] = api_key
+                api_base = getattr(provider, "api_base", None)
+                if api_base:
+                    kwargs["api_base"] = api_base
+                extra_headers = getattr(provider, "extra_headers", None)
+                if extra_headers:
+                    kwargs["extra_headers"] = extra_headers
 
-            # Collect provider credentials — only pass keys that are truthy to avoid
-            # sending empty strings that some backends reject.
-            kwargs: dict[str, Any] = {"model": resolved_model, "input": texts}
-            api_key = getattr(provider, "api_key", None)
-            if api_key:
-                kwargs["api_key"] = api_key
-            api_base = getattr(provider, "api_base", None)
-            if api_base:
-                kwargs["api_base"] = api_base
-            extra_headers = getattr(provider, "extra_headers", None)
-            if extra_headers:
-                kwargs["extra_headers"] = extra_headers
+                response = await litellm.aembedding(**kwargs)
+                return [item.embedding for item in response.data]
 
-            response = await litellm.aembedding(**kwargs)
-            vectors = [item.embedding for item in response.data]
-            return np.array(vectors, dtype=np.float32)
+            return await self._embed_texts_in_batches(texts, _request_batch)
 
         return NanobotEmbeddingAdapter(_embed)
+
+    async def _embed_texts_in_batches(
+        self,
+        texts: list[str],
+        request_batch: Callable[[list[str]], Awaitable[list[list[float]]]],
+    ) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, 0), dtype=np.float32)
+
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
+            batch = texts[start : start + _EMBEDDING_BATCH_SIZE]
+            vectors.extend(await request_batch(batch))
+        return np.array(vectors, dtype=np.float32)
+
+    @staticmethod
+    def _normalize_direct_embedding_model(model: str) -> str:
+        """Strip LiteLLM-style provider prefixes for direct OpenAI-compatible clients."""
+        if "/" not in model:
+            return model
+        return model.split("/", 1)[1]
 
     def _build_backend(self, backend_name: str) -> Any:
         if backend_name == "adb":
