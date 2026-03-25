@@ -237,3 +237,145 @@ def test_task_planner_memory_hint_prompt_guardrail_section() -> None:
     assert "additional routing hints omitted for brevity" in prompt
     assert prompt.count("tool.exec_shell:") <= 5
     assert "Routing memory hints:" not in prompt_without_hints
+
+
+# ---------------------------------------------------------------------------
+# Phase 260325-l2b: active_gui_route — backend-aware catalog and planner prompt
+# ---------------------------------------------------------------------------
+
+
+def _registry_with_gui() -> ToolRegistry:
+    """Return a ToolRegistry containing a gui_task tool (and a basic exec tool)."""
+    registry = ToolRegistry()
+    for tool_name in ("gui_task", "exec"):
+        registry.register(_DummyTool(tool_name))
+    return registry
+
+
+def test_capability_catalog_builder_adb_backend_emits_gui_adb_route() -> None:
+    from nanobot.agent.capabilities import CapabilityCatalogBuilder
+
+    catalog = CapabilityCatalogBuilder().build(
+        tool_registry=_registry_with_gui(),
+        gui_available=True,
+        exec_enabled=True,
+        gui_backend="adb",
+    )
+
+    route_ids = [r.route_id for r in catalog.routes]
+    assert "gui.adb" in route_ids
+    assert "gui.desktop" not in route_ids
+
+    gui_route = next(r for r in catalog.routes if r.route_id == "gui.adb")
+    assert gui_route.kind == "adb"
+    assert "Android" in gui_route.summary
+
+
+def test_capability_catalog_builder_local_backend_emits_gui_desktop_route() -> None:
+    from nanobot.agent.capabilities import CapabilityCatalogBuilder
+
+    catalog = CapabilityCatalogBuilder().build(
+        tool_registry=_registry_with_gui(),
+        gui_available=True,
+        exec_enabled=True,
+        gui_backend="local",
+    )
+
+    route_ids = [r.route_id for r in catalog.routes]
+    assert "gui.desktop" in route_ids
+    assert "gui.adb" not in route_ids
+
+
+def test_capability_catalog_builder_default_backend_emits_gui_desktop_route() -> None:
+    from nanobot.agent.capabilities import CapabilityCatalogBuilder
+
+    # Omitting gui_backend should default to "local" and produce gui.desktop.
+    catalog = CapabilityCatalogBuilder().build(
+        tool_registry=_registry_with_gui(),
+        gui_available=True,
+        exec_enabled=True,
+    )
+
+    route_ids = [r.route_id for r in catalog.routes]
+    assert "gui.desktop" in route_ids
+    assert "gui.adb" not in route_ids
+
+
+def test_planning_context_active_gui_route_defaults_empty() -> None:
+    from nanobot.agent.capabilities import CapabilityCatalog, PlanningContext
+
+    catalog = CapabilityCatalog()
+    ctx = PlanningContext(catalog=catalog)
+
+    assert ctx.active_gui_route == ""
+
+
+def test_planner_prompt_includes_active_gui_route_directive() -> None:
+    from nanobot.agent.capabilities import PlanningContext
+    from nanobot.agent.planner import TaskPlanner
+
+    planner = TaskPlanner(llm=object())
+    ctx = PlanningContext(catalog=_catalog(), active_gui_route="gui.adb")
+
+    prompt = planner._build_system_prompt(planning_context=ctx)
+
+    assert "Active GUI route" in prompt
+    assert "gui.adb" in prompt
+    assert "route_id='gui.adb'" in prompt
+
+
+def test_planner_prompt_omits_active_gui_route_when_empty() -> None:
+    from nanobot.agent.capabilities import PlanningContext
+    from nanobot.agent.planner import TaskPlanner
+
+    planner = TaskPlanner(llm=object())
+    ctx = PlanningContext(catalog=_catalog(), active_gui_route="")
+
+    prompt = planner._build_system_prompt(planning_context=ctx)
+
+    assert "Active GUI route" not in prompt
+
+
+import asyncio  # noqa: E402 — placed here to avoid disrupting existing import block
+
+
+def test_router_dispatches_gui_adb_sentinel_to_run_gui() -> None:
+    """Router must call gui_agent.run() when route_id is gui.adb (same as gui.desktop)."""
+    from nanobot.agent.planner import PlanNode
+    from nanobot.agent.router import RouterContext, TreeRouter
+
+    @dataclass
+    class _FakeGuiResult:
+        success: bool = True
+        summary: str = "done"
+        error: str | None = None
+        trace_path: str | None = None
+
+    class _MockGuiAgent:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def run(self, instruction: str, max_retries: int = 1) -> _FakeGuiResult:
+            self.calls.append(instruction)
+            return _FakeGuiResult()
+
+    node = PlanNode(
+        node_type="atom",
+        instruction="open the settings app",
+        capability="gui",
+        route_id="gui.adb",
+        fallback_route_ids=("gui.adb",),
+    )
+    mock_gui = _MockGuiAgent()
+    context = RouterContext(
+        task="open settings",
+        gui_agent=mock_gui,
+        tool_registry=ToolRegistry(),
+    )
+
+    router = TreeRouter()
+    result = asyncio.run(router.execute(node, context))
+
+    assert result.success is True
+    assert len(mock_gui.calls) == 1
+    assert mock_gui.calls[0] == "open the settings app"
