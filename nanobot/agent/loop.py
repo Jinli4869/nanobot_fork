@@ -487,6 +487,10 @@ class AgentLoop:
         Returns ``False`` on any parsing failure (safe default — never blocks
         execution on gate ambiguity).
         """
+        direct_tools_summary = "; ".join(
+            f"{d['function']['name']}: {d['function'].get('description', '')}"
+            for d in self.tools.get_definitions()
+        )
         messages = [
             {
                 "role": "system",
@@ -494,7 +498,10 @@ class AgentLoop:
                     "You are a task complexity assessor. Determine if the user's task "
                     "requires multi-step decomposition (multiple distinct capabilities, "
                     "sequential multi-app operations, or parallel sub-tasks). "
-                    "Single-capability tasks with no sequential dependencies should return False."
+                    "Single-capability tasks with no sequential dependencies should return False.\n\n"
+                    f"The agent has these direct tools (no planning needed to use them): {direct_tools_summary}.\n"
+                    "If the task can be accomplished with a single call to one of these tools, "
+                    "return False — do NOT route to planning when a direct tool suffices."
                 ),
             },
             {"role": "user", "content": f"Task: {task}"},
