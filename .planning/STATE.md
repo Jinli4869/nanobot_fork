@@ -197,11 +197,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260325-06v | Switch nanobot GUI memory embedding to the same direct OpenAI-compatible path used by OpenGUI CLI and document required config changes | 2026-03-25 | uncommitted | [260325-06v-switch-nanobot-gui-memory-embedding-to-t](./quick/260325-06v-switch-nanobot-gui-memory-embedding-to-t/) |
 | 260325-kgy | Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt | 2026-03-25 | c008d1e | [260325-kgy-gui-memory-os-app-icon-guide-planner-pla](./quick/260325-kgy-gui-memory-os-app-icon-guide-planner-pla/) |
 | 260325-l2b | Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend; PlanningContext.active_gui_route, backend-aware catalog, planner directive, router gui.adb sentinel | 2026-03-25 | b2b7daf | [260325-l2b-planner-planningcontext-active-backend-p](./quick/260325-l2b-planner-planningcontext-active-backend-p/) |
+| 260325-sku | Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate in router.py and loop.py | 2026-03-25 | 56e685b | [260325-sku-and-complexity-tool-gui-plan](./quick/260325-sku-and-complexity-tool-gui-plan/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-25 - Completed quick task 260325-kgy: Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt
+Last activity: 2026-03-25 - Completed quick task 260325-sku: Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate
 
-Last session: 2026-03-25T06:56:18.851Z
-Stopped at: Completed quick/260325-kgy
+Last session: 2026-03-25T12:43:37Z
+Stopped at: Completed quick/260325-sku
 Resume file: None
