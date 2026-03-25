@@ -1739,7 +1739,7 @@ class AgentLoop:
 
         event = None
         meta = dict(msg.metadata or {})
-        if on_stream is not None and stop_reason not in {"error", "tool_error"}:
+        if on_stream is not None and stop_reason not in {"error", "tool_error", "planning"}:
             event = StreamedResponseEvent()
         if turn_latency_ms is not None:
             meta["latency_ms"] = int(turn_latency_ms)
