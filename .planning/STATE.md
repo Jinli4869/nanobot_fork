@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed 22-02-PLAN.md
-last_updated: "2026-03-24T06:35:42.427Z"
-last_activity: 2026-03-24
+stopped_at: Completed quick/260325-kgy
+last_updated: "2026-03-25T06:56:18.861Z"
+last_activity: "2026-03-24 - Completed quick task 260324-oks: Simplify gui_skills into per-platform aggregated skills.json files"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -191,11 +191,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260324-p41 | Make GUI trajectory summarization and skill extraction run in background after GUI agent returns | 2026-03-24 | uncommitted | [260324-p41-make-gui-trajectory-summarization-and-sk](./quick/260324-p41-make-gui-trajectory-summarization-and-sk/) |
 | 260324-wak | Wire Nanobot GUI tool to use OpenGUI memory retrieval with configured embedding model | 2026-03-24 | uncommitted | [260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem](./quick/260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem/) |
 | 260325-06v | Switch nanobot GUI memory embedding to the same direct OpenAI-compatible path used by OpenGUI CLI and document required config changes | 2026-03-25 | uncommitted | [260325-06v-switch-nanobot-gui-memory-embedding-to-t](./quick/260325-06v-switch-nanobot-gui-memory-embedding-to-t/) |
+| 260325-kgy | Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt | 2026-03-25 | c008d1e | [260325-kgy-gui-memory-os-app-icon-guide-planner-pla](./quick/260325-kgy-gui-memory-os-app-icon-guide-planner-pla/) |
 
 ## Session Continuity
 
 Last activity: 2026-03-24 - Completed quick task 260324-oks: Simplify gui_skills into per-platform aggregated skills.json files
 
-Last session: 2026-03-24T08:00:00Z
-Stopped at: Completed quick/260324-oks
+Last session: 2026-03-25T06:56:18.851Z
+Stopped at: Completed quick/260325-kgy
 Resume file: None
