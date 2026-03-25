@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed quick/260325-kgy
-last_updated: "2026-03-25T06:56:18.861Z"
-last_activity: "2026-03-24 - Completed quick task 260324-oks: Simplify gui_skills into per-platform aggregated skills.json files"
+stopped_at: Completed quick/260325-l2b
+last_updated: "2026-03-25T08:13:00.000Z"
+last_activity: "2026-03-25 - Completed quick task 260325-l2b: Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -155,6 +155,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 22]: _dispatch_with_fallback is shared between _run_tool and _run_mcp: capability boundary advisory when fallbacks declared
 - [Phase 22]: gui.desktop is a sentinel route_id that delegates to _run_gui, skipped with diagnostic when gui_agent is None
 - [Phase 22]: _run_tool/_run_mcp delegate to _dispatch_with_fallback only when fallback_route_ids is non-empty to preserve simple direct-dispatch path
+- [260325-l2b]: PlanningContext.active_gui_route carries session GUI route_id; empty string = planner self-judgment (no regression)
+- [260325-l2b]: CapabilityCatalogBuilder.build() gui_backend="adb" overrides route_id/kind/summary inline; _ROUTE_SPECS class constant unchanged
+- [260325-l2b]: active_gui_route derivation: adb->gui.adb, local/dry-run->gui.desktop (local does NOT produce gui.local)
+- [260325-l2b]: Router _dispatch_with_fallback handles gui.adb sentinel same as gui.desktop via set membership check
 
 ### Pending Todos
 
@@ -192,6 +196,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260324-wak | Wire Nanobot GUI tool to use OpenGUI memory retrieval with configured embedding model | 2026-03-24 | uncommitted | [260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem](./quick/260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem/) |
 | 260325-06v | Switch nanobot GUI memory embedding to the same direct OpenAI-compatible path used by OpenGUI CLI and document required config changes | 2026-03-25 | uncommitted | [260325-06v-switch-nanobot-gui-memory-embedding-to-t](./quick/260325-06v-switch-nanobot-gui-memory-embedding-to-t/) |
 | 260325-kgy | Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt | 2026-03-25 | c008d1e | [260325-kgy-gui-memory-os-app-icon-guide-planner-pla](./quick/260325-kgy-gui-memory-os-app-icon-guide-planner-pla/) |
+| 260325-l2b | Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend; PlanningContext.active_gui_route, backend-aware catalog, planner directive, router gui.adb sentinel | 2026-03-25 | b2b7daf | [260325-l2b-planner-planningcontext-active-backend-p](./quick/260325-l2b-planner-planningcontext-active-backend-p/) |
 
 ## Session Continuity
 
