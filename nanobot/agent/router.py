@@ -373,14 +373,14 @@ class TreeRouter:
         tried: list[str] = []
 
         for route_id in route_ids:
-            # gui.desktop is a special sentinel: delegate to the GUI subagent
-            if route_id == "gui.desktop":
+            # gui.desktop and gui.adb are both GUI sentinels that delegate to the GUI subagent
+            if route_id in ("gui.desktop", "gui.adb"):
                 if context.gui_agent is None:
-                    logger.warning("Dispatch: gui.desktop fallback unavailable (no gui_agent)")
+                    logger.warning("Dispatch: %s fallback unavailable (no gui_agent)", route_id)
                     tried.append(f"{route_id}(unavailable:no_gui_agent)")
                     continue
                 logger.info(
-                    "Dispatch: fallback_taken=gui.desktop (primary was %s)", node.route_id,
+                    "Dispatch: fallback_taken=%s (primary was %s)", route_id, node.route_id,
                 )
                 return await self._run_gui(node.instruction, context)
 
