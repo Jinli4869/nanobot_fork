@@ -195,7 +195,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last activity: 2026-03-24 - Completed quick task 260324-oks: Simplify gui_skills into per-platform aggregated skills.json files
+Last activity: 2026-03-25 - Completed quick task 260325-kgy: Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt
 
 Last session: 2026-03-25T06:56:18.851Z
 Stopped at: Completed quick/260325-kgy
