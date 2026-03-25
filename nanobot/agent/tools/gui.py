@@ -16,8 +16,10 @@ import numpy as np
 
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
+from opengui.agent import GuiAgent
 from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 from opengui.skills.normalization import get_gui_skill_store_root
+from opengui.trajectory.recorder import TrajectoryRecorder
 
 if TYPE_CHECKING:
     from nanobot.config.schema import GuiConfig
@@ -202,9 +204,6 @@ class GuiSubagentTool(Tool):
         return await self._run_task(active_backend, task, **kwargs)
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
-        from opengui.agent import GuiAgent
-        from opengui.trajectory.recorder import TrajectoryRecorder
-
         policy_context = self._load_policy_context()
         skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
@@ -213,6 +212,16 @@ class GuiSubagentTool(Tool):
             task=task,
             platform=active_backend.platform,
         )
+
+        skill_executor = None
+        if self._gui_config.enable_skill_execution:
+            from opengui.skills.executor import LLMStateValidator, SkillExecutor
+
+            skill_executor = SkillExecutor(
+                backend=active_backend,
+                state_validator=LLMStateValidator(self._llm_adapter),
+            )
+
         agent = GuiAgent(
             llm=self._llm_adapter,
             backend=active_backend,
@@ -223,6 +232,7 @@ class GuiSubagentTool(Tool):
             policy_context=policy_context,
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
+            skill_executor=skill_executor,
             intervention_handler=self._build_intervention_handler(active_backend, task),
         )
 
@@ -617,6 +627,4 @@ class _GuiToolInterventionHandler:
 
     @staticmethod
     def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
-        from opengui.agent import GuiAgent
-
         return GuiAgent._scrub_for_log(payload)
