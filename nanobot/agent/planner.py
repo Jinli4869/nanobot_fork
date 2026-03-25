@@ -325,6 +325,15 @@ class TaskPlanner:
             except Exception as exc:  # pragma: no cover — graceful degradation
                 logger.warning("Failed to load skills for planner prompt: %s", exc)
 
+        if planning_context is not None and planning_context.gui_memory_context:
+            lines.extend(
+                [
+                    "",
+                    "Device and app knowledge (use this to refine GUI task instructions):",
+                    planning_context.gui_memory_context,
+                ]
+            )
+
         lines.extend(
             [
                 "",

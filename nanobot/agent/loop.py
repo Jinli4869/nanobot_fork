@@ -274,6 +274,41 @@ class AgentLoop:
         """Render a user-facing plan preview message for the current channel."""
         return "执行计划预览：\n```text\n" + cls._format_plan_tree(tree) + "\n```"
 
+    @staticmethod
+    def _load_gui_memory_for_planner() -> str:
+        """Load os_guide, app_guide, and icon_guide entries from the opengui MemoryStore.
+
+        Returns a formatted string of guide entries for planner consumption, or an empty
+        string when the memory directory does not exist or opengui is unavailable.
+        Guide entries (not policy) are surfaced here so the planner can refine GUI task
+        instructions with device and app navigation knowledge.
+        """
+        from nanobot.agent.tools.gui import DEFAULT_OPENGUI_MEMORY_DIR
+
+        if not DEFAULT_OPENGUI_MEMORY_DIR.exists():
+            return ""
+        try:
+            from opengui.memory.store import MemoryStore as GuiMemoryStore
+            from opengui.memory.types import MemoryType
+
+            gui_store = GuiMemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            guide_entries = []
+            for memory_type in (MemoryType.OS_GUIDE, MemoryType.APP_GUIDE, MemoryType.ICON_GUIDE):
+                guide_entries.extend(gui_store.list_all(memory_type=memory_type))
+            if not guide_entries:
+                return ""
+            lines: list[str] = []
+            for entry in guide_entries:
+                tag = entry.memory_type.value.upper()
+                prefix = f"[{tag}]"
+                if entry.app:
+                    prefix += f" ({entry.app})"
+                lines.append(f"- {prefix} {entry.content}")
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("Failed to load GUI guide memory for planner", exc_info=True)
+            return ""
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict],
@@ -539,9 +574,11 @@ class AgentLoop:
             task=task,
             catalog=catalog,
         )
+        gui_memory_context = self._load_gui_memory_for_planner()
         planning_context = PlanningContext(
             catalog=catalog,
             memory_hints=memory_hints,
+            gui_memory_context=gui_memory_context,
         )
         tree = await planner.plan(task, planning_context=planning_context)
         logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))

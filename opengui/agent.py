@@ -170,6 +170,7 @@ class GuiAgent:
         skill_threshold: float = 0.6,
         installed_apps: list[str] | None = None,
         intervention_handler: InterventionHandler | None = None,
+        policy_context: str | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -182,6 +183,7 @@ class GuiAgent:
         self.progress_callback = progress_callback
         self._trajectory_recorder = trajectory_recorder
         self._memory_retriever = memory_retriever
+        self._policy_context = policy_context
         self._skill_library = skill_library
         self._skill_executor = skill_executor
         self._memory_top_k = memory_top_k
@@ -1130,7 +1132,19 @@ class GuiAgent:
     # ------------------------------------------------------------------
 
     async def _retrieve_memory(self, task: str) -> str | None:
-        """Retrieve relevant memory entries for the task, always including POLICY entries."""
+        """Return memory context for the current task.
+
+        When ``_policy_context`` is set (nanobot path), policy entries are injected
+        directly without embedding search — guaranteeing full policy coverage.  The
+        legacy ``_memory_retriever`` path (opengui CLI) is preserved for backward
+        compatibility when ``_policy_context`` is not provided.
+        """
+        if self._policy_context is not None:
+            self._log_policy_injection(self._policy_context)
+            return self._policy_context
+
+        # Existing retriever-based path — used by the opengui CLI and any callers that
+        # construct GuiAgent directly with a memory_retriever.
         if self._memory_retriever is None:
             return None
         from opengui.memory.types import MemoryType
@@ -1169,6 +1183,18 @@ class GuiAgent:
         context = self._memory_retriever.format_context(memory_entries)
         self._log_memory_retrieval(task, memory_entries, context)
         return context
+
+    def _log_policy_injection(self, context: str) -> None:
+        """Record a trajectory event for direct policy context injection."""
+        line_count = context.count("\n") + 1
+        logger.info("Policy context injected directly: %d line(s)", line_count)
+        self._trajectory_recorder.record_event(
+            "memory_retrieval",
+            task="(policy_direct_injection)",
+            hit_count=line_count,
+            hits=[],
+            context=context[:200],
+        )
 
     def _log_memory_retrieval(
         self,

@@ -205,7 +205,7 @@ class GuiSubagentTool(Tool):
         from opengui.agent import GuiAgent
         from opengui.trajectory.recorder import TrajectoryRecorder
 
-        memory_retriever = await self._build_memory_retriever()
+        policy_context = self._load_policy_context()
         skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
@@ -220,7 +220,7 @@ class GuiSubagentTool(Tool):
             model=self._model,
             artifacts_root=run_dir,
             max_steps=self._gui_config.max_steps,
-            memory_retriever=memory_retriever,
+            policy_context=policy_context,
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
             intervention_handler=self._build_intervention_handler(active_backend, task),
@@ -301,16 +301,25 @@ class GuiSubagentTool(Tool):
         return self._build_backend(backend)
 
     async def _build_memory_retriever(self) -> Any | None:
+        """Build a memory retriever indexed with POLICY entries only.
+
+        Guide entries (os_guide, app_guide, icon_guide) are now consumed by the planner
+        via PlanningContext.gui_memory_context instead of being surfaced here.
+        """
         if self._embedding_adapter is None:
             return None
 
         from opengui.memory.retrieval import MemoryRetriever
         from opengui.memory.store import MemoryStore
+        from opengui.memory.types import MemoryType
 
         try:
             memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
+            if not policy_entries:
+                return None
             memory_retriever = MemoryRetriever(embedding_provider=self._embedding_adapter, top_k=5)
-            await memory_retriever.index(memory_store.list_all())
+            await memory_retriever.index(policy_entries)
             return memory_retriever
         except Exception:
             logger.warning(
@@ -318,6 +327,26 @@ class GuiSubagentTool(Tool):
                 DEFAULT_OPENGUI_MEMORY_DIR,
                 exc_info=True,
             )
+            return None
+
+    def _load_policy_context(self) -> str | None:
+        """Load all POLICY entries as raw text for direct injection into the GUI agent system prompt.
+
+        Policies must always be present regardless of task relevance, so they are loaded
+        in full without embedding-based search filtering.
+        """
+        from opengui.memory.store import MemoryStore
+        from opengui.memory.types import MemoryType
+
+        try:
+            memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
+            if not policy_entries:
+                return None
+            lines = [f"- {entry.content}" for entry in policy_entries]
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("Failed to load GUI policy memory", exc_info=True)
             return None
 
     def _build_embedding_adapter(self) -> NanobotEmbeddingAdapter:

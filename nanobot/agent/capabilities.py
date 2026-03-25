@@ -52,6 +52,7 @@ class PlanningContext:
 
     catalog: CapabilityCatalog
     memory_hints: tuple["PlanningMemoryHint", ...] = ()
+    gui_memory_context: str = ""  # os_guide / app_guide / icon_guide content for the planner
 
 
 class CapabilityCatalogBuilder:
