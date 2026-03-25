@@ -54,6 +54,23 @@ class _FakeProvider:
         raise NotImplementedError
 
 
+class _FakeDirectEmbeddingClient:
+    def __init__(self, response: Any) -> None:
+        self.embeddings = SimpleNamespace(create=AsyncMock(return_value=response))
+
+
+class _FakeCustomLikeProvider:
+    api_key: str = "sk-test"
+    api_base: str | None = "https://example.invalid/v1"
+    extra_headers: dict[str, str] = {}
+
+    def __init__(self, response: Any) -> None:
+        self._client = _FakeDirectEmbeddingClient(response)
+
+    async def chat_with_retry(self, *args: Any, **kwargs: Any) -> Any:  # pragma: no cover
+        raise NotImplementedError
+
+
 @pytest.mark.asyncio
 async def test_gui_tool_wires_embedding_adapter_when_configured(
     tmp_path: Path,
@@ -106,6 +123,133 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
     assert call_kwargs.get("model") == "resolved/embed-model"
     assert call_kwargs.get("input") == ["hello", "world"]
     assert call_kwargs.get("api_key") == "sk-test"
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_uses_direct_openai_compatible_embedding_path_when_provider_exposes_client(
+    tmp_path: Path,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    fake_embedding_data = [
+        SimpleNamespace(embedding=[1.0, 2.0]),
+        SimpleNamespace(embedding=[3.0, 4.0]),
+    ]
+    fake_response = SimpleNamespace(data=fake_embedding_data)
+    provider = _FakeCustomLikeProvider(fake_response)
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "dashscope/text-embedding-v4"})
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    result = await tool._embedding_adapter.embed(["hello", "world"])
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
+    assert result.shape == (2, 2)
+    provider._client.embeddings.create.assert_awaited_once_with(
+        model="text-embedding-v4",
+        input=["hello", "world"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_batches_direct_embedding_requests_in_chunks_of_ten(
+    tmp_path: Path,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    async def _fake_create(*, model: str, input: list[str]) -> Any:
+        assert model == "text-embedding-v4"
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(embedding=[float(text.rsplit("-", 1)[1])])
+                for text in input
+            ]
+        )
+
+    provider = _FakeCustomLikeProvider(SimpleNamespace(data=[]))
+    create_mock = AsyncMock(side_effect=_fake_create)
+    provider._client.embeddings.create = create_mock
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "dashscope/text-embedding-v4"})
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    texts = [f"text-{idx}" for idx in range(11)]
+    result = await tool._embedding_adapter.embed(texts)
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
+    assert result.shape == (11, 1)
+    assert result[:, 0].tolist() == [float(idx) for idx in range(11)]
+    assert create_mock.await_count == 2
+    assert create_mock.await_args_list[0].kwargs == {
+        "model": "text-embedding-v4",
+        "input": texts[:10],
+    }
+    assert create_mock.await_args_list[1].kwargs == {
+        "model": "text-embedding-v4",
+        "input": texts[10:],
+    }
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_batches_litellm_embedding_requests_in_chunks_of_ten(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import litellm
+
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    async def _fake_aembedding(**kwargs: Any) -> Any:
+        return SimpleNamespace(
+            data=[
+                SimpleNamespace(embedding=[float(text.rsplit("-", 1)[1])])
+                for text in kwargs["input"]
+            ]
+        )
+
+    aembedding_mock = AsyncMock(side_effect=_fake_aembedding)
+    monkeypatch.setattr(litellm, "aembedding", aembedding_mock)
+
+    provider = _FakeProvider()
+    config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    texts = [f"text-{idx}" for idx in range(11)]
+    result = await tool._embedding_adapter.embed(texts)
+
+    assert isinstance(result, np.ndarray)
+    assert result.dtype == np.float32
+    assert result.shape == (11, 1)
+    assert result[:, 0].tolist() == [float(idx) for idx in range(11)]
+    assert aembedding_mock.await_count == 2
+    assert aembedding_mock.await_args_list[0].kwargs["model"] == "resolved/embed-model"
+    assert aembedding_mock.await_args_list[0].kwargs["input"] == texts[:10]
+    assert aembedding_mock.await_args_list[1].kwargs["model"] == "resolved/embed-model"
+    assert aembedding_mock.await_args_list[1].kwargs["input"] == texts[10:]
 
 
 @pytest.mark.asyncio

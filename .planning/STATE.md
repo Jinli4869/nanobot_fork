@@ -190,6 +190,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260324-oks | 简化 gui_skills 目录结构为每个平台单一 skills.json 聚合文件 | 2026-03-24 | uncommitted | [260324-oks-gui-skills-skills-json](./quick/260324-oks-gui-skills-skills-json/) |
 | 260324-p41 | Make GUI trajectory summarization and skill extraction run in background after GUI agent returns | 2026-03-24 | uncommitted | [260324-p41-make-gui-trajectory-summarization-and-sk](./quick/260324-p41-make-gui-trajectory-summarization-and-sk/) |
 | 260324-wak | Wire Nanobot GUI tool to use OpenGUI memory retrieval with configured embedding model | 2026-03-24 | uncommitted | [260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem](./quick/260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem/) |
+| 260325-06v | Switch nanobot GUI memory embedding to the same direct OpenAI-compatible path used by OpenGUI CLI and document required config changes | 2026-03-25 | uncommitted | [260325-06v-switch-nanobot-gui-memory-embedding-to-t](./quick/260325-06v-switch-nanobot-gui-memory-embedding-to-t/) |
 
 ## Session Continuity
 
