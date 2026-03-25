@@ -176,6 +176,7 @@ class GuiConfig(Base):
     display_num: int | None = None
     display_width: int = 1280
     display_height: int = 720
+    enable_skill_execution: bool = False
 
     @model_validator(mode="after")
     def _validate_background_requires_local(self) -> "GuiConfig":
