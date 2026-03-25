@@ -334,6 +334,17 @@ class TaskPlanner:
                 ]
             )
 
+        if planning_context is not None and planning_context.active_gui_route:
+            lines.extend(
+                [
+                    "",
+                    "Active GUI route:",
+                    f"- The current GUI backend is '{planning_context.active_gui_route}'. "
+                    f"Use route_id='{planning_context.active_gui_route}' for ALL GUI subtasks "
+                    f"that target the device/screen. Do NOT use any other gui.* route_id.",
+                ]
+            )
+
         lines.extend(
             [
                 "",
