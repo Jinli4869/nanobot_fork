@@ -46,16 +46,21 @@ _COMPLEXITY_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
         "name": "assess_complexity",
-        "description": "Determine if a task requires multi-step decomposition.",
+        "description": (
+            "Determine if a task requires GUI operations that need multi-step planning."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "needs_planning": {
                     "type": "boolean",
                     "description": (
-                        "True if the task requires multiple distinct steps, "
-                        "multiple capabilities (GUI + web search), or sequential "
-                        "multi-app operations. False for simple single-step tasks."
+                        "True ONLY if the task requires GUI operations — screen taps, "
+                        "app navigation, interacting with device UI elements, opening "
+                        "or switching between apps on a device screen. "
+                        "False for tasks that can be completed with shell commands, "
+                        "file operations, web searches, API calls, or any non-GUI tool. "
+                        "Pure tool/shell tasks NEVER need planning."
                     ),
                 }
             },
@@ -495,13 +500,15 @@ class AgentLoop:
             {
                 "role": "system",
                 "content": (
-                    "You are a task complexity assessor. Determine if the user's task "
-                    "requires multi-step decomposition (multiple distinct capabilities, "
-                    "sequential multi-app operations, or parallel sub-tasks). "
-                    "Single-capability tasks with no sequential dependencies should return False.\n\n"
-                    f"The agent has these direct tools (no planning needed to use them): {direct_tools_summary}.\n"
-                    "If the task can be accomplished with a single call to one of these tools, "
-                    "return False — do NOT route to planning when a direct tool suffices."
+                    "You are a task complexity assessor for a device automation agent. "
+                    "Determine if the user's task requires GUI operations — interacting "
+                    "with a device screen (tapping, swiping, typing into app UI, navigating "
+                    "between apps, reading screen content). "
+                    "ONLY return True when GUI interaction is needed.\n\n"
+                    f"The agent has these direct tools (no planning needed): {direct_tools_summary}.\n"
+                    "If the task can be accomplished entirely with these tools (shell commands, "
+                    "file I/O, web search, web fetch), return False. "
+                    "Planning is ONLY for tasks that require controlling a device screen."
                 ),
             },
             {"role": "user", "content": f"Task: {task}"},
