@@ -842,7 +842,11 @@ class AgentLoop:
         logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
 
         meta = dict(msg.metadata or {})
-        if on_stream is not None:
+        if on_stream is not None and not use_planning:
+            # _streamed=True tells the dispatcher to skip the final message because
+            # content was already sent via stream deltas. Only set this flag when
+            # streaming actually occurred — the planning path returns content directly
+            # and never calls on_stream, so its final response must NOT be skipped.
             meta["_streamed"] = True
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content,
