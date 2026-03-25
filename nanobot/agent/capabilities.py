@@ -53,6 +53,7 @@ class PlanningContext:
     catalog: CapabilityCatalog
     memory_hints: tuple["PlanningMemoryHint", ...] = ()
     gui_memory_context: str = ""  # os_guide / app_guide / icon_guide content for the planner
+    active_gui_route: str = ""  # concrete gui route_id for this session (e.g. "gui.adb", "gui.desktop")
 
 
 class CapabilityCatalogBuilder:
@@ -139,8 +140,15 @@ class CapabilityCatalogBuilder:
         *,
         gui_available: bool,
         exec_enabled: bool,
+        gui_backend: str = "local",
     ) -> CapabilityCatalog:
-        """Return planner-facing route summaries for currently usable routes."""
+        """Return planner-facing route summaries for currently usable routes.
+
+        When *gui_backend* is ``"adb"``, the gui_task route is emitted as
+        ``gui.adb`` (targeting the connected Android device via ADB) instead of
+        the default ``gui.desktop``.  All other backend values keep the existing
+        ``gui.desktop`` route unchanged.
+        """
         tool_names = set(tool_registry.tool_names)
         routes: list[RouteSummary] = []
 
@@ -151,6 +159,13 @@ class CapabilityCatalogBuilder:
                 continue
             if tool_name not in tool_names:
                 continue
+
+            # Override the GUI route metadata when the active backend is ADB.
+            if tool_name == "gui_task" and gui_backend == "adb":
+                route_id = "gui.adb"
+                kind = "adb"
+                summary = "Use the GUI subagent to operate apps on the connected Android device"
+
             routes.append(
                 RouteSummary(
                     route_id=route_id,
