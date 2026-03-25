@@ -198,11 +198,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260325-kgy | Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt | 2026-03-25 | c008d1e | [260325-kgy-gui-memory-os-app-icon-guide-planner-pla](./quick/260325-kgy-gui-memory-os-app-icon-guide-planner-pla/) |
 | 260325-l2b | Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend; PlanningContext.active_gui_route, backend-aware catalog, planner directive, router gui.adb sentinel | 2026-03-25 | b2b7daf | [260325-l2b-planner-planningcontext-active-backend-p](./quick/260325-l2b-planner-planningcontext-active-backend-p/) |
 | 260325-sku | Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate in router.py and loop.py | 2026-03-25 | 56e685b | [260325-sku-and-complexity-tool-gui-plan](./quick/260325-sku-and-complexity-tool-gui-plan/) |
+| 260325-ts0 | Wire SkillExecutor into nanobot GuiSubagentTool via enable_skill_execution config flag; add enable_skill_execution field to GuiConfig | 2026-03-25 | 5f81c1b | [260325-ts0-nanobot](./quick/260325-ts0-nanobot/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-25 - Completed quick task 260325-sku: Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate
+Last activity: 2026-03-25 - Completed quick task 260325-ts0: Wire SkillExecutor into GuiSubagentTool via enable_skill_execution config flag
 
-Last session: 2026-03-25T12:43:37Z
-Stopped at: Completed quick/260325-sku
+Last session: 2026-03-25T14:50:00Z
+Stopped at: Completed quick/260325-ts0
 Resume file: None
