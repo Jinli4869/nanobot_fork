@@ -1,0 +1,51 @@
+﻿task_id,task_type,abstract_category,instruction,instruction_ch,involved_apps,dependencies_count
+single_app_001,single-app,,"Use 美团 to book a table for 4 at a Chinese restaurant for this Saturday evening, with a budget of 300 RMB. Ensure the restaurant has at least 4-star ratings.",使用美团预订一家中餐厅的四人桌，时间是这个星期六晚上，预算为300元。确保餐厅的评分至少为4星。,美团,5
+single_app_002,single-app,,"Use 淘宝 to find and add a specific running shoe to the cart, size 42, and ensure it has free shipping and a discount.",使用淘宝找到并添加一双特定的跑鞋到购物车，尺码42，确保它有免运费和折扣。,淘宝,6
+single_app_003,single-app,,"Use 网易云音乐 to create a new playlist with at least 10 songs, all from the pop genre, and make it public.",使用网易云音乐创建一个新的播放列表，包含至少10首流行歌曲，并将其设为公开。,网易云音乐,4
+single_app_004,single-app,,"In 设置, configure a new Wi-Fi connection named 'HomeNet', ensuring it connects automatically and saves the password.",在设置中配置一个新的Wi-Fi连接，名称为'HomeNet'，确保自动连接并保存密码。,设置,5
+single_app_005,single-app,,Use QQ to send a photo from your gallery to a friend with a message 'Check this out!' and ensure the message is marked as important.,使用QQ发送一张图库中的照片给朋友，并附上信息'Check this out!'，确保信息被标记为重要。,QQ,6
+single_app_006,single-app,,"Use 高德地图 to find the fastest route to the nearest gas station, avoiding highways and tolls.",使用高德地图找到到最近加油站的最快路线，避免高速公路和收费站。,高德地图,5
+single_app_007,single-app,,"Use 抖音 to create a 15-second video using three different video clips, add a trending music track, and apply a filter.",使用抖音创建一个15秒的视频，使用三个不同的视频片段，添加流行音乐，并应用一个滤镜。,抖音,6
+single_app_008,single-app,,"Use 闲鱼 to list an item for sale, include a title, description, price, and at least one photo, ensuring the listing is public.",使用闲鱼发布一个待售物品，包含标题、描述、价格和至少一张照片，确保列表为公开。,闲鱼,6
+single_app_009,single-app,,"Use 日历 to schedule a meeting on the first Monday of next month at 10 AM, include an alert 30 minutes before.",使用日历在下个月的第一个星期一上午10点安排一个会议，包含提前30分钟的提醒。,日历,4
+single_app_010,single-app,,"Use 大众点评 to find a popular cafe near you with free Wi-Fi, 4-star ratings, and open currently.",使用大众点评找到一个离你最近的受欢迎咖啡馆，要求有免费Wi-Fi、4星评分并且目前营业。,大众点评,5
+mobile_task_01,cross-app,,Book a hotel on Ctrip and send the reservation details to a friend via WeChat.,在携程上预订酒店，并通过微信将预订详情发送给朋友。,"携程, 微信",5
+mobile_task_02,cross-app,,Find a popular local restaurant on Dianping and share its location to a group chat on QQ.,在大众点评上找到一家受欢迎的本地餐厅，并将其位置分享到QQ的群聊中。,"大众点评, QQ",5
+mobile_task_03,cross-app,,Capture a photo of your meal with Camera and post it on Xiaohongshu for a food review.,用相机拍摄你的餐点照片，并将其发布在小红书上进行美食点评。,"相机, 小红书",5
+mobile_task_04,cross-app,,Calculate monthly expenses using the calculator and then save the record in the Notes app.,用计算器计算每月开支，然后在备忘录中保存记录。,"计算器, 备忘录",5
+mobile_task_05,cross-app,,Find a trending song on NetEase Cloud Music and share it to a friend on QQ.,在网易云音乐上找到一首流行歌曲，并将其分享给QQ上的朋友。,"网易云音乐, QQ",5
+mobile_task_06,cross-app,,Search for a local event on Meituan and add it to your Calendar.,在美团上搜索本地活动，并将其添加到你的日历中。,"美团, 日历",5
+mobile_task_07,cross-app,,Record a new recipe on Notes and share it on WeChat Moments.,在备忘录中记录一个新食谱，并在微信朋友圈分享。,"备忘录, 微信",5
+mobile_task_08,cross-app,,Locate a nearby ATM using Gaode Maps and save its location in Alipay for future reference.,使用高德地图查找附近的ATM，并将其位置保存到支付宝中以备将来参考。,"高德地图, 支付宝",5
+mobile_task_09,cross-app,,Create a shopping list in Files and send it via email using the Mail app.,在文件管理器中创建购物清单，并通过邮件应用发送。,"文件管理器, 邮件",5
+mobile_task_10,cross-app,,Watch a tutorial on Bilibili and save the important points in a new Notebook entry.,在Bilibili上观看教程，并将重点保存到新建的笔记本条目中。,"Bilibili, 备忘录",5
+mobile_task_001,abstract,resource_asset,Help me organize our family's assets and investments for the next year to ensure we have a clear picture of our resources and a strategy for maximizing returns.,帮我整理我们家庭的资产和投资，规划明年以确保资源清晰，并制定一个最大化回报的策略。,,5
+mobile_task_002,abstract,resource_asset,Assist me in compiling and archiving all digital receipts from the past six months to help track spending and identify areas for budget optimization.,帮我汇总和归档过去六个月的所有电子收据，以帮助跟踪支出并识别预算优化的领域。,,5
+mobile_task_003,abstract,resource_asset,"Help me establish a digital certificate library for easy access and retrieval when needed, ensuring all important documents are securely stored.",帮我建立一个电子证书库，以便需要时可以轻松访问和检索，确保所有重要文件安全存储。,,5
+mobile_task_004,abstract,resource_asset,Help me compile a list of all household bills and expenses for this year to ensure we have an accurate financial overview and can plan effectively for next year.,帮我汇总今年所有家庭账单和费用，以确保我们有准确的财务概览，并能为明年有效规划。,,5
+mobile_task_005,abstract,resource_asset,"Assist me in creating a detailed inventory of home assets, including electronics, furniture, and valuables, to ensure we have proper documentation for insurance purposes.",帮我创建一个家庭资产的详细清单，包括电子产品、家具和贵重物品，以确保我们有适当的保险用途文件。,,5
+mobile_task_1,abstract,consumption_commercial,"Help me plan next week's family dining, including selecting restaurants with good reviews and deciding on a budget for each meal.",帮我规划下周的家庭聚餐，包括选择评价好的餐厅和为每餐制定预算。,,5
+mobile_task_2,abstract,consumption_commercial,"Assist me in organizing a weekend outing with friends, including activities and cost-sharing details.",帮我组织一个周末和朋友的外出活动，包括活动安排和费用分摊细节。,,5
+mobile_task_3,abstract,consumption_commercial,"Help me arrange a birthday party for my child, considering entertainment options and budget constraints.",帮我为孩子安排一个生日派对，考虑娱乐选项和预算限制。,,5
+mobile_task_4,abstract,consumption_commercial,"Assist me in booking a cleaning service for our home, ensuring to find the best deal and schedule.",帮我预订家庭清洁服务，确保找到最优惠的价格和合适的时间。,,5
+mobile_task_5,abstract,consumption_commercial,"Help me organize next month's grocery shopping, focusing on discounts and seasonal produce.",帮我安排下月的杂货购物，重点关注折扣和时令产品。,,5
+abstract_task_001,abstract,mobility_spatial,"Help me organize a weekend getaway for my family, including transportation, accommodation, and activities.",帮我安排一次家庭周末短途旅行，包含交通、住宿和活动。,,5
+abstract_task_002,abstract,mobility_spatial,"Plan a day trip for my parents visiting next month, ensuring ease of travel and must-see spots.",为下个月来访的父母计划一天的短途旅行，确保交通便利并包含必看景点。,,5
+abstract_task_003,abstract,mobility_spatial,"Organize a trip for a weekend hiking adventure with friends, including route details and gear preparation.",帮我筹划一个周末与朋友的徒步探险旅行，包含路线细节和装备准备。,,5
+abstract_task_004,abstract,mobility_spatial,"Draft a travel plan for a cross-city business trip next month, covering transport, accommodation, and meeting schedules.",为下个月的跨城市商务旅行制定计划，涵盖交通、住宿和会议日程。,,5
+abstract_task_005,abstract,mobility_spatial,"Help me design a two-day itinerary for exploring local attractions with my children, focusing on educational experiences.",帮我设计一个两天的亲子本地游行程，强调教育体验。,,5
+abstract_task_001,abstract,social_information,"Help me compile and share key policy updates with colleagues, ensuring they are well-informed for the upcoming project deadline.",帮我汇总并分享重要政策更新给同事，确保他们在即将到来的项目截止日期前充分了解情况。,,4
+abstract_task_002,abstract,social_information,"Organize a surprise virtual gathering for my friend’s birthday, including sending invitations and planning activities.",为我朋友的生日组织一次惊喜的线上聚会，包括发送邀请和策划活动。,,4
+abstract_task_003,abstract,social_information,"Help me gather feedback from my team on the recent training session, and summarize the key points for review.",帮我收集团队对最近培训课程的反馈，并总结关键点以供审阅。,,4
+abstract_task_004,abstract,social_information,"Compile a list of upcoming cultural events in the city for my family, ensuring it includes activities suitable for children.",为我的家庭汇总城市中即将举行的文化活动列表，并确保包括适合儿童的活动。,,4
+abstract_task_005,abstract,social_information,Help me set reminders for my friends’ birthdays this month and plan thoughtful gift ideas for each.,帮我设置本月朋友们的生日提醒，并为每位朋友规划贴心的礼物方案。,,4
+mobile_task_001,abstract,wellbeing_development,"Help me set up a monthly exercise plan that fits into my busy work schedule, including reminders and progress tracking.",帮我制定一个适合我繁忙工作日程的月度锻炼计划，包括提醒和进度跟踪。,,5
+mobile_task_002,abstract,wellbeing_development,Create a balanced diet plan for the next three months that considers my dietary restrictions and fitness goals.,为我制定接下来三个月的均衡饮食计划，考虑我的饮食限制和健身目标。,,5
+mobile_task_003,abstract,wellbeing_development,Help me organize a monthly mental wellness check-in routine to manage stress effectively.,帮我组织一个月度心理健康检查例程，以有效管理压力。,,5
+mobile_task_004,abstract,wellbeing_development,Plan a six-month career development program including skill assessments and regular review sessions.,为我规划一个为期六个月的职业发展项目，包括技能评估和定期回顾会议。,,5
+mobile_task_005,abstract,wellbeing_development,Design a personalized reading schedule to enhance my knowledge in various fields over the next year.,为我设计一个个性化的阅读时间表，以在接下来的一年里提升我在各个领域的知识。,,5
+mobile_task_001,abstract,system_emergency,Help me prepare my phone for a long flight by optimizing battery usage and setting up necessary offline accessibility for work documents.,帮我为长途飞行准备手机，优化电池使用并设置工作文件的离线访问。,,6
+mobile_task_002,abstract,system_emergency,Prepare my phone for a potential loss situation by securing data and setting up a recovery plan.,为可能的手机丢失情况做好准备，确保数据安全并设置恢复计划。,,6
+mobile_task_003,abstract,system_emergency,Organize my phone storage by cleaning up unnecessary files and arranging remaining data efficiently.,整理手机存储空间，清理不必要的文件并高效安排剩余数据。,,6
+mobile_task_004,abstract,system_emergency,Create a system for managing emergency contacts and medical information for quick access in urgent situations.,创建管理紧急联系人和医疗信息的系统，以便在紧急情况下快速访问。,,6
+mobile_task_005,abstract,system_emergency,"Set up a comprehensive disturbance-free mode for focused work sessions, ensuring no critical notifications are missed.",设置全面的免打扰模式以便专注工作，并确保不会错过重要通知。,,6
