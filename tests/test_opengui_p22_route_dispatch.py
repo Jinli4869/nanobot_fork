@@ -750,6 +750,129 @@ async def test_run_tool_multi_param_with_params_succeeds() -> None:
     registry.execute.assert_awaited_once_with("write_file", {"path": "out.txt", "content": "hello"})
 
 
+# ---------------------------------------------------------------------------
+# SKU: Exit code error detection tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_tool_detects_nonzero_exit_code() -> None:
+    """_run_tool detects 'Exit code: 127' in output as a failure (not just 'Error:' prefix)."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value="STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127"
+    )
+
+    router = TreeRouter()
+    node = _make_tool_atom("tool.exec_shell", "pip install foo")
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_run_tool_allows_zero_exit_code() -> None:
+    """_run_tool does NOT treat 'Exit code: 0' as failure (zero = success)."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value="some output\n\nExit code: 0"
+    )
+
+    router = TreeRouter()
+    node = _make_tool_atom("tool.exec_shell", "echo hello")
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_with_fallback_detects_nonzero_exit_code() -> None:
+    """_dispatch_with_fallback treats 'Exit code: 127' output as failure and tries fallback."""
+    registry = _make_mock_registry(["exec", "web_search"])
+
+    call_log: list[str] = []
+
+    async def execute_side_effect(tool_name: str, params: dict) -> str:
+        call_log.append(tool_name)
+        if tool_name == "exec":
+            return "STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127"
+        return "search fallback result"
+
+    registry.execute = AsyncMock(side_effect=execute_side_effect)  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="pip install foo",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    # Fallback must have been attempted because primary returned non-zero exit code
+    assert "web_search" in call_log
+    assert result.success is True
+    assert "search fallback result" in result.output
+
+
+# ---------------------------------------------------------------------------
+# SKU: AND sequential execution test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_and_runs_sequentially() -> None:
+    """AND node executes children sequentially — child 2 starts only after child 1 completes."""
+    import time
+
+    execution_order: list[int] = []
+    completion_times: list[float] = []
+
+    call_count = 0
+
+    async def dispatch_side_effect(tool_name: str, params: dict) -> str:
+        nonlocal call_count
+        idx = call_count
+        call_count += 1
+        execution_order.append(idx)
+        await asyncio.sleep(0.02)
+        completion_times.append(time.monotonic())
+        return f"result_{idx}"
+
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(side_effect=dispatch_side_effect)  # type: ignore[method-assign]
+
+    children = [
+        PlanNode(
+            node_type="atom",
+            instruction=f"step {i}",
+            capability="tool",
+            route_id="tool.exec_shell",
+        )
+        for i in range(3)
+    ]
+    and_node = PlanNode(node_type="and", instruction="", children=children)
+
+    router = TreeRouter()
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router.execute(and_node, ctx)
+
+    assert result.success is True
+    # Sequential order: 0 must start (and complete) before 1, 1 before 2
+    assert execution_order == [0, 1, 2], f"Expected [0, 1, 2] but got {execution_order}"
+    # Verify completion timestamps are monotonically non-decreasing (sequential)
+    for i in range(len(completion_times) - 1):
+        assert completion_times[i] <= completion_times[i + 1], (
+            f"Child {i} completed after child {i + 1} — execution was not sequential"
+        )
+
+
 @pytest.mark.asyncio
 async def test_run_tool_multi_param_without_params_fails() -> None:
     """Multi-param route (write_file) with params=None returns structured failure."""
@@ -854,3 +977,126 @@ async def test_dispatch_with_fallback_multi_param_with_params_succeeds() -> None
 
     assert result.success is True
     registry.execute.assert_awaited_once_with("write_file", {"path": "out.txt", "content": "hello"})
+
+
+# ---------------------------------------------------------------------------
+# SKU: Exit code error detection tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_tool_detects_nonzero_exit_code() -> None:
+    """_run_tool detects 'Exit code: 127' in output as a failure (not just 'Error:' prefix)."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value="STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127"
+    )
+
+    router = TreeRouter()
+    node = _make_tool_atom("tool.exec_shell", "pip install foo")
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is False
+
+
+@pytest.mark.asyncio
+async def test_run_tool_allows_zero_exit_code() -> None:
+    """_run_tool does NOT treat 'Exit code: 0' as failure (zero = success)."""
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(  # type: ignore[method-assign]
+        return_value="some output\n\nExit code: 0"
+    )
+
+    router = TreeRouter()
+    node = _make_tool_atom("tool.exec_shell", "echo hello")
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    assert result.success is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_with_fallback_detects_nonzero_exit_code() -> None:
+    """_dispatch_with_fallback treats 'Exit code: 127' output as failure and tries fallback."""
+    registry = _make_mock_registry(["exec", "web_search"])
+
+    call_log: list[str] = []
+
+    async def execute_side_effect(tool_name: str, params: dict) -> str:
+        call_log.append(tool_name)
+        if tool_name == "exec":
+            return "STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127"
+        return "search fallback result"
+
+    registry.execute = AsyncMock(side_effect=execute_side_effect)  # type: ignore[method-assign]
+
+    router = TreeRouter()
+    node = _make_fallback_atom(
+        route_id="tool.exec_shell",
+        fallback_route_ids=("tool.web.search",),
+        instruction="pip install foo",
+    )
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router._run_tool(node, ctx)
+
+    # Fallback must have been attempted because primary returned non-zero exit code
+    assert "web_search" in call_log
+    assert result.success is True
+    assert "search fallback result" in result.output
+
+
+# ---------------------------------------------------------------------------
+# SKU: AND sequential execution test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execute_and_runs_sequentially() -> None:
+    """AND node executes children sequentially — child 2 starts only after child 1 completes."""
+    import time
+
+    execution_order: list[int] = []
+    completion_times: list[float] = []
+
+    call_count = 0
+
+    async def dispatch_side_effect(tool_name: str, params: dict) -> str:
+        nonlocal call_count
+        idx = call_count
+        call_count += 1
+        execution_order.append(idx)
+        await asyncio.sleep(0.02)
+        completion_times.append(time.monotonic())
+        return f"result_{idx}"
+
+    registry = _make_mock_registry(["exec"])
+    registry.execute = AsyncMock(side_effect=dispatch_side_effect)  # type: ignore[method-assign]
+
+    children = [
+        PlanNode(
+            node_type="atom",
+            instruction=f"step {i}",
+            capability="tool",
+            route_id="tool.exec_shell",
+        )
+        for i in range(3)
+    ]
+    and_node = PlanNode(node_type="and", instruction="", children=children)
+
+    router = TreeRouter()
+    ctx = _make_ctx(tool_registry=registry)
+
+    result = await router.execute(and_node, ctx)
+
+    assert result.success is True
+    # Sequential order: 0 must start (and complete) before 1, 1 before 2
+    assert execution_order == [0, 1, 2], f"Expected [0, 1, 2] but got {execution_order}"
+    # Verify completion timestamps are monotonically non-decreasing (sequential)
+    for i in range(len(completion_times) - 1):
+        assert completion_times[i] <= completion_times[i + 1], (
+            f"Child {i} completed after child {i + 1} — execution was not sequential"
+        )
