@@ -131,7 +131,7 @@ def test_planning_context_wraps_catalog() -> None:
 
 def test_task_planner_catalog_prompt_mentions_route_metadata() -> None:
     from nanobot.agent.capabilities import PlanningContext
-    from nanobot.agent.planner import TaskPlanner, _CREATE_PLAN_TOOL
+    from nanobot.agent.planner import TaskPlanner, _build_create_plan_tool
 
     planner = TaskPlanner(llm=object())
     planning_context = PlanningContext(catalog=_catalog())
@@ -143,8 +143,12 @@ def test_task_planner_catalog_prompt_mentions_route_metadata() -> None:
     assert "route_id" in prompt
     assert "route_reason" in prompt
     assert "fallback_route_ids" in prompt
-    assert "tool.exec_shell" in str(_CREATE_PLAN_TOOL)
-    assert "route_id" in str(_CREATE_PLAN_TOOL)
+    default_tool = _build_create_plan_tool()
+    assert "tool.exec_shell" in str(default_tool)
+    assert "route_id" in str(default_tool)
+    adb_tool = _build_create_plan_tool("gui.adb")
+    assert "gui.adb" in str(adb_tool)
+    assert "gui.desktop" not in adb_tool["function"]["description"]
 
 
 def test_memory_hint_extractor_excludes_unrelated_narrative_memory(tmp_path: Path) -> None:

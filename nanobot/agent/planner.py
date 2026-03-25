@@ -92,38 +92,40 @@ class PlanNode:
 # LLM tool definition
 # ---------------------------------------------------------------------------
 
-_CREATE_PLAN_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "create_plan",
-        "description": (
-            "Decompose a user task into an AND/OR/ATOM execution tree. "
-            "AND nodes execute all children sequentially. "
-            "OR nodes try children until one succeeds. "
-            "ATOM nodes are leaf tasks with a capability type (gui/tool/mcp/api), "
-            "and may optionally include route_id (e.g. gui.desktop or tool.exec_shell), "
-            "route_reason, fallback_route_ids, and params (a dict of concrete executable "
-            "parameter values for the routed tool)."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "tree": {
-                    "type": "object",
-                    "description": (
-                        "Root node.  Each node has 'type' (and/or/atom). "
-                        "AND/OR nodes have a 'children' array.  "
-                        "ATOM nodes have 'instruction' (human-readable description of what to do) and "
-                        "'capability' (gui/tool/mcp/api), and may optionally include 'route_id', "
-                        "'route_reason', 'fallback_route_ids', and 'params' (dict of concrete "
-                        "executable parameter values for the routed tool)."
-                    ),
-                }
+def _build_create_plan_tool(active_gui_route: str = "gui.desktop") -> dict[str, Any]:
+    """Return the create_plan tool schema with the correct GUI route example."""
+    return {
+        "type": "function",
+        "function": {
+            "name": "create_plan",
+            "description": (
+                "Decompose a user task into an AND/OR/ATOM execution tree. "
+                "AND nodes execute all children sequentially. "
+                "OR nodes try children until one succeeds. "
+                f"ATOM nodes are leaf tasks with a capability type (gui/tool/mcp/api), "
+                f"and may optionally include route_id (e.g. {active_gui_route} or tool.exec_shell), "
+                "route_reason, fallback_route_ids, and params (a dict of concrete executable "
+                "parameter values for the routed tool)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tree": {
+                        "type": "object",
+                        "description": (
+                            "Root node.  Each node has 'type' (and/or/atom). "
+                            "AND/OR nodes have a 'children' array.  "
+                            "ATOM nodes have 'instruction' (human-readable description of what to do) and "
+                            "'capability' (gui/tool/mcp/api), and may optionally include 'route_id', "
+                            "'route_reason', 'fallback_route_ids', and 'params' (dict of concrete "
+                            "executable parameter values for the routed tool)."
+                        ),
+                    }
+                },
+                "required": ["tree"],
             },
-            "required": ["tree"],
         },
-    },
-}
+    }
 
 # ---------------------------------------------------------------------------
 # TaskPlanner
@@ -189,7 +191,10 @@ class TaskPlanner:
 
         logger.debug("Requesting plan for task: %r", task)
 
-        response = await self._request_plan(messages)
+        active_gui_route = (
+            planning_context.active_gui_route if planning_context and planning_context.active_gui_route else "gui.desktop"
+        )
+        response = await self._request_plan(messages, active_gui_route=active_gui_route)
 
         if not response.tool_calls:
             logger.warning(
@@ -361,12 +366,15 @@ class TaskPlanner:
             parts.extend(["", "Context:", context])
         return "\n".join(parts)
 
-    async def _request_plan(self, messages: list[dict[str, Any]]) -> Any:
+    async def _request_plan(
+        self, messages: list[dict[str, Any]], *, active_gui_route: str = "gui.desktop"
+    ) -> Any:
         """Request a plan, retrying with auto tool choice when forced choice is unsupported."""
+        create_plan_tool = _build_create_plan_tool(active_gui_route)
         forced_tool_choice = {"type": "function", "function": {"name": "create_plan"}}
         response = await self._llm.chat(
             messages=messages,
-            tools=[_CREATE_PLAN_TOOL],
+            tools=[create_plan_tool],
             tool_choice=forced_tool_choice,
         )
         if self._should_retry_with_auto_tool_choice(response):
@@ -376,7 +384,7 @@ class TaskPlanner:
             )
             response = await self._llm.chat(
                 messages=messages,
-                tools=[_CREATE_PLAN_TOOL],
+                tools=[create_plan_tool],
                 tool_choice="auto",
             )
         return response
