@@ -565,20 +565,26 @@ class AgentLoop:
 
         planner = TaskPlanner(llm=self.provider)
         raw_gui_tool = self.tools.get("gui_task")
+        gui_backend = self._gui_config.backend if self._gui_config is not None else "local"
         catalog = CapabilityCatalogBuilder().build(
             tool_registry=self.tools,
             gui_available=raw_gui_tool is not None,
             exec_enabled=self.exec_config.enable,
+            gui_backend=gui_backend,
         )
         memory_hints = PlanningMemoryHintExtractor(self.workspace).build(
             task=task,
             catalog=catalog,
         )
         gui_memory_context = self._load_gui_memory_for_planner()
+        # Derive the stable planner route_id from the active backend.
+        # "local" maps to "gui.desktop" (not "gui.local"); "dry-run" falls back to "gui.desktop".
+        active_gui_route = f"gui.{gui_backend}" if gui_backend in ("adb", "desktop") else "gui.desktop"
         planning_context = PlanningContext(
             catalog=catalog,
             memory_hints=memory_hints,
             gui_memory_context=gui_memory_context,
+            active_gui_route=active_gui_route,
         )
         tree = await planner.plan(task, planning_context=planning_context)
         logger.info("Decomposed plan:\n{}", self._format_plan_tree(tree))
