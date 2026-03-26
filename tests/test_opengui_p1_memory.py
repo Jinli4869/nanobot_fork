@@ -15,7 +15,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from opengui.memory.retrieval import EmbeddingProvider, MemoryRetriever
+import opengui.memory.retrieval as _retrieval_mod
+from opengui.memory.retrieval import EmbeddingProvider, MemoryRetriever, _tokenize
 from opengui.memory.store import MemoryStore
 from opengui.memory.types import MemoryEntry, MemoryType
 
@@ -280,3 +281,128 @@ async def test_retriever_format_context_empty() -> None:
     context = retriever.format_context([])
 
     assert context == ""
+
+
+# ---------------------------------------------------------------------------
+# Chinese tokenization / BM25 tests (jieba integration)
+# ---------------------------------------------------------------------------
+
+
+def test_tokenize_chinese_word_segmentation() -> None:
+    """_tokenize() with jieba must segment Chinese text into words, not chars.
+
+    "打开浏览器搜索内容" should produce word-level tokens that include "浏览器"
+    as a single token (not the three individual chars 浏, 览, 器).
+    """
+    tokens = _tokenize("打开浏览器搜索内容")
+    assert "浏览器" in tokens, f"Expected '浏览器' as a word token; got {tokens}"
+    assert "打开" in tokens, f"Expected '打开' as a word token; got {tokens}"
+
+
+def test_tokenize_mixed_latin_cjk() -> None:
+    """_tokenize() must handle mixed Latin + CJK text correctly.
+
+    "open浏览器test" should yield "open", "浏览器", and "test" as separate tokens.
+    """
+    tokens = _tokenize("open浏览器test")
+    assert "open" in tokens, f"Expected 'open' in {tokens}"
+    assert "浏览器" in tokens, f"Expected '浏览器' as a word token in {tokens}"
+    assert "test" in tokens, f"Expected 'test' in {tokens}"
+
+
+def test_tokenize_english_unchanged() -> None:
+    """_tokenize() must not regress on pure English input."""
+    tokens = _tokenize("hello world")
+    assert tokens == ["hello", "world"], f"Expected ['hello', 'world'], got {tokens}"
+
+
+def test_tokenize_fallback_char_level() -> None:
+    """When _JIEBA_AVAILABLE is False, _tokenize must fall back to char-level CJK splitting."""
+    original = _retrieval_mod._JIEBA_AVAILABLE
+    try:
+        _retrieval_mod._JIEBA_AVAILABLE = False
+        tokens = _tokenize("浏览器")
+        assert tokens == ["浏", "览", "器"], (
+            f"Expected char-level fallback ['浏', '览', '器'], got {tokens}"
+        )
+    finally:
+        _retrieval_mod._JIEBA_AVAILABLE = original
+
+
+async def test_retriever_bm25_chinese_search() -> None:
+    """BM25-only search (alpha=0.0) must rank the entry containing the Chinese query word first.
+
+    Indexes three entries with distinct Chinese content. Queries with "浏览器"
+    (browser) and asserts the first result is the entry about browsers.
+    """
+    embedder = _FakeEmbedder()
+    retriever = MemoryRetriever(embedding_provider=embedder, alpha=0.0, top_k=3)
+
+    entries = [
+        _make_entry("打开浏览器进行搜索", entry_id="zh-1"),
+        _make_entry("调节屏幕亮度", entry_id="zh-2"),
+        _make_entry("返回桌面主屏幕", entry_id="zh-3"),
+    ]
+    await retriever.index(entries)
+
+    results = await retriever.search("浏览器")
+
+    assert len(results) > 0, "Expected at least one result for '浏览器'"
+    top_entry, _score = results[0]
+    assert top_entry.entry_id == "zh-1", (
+        f"Expected entry 'zh-1' (about browser) to rank first, got '{top_entry.entry_id}'"
+    )
+
+
+async def test_skill_library_search_chinese_bm25() -> None:
+    """SkillLibrary.search() must return matching Chinese-described skills via shared _BM25Index.
+
+    Creates a library with three skills that have Chinese descriptions and searches
+    with a Chinese compound-word query. Verifies the correct skill is returned.
+    """
+    from opengui.skills.data import Skill, SkillStep
+    from opengui.skills.library import SkillLibrary
+
+    with pytest.MonkeyPatch().context() as mp:
+        import tempfile
+        import pathlib
+
+        tmp_dir = pathlib.Path(tempfile.mkdtemp())
+        library = SkillLibrary(store_dir=tmp_dir)
+
+        skills = [
+            Skill(
+                skill_id="zhs-1",
+                name="打开浏览器",
+                description="启动浏览器并搜索网页内容",
+                app="chrome",
+                platform="android",
+                steps=[SkillStep(action_type="tap", description="点击浏览器图标")],
+            ),
+            Skill(
+                skill_id="zhs-2",
+                name="调节亮度",
+                description="通过快捷设置调节屏幕亮度",
+                app="settings",
+                platform="android",
+                steps=[SkillStep(action_type="swipe", description="下拉通知栏")],
+            ),
+            Skill(
+                skill_id="zhs-3",
+                name="返回主屏幕",
+                description="按下返回键回到桌面",
+                app="launcher",
+                platform="android",
+                steps=[SkillStep(action_type="press", description="按返回键")],
+            ),
+        ]
+        for skill in skills:
+            library.add(skill)
+
+        results = await library.search("浏览器搜索", platform="android", top_k=3)
+
+        assert len(results) > 0, "Expected at least one result for '浏览器搜索'"
+        top_skill, _score = results[0]
+        assert top_skill.skill_id == "zhs-1", (
+            f"Expected skill 'zhs-1' (browser) to rank first, got '{top_skill.skill_id}'"
+        )
