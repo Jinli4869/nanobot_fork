@@ -23,6 +23,13 @@ from opengui.memory.types import MemoryEntry, MemoryType
 if typing.TYPE_CHECKING:
     import faiss as _faiss_mod  # noqa: F401
 
+try:
+    import jieba as _jieba
+    _JIEBA_AVAILABLE = True
+except ImportError:
+    _jieba = None  # type: ignore[assignment]
+    _JIEBA_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # EmbeddingProvider protocol
@@ -55,9 +62,8 @@ def _is_cjk(ch: str) -> bool:
     return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
 
 
-def _tokenize(text: str) -> list[str]:
-    """Tokenize *text* with CJK char-level splitting + Latin word splitting."""
-    text = text.lower()
+def _tokenize_charlevel(text: str) -> list[str]:
+    """Char-level CJK splitting + Latin word splitting (fallback implementation)."""
     tokens: list[str] = []
     buf: list[str] = []
     for ch in text:
@@ -75,6 +81,20 @@ def _tokenize(text: str) -> list[str]:
     if buf:
         tokens.append("".join(buf))
     return tokens
+
+
+def _tokenize_jieba(text: str) -> list[str]:
+    """Word-level tokenization using jieba.lcut(), filtering punctuation segments."""
+    raw_tokens: list[str] = _jieba.lcut(text)  # type: ignore[union-attr]
+    return [tok for tok in raw_tokens if re.search(r"\w", tok)]
+
+
+def _tokenize(text: str) -> list[str]:
+    """Tokenize *text* with jieba word segmentation (if available) or char-level CJK fallback."""
+    text = text.lower()
+    if _JIEBA_AVAILABLE:
+        return _tokenize_jieba(text)
+    return _tokenize_charlevel(text)
 
 
 @dataclass
