@@ -377,7 +377,7 @@ async def test_skill_library_search_chinese_bm25() -> None:
                 description="启动浏览器并搜索网页内容",
                 app="chrome",
                 platform="android",
-                steps=[SkillStep(action_type="tap", description="点击浏览器图标")],
+                steps=[SkillStep(action_type="tap", target="浏览器图标")],
             ),
             Skill(
                 skill_id="zhs-2",
@@ -385,7 +385,7 @@ async def test_skill_library_search_chinese_bm25() -> None:
                 description="通过快捷设置调节屏幕亮度",
                 app="settings",
                 platform="android",
-                steps=[SkillStep(action_type="swipe", description="下拉通知栏")],
+                steps=[SkillStep(action_type="swipe", target="通知栏")],
             ),
             Skill(
                 skill_id="zhs-3",
@@ -393,7 +393,7 @@ async def test_skill_library_search_chinese_bm25() -> None:
                 description="按下返回键回到桌面",
                 app="launcher",
                 platform="android",
-                steps=[SkillStep(action_type="press", description="按返回键")],
+                steps=[SkillStep(action_type="press", target="返回键")],
             ),
         ]
         for skill in skills:
