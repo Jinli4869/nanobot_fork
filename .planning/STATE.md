@@ -200,10 +200,11 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260325-l2b | Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend; PlanningContext.active_gui_route, backend-aware catalog, planner directive, router gui.adb sentinel | 2026-03-25 | b2b7daf | [260325-l2b-planner-planningcontext-active-backend-p](./quick/260325-l2b-planner-planningcontext-active-backend-p/) |
 | 260325-sku | Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate in router.py and loop.py | 2026-03-25 | 56e685b | [260325-sku-and-complexity-tool-gui-plan](./quick/260325-sku-and-complexity-tool-gui-plan/) |
 | 260325-ts0 | Wire SkillExecutor into nanobot GuiSubagentTool via enable_skill_execution config flag; add enable_skill_execution field to GuiConfig | 2026-03-25 | 5f81c1b | [260325-ts0-nanobot](./quick/260325-ts0-nanobot/) |
+| 260326-e16 | 引入jieba进行分词,为稳定的中文检索进行支持,并确认skills的检索也支持中文稳定检索 | 2026-03-26 | 34b41ed | [260326-e16-jieba-skills](./quick/260326-e16-jieba-skills/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-25 - Completed quick task 260325-ts0: Wire SkillExecutor into GuiSubagentTool via enable_skill_execution config flag
+Last activity: 2026-03-26 - Completed quick task 260326-e16: 引入jieba进行分词,为稳定的中文检索进行支持,并确认skills的检索也支持中文稳定检索
 
 Last session: 2026-03-26T02:14:49.925Z
 Stopped at: Completed quick/260326-e16
