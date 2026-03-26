@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed quick/260325-l2b
-last_updated: "2026-03-25T08:13:00.000Z"
-last_activity: "2026-03-25 - Completed quick task 260325-l2b: Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend"
+stopped_at: Completed quick/260326-e16
+last_updated: "2026-03-26T02:15:03.479Z"
+last_activity: "2026-03-25 - Completed quick task 260325-ts0: Wire SkillExecutor into GuiSubagentTool via enable_skill_execution config flag"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -159,6 +159,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [260325-l2b]: CapabilityCatalogBuilder.build() gui_backend="adb" overrides route_id/kind/summary inline; _ROUTE_SPECS class constant unchanged
 - [260325-l2b]: active_gui_route derivation: adb->gui.adb, local/dry-run->gui.desktop (local does NOT produce gui.local)
 - [260325-l2b]: Router _dispatch_with_fallback handles gui.adb sentinel same as gui.desktop via set membership check
+- [Phase quick]: [260326-e16]: _JIEBA_AVAILABLE module-level flag dispatches _tokenize() to jieba or char-level fallback; SkillLibrary inherits improvement via shared _BM25Index with no changes
 
 ### Pending Todos
 
@@ -204,6 +205,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-03-25 - Completed quick task 260325-ts0: Wire SkillExecutor into GuiSubagentTool via enable_skill_execution config flag
 
-Last session: 2026-03-25T14:50:00Z
-Stopped at: Completed quick/260325-ts0
+Last session: 2026-03-26T02:14:49.925Z
+Stopped at: Completed quick/260326-e16
 Resume file: None
