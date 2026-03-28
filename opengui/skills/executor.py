@@ -1,22 +1,25 @@
 """
 opengui.skills.executor
 ~~~~~~~~~~~~~~~~~~~~~~
-Step-by-step skill execution with parameter grounding and per-step
-valid-state verification.
+Step-by-step skill execution with agent-integrated parameter grounding,
+valid-state verification, and subgoal recovery.
 
 Execution pipeline per step:
-1. Verify ``valid_state`` against current screenshot (LLM-based)
-2. Ground ``{{param}}`` placeholders with actual values
-3. Execute action via DeviceBackend
-4. Record step result
-
-Supports optional steps (graceful degradation) and pre/postconditions.
+1. Verify ``valid_state`` against current screenshot (LLM-based); skip if special.
+2a. If valid_state passes and step is fixed → execute with ``fixed_values`` directly.
+2b. If valid_state passes and step is not fixed → ground parameters via ``ActionGrounder``
+    (vision-LLM call) or fall back to template substitution if no grounder is available.
+3. If valid_state fails → run a mini recovery loop (``SubgoalRunner``) with valid_state
+   as the goal; retry up to ``max_recovery_steps``; re-validate afterwards.
+4. After all steps complete (or recovery exhausted), ``execution_summary`` carries a
+   narrative for the outer agent loop to use as context when it takes over.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import time
 import typing
 from dataclasses import dataclass, field
 from enum import Enum
@@ -45,6 +48,21 @@ class ExecutionState(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# Subgoal result
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class SubgoalResult:
+    """Outcome of a mini recovery loop."""
+
+    success: bool
+    steps_taken: int
+    action_summaries: list[str]
+    final_screenshot: Path | bytes | None = None
+    error: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
 
@@ -57,6 +75,11 @@ class StepResult:
     backend_result: str
     state: ExecutionState
     valid_state_check: bool = True
+    # "fixed" | "llm" | "template"
+    grounding_mode: str = "template"
+    recovery_attempted: bool = False
+    recovery_result: SubgoalResult | None = None
+    action_summary: str = ""
     error: str | None = None
 
 
@@ -67,20 +90,18 @@ class SkillExecutionResult:
     skill: Skill
     step_results: list[StepResult]
     state: ExecutionState
+    # Narrative summary of all steps; injected into the agent loop as context.
+    execution_summary: str = ""
     error: str | None = None
 
 
 # ---------------------------------------------------------------------------
-# State validator protocol
+# Protocols
 # ---------------------------------------------------------------------------
 
 @typing.runtime_checkable
 class StateValidator(typing.Protocol):
-    """Validates current screen state against a ``valid_state`` description.
-
-    Implementations typically use a vision LLM to compare the screenshot
-    with the expected state text.
-    """
+    """Validates current screen state against a ``valid_state`` description."""
 
     async def validate(
         self,
@@ -88,6 +109,55 @@ class StateValidator(typing.Protocol):
         screenshot: Path | bytes | None = None,
     ) -> bool:
         """Return True if the current screen matches *valid_state*."""
+        ...
+
+
+@typing.runtime_checkable
+class ActionGrounder(typing.Protocol):
+    """Grounds a non-fixed SkillStep into a concrete Action via vision LLM.
+
+    Called when ``step.fixed`` is False. The implementation sends the current
+    screenshot and step description to the LLM with the ``computer_use`` tool
+    and parses the response into an Action.
+    """
+
+    async def ground(
+        self,
+        step: SkillStep,
+        screenshot: Path | bytes,
+        params: dict[str, str],
+    ) -> Action:
+        """Return a concrete Action for *step* given the current *screenshot*."""
+        ...
+
+
+@typing.runtime_checkable
+class SubgoalRunner(typing.Protocol):
+    """Runs a mini vision-action loop to recover to a desired screen state.
+
+    Called when ``valid_state`` does not match. The implementation executes
+    up to ``max_steps`` vision-action cycles, each time checking whether the
+    goal state has been reached. The accumulated action summaries are returned
+    so the caller can include them in the outer history.
+    """
+
+    async def run_subgoal(
+        self,
+        goal: str,
+        screenshot: Path | bytes,
+        *,
+        max_steps: int = 3,
+    ) -> SubgoalResult:
+        """Navigate towards *goal* starting from *screenshot*."""
+        ...
+
+
+@typing.runtime_checkable
+class ScreenshotProvider(typing.Protocol):
+    """Provides the current screen screenshot as a Path or bytes object."""
+
+    async def get_screenshot(self) -> Path | bytes | None:
+        """Capture and return the current screenshot."""
         ...
 
 
@@ -125,22 +195,16 @@ class LLMStateValidator:
 
         prompt = _VALIDATION_PROMPT.format(valid_state=valid_state)
 
-        # Build multimodal message
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        import base64
         if isinstance(screenshot, Path):
-            import base64
             image_data = base64.b64encode(screenshot.read_bytes()).decode()
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{image_data}"},
-            })
-        elif isinstance(screenshot, bytes):
-            import base64
+        else:
             image_data = base64.b64encode(screenshot).decode()
-            content.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:image/png;base64,{image_data}"},
-            })
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/png;base64,{image_data}"},
+        })
 
         messages = [{"role": "user", "content": content}]
         try:
@@ -155,7 +219,6 @@ class LLMStateValidator:
     def _parse_response(text: str) -> bool:
         import json as _json
         text = text.strip()
-        # Try JSON parse
         match = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if match:
             try:
@@ -167,7 +230,6 @@ class LLMStateValidator:
                     return valid.strip().lower() in ("true", "yes", "matched")
             except _json.JSONDecodeError:
                 pass
-        # Fallback: look for yes/no
         lowered = text.lower()
         if "true" in lowered or "yes" in lowered or "match" in lowered:
             return True
@@ -175,7 +237,7 @@ class LLMStateValidator:
 
 
 def _should_skip_validation(valid_state: str | None) -> bool:
-    """Check if valid_state indicates no verification is needed."""
+    """Return True when valid_state indicates no verification is needed."""
     if not valid_state:
         return True
     lowered = valid_state.strip().lower()
@@ -184,7 +246,7 @@ def _should_skip_validation(valid_state: str | None) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Parameter grounding
+# Parameter grounding helpers
 # ---------------------------------------------------------------------------
 
 def _ground_text(text: str, params: dict[str, str]) -> str:
@@ -197,15 +259,50 @@ def _ground_text(text: str, params: dict[str, str]) -> str:
     return text
 
 
-def _ground_step(step: SkillStep, params: dict[str, str]) -> dict[str, Any]:
-    """Ground a step's target and parameters into Action kwargs."""
+def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
+    """Construct an Action from ``step.fixed_values``.
+
+    ``fixed_values`` holds concrete parameter values (coordinates, text, etc.)
+    that bypass LLM grounding entirely. Template substitution is still applied
+    to string values so that ``{{param}}`` placeholders in text fields resolve
+    correctly.
+    """
+    values: dict[str, Any] = {}
+    for k, v in step.fixed_values.items():
+        values[k] = _ground_text(str(v), params) if isinstance(v, str) else v
+
+    kwargs: dict[str, Any] = {"action_type": step.action_type}
+    if "x" in values:
+        kwargs["x"] = float(values["x"])
+    if "y" in values:
+        kwargs["y"] = float(values["y"])
+    if "x2" in values:
+        kwargs["x2"] = float(values["x2"])
+    if "y2" in values:
+        kwargs["y2"] = float(values["y2"])
+    if "text" in values:
+        kwargs["text"] = values["text"]
+    if "key" in values:
+        kwargs["key"] = values["key"]
+    if "pixels" in values:
+        kwargs["pixels"] = int(values["pixels"])
+    if "duration_ms" in values:
+        kwargs["duration_ms"] = int(values["duration_ms"])
+    return Action(**kwargs)
+
+
+def _build_template_action(step: SkillStep, params: dict[str, str]) -> Action:
+    """Construct an Action via template substitution (legacy / fallback path).
+
+    Used when no ``ActionGrounder`` is provided or when callers do not supply
+    one. Mirrors the original ``_ground_step`` behaviour.
+    """
     target = _ground_text(step.target, params)
     grounded: dict[str, Any] = {}
     for k, v in step.parameters.items():
         grounded[k] = _ground_text(str(v), params) if isinstance(v, str) else v
 
     kwargs: dict[str, Any] = {"action_type": step.action_type}
-
     if "x" in grounded:
         kwargs["x"] = float(grounded["x"])
     if "y" in grounded:
@@ -214,8 +311,34 @@ def _ground_step(step: SkillStep, params: dict[str, str]) -> dict[str, Any]:
         kwargs["text"] = grounded["text"]
     elif step.action_type == "input_text":
         kwargs["text"] = target
+    return Action(**kwargs)
 
-    return kwargs
+
+# ---------------------------------------------------------------------------
+# Execution summary formatter
+# ---------------------------------------------------------------------------
+
+def _build_execution_summary(skill: Skill, step_results: list[StepResult]) -> str:
+    """Build a human-readable narrative of the skill execution for the agent loop."""
+    succeeded = sum(1 for r in step_results if r.state == ExecutionState.SUCCEEDED)
+    total = len(skill.steps)
+
+    lines = [f'Skill "{skill.name}" executed ({succeeded}/{total} steps succeeded):']
+    for r in step_results:
+        status_tag = "succeeded" if r.state == ExecutionState.SUCCEEDED else "failed"
+        mode_tag = f"[{r.grounding_mode}]"
+        recovery_tag = ""
+        if r.recovery_attempted:
+            if r.recovery_result and r.recovery_result.success:
+                recovery_tag = f" [recovered in {r.recovery_result.steps_taken} sub-steps]"
+            else:
+                recovery_tag = " [recovery failed]"
+        summary_text = f" — {r.action_summary}" if r.action_summary else ""
+        lines.append(
+            f"  Step {r.step_index + 1}: {r.action.action_type} {mode_tag}"
+            f"{recovery_tag}{summary_text} — {status_tag}"
+        )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -224,26 +347,38 @@ def _ground_step(step: SkillStep, params: dict[str, str]) -> dict[str, Any]:
 
 @dataclass
 class SkillExecutor:
-    """Execute a :class:`Skill` step-by-step with state validation.
+    """Execute a :class:`Skill` step-by-step with agent-integrated validation.
 
     Parameters
     ----------
     backend:
         Device backend for action execution.
     state_validator:
-        Optional validator for per-step ``valid_state`` checks.
-        If None, all state checks pass (with a warning).
-    screenshot_getter:
-        Optional callable that returns the current screenshot path or bytes.
-        Used to supply screenshots for state validation between steps.
+        Optional LLM-based validator for per-step ``valid_state`` checks.
+        Falls back to pass-through (allow) when ``None``.
+    action_grounder:
+        Optional vision-LLM grounder for non-fixed steps. When ``None``,
+        falls back to template substitution (legacy behaviour).
+    subgoal_runner:
+        Optional mini agent-loop runner for recovering from a failed
+        ``valid_state`` check. When ``None``, validation failures fail the
+        step immediately (legacy behaviour).
+    screenshot_provider:
+        Optional async provider for the current screenshot. Falls back to
+        ``None`` screenshots (validation is skipped) when not supplied.
     stop_on_failure:
         Whether to halt execution on the first non-optional step failure.
+    max_recovery_steps:
+        Maximum vision-action steps allowed inside a single recovery subgoal.
     """
 
     backend: DeviceBackend
     state_validator: StateValidator | None = None
-    screenshot_getter: typing.Callable[[], Path | bytes | None] | None = None
+    action_grounder: ActionGrounder | None = None
+    subgoal_runner: SubgoalRunner | None = None
+    screenshot_provider: ScreenshotProvider | None = None
     stop_on_failure: bool = True
+    max_recovery_steps: int = 3
 
     async def execute(
         self,
@@ -255,76 +390,153 @@ class SkillExecutor:
         """Run all steps of *skill* sequentially with state verification."""
         params = params or {}
         step_results: list[StepResult] = []
-        state = ExecutionState.RUNNING
+        overall_state = ExecutionState.RUNNING
         error_msg: str | None = None
 
-        # Get initial screenshot for first step validation
-        current_screenshot = self._get_screenshot()
-
         for i, step in enumerate(skill.steps):
-            # Step 1: valid_state verification BEFORE execution
-            valid_state_ok = await self._validate_state(step, current_screenshot)
-            if not valid_state_ok:
-                is_optional = step.parameters.get("optional", False)
+            is_optional = bool(step.parameters.get("optional", False))
+
+            # ------------------------------------------------------------------
+            # 1. Capture current screenshot
+            # ------------------------------------------------------------------
+            screenshot = await self._get_screenshot()
+
+            # ------------------------------------------------------------------
+            # 2. Valid-state check
+            # ------------------------------------------------------------------
+            valid = await self._validate_state(step, screenshot)
+
+            # ------------------------------------------------------------------
+            # 3. Recovery subgoal when valid_state fails
+            # ------------------------------------------------------------------
+            recovery_result: SubgoalResult | None = None
+            if not valid and not _should_skip_validation(step.valid_state):
+                if self.subgoal_runner is not None and screenshot is not None:
+                    logger.info(
+                        "Step %d: valid_state failed, attempting recovery for: %r",
+                        i, step.valid_state,
+                    )
+                    recovery_result = await self.subgoal_runner.run_subgoal(
+                        goal=step.valid_state or "",
+                        screenshot=screenshot,
+                        max_steps=self.max_recovery_steps,
+                    )
+                    if recovery_result.success:
+                        # Refresh screenshot and re-validate after recovery
+                        screenshot = recovery_result.final_screenshot or screenshot
+                        valid = await self._validate_state(step, screenshot)
+                        if not valid:
+                            logger.warning(
+                                "Step %d: re-validation after recovery still failed", i
+                            )
+                    else:
+                        logger.warning(
+                            "Step %d: recovery exhausted (%d sub-steps), "
+                            "valid_state still not reached",
+                            i, recovery_result.steps_taken,
+                        )
+                else:
+                    logger.info(
+                        "Step %d: valid_state failed, no subgoal_runner available", i
+                    )
+
+            # ------------------------------------------------------------------
+            # 4. If still invalid, record failure and decide whether to continue
+            # ------------------------------------------------------------------
+            if not valid and not _should_skip_validation(step.valid_state):
                 step_results.append(StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
                     backend_result="",
                     state=ExecutionState.FAILED,
                     valid_state_check=False,
-                    error=f"State validation failed: {step.valid_state}",
+                    recovery_attempted=recovery_result is not None,
+                    recovery_result=recovery_result,
+                    error=f"valid_state not reached: {step.valid_state}",
                 ))
                 if is_optional:
-                    logger.info("Optional step %d failed state check, skipping", i)
+                    logger.info("Optional step %d skipped (valid_state not reached)", i)
                     continue
-                state = ExecutionState.FAILED
-                error_msg = f"Step {i} state validation failed: {step.valid_state}"
+                overall_state = ExecutionState.FAILED
+                error_msg = f"Step {i} valid_state not reached: {step.valid_state}"
                 if self.stop_on_failure:
                     break
                 continue
 
-            # Step 2: Ground parameters and execute
+            # ------------------------------------------------------------------
+            # 5. Execute action
+            # ------------------------------------------------------------------
             try:
-                action_kwargs = _ground_step(step, params)
-                action = Action(**action_kwargs)
-                result = await self.backend.execute(action, timeout=timeout)
+                action, grounding_mode = await self._resolve_action(
+                    step, screenshot, params
+                )
+                result_text = await self.backend.execute(action, timeout=timeout)
                 step_results.append(StepResult(
                     step_index=i,
                     action=action,
-                    backend_result=result,
+                    backend_result=result_text,
                     state=ExecutionState.SUCCEEDED,
+                    grounding_mode=grounding_mode,
+                    recovery_attempted=recovery_result is not None,
+                    recovery_result=recovery_result,
+                    action_summary=f"{action.action_type} on {step.target or 'target'}",
                 ))
             except Exception as exc:
-                logger.error("Skill step %d execution failed: %s", i, exc)
-                is_optional = step.parameters.get("optional", False)
+                logger.error("Step %d execution error: %s", i, exc)
                 step_results.append(StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
                     backend_result=str(exc),
                     state=ExecutionState.FAILED,
+                    recovery_attempted=recovery_result is not None,
+                    recovery_result=recovery_result,
                     error=str(exc),
                 ))
                 if is_optional:
-                    logger.info("Optional step %d failed, continuing", i)
+                    logger.info("Optional step %d failed with exception, continuing", i)
                     continue
-                state = ExecutionState.FAILED
-                error_msg = f"Step {i} failed: {exc}"
+                overall_state = ExecutionState.FAILED
+                error_msg = f"Step {i} execution failed: {exc}"
                 if self.stop_on_failure:
                     break
                 continue
 
-            # Update screenshot for next step's validation
-            current_screenshot = self._get_screenshot()
-
-        if state != ExecutionState.FAILED:
-            state = ExecutionState.SUCCEEDED
+        if overall_state != ExecutionState.FAILED:
+            overall_state = ExecutionState.SUCCEEDED
 
         return SkillExecutionResult(
             skill=skill,
             step_results=step_results,
-            state=state,
+            state=overall_state,
+            execution_summary=_build_execution_summary(skill, step_results),
             error=error_msg,
         )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    async def _resolve_action(
+        self,
+        step: SkillStep,
+        screenshot: Path | bytes | None,
+        params: dict[str, str],
+    ) -> tuple[Action, str]:
+        """Return ``(action, grounding_mode)`` for the given step."""
+        if step.fixed:
+            return _build_fixed_action(step, params), "fixed"
+
+        if self.action_grounder is not None and screenshot is not None:
+            try:
+                action = await self.action_grounder.ground(step, screenshot, params)
+                return action, "llm"
+            except Exception as exc:
+                logger.warning(
+                    "ActionGrounder failed for step %r, falling back to template: %s",
+                    step.action_type, exc,
+                )
+
+        return _build_template_action(step, params), "template"
 
     async def _validate_state(
         self,
@@ -346,10 +558,11 @@ class SkillExecutor:
             logger.error("State validator error: %s", exc)
             return True  # Fail-open
 
-    def _get_screenshot(self) -> Path | bytes | None:
-        if self.screenshot_getter is not None:
+    async def _get_screenshot(self) -> Path | bytes | None:
+        """Capture the current screenshot via the ScreenshotProvider."""
+        if self.screenshot_provider is not None:
             try:
-                return self.screenshot_getter()
+                return await self.screenshot_provider.get_screenshot()
             except Exception as exc:
-                logger.warning("Screenshot getter failed: %s", exc)
+                logger.warning("ScreenshotProvider failed: %s", exc)
         return None

@@ -129,6 +129,258 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
+# Agent-side protocol implementations for SkillExecutor
+# ---------------------------------------------------------------------------
+
+class _AgentActionGrounder:
+    """Ground a non-fixed SkillStep into a concrete Action via vision LLM.
+
+    Sends the current screenshot and step description to the LLM with the
+    ``computer_use`` tool and parses the returned tool call into an Action.
+    """
+
+    _MAX_RETRIES = 2
+
+    def __init__(self, llm: LLMProvider, model: str) -> None:
+        self._llm = llm
+        self._model = model
+
+    async def ground(
+        self,
+        step: Any,  # SkillStep — avoid circular import
+        screenshot: "Path | bytes",
+        params: dict[str, str],
+    ) -> "Action":
+        from opengui.action import parse_action
+        from opengui.skills.executor import _ground_text
+
+        target = _ground_text(step.target, params)
+        extra_ctx = ""
+        if step.parameters:
+            extra_ctx = f"\nContext: {step.parameters}"
+
+        prompt = (
+            f"Look at the screenshot carefully. Perform the following action:\n"
+            f"  action_type: {step.action_type}\n"
+            f"  target: {target}{extra_ctx}\n\n"
+            f"Respond with ONLY a computer_use tool call. "
+            f"You MUST use action_type='{step.action_type}'."
+        )
+        import base64
+        if isinstance(screenshot, Path):
+            image_data = base64.b64encode(screenshot.read_bytes()).decode()
+        else:
+            image_data = base64.b64encode(screenshot).decode()
+
+        messages: list[dict[str, Any]] = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}},
+            ],
+        }]
+
+        for attempt in range(self._MAX_RETRIES + 1):
+            try:
+                response = await self._llm.chat(
+                    messages=messages,
+                    tools=[_COMPUTER_USE_TOOL],
+                    tool_choice="required",
+                )
+            except Exception as exc:
+                raise RuntimeError(f"ActionGrounder LLM call failed: {exc}") from exc
+
+            if response.tool_calls:
+                tc = response.tool_calls[0]
+                if tc.name == "computer_use":
+                    try:
+                        return parse_action(tc.arguments)
+                    except Exception as exc:
+                        if attempt < self._MAX_RETRIES:
+                            messages.append({"role": "assistant", "content": response.content or ""})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": f"Error parsing action: {exc}. Please fix.",
+                            })
+                            continue
+                        raise RuntimeError(f"ActionGrounder parse failed: {exc}") from exc
+
+            if attempt < self._MAX_RETRIES:
+                messages.append({"role": "assistant", "content": response.content or ""})
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": "error",
+                    "content": "Error: no computer_use tool call. You must use it.",
+                })
+            else:
+                raise RuntimeError("ActionGrounder: LLM did not return a computer_use call after retries.")
+
+        raise RuntimeError("ActionGrounder: unexpected exit from retry loop.")
+
+
+class _AgentSubgoalRunner:
+    """Mini vision-action loop to recover to a desired screen state.
+
+    Maintains an isolated history (not shared with the main agent loop) and
+    runs up to ``max_steps`` observe → LLM → execute → validate cycles.
+    """
+
+    def __init__(
+        self,
+        llm: LLMProvider,
+        backend: "DeviceBackend",
+        state_validator: Any,
+        model: str,
+        artifacts_root: "Path",
+    ) -> None:
+        self._llm = llm
+        self._backend = backend
+        self._state_validator = state_validator
+        self._model = model
+        self._artifacts_root = Path(artifacts_root)
+        self._step_counter = 0
+
+    async def run_subgoal(
+        self,
+        goal: str,
+        screenshot: "Path | bytes",
+        *,
+        max_steps: int = 3,
+    ) -> "Any":  # SubgoalResult
+        from opengui.action import parse_action, ActionError
+        from opengui.skills.executor import SubgoalResult, _should_skip_validation
+
+        summaries: list[str] = []
+        current_screenshot: Path | bytes = screenshot
+
+        for i in range(max_steps):
+            # Build a minimal prompt for the subgoal
+            history_text = (
+                "\n".join(f"  Sub-step {j+1}: {s}" for j, s in enumerate(summaries))
+                if summaries else "  None"
+            )
+            prompt = (
+                f"Your current sub-goal is: {goal}\n\n"
+                f"Previous sub-steps:\n{history_text}\n\n"
+                f"Look at the screenshot and choose ONE action that moves you "
+                f"closer to the sub-goal. Respond with ONLY a computer_use tool call."
+            )
+
+            import base64
+            if isinstance(current_screenshot, Path):
+                img_bytes = current_screenshot.read_bytes()
+            else:
+                img_bytes = current_screenshot
+            image_data = base64.b64encode(img_bytes).decode()
+
+            messages: list[dict[str, Any]] = [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}},
+                ],
+            }]
+
+            try:
+                response = await self._llm.chat(
+                    messages=messages,
+                    tools=[_COMPUTER_USE_TOOL],
+                    tool_choice="required",
+                )
+            except Exception as exc:
+                logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
+                return SubgoalResult(success=False, steps_taken=i, action_summaries=summaries, error=str(exc))
+
+            if not response.tool_calls or response.tool_calls[0].name != "computer_use":
+                logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
+                summaries.append(f"Sub-step {i+1}: no valid action returned")
+                continue
+
+            tc = response.tool_calls[0]
+            try:
+                action = parse_action(tc.arguments)
+            except ActionError as exc:
+                logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
+                summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
+                continue
+
+            # Skip terminal actions inside a subgoal
+            if action.action_type in ("done", "request_intervention"):
+                summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
+                continue
+
+            try:
+                await self._backend.execute(action)
+            except Exception as exc:
+                logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
+                summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
+                continue
+
+            # Observe new screen
+            self._step_counter += 1
+            subgoal_dir = self._artifacts_root / "subgoal_screenshots"
+            subgoal_dir.mkdir(parents=True, exist_ok=True)
+            next_path = subgoal_dir / f"subgoal_{int(time.time() * 1000)}_{self._step_counter}.png"
+            try:
+                obs = await self._backend.observe(next_path)
+                current_screenshot = Path(obs.screenshot_path) if obs.screenshot_path else current_screenshot
+            except Exception as exc:
+                logger.warning("Subgoal observe failed at sub-step %d: %s", i, exc)
+
+            action_desc = f"{action.action_type}"
+            if hasattr(action, "x") and action.x is not None:
+                action_desc += f" at ({action.x}, {action.y})"
+            elif hasattr(action, "text") and action.text:
+                action_desc += f" '{action.text}'"
+            summaries.append(f"Sub-step {i+1}: {action_desc}")
+
+            # Check if the goal state has been reached
+            if not _should_skip_validation(goal) and self._state_validator is not None:
+                try:
+                    reached = await self._state_validator.validate(goal, screenshot=current_screenshot)
+                except Exception:
+                    reached = False
+                if reached:
+                    logger.info("Subgoal reached after %d sub-steps", i + 1)
+                    return SubgoalResult(
+                        success=True,
+                        steps_taken=i + 1,
+                        action_summaries=summaries,
+                        final_screenshot=current_screenshot,
+                    )
+
+        return SubgoalResult(
+            success=False,
+            steps_taken=max_steps,
+            action_summaries=summaries,
+            error=f"Subgoal not reached after {max_steps} sub-steps",
+        )
+
+
+class _AgentScreenshotProvider:
+    """Provide the current screenshot via ``DeviceBackend.observe()``."""
+
+    def __init__(self, backend: "DeviceBackend", artifacts_root: "Path") -> None:
+        self._backend = backend
+        self._artifacts_root = Path(artifacts_root)
+        self._counter = 0
+
+    async def get_screenshot(self) -> Path | None:
+        self._counter += 1
+        skill_dir = self._artifacts_root / "skill_screenshots"
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        path = skill_dir / f"skill_{int(time.time() * 1000)}_{self._counter}.png"
+        try:
+            obs = await self._backend.observe(path)
+            if obs.screenshot_path:
+                return Path(obs.screenshot_path)
+        except Exception as exc:
+            logger.warning("ScreenshotProvider observe failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # GuiAgent
 # ---------------------------------------------------------------------------
 
@@ -218,6 +470,7 @@ class GuiAgent:
         skill_match = await self._search_skill(task)
 
         # 4. If skill matched, attempt skill execution first
+        skill_context: str | None = None
         if skill_match is not None and self._skill_executor is not None:
             skill, final_score = skill_match
             self._trajectory_recorder.set_phase(
@@ -226,10 +479,16 @@ class GuiAgent:
             )
             try:
                 skill_result = await self._skill_executor.execute(skill)
+                skill_context = skill_result.execution_summary
                 if skill_result.state.value == "succeeded":
                     # Skill succeeded — fall through to agent for confirmation
                     self._trajectory_recorder.set_phase(
                         ExecutionPhase.AGENT, reason="Skill complete, agent confirms"
+                    )
+                else:
+                    # Skill partially succeeded — agent completes the rest
+                    self._trajectory_recorder.set_phase(
+                        ExecutionPhase.AGENT, reason="Skill partially succeeded, agent completes"
                     )
             except Exception:
                 # Skill failed — fall back to free exploration
@@ -258,6 +517,7 @@ class GuiAgent:
                 result = await self._run_once(
                     task, app_hint=app_hint, run_dir=run_dir,
                     memory_context=memory_context,
+                    skill_context=skill_context,
                 )
                 await self._log_attempt_event(
                     run_dir,
@@ -333,6 +593,7 @@ class GuiAgent:
         app_hint: str | None,
         run_dir: Path,
         memory_context: str | None = None,
+        skill_context: str | None = None,
     ) -> AgentResult:
         """Execute one full attempt of the task."""
         # 1. Preflight
@@ -364,6 +625,7 @@ class GuiAgent:
                 history=history,
                 app_hint=app_hint,
                 memory_context=memory_context,
+                skill_context=skill_context,
             )
             prompt_snapshot = self._snapshot_step_prompt(
                 task=task,
@@ -757,6 +1019,7 @@ class GuiAgent:
         history: list[HistoryTurn],
         app_hint: str | None,
         memory_context: str | None = None,
+        skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
         """Build a Mobile-Agent-style prompt window with summaries and recent screenshots."""
         messages: list[dict[str, Any]] = [{
@@ -775,6 +1038,7 @@ class GuiAgent:
             current_observation=current_observation,
             history=history,
             app_hint=app_hint,
+            skill_context=skill_context,
         )
         recent_history = history[-self.history_image_window:]
 
@@ -816,6 +1080,7 @@ class GuiAgent:
         current_observation: Observation,
         history: list[HistoryTurn],
         app_hint: str | None,
+        skill_context: str | None = None,
     ) -> str:
         """Build the text prompt that frames the current step."""
         summarized_history = history[: -self.history_image_window] if len(history) > self.history_image_window else []
@@ -840,6 +1105,17 @@ class GuiAgent:
             "Previous actions:",
             previous_actions,
         ])
+
+        if skill_context:
+            lines.extend([
+                "",
+                "Previous skill execution (already completed):",
+                skill_context,
+                "",
+                "Check the current screen. If the task is now complete, call "
+                "done(status=\"success\"). Otherwise, continue with any remaining steps.",
+            ])
+
         return "\n".join(lines)
 
     @staticmethod
