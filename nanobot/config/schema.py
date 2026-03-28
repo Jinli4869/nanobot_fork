@@ -177,6 +177,8 @@ class GuiConfig(Base):
     display_width: int = 1280
     display_height: int = 720
     enable_skill_execution: bool = False
+    enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
+    enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
 
     @model_validator(mode="after")
     def _validate_background_requires_local(self) -> "GuiConfig":
