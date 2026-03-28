@@ -616,6 +616,18 @@ class AgentLoop:
 
         gui_agent = _GuiDispatchAdapter(raw_gui_tool) if raw_gui_tool is not None else None
 
+        # When the router is disabled, skip TreeRouter and dispatch the original
+        # task directly to the GUI agent.  The plan preview above still gives the
+        # user visibility into the intended decomposition.
+        if self._gui_config is not None and not self._gui_config.enable_router:
+            logger.info("TreeRouter disabled (gui.enable_router=false); dispatching task directly to GUI agent")
+            if gui_agent is not None:
+                result = await gui_agent.run(task)
+                output: str = result.summary if result.success else (result.error or "GUI task failed.")
+            else:
+                output = "No GUI agent available for direct execution."
+            return output, ["task_planner"], []
+
         ctx = RouterContext(
             task=task,
             gui_agent=gui_agent,
@@ -803,10 +815,14 @@ class AgentLoop:
 
         # Complexity gate: evaluate whether the task warrants multi-step
         # decomposition.  Gate is skipped for short messages (already handled
-        # above via slash-command logic or trivially short content) and when no
-        # GUI config is present (planning currently relies on GUI capability).
+        # above via slash-command logic or trivially short content), when no
+        # GUI config is present, or when gui.enable_planner is False.
         use_planning = False
-        if self._gui_config is not None and len(msg.content.strip()) >= 20:
+        if (
+            self._gui_config is not None
+            and self._gui_config.enable_planner
+            and len(msg.content.strip()) >= 20
+        ):
             try:
                 use_planning = await self._needs_planning(msg.content.strip())
             except Exception:

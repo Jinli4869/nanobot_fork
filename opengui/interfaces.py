@@ -35,6 +35,7 @@ class LLMResponse:
     content: str
     tool_calls: list[ToolCall] | None = None
     raw: typing.Any = dataclasses.field(default=None, compare=False)
+    usage: dict[str, int] = dataclasses.field(default_factory=dict, compare=False)
 
 
 @dataclasses.dataclass(frozen=True)

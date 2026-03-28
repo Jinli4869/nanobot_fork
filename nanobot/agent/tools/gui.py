@@ -215,11 +215,34 @@ class GuiSubagentTool(Tool):
 
         skill_executor = None
         if self._gui_config.enable_skill_execution:
+            from opengui.agent import (
+                _AgentActionGrounder,
+                _AgentScreenshotProvider,
+                _AgentSubgoalRunner,
+            )
             from opengui.skills.executor import LLMStateValidator, SkillExecutor
 
+            state_validator = LLMStateValidator(self._llm_adapter)
             skill_executor = SkillExecutor(
                 backend=active_backend,
-                state_validator=LLMStateValidator(self._llm_adapter),
+                state_validator=state_validator,
+                action_grounder=_AgentActionGrounder(
+                    llm=self._llm_adapter,
+                    model=self._model,
+                ),
+                subgoal_runner=_AgentSubgoalRunner(
+                    llm=self._llm_adapter,
+                    backend=active_backend,
+                    state_validator=state_validator,
+                    model=self._model,
+                    artifacts_root=run_dir,
+                ),
+                screenshot_provider=_AgentScreenshotProvider(
+                    backend=active_backend,
+                    artifacts_root=run_dir,
+                ),
+                stop_on_failure=False,
+                max_recovery_steps=3,
             )
 
         agent = GuiAgent(
@@ -526,6 +549,9 @@ class GuiSubagentTool(Tool):
         try:
             extractor = SkillExtractor(llm=self._llm_adapter)
             skill = await extractor.extract_from_file(trace_path, is_success=is_success)
+            usage = extractor.total_usage
+            logger.info("Extraction usage: %s", usage)
+            _write_extraction_usage(trace_path, usage)
             if skill is None:
                 logger.debug("No skill extracted from trajectory %s", trace_path)
                 return
@@ -628,3 +654,12 @@ class _GuiToolInterventionHandler:
     @staticmethod
     def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return GuiAgent._scrub_for_log(payload)
+
+
+def _write_extraction_usage(trace_path: Path, usage: dict[str, int]) -> None:
+    """Persist LLM token usage from skill extraction next to the trace file."""
+    usage_path = trace_path.parent / "extraction_usage.json"
+    try:
+        usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)

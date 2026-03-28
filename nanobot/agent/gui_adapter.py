@@ -39,6 +39,7 @@ class NanobotLLMAdapter:
             content=nano_resp.content or "",
             tool_calls=tool_calls,
             raw=nano_resp,
+            usage=nano_resp.usage or {},
         )
 
 
