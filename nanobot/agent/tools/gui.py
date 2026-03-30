@@ -88,7 +88,7 @@ class GuiSubagentTool(Tool):
                 },
                 "backend": {
                     "type": "string",
-                    "enum": ["adb", "local", "dry-run"],
+                    "enum": ["adb", "ios", "hdc", "local", "dry-run"],
                     "description": "Optional backend override. Defaults to the configured GUI backend.",
                 },
                 "require_background_isolation": {
@@ -462,6 +462,16 @@ class GuiSubagentTool(Tool):
             from opengui.backends.adb import AdbBackend
 
             return AdbBackend(serial=self._gui_config.adb.serial)
+
+        if backend_name == "ios":
+            from opengui.backends.ios_wda import WdaBackend
+
+            return WdaBackend()
+
+        if backend_name == "hdc":
+            from opengui.backends.hdc import HdcBackend
+
+            return HdcBackend(serial=self._gui_config.hdc.serial)
 
         if backend_name == "dry-run":
             from opengui.backends.dry_run import DryRunBackend

@@ -172,6 +172,12 @@ class CapabilityCatalogBuilder:
                 kind = "ios"
                 summary = "Use the GUI subagent to operate apps on the connected iOS device"
 
+            # Override the GUI route metadata when the active backend is HDC/HarmonyOS.
+            if tool_name == "gui_task" and gui_backend == "hdc":
+                route_id = "gui.hdc"
+                kind = "hdc"
+                summary = "Use the GUI subagent to operate apps on the connected HarmonyOS device"
+
             routes.append(
                 RouteSummary(
                     route_id=route_id,
