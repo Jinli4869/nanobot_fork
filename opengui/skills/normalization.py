@@ -287,6 +287,174 @@ def resolve_android_package(app_text: str) -> str:
     return cleaned
 
 
+# ---------------------------------------------------------------------------
+# Bundle ID <-> display name mapping for iOS
+# ---------------------------------------------------------------------------
+
+_IOS_BUNDLE_DISPLAY_NAMES: dict[str, str] = {
+    # Social & Communication
+    "com.tencent.xin": "WeChat",
+    "com.tencent.mqq": "QQ",
+    "com.sina.weibo": "Weibo",
+    "com.zhihu.ios": "Zhihu",
+    "com.xingin.discover": "RedNote",
+    "com.atebits.Tweetie2": "X/Twitter",
+    "net.whatsapp.WhatsApp": "WhatsApp",
+    "ph.telegra.Telegraph": "Telegram",
+    "com.facebook.Facebook": "Facebook",
+    "com.bilibili.bilibili": "Bilibili",
+    # Shopping & Food
+    "com.taobao.taobao4iphone": "Taobao",
+    "com.jingdong.app.iphone": "JD",
+    "com.xunmeng.pinduoduo": "Pinduoduo",
+    "com.taobao.fleamarket": "Xianyu",
+    "com.meituan.imeituan": "Meituan",
+    "com.dianping.dpscope": "Dianping",
+    # Transport
+    "com.xiaojukeji.didi": "DiDi",
+    "com.autonavi.amap": "Amap",
+    # Travel
+    "ctrip.com": "Ctrip",
+    "com.12306": "12306",
+    # Finance
+    "com.alipay.iphoneclient": "Alipay",
+    # Entertainment
+    "com.ss.iphone.ugc.Aweme": "Douyin",
+    "com.netease.cloudmusic": "NetEase Music",
+    "com.google.ios.youtube": "YouTube",
+    # Work & Productivity
+    "com.ss.iphone.lark": "Lark",
+    "com.tencent.wework": "WeCom",
+    "com.tencent.tgmeeting": "VooV",
+    # AI
+    "com.openai.chat": "ChatGPT",
+    "com.deepseek.chat": "DeepSeek",
+    # Reading
+    "com.tencent.weread": "WeRead",
+    # Google
+    "com.google.chrome.ios": "Chrome",
+    "com.google.Gmail": "Gmail",
+    "com.google.Maps": "Google Maps",
+    # System
+    "com.apple.Preferences": "Settings",
+    "com.apple.mobilesafari": "Safari",
+    "com.apple.mobilemail": "Mail",
+    "com.apple.mobilenotes": "Notes",
+    "com.apple.reminders": "Reminders",
+    "com.apple.Maps": "Apple Maps",
+    "com.apple.camera": "Camera",
+    "com.apple.mobileslideshow": "Photos",
+    "com.apple.calculator": "Calculator",
+    "com.apple.mobiletimer": "Clock",
+    "com.apple.weather": "Weather",
+    "com.apple.AppStore": "App Store",
+    "com.apple.iBooks": "Books",
+    "com.apple.Health": "Health",
+    "com.apple.Fitness": "Fitness",
+    "com.apple.MobileStore": "Apple Store",
+    "com.apple.Music": "Music",
+    "com.apple.podcasts": "Podcasts",
+    "com.apple.tv": "Apple TV",
+    "com.apple.DocumentsApp": "Files",
+    "com.apple.mobilephone": "Phone",
+    "com.apple.MobileSMS": "Messages",
+    "com.apple.facetime": "FaceTime",
+}
+
+# Manual aliases for iOS that cannot be derived from display names alone
+_IOS_APP_ALIASES_BASE: dict[str, str] = {
+    "ios settings": "com.apple.Preferences",
+    "iphone settings": "com.apple.Preferences",
+    "system settings": "com.apple.Preferences",
+    "wechat": "com.tencent.xin",
+    "weixin": "com.tencent.xin",
+    "alipay": "com.alipay.iphoneclient",
+    "taobao": "com.taobao.taobao4iphone",
+    "jd": "com.jingdong.app.iphone",
+    "jingdong": "com.jingdong.app.iphone",
+    "meituan": "com.meituan.imeituan",
+    "douyin": "com.ss.iphone.ugc.Aweme",
+    "tiktok": "com.ss.iphone.ugc.Aweme",
+    "bilibili": "com.bilibili.bilibili",
+    "didi": "com.xiaojukeji.didi",
+    "weibo": "com.sina.weibo",
+    "zhihu": "com.zhihu.ios",
+    "redbook": "com.xingin.discover",
+    "rednote": "com.xingin.discover",
+    "xiaohongshu": "com.xingin.discover",
+    "pinduoduo": "com.xunmeng.pinduoduo",
+    "xianyu": "com.taobao.fleamarket",
+    "ctrip": "ctrip.com",
+    "lark": "com.ss.iphone.lark",
+    "feishu": "com.ss.iphone.lark",
+    "wecom": "com.tencent.wework",
+    "weread": "com.tencent.weread",
+    "amap": "com.autonavi.amap",
+    "gaode": "com.autonavi.amap",
+    "twitter": "com.atebits.Tweetie2",
+    "x": "com.atebits.Tweetie2",
+    "chatgpt": "com.openai.chat",
+    "deepseek": "com.deepseek.chat",
+    "youtube": "com.google.ios.youtube",
+    "safari": "com.apple.mobilesafari",
+    "chrome": "com.google.chrome.ios",
+    "gmail": "com.google.Gmail",
+    "google maps": "com.google.Maps",
+}
+
+
+def _build_ios_aliases() -> dict[str, str]:
+    """Build reverse lookup: display name parts -> bundle ID."""
+    aliases: dict[str, str] = {}
+    for bundle_id, display in _IOS_BUNDLE_DISPLAY_NAMES.items():
+        # Add each "/" separated part as an alias
+        for part in display.split("/"):
+            key = part.strip().lower()
+            if key and key not in aliases:
+                aliases[key] = bundle_id
+        # Add the full display string
+        full = display.strip().lower()
+        if full not in aliases:
+            aliases[full] = bundle_id
+    # Manual aliases take priority
+    aliases.update(_IOS_APP_ALIASES_BASE)
+    return aliases
+
+
+_IOS_APP_ALIASES = _build_ios_aliases()
+
+
+def annotate_ios_apps(bundle_ids: list[str]) -> list[str]:
+    """Annotate iOS bundle IDs with human-readable display names.
+
+    Only bundle IDs with a known display name are included; unmapped entries are
+    silently dropped.  This keeps the system prompt focused on apps the model can
+    name and launch, while ``resolve_ios_bundle()`` handles the lookup at execution time.
+
+    Returns a list like ``["WeChat: com.tencent.xin"]``.
+    """
+    result: list[str] = []
+    for bundle_id in bundle_ids:
+        display = _IOS_BUNDLE_DISPLAY_NAMES.get(bundle_id)
+        if display:
+            result.append(f"{display}: {bundle_id}")
+    return result
+
+
+def resolve_ios_bundle(app_text: str) -> str:
+    """Resolve a human-readable app name to its iOS bundle ID.
+
+    Returns the matching bundle ID if found, otherwise the input unchanged.
+    """
+    cleaned = " ".join((app_text or "").strip().strip("\"'").split())
+    if not cleaned:
+        return app_text or ""
+    lowered = cleaned.lower()
+    if lowered in _IOS_APP_ALIASES:
+        return _IOS_APP_ALIASES[lowered]
+    return cleaned
+
+
 def normalize_app_identifier(platform: str, app: str) -> str:
     cleaned = " ".join((app or "").strip().strip("\"'").split())
     if not cleaned:
@@ -300,6 +468,13 @@ def normalize_app_identifier(platform: str, app: str) -> str:
             return _ANDROID_APP_ALIASES[lowered]
         if "." in cleaned:
             return lowered
+
+    elif platform_key == "ios":
+        if lowered in _IOS_APP_ALIASES:
+            return _IOS_APP_ALIASES[lowered]
+        # Already a bundle ID (contains dots in reverse-domain format)
+        if "." in cleaned:
+            return cleaned
 
     slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
     return slug or "unknown"
