@@ -1,6 +1,6 @@
 # OpenGUI
 
-OpenGUI is a vision-based GUI automation engine. It takes a screenshot of the current screen, asks an LLM what action to take next, and executes that action — repeating until the task is complete. It supports Android (via ADB), desktop (macOS / Linux / Windows), and a dry-run mode for testing.
+OpenGUI is a vision-based GUI automation engine. It takes a screenshot of the current screen, asks an LLM what action to take next, and executes that action — repeating until the task is complete. It supports Android (via ADB), iOS (via WebDriverAgent), HarmonyOS (via HDC), desktop (macOS / Linux / Windows), and a dry-run mode for testing.
 
 OpenGUI can be used in two ways:
 
@@ -23,10 +23,11 @@ OpenGUI can be used in two ways:
    - [GUI section reference](#gui-section-reference)
    - [Switching backends](#switching-backends)
    - [Platform-specific examples](#platform-specific-examples)
-4. [App List Initialization](#app-list-initialization)
-5. [Memory Store](#memory-store)
-6. [Backends](#backends)
-7. [Skills System](#skills-system)
+4. [Planner / Router Integration](#planner--router-integration)
+5. [App List Initialization](#app-list-initialization)
+6. [Memory Store](#memory-store)
+7. [Backends](#backends)
+8. [Skills System](#skills-system)
 
 ---
 
@@ -44,6 +45,12 @@ uv tool install nanobot-ai
 ```
 
 **Platform extras** are installed automatically. On macOS the `pyobjc` accessibility stack is required — it ships with the package and requires no manual steps.
+
+For the **iOS backend**, install the optional `facebook-wda` dependency:
+
+```bash
+pip install facebook-wda
+```
 
 ---
 
@@ -86,6 +93,15 @@ adb:
   serial: null               # null = auto-detect first connected device
   adb_path: "adb"            # path to adb binary; set if not on $PATH
 
+# iOS / WebDriverAgent settings (iOS backend only)
+ios:
+  wda_url: "http://localhost:8100"   # URL of the running WDA server
+
+# HDC settings (HarmonyOS backend only)
+hdc:
+  serial: null               # null = auto-detect first connected device
+  hdc_path: "hdc"            # path to hdc binary; set if not on $PATH
+
 # Execution limits
 max_steps: 15
 
@@ -113,7 +129,7 @@ Positional:
 
 Options:
   --task TEXT             Task description (alternative to positional)
-  --backend {adb,local,dry-run}
+  --backend {adb,ios,hdc,local,dry-run}
                           Execution backend (default: local)
   --dry-run               Shortcut for --backend dry-run
   --config PATH           Config file path (default: ~/.opengui/config.yaml)
@@ -137,6 +153,12 @@ opengui "Open the browser and go to github.com"
 # Control Android device via ADB
 opengui --backend adb "Open Settings and enable Wi-Fi"
 
+# Control iOS device via WebDriverAgent
+opengui --backend ios "Open Settings and check the iOS version"
+
+# Control HarmonyOS device via HDC
+opengui --backend hdc "Open Settings and enable Bluetooth"
+
 # Run headlessly on Linux CI
 opengui --backend local --background "Take a screenshot of the desktop"
 
@@ -158,6 +180,8 @@ opengui --config ~/my-config.yaml "Open the calculator"
 | Linux    | `local` | Install `xdotool` and `xclip`; use `--background` for headless CI |
 | Windows  | `local` | Use `--target-app-class` to hint the window type for background isolation |
 | Android  | `adb`   | Install [ADBKeyboard](https://github.com/senzhk/ADBKeyboard): `adb shell ime set com.android.adbkeyboard/.AdbIME` |
+| iOS      | `ios`   | Requires WebDriverAgent running on device; install `pip install facebook-wda` |
+| HarmonyOS | `hdc`  | Requires HDC (Huawei Device Connector) on `$PATH`; UITest service must be running on device |
 
 ---
 
@@ -263,8 +287,10 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `backend` | `"adb"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
+| `backend` | `"adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
 | `adb.serial` | `string \| null` | `null` | ADB device serial; `null` = auto-detect |
+| `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent server URL |
+| `hdc.serial` | `string \| null` | `null` | HDC device serial; `null` = auto-detect |
 | `artifactsDir` | `string` | `"gui_runs"` | Directory for screenshots and run logs (relative to workspace) |
 | `maxSteps` | `int` | `15` | Maximum actions per task before giving up |
 | `embeddingModel` | `string \| null` | `null` | Embedding model for semantic skill search (e.g. `"text-embedding-v4"`) |
@@ -277,10 +303,12 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 
 ### Switching backends
 
-Change the `backend` field in the `gui` section to switch between Android and desktop control:
+Change the `backend` field in the `gui` section to switch between device and desktop control:
 
 ```json
 "gui": { "backend": "adb"      }   // Android device via ADB
+"gui": { "backend": "ios"      }   // iOS device via WebDriverAgent
+"gui": { "backend": "hdc"      }   // HarmonyOS device via HDC
 "gui": { "backend": "local"    }   // local desktop (macOS / Linux / Windows)
 "gui": { "backend": "dry-run"  }   // no real actions, for testing
 ```
@@ -289,6 +317,8 @@ In the standalone CLI, use the `--backend` flag:
 
 ```bash
 opengui --backend adb     "..."    # Android
+opengui --backend ios     "..."    # iOS
+opengui --backend hdc     "..."    # HarmonyOS
 opengui --backend local   "..."    # desktop
 opengui --backend dry-run "..."    # dry-run
 ```
@@ -400,6 +430,117 @@ To target a specific device when multiple are connected:
 
 Run `adb devices` to list available serials.
 
+#### iOS — WebDriverAgent
+
+```json
+{
+  "providers": {
+    "dashscope": { "apiKey": "sk-..." }
+  },
+  "agents": {
+    "defaults": { "model": "qwen3.5-plus" }
+  },
+  "gui": {
+    "backend": "ios",
+    "ios": { "wdaUrl": "http://localhost:8100" },
+    "maxSteps": 20,
+    "embeddingModel": "text-embedding-v4",
+    "enableSkillExecution": true
+  }
+}
+```
+
+> **iOS setup steps:**
+> 1. Install the Python client: `pip install facebook-wda`
+> 2. Build and deploy [WebDriverAgent](https://github.com/appium/WebDriverAgent) onto your device via Xcode
+> 3. Start the WDA server (Xcode test runner or `xcodebuild test-without-building`) — it listens on port `8100` by default
+> 4. Forward the port over USB: `iproxy 8100 8100` (from `libimobiledevice`)
+> 5. Verify the server is reachable: `curl http://localhost:8100/status`
+>
+> If WDA listens on a different host/port, update `wdaUrl` accordingly.
+
+#### HarmonyOS — HDC
+
+```json
+{
+  "providers": {
+    "dashscope": { "apiKey": "sk-..." }
+  },
+  "agents": {
+    "defaults": { "model": "qwen3.5-plus" }
+  },
+  "gui": {
+    "backend": "hdc",
+    "hdc": { "serial": null },
+    "maxSteps": 20,
+    "embeddingModel": "text-embedding-v4",
+    "enableSkillExecution": true
+  }
+}
+```
+
+> **HarmonyOS setup steps:**
+> 1. Enable Developer Mode: **Settings → About Phone → tap Build Number 7 times**
+> 2. Enable USB Debugging: **Settings → Developer Options → USB Debugging**
+> 3. Connect the device via USB and accept the pairing prompt on-device
+> 4. Install the HDC tool (ships with DevEco Studio SDK): ensure `hdc` is on your `$PATH`
+> 5. Verify: `hdc list targets` — your device serial should appear
+>
+> The UITest framework (`uitest` service) must be running on the device. It starts automatically on HarmonyOS 3.1+ when USB debugging is enabled.
+
+To target a specific device when multiple are connected:
+
+```json
+"hdc": { "serial": "FMR0223C13000649" }
+```
+
+Run `hdc list targets` to list available serials.
+
+---
+
+## Planner / Router Integration
+
+When nanobot decomposes a multi-step task into a plan, it needs to know which GUI route to assign to each GUI subtask. OpenGUI exposes a **route sentinel** per backend that the planner uses to emit correctly-typed plan nodes.
+
+### Route sentinels
+
+| Backend | Route sentinel | When it is active |
+|---------|---------------|-------------------|
+| `local` or `dry-run` | `gui.desktop` | Default; local desktop control |
+| `adb` | `gui.adb` | Android device via ADB |
+| `ios` | `gui.ios` | iOS device via WebDriverAgent |
+| `hdc` | `gui.hdc` | HarmonyOS device via HDC |
+
+The active sentinel is derived from `gui.backend` in your config:
+
+```
+"backend": "adb"   →  planner emits  route_id = "gui.adb"
+"backend": "ios"   →  planner emits  route_id = "gui.ios"
+"backend": "hdc"   →  planner emits  route_id = "gui.hdc"
+"backend": "local" →  planner emits  route_id = "gui.desktop"
+```
+
+The router dispatches any of `gui.desktop`, `gui.adb`, `gui.ios`, and `gui.hdc` to the same underlying GUI subagent tool — the sentinel exists only so the planner (and human readers of plan traces) can see which physical device a subtask targets.
+
+### How the planner learns the active backend
+
+At planning time, nanobot passes the current backend as `active_gui_route` inside `PlanningContext`. The planner directive instructs the LLM:
+
+> *"The current GUI backend is 'gui.hdc'. Use route_id='gui.hdc' for ALL GUI subtasks — do not use 'gui.desktop' or other GUI route IDs."*
+
+This ensures that when you switch between an Android phone, an iPhone, and a HarmonyOS device, the planner automatically generates the correct route IDs without any manual intervention.
+
+### Capability catalog
+
+The capability catalog shown to the planner also reflects the active backend:
+
+| `gui.backend` | Catalog summary shown to planner |
+|---------------|----------------------------------|
+| `adb` | "Use the GUI subagent to operate apps on the connected Android device" |
+| `ios` | "Use the GUI subagent to operate apps on the connected iOS device" |
+| `hdc` | "Use the GUI subagent to operate apps on the connected HarmonyOS device" |
+| `local` | "Use the GUI subagent to operate apps on the local desktop" |
+
 ---
 
 ## App List Initialization
@@ -412,6 +553,9 @@ OpenGUI caches the list of installed apps so the agent knows which apps are avai
 |----------|-----------|
 | Android (default device) | `~/.opengui/apps/android_default.json` |
 | Android (specific serial) | `~/.opengui/apps/android_R3CN70BAYER.json` |
+| iOS | `~/.opengui/apps/ios_default.json` |
+| HarmonyOS (default device) | `~/.opengui/apps/harmonyos_default.json` |
+| HarmonyOS (specific serial) | `~/.opengui/apps/harmonyos_FMR0223C13000649.json` |
 | macOS | `~/.opengui/apps/macos.json` |
 | Linux | `~/.opengui/apps/linux.json` |
 | Windows | `~/.opengui/apps/windows.json` |
@@ -422,6 +566,8 @@ The app list is fetched automatically on first run and cached. Subsequent runs r
 
 ```bash
 opengui --refresh-apps --backend adb "Open WeChat"
+opengui --refresh-apps --backend ios "Open Settings"
+opengui --refresh-apps --backend hdc "Open Settings"
 ```
 
 ### Manual initialization
@@ -446,6 +592,40 @@ You can seed or edit the cache by hand. The format is a JSON array of strings.
 > ```bash
 > adb shell pm list packages -3      # third-party apps only
 > adb shell pm list packages          # all packages
+> ```
+
+**iOS** (`~/.opengui/apps/ios_default.json`):
+
+```json
+[
+  "com.apple.Preferences",
+  "com.apple.mobilesafari",
+  "com.tencent.xin",
+  "com.alipay.iphoneclient",
+  "com.ss.iphone.ugc.Aweme"
+]
+```
+
+> iOS entries are **bundle IDs**. List installed app bundle IDs with:
+> ```bash
+> ideviceinstaller -l          # requires libimobiledevice
+> ```
+
+**HarmonyOS** (`~/.opengui/apps/harmonyos_default.json`):
+
+```json
+[
+  "com.huawei.settings",
+  "com.huawei.browser",
+  "com.tencent.mm",
+  "com.eg.android.AlipayGphone",
+  "com.ss.android.ugc.aweme"
+]
+```
+
+> HarmonyOS entries are **bundle names**. List installed bundles with:
+> ```bash
+> hdc shell bm dump -a          # list all bundles
 > ```
 
 **macOS** (`~/.opengui/apps/macos.json`):
@@ -522,7 +702,7 @@ Each file is a sequence of Markdown `##` sections — one section per memory ent
 ## {heading — first line of content, max 72 characters}
 id: {uuid}
 type: {os|app|icon|policy}
-platform: {android|macos|linux|windows|dry-run}
+platform: {android|ios|harmonyos|macos|linux|windows|dry-run}
 app: {package name or app name, leave blank if not app-specific}
 tags: {comma-separated tags, or leave blank}
 created_at: {unix timestamp as float}
@@ -567,6 +747,23 @@ WeChat chat list is on the first tab (bottom nav). Tap the compose icon
 contacts and messages. Long-press a conversation to pin, mute, or delete it.
 ```
 
+#### App guide — HarmonyOS Settings (`app_guide.md`)
+
+```markdown
+## HarmonyOS Settings main menu uses a card-based layout; swipe down to search
+id: 3a7f2c1e-0005-4b2d-a100-000000000005
+type: app
+platform: harmonyos
+app: com.huawei.settings
+tags: settings, navigation
+created_at: 1711468800.0
+access_count: 0
+
+HarmonyOS Settings presents options as large cards. Pull down anywhere in the
+list to reveal the search bar. Wi-Fi is under "WLAN", Bluetooth under
+"Bluetooth", and app permissions under "Apps > Permission Manager".
+```
+
 #### Icon guide — custom app icon (`icon_guide.md`)
 
 ```markdown
@@ -609,7 +806,7 @@ You can add, edit, or delete entries by directly editing the Markdown files in `
 - The `id:`, `type:`, and `platform:` metadata lines are **required**; all others are optional but recommended
 - `id` must be a UUID — generate one with `python -c "import uuid; print(uuid.uuid4())"`
 - `type` must be one of: `os`, `app`, `icon`, `policy`
-- `platform` must be one of: `android`, `macos`, `linux`, `windows`, `dry-run`
+- `platform` must be one of: `android`, `ios`, `harmonyos`, `macos`, `linux`, `windows`, `dry-run`
 - Separate the metadata block from the content body with a blank line
 - Multiple entries in the same file are separated by `##` headings
 
@@ -623,6 +820,8 @@ To delete an entry, simply remove its entire `##` section from the file.
 |---------|---------------------|-------------|
 | `local` | macOS / Linux / Windows | Control the desktop of the machine running nanobot/opengui |
 | `adb` | Android (USB or network ADB) | Control a connected Android device or emulator |
+| `ios` | iOS (USB or Wi-Fi via WebDriverAgent) | Control a connected iPhone or iPad via the WDA HTTP server |
+| `hdc` | HarmonyOS (USB or network HDC) | Control a connected HarmonyOS device via `hdc` CLI and UITest framework |
 | `dry-run` | Any | Testing mode — no real actions executed; screenshots return a 1×1 transparent PNG |
 
 ---
