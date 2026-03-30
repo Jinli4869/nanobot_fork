@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed quick/260326-e16
-last_updated: "2026-03-26T02:15:03.479Z"
-last_activity: "2026-03-25 - Completed quick task 260325-ts0: Wire SkillExecutor into GuiSubagentTool via enable_skill_execution config flag"
+stopped_at: Completed quick/260330-l0g
+last_updated: "2026-03-30T07:26:04.482Z"
+last_activity: "2026-03-30 - Completed quick task 260330-khq: Add iOS/iPhone WDA backend to OpenGUI with full action coverage, bundle ID normalization, CLI integration, and nanobot gui.ios routing"
 progress:
   total_phases: 4
   completed_phases: 4
@@ -160,6 +160,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [260325-l2b]: active_gui_route derivation: adb->gui.adb, local/dry-run->gui.desktop (local does NOT produce gui.local)
 - [260325-l2b]: Router _dispatch_with_fallback handles gui.adb sentinel same as gui.desktop via set membership check
 - [Phase quick]: [260326-e16]: _JIEBA_AVAILABLE module-level flag dispatches _tokenize() to jieba or char-level fallback; SkillLibrary inherits improvement via shared _BM25Index with no changes
+- [Phase quick-260330-l0g]: HdcBackend platform=harmonyos for AppCache keying; JPEG->PNG via PIL in asyncio.to_thread; static bundle list for list_apps(); open_app uses bundle/ability slash convention with MainAbility default; gui.hdc sentinel added to router/loop/capabilities like gui.adb and gui.ios
 
 ### Pending Todos
 
@@ -202,11 +203,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260325-ts0 | Wire SkillExecutor into nanobot GuiSubagentTool via enable_skill_execution config flag; add enable_skill_execution field to GuiConfig | 2026-03-25 | 5f81c1b | [260325-ts0-nanobot](./quick/260325-ts0-nanobot/) |
 | 260326-e16 | 引入jieba进行分词,为稳定的中文检索进行支持,并确认skills的检索也支持中文稳定检索 | 2026-03-26 | 34b41ed | [260326-e16-jieba-skills](./quick/260326-e16-jieba-skills/) |
 | 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
+| 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-30 - Completed quick task 260330-khq: Add iOS/iPhone WDA backend to OpenGUI with full action coverage, bundle ID normalization, CLI integration, and nanobot gui.ios routing
+Last activity: 2026-03-30 - Completed quick task 260330-l0g: Add HarmonyOS HDC backend to OpenGUI with full action coverage, JPEG screenshot conversion, uitest uiInput commands, and nanobot gui.hdc routing
 
-Last session: 2026-03-30T06:59:12Z
-Stopped at: Completed quick/260330-khq
+Last session: 2026-03-30T07:25:56.928Z
+Stopped at: Completed quick/260330-l0g
 Resume file: None
