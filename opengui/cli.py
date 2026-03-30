@@ -75,6 +75,9 @@ class AppCache:
             return f"android_{serial}"
         if platform == "ios":
             return "ios_default"
+        if platform == "harmonyos":
+            serial = getattr(backend, "_serial", None) or "default"
+            return f"harmonyos_{serial}"
         return platform
 
     def load(self, key: str) -> list[str] | None:
@@ -121,6 +124,12 @@ class IosConfig:
 
 
 @dataclass(slots=True)
+class HdcConfig:
+    serial: str | None = None
+    hdc_path: str = "hdc"
+
+
+@dataclass(slots=True)
 class BackgroundConfig:
     """Settings for isolated background displays used with --background."""
 
@@ -135,6 +144,7 @@ class CliConfig:
     embedding: EmbeddingConfig | None = None
     adb: AdbConfig = field(default_factory=AdbConfig)
     ios: IosConfig = field(default_factory=IosConfig)
+    hdc: HdcConfig = field(default_factory=HdcConfig)
     max_steps: int = 15
     memory_dir: Path | None = None
     skills_dir: Path | None = None
@@ -217,7 +227,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", dest="task_flag", help="Task description")
     parser.add_argument(
         "--backend",
-        choices=("adb", "ios", "local", "dry-run"),
+        choices=("adb", "ios", "hdc", "local", "dry-run"),
         default="local",
         help="Execution backend",
     )
@@ -267,7 +277,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.task_input and not args.task_flag:
         parser.error("task is required via positional input or --task")
-    if args.background and args.backend in ("adb", "ios", "dry-run"):
+    if args.background and args.backend in ("adb", "ios", "hdc", "dry-run"):
         parser.error("--background requires --backend local (or omit --backend)")
     if args.background and args.dry_run:
         parser.error("--background is incompatible with --dry-run")
@@ -350,11 +360,20 @@ def load_config(path: Path | None = None) -> CliConfig:
         wda_url=_optional_string(ios_raw, "wda_url") or "http://localhost:8100",
     )
 
+    hdc_raw = raw.get("hdc") or {}
+    if not isinstance(hdc_raw, dict):
+        raise ValueError("hdc config must be a mapping")
+    hdc = HdcConfig(
+        serial=_optional_string(hdc_raw, "serial"),
+        hdc_path=_optional_string(hdc_raw, "hdc_path") or "hdc",
+    )
+
     return CliConfig(
         provider=provider,
         embedding=embedding,
         adb=adb,
         ios=ios,
+        hdc=hdc,
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
         memory_dir=_optional_path(raw.get("memory_dir")),
         skills_dir=_optional_path(raw.get("skills_dir")),
@@ -367,6 +386,9 @@ def build_backend(name: str, config: CliConfig) -> Any:
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend
         return WdaBackend(wda_url=config.ios.wda_url)
+    if name == "hdc":
+        from opengui.backends.hdc import HdcBackend
+        return HdcBackend(serial=config.hdc.serial, hdc_path=config.hdc.hdc_path or "hdc")
     if name == "local":
         desktop_backend_cls = LocalDesktopBackend
         if desktop_backend_cls is None:

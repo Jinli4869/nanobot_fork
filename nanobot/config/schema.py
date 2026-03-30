@@ -163,11 +163,18 @@ class AdbConfig(Base):
     serial: str | None = None
 
 
+class HdcConfig(Base):
+    """HDC backend configuration for HarmonyOS device automation."""
+
+    serial: str | None = None
+
+
 class GuiConfig(Base):
     """GUI subagent configuration."""
 
-    backend: Literal["adb", "local", "dry-run"] = "adb"
+    backend: Literal["adb", "hdc", "local", "dry-run"] = "adb"
     adb: AdbConfig = Field(default_factory=AdbConfig)
+    hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
     skill_threshold: float = 0.6
