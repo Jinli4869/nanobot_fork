@@ -166,6 +166,12 @@ class CapabilityCatalogBuilder:
                 kind = "adb"
                 summary = "Use the GUI subagent to operate apps on the connected Android device"
 
+            # Override the GUI route metadata when the active backend is iOS/WDA.
+            if tool_name == "gui_task" and gui_backend == "ios":
+                route_id = "gui.ios"
+                kind = "ios"
+                summary = "Use the GUI subagent to operate apps on the connected iOS device"
+
             routes.append(
                 RouteSummary(
                     route_id=route_id,

@@ -65,6 +65,7 @@ class AppCache:
         """Derive a unique filename stem from a backend instance.
 
         - AdbBackend  → ``android_{serial}`` or ``android_default``
+        - WdaBackend  → ``ios_default``
         - Desktop     → ``macos`` / ``linux`` / ``windows``
         - DryRun      → ``dry-run``
         """
@@ -72,6 +73,8 @@ class AppCache:
         if platform == "android":
             serial = getattr(backend, "_serial", None) or "default"
             return f"android_{serial}"
+        if platform == "ios":
+            return "ios_default"
         return platform
 
     def load(self, key: str) -> list[str] | None:
@@ -113,6 +116,11 @@ class AdbConfig:
 
 
 @dataclass(slots=True)
+class IosConfig:
+    wda_url: str = "http://localhost:8100"
+
+
+@dataclass(slots=True)
 class BackgroundConfig:
     """Settings for isolated background displays used with --background."""
 
@@ -126,6 +134,7 @@ class CliConfig:
     provider: ProviderConfig
     embedding: EmbeddingConfig | None = None
     adb: AdbConfig = field(default_factory=AdbConfig)
+    ios: IosConfig = field(default_factory=IosConfig)
     max_steps: int = 15
     memory_dir: Path | None = None
     skills_dir: Path | None = None
@@ -208,7 +217,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", dest="task_flag", help="Task description")
     parser.add_argument(
         "--backend",
-        choices=("adb", "local", "dry-run"),
+        choices=("adb", "ios", "local", "dry-run"),
         default="local",
         help="Execution backend",
     )
@@ -258,7 +267,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.task_input and not args.task_flag:
         parser.error("task is required via positional input or --task")
-    if args.background and args.backend in ("adb", "dry-run"):
+    if args.background and args.backend in ("adb", "ios", "dry-run"):
         parser.error("--background requires --backend local (or omit --backend)")
     if args.background and args.dry_run:
         parser.error("--background is incompatible with --dry-run")
@@ -334,10 +343,18 @@ def load_config(path: Path | None = None) -> CliConfig:
         adb_path=_optional_string(adb_raw, "adb_path") or "adb",
     )
 
+    ios_raw = raw.get("ios") or {}
+    if not isinstance(ios_raw, dict):
+        raise ValueError("ios config must be a mapping")
+    ios = IosConfig(
+        wda_url=_optional_string(ios_raw, "wda_url") or "http://localhost:8100",
+    )
+
     return CliConfig(
         provider=provider,
         embedding=embedding,
         adb=adb,
+        ios=ios,
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
         memory_dir=_optional_path(raw.get("memory_dir")),
         skills_dir=_optional_path(raw.get("skills_dir")),
@@ -347,6 +364,9 @@ def load_config(path: Path | None = None) -> CliConfig:
 def build_backend(name: str, config: CliConfig) -> Any:
     if name == "adb":
         return AdbBackend(serial=config.adb.serial, adb_path=config.adb.adb_path or "adb")
+    if name == "ios":
+        from opengui.backends.ios_wda import WdaBackend
+        return WdaBackend(wda_url=config.ios.wda_url)
     if name == "local":
         desktop_backend_cls = LocalDesktopBackend
         if desktop_backend_cls is None:
