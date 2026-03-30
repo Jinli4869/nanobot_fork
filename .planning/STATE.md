@@ -201,11 +201,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260325-sku | Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate in router.py and loop.py | 2026-03-25 | 56e685b | [260325-sku-and-complexity-tool-gui-plan](./quick/260325-sku-and-complexity-tool-gui-plan/) |
 | 260325-ts0 | Wire SkillExecutor into nanobot GuiSubagentTool via enable_skill_execution config flag; add enable_skill_execution field to GuiConfig | 2026-03-25 | 5f81c1b | [260325-ts0-nanobot](./quick/260325-ts0-nanobot/) |
 | 260326-e16 | 引入jieba进行分词,为稳定的中文检索进行支持,并确认skills的检索也支持中文稳定检索 | 2026-03-26 | 34b41ed | [260326-e16-jieba-skills](./quick/260326-e16-jieba-skills/) |
+| 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
 
 ## Session Continuity
 
-Last activity: 2026-03-26 - Completed quick task 260326-e16: 引入jieba进行分词,为稳定的中文检索进行支持,并确认skills的检索也支持中文稳定检索
+Last activity: 2026-03-30 - Completed quick task 260330-khq: Add iOS/iPhone WDA backend to OpenGUI with full action coverage, bundle ID normalization, CLI integration, and nanobot gui.ios routing
 
-Last session: 2026-03-26T02:14:49.925Z
-Stopped at: Completed quick/260326-e16
+Last session: 2026-03-30T06:59:12Z
+Stopped at: Completed quick/260330-khq
 Resume file: None
