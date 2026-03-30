@@ -593,7 +593,7 @@ class AgentLoop:
         gui_memory_context = self._load_gui_memory_for_planner()
         # Derive the stable planner route_id from the active backend.
         # "local" maps to "gui.desktop" (not "gui.local"); "dry-run" falls back to "gui.desktop".
-        active_gui_route = f"gui.{gui_backend}" if gui_backend in ("adb", "ios", "desktop") else "gui.desktop"
+        active_gui_route = f"gui.{gui_backend}" if gui_backend in ("adb", "ios", "hdc", "desktop") else "gui.desktop"
         planning_context = PlanningContext(
             catalog=catalog,
             memory_hints=memory_hints,
