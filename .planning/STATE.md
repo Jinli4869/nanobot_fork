@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: New OpenGUI Skills Architecture
-status: defining_requirements
-stopped_at: Milestone v1.5 started
+status: roadmap_defined
+stopped_at: Roadmap created for v1.5 (phases 24-27)
 last_updated: "2026-04-01T00:00:00.000Z"
-last_activity: "2026-04-01 - Milestone v1.5 started — defining requirements for new three-layer skills architecture"
+last_activity: "2026-04-01 - Roadmap defined for v1.5 New OpenGUI Skills Architecture — 4 phases, 20 requirements mapped"
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -18,21 +18,21 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-03-21)
+See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 22 — route-aware-tool-and-mcp-dispatch
+**Current focus:** Milestone v1.5 — Phase 24 next (Schema and Grounding)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (roadmap defined, planning next)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-04-01 — Milestone v1.5 started
+Status: Roadmap defined
+Last activity: 2026-04-01 — v1.5 roadmap created (phases 24-27, 20 requirements mapped)
 
 ## Performance Metrics
 
-**Progress:** [██████████] 100%
+**Progress:** [██████████] 100% (v1.4 phases complete; v1.5 not started)
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -163,11 +163,15 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [260325-l2b]: Router _dispatch_with_fallback handles gui.adb sentinel same as gui.desktop via set membership check
 - [Phase quick]: [260326-e16]: _JIEBA_AVAILABLE module-level flag dispatches _tokenize() to jieba or char-level fallback; SkillLibrary inherits improvement via shared _BM25Index with no changes
 - [Phase quick-260330-l0g]: HdcBackend platform=harmonyos for AppCache keying; JPEG->PNG via PIL in asyncio.to_thread; static bundle list for list_apps(); open_app uses bundle/ability slash convention with MainAbility default; gui.hdc sentinel added to router/loop/capabilities like gui.adb and gui.ios
+- [v1.5-roadmap]: Phase 24 groups SCHEMA-01..06 and GRND-01..03 together because grounding protocol is a typed contract required by both schemas and executors; they form a single foundation layer
+- [v1.5-roadmap]: Phase 25 (execution) and Phase 26 (extraction) both depend on Phase 24 schemas but are independent of each other; execution needs the runtime contracts, extraction only needs schema shapes to produce skill candidates
+- [v1.5-roadmap]: Phase 27 is the capstone: persists what extraction produces, enables search across both layers, and wires GuiAgent to consume both layers with memory context injection
+- [v1.5-roadmap]: Fresh start on skill data — old skills.json kept as reference, new stores start empty; quality-gated re-extraction produces better seeds than migrating brittle pixel-coordinate skills
 
 ### Pending Todos
 
 1. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
-2. Start Phase 20 by wiring the React/Vite shell onto the completed Phase 17-19 backend contracts
+2. Start Phase 24 planning — Schema and Grounding (SCHEMA-01..06, GRND-01..03)
 
 ### Blockers/Concerns
 
@@ -209,8 +213,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last activity: 2026-03-30 - Completed quick task 260330-l0g: Add HarmonyOS HDC backend to OpenGUI with full action coverage, JPEG screenshot conversion, uitest uiInput commands, and nanobot gui.hdc routing
+Last activity: 2026-04-01 - Roadmap defined for v1.5 New OpenGUI Skills Architecture — phases 24-27, 20 requirements mapped, all phases with success criteria derived
 
-Last session: 2026-03-30T07:25:56.928Z
-Stopped at: Completed quick/260330-l0g
+Last session: 2026-04-01T00:00:00.000Z
+Stopped at: v1.5 roadmap creation complete
 Resume file: None
