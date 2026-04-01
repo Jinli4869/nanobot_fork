@@ -18,16 +18,19 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
 - **Planner status:** Phase 21 added a live route catalog plus bounded routing-memory hints; Phase 22 completed real route-aware `tool` and `mcp` dispatch with fallback chains and observability logging
 
-## Current Milestone: v1.3 Nanobot Web Workspace
+## Current Milestone: v1.5 New OpenGUI Skills Architecture
 
-**Goal:** Add a local-first web workspace for nanobot that combines browser chat and GUI operations while keeping the new FastAPI + React + Vite stack isolated under `nanobot/tui` and minimizing changes to the existing nanobot runtime.
+**Goal:** Replace the flat single-layer skill system with a two-layer tree architecture: a shortcut layer (verifiable macro actions with typed contracts and parameter slots) and a task-level layer (shortcut composition with ATOM fallbacks and conditional branches), backed by a pluggable grounding protocol, a quality-gated extraction pipeline with step-level and trajectory-level critics, and separate layer-aware skill stores.
 
 **Target features:**
-- Browser chat workspace with streaming replies, recent sessions, and recovery after refresh
-- Operations console for launching and monitoring supported nanobot/OpenGUI tasks
-- Thin FastAPI adapter layer and React/Vite frontend packaged under `nanobot/tui`
+- Two-layer skill schema: ShortcutSkill (typed pre/post contracts, parameter slots) and TaskSkill (shortcut refs + ATOM steps + branches + memory context pointer)
+- GrounderProtocol interface with LLMGrounder implementation, enabling pluggable target resolution
+- Multi-layer execution engine: ShortcutExecutor and TaskSkillExecutor with contract verification
+- Quality-gated extraction: step-level critic + trajectory-level critic before any skill is promoted
+- Separate versioned JSON stores for shortcut and task-level layers, unified hybrid search
+- GuiAgent integration searching both layers with app memory context injection
 
-## Next Milestone: v1.4 Capability-Aware Planning And Routing
+## Previous Milestone: v1.4 Capability-Aware Planning And Routing (Completed)
 
 **Goal:** Make nanobot planning and execution capability-aware so route selection can prefer shell/tool/MCP paths when they are more appropriate than GUI automation.
 
@@ -35,7 +38,6 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Compact planner-time capability catalog built from the live tool registry and MCP inventory
 - Memory-derived routing hints so previous successful routes influence future planning
 - Route-aware router execution for `tool` and `mcp` nodes instead of placeholder-only dispatch
-- Verification scenarios that prove capability choice improves on mixed host tasks such as system toggles and local automation
 
 ## Requirements
 
@@ -66,9 +68,13 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ### Active
 
-- [ ] Browser-based chat workspace for nanobot sessions
-- [ ] Browser-based operations console for OpenGUI and runtime visibility
-- [ ] FastAPI + React + Vite implementation isolated under `nanobot/tui`
+- [ ] ShortcutSkill schema with typed pre/post contracts and parameter slots
+- [ ] TaskSkill schema with shortcut references, ATOM fallbacks, conditional branches, and memory context pointer
+- [ ] GrounderProtocol interface with LLMGrounder implementation
+- [ ] ShortcutExecutor and TaskSkillExecutor with contract verification
+- [ ] Step-level and trajectory-level quality critics for skill extraction
+- [ ] Two-layer skill store (separate shortcut and task-level JSON stores with unified search)
+- [ ] GuiAgent integration searching both layers with app memory context injection
 
 ### Out of Scope
 
@@ -102,11 +108,15 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 | Xvfb via `asyncio.subprocess` | No extra Python binding dependency, CI-friendly mocking boundary | ✓ Good |
 | Shared runtime probe + resolved-mode contract | Keep CLI, nanobot, and future macOS/Windows flows on one capability vocabulary | ✓ Good |
 | Process-wide runtime lease coordinator | Prevent overlapping background runs from corrupting global desktop state | ✓ Good |
-| Keep the web stack under `nanobot/tui` | Minimize pollution of the existing nanobot and OpenGUI modules while adding a new surface area | — Pending |
-| Use FastAPI + React + Vite for v1.3 | Match the desired local-first stack and keep backend/frontend responsibilities cleanly separated | — Pending |
-| Planner should consume a compact live capability catalog instead of guessing from coarse labels alone | Improves capability selection without overwhelming the prompt with raw schema dumps | — Proposed |
-| Memory should contribute routing hints, not full conversational context, to planning | Reuses prior successful tool choices while keeping planner prompts focused and bounded | — Proposed |
+| Keep the web stack under `nanobot/tui` | Minimize pollution of the existing nanobot and OpenGUI modules while adding a new surface area | ✓ Good |
+| Use FastAPI + React + Vite for v1.3 | Match the desired local-first stack and keep backend/frontend responsibilities cleanly separated | ✓ Good |
+| Planner should consume a compact live capability catalog instead of guessing from coarse labels alone | Improves capability selection without overwhelming the prompt with raw schema dumps | ✓ Good |
+| Memory should contribute routing hints, not full conversational context, to planning | Reuses prior successful tool choices while keeping planner prompts focused and bounded | ✓ Good |
 | Router should dispatch by explicit route identity, not only by coarse capability type | Makes tool and MCP routes executable and inspectable in logs/traces | ✓ Good |
+| Three-layer skills tree: shortcut → task-level → orchestration (v1.5 builds shortcut + task-level) | Current flat SkillStep list has no composition semantics, no typed contracts, and no quality gate | — Pending |
+| GrounderProtocol as pluggable interface (LLM/OmniParser/future) | Decouples skill definitions from grounding implementation; enables OmniParser and future grounders without schema changes | — Pending |
+| Fresh start on skill data: old skills.json kept as reference, new stores start empty | Migration of brittle pixel-coordinate skills would import fragility; quality-gated re-extraction produces better seeds | — Pending |
+| Both step-level and trajectory-level critics required before skill promotion | Mobile-Agent-v3 approach: filters bad steps and low-quality trajectories from being crystallized as reusable skills | — Pending |
 
 ## Constraints
 
@@ -119,4 +129,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-03-22 after completing Phase 22 route-aware tool and MCP dispatch*
+*Last updated: 2026-04-01 after starting milestone v1.5 New OpenGUI Skills Architecture*

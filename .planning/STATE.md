@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Nanobot Web Workspace
-status: unknown
-stopped_at: Completed quick/260330-l0g
-last_updated: "2026-03-30T07:26:04.482Z"
-last_activity: "2026-03-30 - Completed quick task 260330-khq: Add iOS/iPhone WDA backend to OpenGUI with full action coverage, bundle ID normalization, CLI integration, and nanobot gui.ios routing"
+milestone: v1.5
+milestone_name: New OpenGUI Skills Architecture
+status: defining_requirements
+stopped_at: Milestone v1.5 started
+last_updated: "2026-04-01T00:00:00.000Z"
+last_activity: "2026-04-01 - Milestone v1.5 started — defining requirements for new three-layer skills architecture"
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 11
-  completed_plans: 11
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,8 +25,10 @@ See: .planning/PROJECT.md (updated 2026-03-21)
 
 ## Current Position
 
-Phase: 22 (route-aware-tool-and-mcp-dispatch) — EXECUTING
-Plan: 1 of 2
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-04-01 — Milestone v1.5 started
 
 ## Performance Metrics
 
