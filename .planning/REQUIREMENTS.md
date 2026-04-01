@@ -1,91 +1,110 @@
-# Requirements: OpenGUI
+# Requirements: OpenGUI v1.5
 
-**Defined:** 2026-03-21
-**Core Value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
+**Defined:** 2026-04-01
+**Core Value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously, while accumulating reusable skills and execution history over time.
 
-## v1 Requirements
+## v1.5 Requirements
 
-Requirements for milestone v1.3: Nanobot Web Workspace.
+Requirements for the new OpenGUI skills architecture milestone. Replaces the flat single-layer skill system with a two-layer tree (shortcut + task-level), backed by a pluggable grounding protocol, quality-gated extraction, and layer-aware storage.
 
-### Web App Shell
+### SCHEMA — New Skill Data Models
 
-- [ ] **WEB-01**: User can open a browser-based nanobot workspace served from the local app instead of relying on terminal-only interaction
-- [ ] **WEB-02**: User can switch between chat and operations views inside one web app without losing the active workspace context
+- [ ] **SCHEMA-01**: Shortcut skill defines pre/post conditions as structured, checkable state descriptors (not free-form strings)
+- [ ] **SCHEMA-02**: Shortcut skill declares typed parameter slots (name, type, description) for runtime grounding
+- [ ] **SCHEMA-03**: Task-level skill references shortcut skills by ID with parameter binding declarations
+- [ ] **SCHEMA-04**: Task-level skill supports inline ATOM fallback steps for actions not covered by a shortcut
+- [ ] **SCHEMA-05**: Task-level skill supports conditional branch nodes with checkable condition expressions
+- [ ] **SCHEMA-06**: Task-level skill carries an optional pointer to an app memory context entry in the existing memory system
 
-### Chat Workspace
+### GRND — Pluggable Grounding Protocol
 
-- [x] **CHAT-01**: User can start a new nanobot conversation and send follow-up messages from the web UI
-- [x] **CHAT-02**: User sees streamed assistant responses and progress updates in the web UI as they happen
-- [x] **CHAT-03**: User can refresh or reconnect the page and recover recent session history from backend state
+- [ ] **GRND-01**: GrounderProtocol defines a common async interface for resolving semantic step targets to concrete action parameters
+- [ ] **GRND-02**: LLMGrounder implements GrounderProtocol wrapping the existing vision-LLM grounding path
+- [ ] **GRND-03**: Grounding results expose the grounder used, confidence score, and fallback metadata
 
-### Operations Console
+### EXEC — Multi-layer Execution Engine
 
-- [x] **OPS-01**: User can inspect runtime status for sessions, background GUI runs, and recent failures from the web UI
-- [x] **OPS-02**: User can launch supported nanobot or OpenGUI tasks from the web UI with explicit task parameters
-- [x] **OPS-03**: User can inspect structured logs or event traces for web-triggered runs without dropping to the terminal
+- [ ] **EXEC-01**: ShortcutExecutor verifies pre/post contracts at each step boundary and reports violations
+- [ ] **EXEC-02**: TaskSkillExecutor resolves shortcut references, executes ATOM fallback steps, and evaluates conditional branches
+- [ ] **EXEC-03**: Both executors route all action parameter resolution through GrounderProtocol
 
-### Isolation and Delivery
+### EXTR — Quality-Gated Skill Extraction
 
-- [ ] **ISO-01**: The web backend lives under `nanobot/tui` and reaches existing nanobot or OpenGUI behavior through thin adapter boundaries instead of broad core-runtime refactors
-- [ ] **ISO-02**: The first web release defaults to local-first safe access patterns such as localhost binding and explicit config, without adding mandatory cloud dependencies
-- [ ] **SHIP-01**: User can start the web workspace through documented development and packaged entrypoints without breaking existing CLI usage
+- [ ] **EXTR-01**: Step-level critic evaluates each trajectory step for correctness before skill extraction
+- [ ] **EXTR-02**: Trajectory-level critic evaluates overall trajectory quality before a skill is promoted to the library
+- [ ] **EXTR-03**: Extraction pipeline only promotes skills from trajectories passing both critics
+- [ ] **EXTR-04**: Extractor produces shortcut-layer skill candidates from validated trajectory step sequences
 
-## v2 Requirements
+### STOR — Two-Layer Skill Store
 
-### Multi-User and Remote Access
+- [ ] **STOR-01**: Shortcut skills and task-level skills are persisted in separate, versioned JSON stores
+- [ ] **STOR-02**: Unified skill search covers both layers with layer-aware relevance scoring
 
-- **AUTH-01**: User can protect the web workspace with first-class authentication suitable for non-local or multi-user deployment
-- **AUTH-02**: Operators can manage multiple users or roles inside the same web workspace instance
+### INTEG — Agent Integration
 
-### Richer Browser Operations
+- [ ] **INTEG-01**: GuiAgent searches both skill layers during pre-task skill lookup and selects the most appropriate match
+- [ ] **INTEG-02**: GuiAgent injects the app memory context referenced by a task-level skill into the execution context before running
 
-- **OBS-01**: User can watch a live browser-rendered viewer for active GUI runs instead of relying only on status and logs
-- **TRACE-01**: User can replay completed runs visually with screenshots, actions, and tool events
+## Future Requirements (v1.6+)
 
-### Capability-Aware Planning And Routing
+### Orchestration Layer (deferred)
 
-- [x] **CAP-01**: Planner can see a compact summary of currently available GUI, tool, shell/exec, and MCP routes instead of reasoning from coarse capability labels alone
-- [x] **CAP-02**: Planner context can include routing-relevant memory hints about previously successful routes without dumping unrelated memory into the prompt
-- [x] **CAP-03**: Router can execute `tool` plan nodes through real dispatch instead of placeholder-only success responses
-- [x] **CAP-04**: Router can execute `mcp` plan nodes through real dispatch with route validation and fallback behavior
-- [ ] **CAP-05**: The system can learn from successful route selections and improve future capability choice on representative mixed-capability tasks
+- **ORCH-01**: Orchestration-layer skills define high-level strategy templates composed of task-level skills and explicit OR-branch nodes
+- **ORCH-02**: Main agent can delegate orchestration skill execution with OR-branch resolution at the agent level
+- **ORCH-03**: Orchestration skills support GUI + tool/MCP collaborative workflows with explicit capability boundaries
+
+### Grounding Extensions (deferred)
+
+- **GRND-04**: OmniParser implements GrounderProtocol for structured element detection as an alternative to LLM grounding
+- **GRND-05**: Grounding cache avoids redundant LLM/OmniParser calls for repeated screen elements within a session
+
+### Skill Promotion Pipeline (deferred)
+
+- **EXTR-05**: Extractor can synthesize task-level skill candidates by composing shortcut sequences from validated trajectories
+- **EXTR-06**: Skill promotion includes a live sandbox verification step before a candidate enters the stable library
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Replacing the existing CLI and chat-channel surfaces | The web workspace is an added surface, not a rewrite of proven host entry points |
-| Broadly refactoring core nanobot or OpenGUI runtime modules to fit the web UI | Violates the isolation goal for work under `nanobot/tui` |
-| Multi-user auth, internet-facing hosting, or cloud tenancy in v1.3 | Expands scope beyond the requested local-first web milestone |
-| A full live remote desktop viewer in the browser | Better treated as a later milestone after chat and operations basics ship |
+| Migration of existing skills.json | Old skills carry pixel-coordinate data that doesn't generalize; quality-gated re-extraction is safer |
+| Orchestration layer | Deferred to v1.6 — shortcut + task-level must be stable first |
+| OmniParser grounding backend | Deferred to v1.6 via GrounderProtocol — LLM grounder covers v1.5 needs |
+| Skill sandbox verification before promotion | Deferred — critics provide sufficient quality gate for v1.5 |
+| Persistent FAISS index | Deferred — in-session FAISS rebuild is acceptable at current scale |
 
 ## Traceability
 
+Which phases cover which requirements. Updated during roadmap creation.
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ISO-01 | Phase 17 | Pending |
-| ISO-02 | Phase 17 | Pending |
-| CHAT-01 | Phase 18 | Complete |
-| CHAT-02 | Phase 18 | Complete |
-| CHAT-03 | Phase 18 | Complete |
-| OPS-01 | Phase 19 | Complete |
-| OPS-02 | Phase 19 | Complete |
-| OPS-03 | Phase 19 | Complete |
-| WEB-01 | Phase 20 | Pending |
-| WEB-02 | Phase 20 | Pending |
-| SHIP-01 | Phase 20 | Pending |
-| CAP-01 | Phase 21 | Complete |
-| CAP-02 | Phase 21 | Complete |
-| CAP-03 | Phase 22 | Complete |
-| CAP-04 | Phase 22 | Complete |
-| CAP-05 | Phase 23 | Pending |
+| SCHEMA-01 | TBD | Pending |
+| SCHEMA-02 | TBD | Pending |
+| SCHEMA-03 | TBD | Pending |
+| SCHEMA-04 | TBD | Pending |
+| SCHEMA-05 | TBD | Pending |
+| SCHEMA-06 | TBD | Pending |
+| GRND-01 | TBD | Pending |
+| GRND-02 | TBD | Pending |
+| GRND-03 | TBD | Pending |
+| EXEC-01 | TBD | Pending |
+| EXEC-02 | TBD | Pending |
+| EXEC-03 | TBD | Pending |
+| EXTR-01 | TBD | Pending |
+| EXTR-02 | TBD | Pending |
+| EXTR-03 | TBD | Pending |
+| EXTR-04 | TBD | Pending |
+| STOR-01 | TBD | Pending |
+| STOR-02 | TBD | Pending |
+| INTEG-01 | TBD | Pending |
+| INTEG-02 | TBD | Pending |
 
 **Coverage:**
-- v1 requirements: 11 total
-- v2 requirements: 7 total
-- Mapped to phases: 16
-- Unmapped: 0 ✓
+- v1.5 requirements: 20 total
+- Mapped to phases: 0 (roadmap pending)
+- Unmapped: 20
 
 ---
-*Requirements defined: 2026-03-21*
-*Last updated: 2026-03-22 after completing Phase 21 capability-aware planner context requirements*
+*Requirements defined: 2026-04-01*
+*Last updated: 2026-04-01 after initial definition*
