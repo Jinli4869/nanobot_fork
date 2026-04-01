@@ -11,6 +11,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 - ○ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (closeout in progress)
 - ○ **v1.3 Nanobot Web Workspace** — Phases 17-20 (in progress)
 - ○ **v1.4 Capability-Aware Planning And Routing** — Phases 21-23 (planned)
+- ○ **v1.5 New OpenGUI Skills Architecture** — Phases 24-27 (planned)
 
 ## Current Milestone: v1.3 Nanobot Web Workspace
 
@@ -168,12 +169,84 @@ Plans:
 3. Mixed-capability regression scenarios demonstrate fewer unnecessary GUI choices on host-side operations.
 4. The milestone closes with both automated verification and a manual sanity pass over representative planner outputs.
 
+## Current Milestone: v1.5 New OpenGUI Skills Architecture
+
+**Goal:** Replace the flat single-layer skill system with a two-layer tree architecture — shortcut layer (verifiable macro actions with typed contracts and parameter slots) and task-level layer (shortcut composition with ATOM fallbacks and conditional branches) — backed by a pluggable grounding protocol, a quality-gated extraction pipeline with step-level and trajectory-level critics, and separate layer-aware skill stores.
+
+**Requirements:** 20 mapped / 20 total
+
+| Phase | Name | Goal | Requirements | Success Criteria |
+|-------|------|------|--------------|------------------|
+| 24 | Schema and Grounding | Define the two-layer skill data models and the pluggable grounding protocol so all downstream execution and extraction have stable typed contracts to build against. | SCHEMA-01, SCHEMA-02, SCHEMA-03, SCHEMA-04, SCHEMA-05, SCHEMA-06, GRND-01, GRND-02, GRND-03 | 4 |
+| 25 | Multi-layer Execution | Implement ShortcutExecutor and TaskSkillExecutor so shortcut-layer and task-level skills can execute with contract verification and grounded parameter resolution. | EXEC-01, EXEC-02, EXEC-03 | 4 |
+| 26 | Quality-Gated Extraction | Build the step-level and trajectory-level critics and the extraction pipeline that converts validated trajectories into shortcut-layer skill candidates. | EXTR-01, EXTR-02, EXTR-03, EXTR-04 | 4 |
+| 27 | Storage, Search, and Agent Integration | Stand up the two separate versioned skill stores with unified hybrid search, then wire GuiAgent to search both layers and inject referenced app memory context. | STOR-01, STOR-02, INTEG-01, INTEG-02 | 4 |
+
+### Phase 24: Schema and Grounding
+
+**Goal:** Define the two-layer skill data models and the pluggable grounding protocol so all downstream execution and extraction have stable typed contracts to build against.
+
+**Depends on:** Phase 23
+**Requirements:** SCHEMA-01, SCHEMA-02, SCHEMA-03, SCHEMA-04, SCHEMA-05, SCHEMA-06, GRND-01, GRND-02, GRND-03
+**Plans:** TBD
+
+**Success Criteria** (what must be TRUE):
+1. A ShortcutSkill can be instantiated with structured pre/post condition descriptors, typed parameter slots, and validated round-trip through its serialization format.
+2. A TaskSkill can be instantiated with shortcut references, inline ATOM fallback steps, conditional branch nodes, and an optional memory context pointer, and validated round-trip through its serialization format.
+3. GrounderProtocol is importable as an abstract async interface, and LLMGrounder can be instantiated and invoked with a step target, returning a result that exposes grounder identity, confidence score, and fallback metadata.
+4. Both skill schemas and the grounding protocol are free of circular imports with the existing opengui module tree and pass a type-check pass.
+
+### Phase 25: Multi-layer Execution
+
+**Goal:** Implement ShortcutExecutor and TaskSkillExecutor so shortcut-layer and task-level skills can execute with contract verification and grounded parameter resolution.
+
+**Depends on:** Phase 24
+**Requirements:** EXEC-01, EXEC-02, EXEC-03
+**Plans:** TBD
+
+**Success Criteria** (what must be TRUE):
+1. ShortcutExecutor runs a ShortcutSkill step-by-step, and a detectable pre/post contract violation at any boundary produces a structured violation report rather than a silent failure.
+2. TaskSkillExecutor resolves a shortcut reference by ID, executes its steps, evaluates a conditional branch node by its condition expression, and falls back to an inline ATOM step when no shortcut reference is provided.
+3. Both executors resolve all action parameter targets through the GrounderProtocol interface, so swapping LLMGrounder for a stub grounder changes grounding results without touching executor logic.
+4. Executor behavior is testable in isolation with a stub backend and stub grounder, with no dependency on a live device or LLM call.
+
+### Phase 26: Quality-Gated Extraction
+
+**Goal:** Build the step-level and trajectory-level critics and the extraction pipeline that converts validated trajectories into shortcut-layer skill candidates.
+
+**Depends on:** Phase 24
+**Requirements:** EXTR-01, EXTR-02, EXTR-03, EXTR-04
+**Plans:** TBD
+
+**Success Criteria** (what must be TRUE):
+1. Step-level critic evaluates an individual trajectory step and returns a structured verdict (pass/fail with reason), and a trajectory containing a step that fails the critic is not passed to the trajectory-level critic.
+2. Trajectory-level critic evaluates a complete trajectory and returns a structured verdict; a trajectory that fails is not promoted to the skill library.
+3. Extraction pipeline ingests a validated trajectory, applies both critics in order, and only calls the skill candidate producer when both critics pass.
+4. Extractor produces a well-formed ShortcutSkill candidate from a validated step sequence, with parameter slots inferred from the step targets and conditions mapped to pre/post descriptors.
+
+### Phase 27: Storage, Search, and Agent Integration
+
+**Goal:** Stand up the two separate versioned skill stores with unified hybrid search, then wire GuiAgent to search both layers and inject referenced app memory context.
+
+**Depends on:** Phases 25-26
+**Requirements:** STOR-01, STOR-02, INTEG-01, INTEG-02
+**Plans:** TBD
+
+**Success Criteria** (what must be TRUE):
+1. ShortcutSkill and TaskSkill records persist to separate, versioned JSON files on disk; loading each store back produces the same typed objects that were saved.
+2. A unified search call against both stores returns ranked results with layer-aware relevance scoring, so a query can surface shortcut-layer candidates alongside task-level candidates in one response.
+3. GuiAgent performs a pre-task skill lookup against both stores and selects the highest-ranked match when one exceeds the relevance threshold, verifiable by inspecting the lookup log entry.
+4. When GuiAgent selects a task-level skill that carries a memory context pointer, the referenced app memory context entry is injected into the execution context before the first skill step runs.
+
 ## Phase Ordering Rationale
 
 - Phase 17 comes first because the web surface needs a clean boundary under `nanobot/tui` before any UI code or API growth begins.
 - Chat comes before operations because browser chat is the narrowest host-facing vertical slice and reuses more existing session behavior.
 - Operations follows once the web runtime and chat transport are stable enough to support broader task launch and inspection flows.
 - Integration and verification are last so the React/Vite shell and packaged entrypoints validate the final contracts rather than an intermediate prototype.
+- Phase 24 defines schemas and grounding first because executors, critics, and storage all depend on stable typed contracts; no downstream phase can be built without them.
+- Phase 25 (execution) and Phase 26 (extraction) both depend on Phase 24 schemas but are independent of each other; extraction only needs the schema shapes, not a running executor.
+- Phase 27 (storage and agent integration) closes last because it depends on both the executor outputs (Phase 25) and the extraction pipeline (Phase 26) to produce the skill records that storage must persist.
 
 ## Archived Phase Ranges
 
@@ -189,7 +262,8 @@ Plans:
 | v1.2 Cross-Platform Background Execution | 12-16 | Closeout In Progress | — |
 | v1.3 Nanobot Web Workspace | 17-20 | In Progress | — |
 | v1.4 Capability-Aware Planning And Routing | 21-23 | Planned | — |
+| v1.5 New OpenGUI Skills Architecture | 24-27 | Planned | — |
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-03-22 after planning Phase 22 route-aware tool and MCP dispatch*
+*Last updated: 2026-04-01 after defining v1.5 New OpenGUI Skills Architecture roadmap (phases 24-27)*

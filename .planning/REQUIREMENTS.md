@@ -79,32 +79,32 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | TBD | Pending |
-| SCHEMA-02 | TBD | Pending |
-| SCHEMA-03 | TBD | Pending |
-| SCHEMA-04 | TBD | Pending |
-| SCHEMA-05 | TBD | Pending |
-| SCHEMA-06 | TBD | Pending |
-| GRND-01 | TBD | Pending |
-| GRND-02 | TBD | Pending |
-| GRND-03 | TBD | Pending |
-| EXEC-01 | TBD | Pending |
-| EXEC-02 | TBD | Pending |
-| EXEC-03 | TBD | Pending |
-| EXTR-01 | TBD | Pending |
-| EXTR-02 | TBD | Pending |
-| EXTR-03 | TBD | Pending |
-| EXTR-04 | TBD | Pending |
-| STOR-01 | TBD | Pending |
-| STOR-02 | TBD | Pending |
-| INTEG-01 | TBD | Pending |
-| INTEG-02 | TBD | Pending |
+| SCHEMA-01 | Phase 24 | Pending |
+| SCHEMA-02 | Phase 24 | Pending |
+| SCHEMA-03 | Phase 24 | Pending |
+| SCHEMA-04 | Phase 24 | Pending |
+| SCHEMA-05 | Phase 24 | Pending |
+| SCHEMA-06 | Phase 24 | Pending |
+| GRND-01 | Phase 24 | Pending |
+| GRND-02 | Phase 24 | Pending |
+| GRND-03 | Phase 24 | Pending |
+| EXEC-01 | Phase 25 | Pending |
+| EXEC-02 | Phase 25 | Pending |
+| EXEC-03 | Phase 25 | Pending |
+| EXTR-01 | Phase 26 | Pending |
+| EXTR-02 | Phase 26 | Pending |
+| EXTR-03 | Phase 26 | Pending |
+| EXTR-04 | Phase 26 | Pending |
+| STOR-01 | Phase 27 | Pending |
+| STOR-02 | Phase 27 | Pending |
+| INTEG-01 | Phase 27 | Pending |
+| INTEG-02 | Phase 27 | Pending |
 
 **Coverage:**
 - v1.5 requirements: 20 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 20
+- Mapped to phases: 20 (roadmap complete)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-01*
-*Last updated: 2026-04-01 after initial definition*
+*Last updated: 2026-04-01 after roadmap creation — all 20 requirements mapped to phases 24-27*
