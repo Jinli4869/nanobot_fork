@@ -410,10 +410,21 @@ class HdcConfig(Base):
     serial: str | None = None
 
 
+class GuiEvaluationConfig(Base):
+    """Optional post-run evaluation for GUI tasks."""
+
+    enabled: bool = False
+    judge_model: str = "qwen3-vl-plus"
+    api_key: str = ""
+    api_base: str | None = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
 class GuiConfig(Base):
     """GUI subagent configuration."""
 
     backend: Literal["adb", "hdc", "local", "dry-run"] = "adb"
+    model: str | None = None
+    provider: str | None = None
     adb: AdbConfig = Field(default_factory=AdbConfig)
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
@@ -427,6 +438,7 @@ class GuiConfig(Base):
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
+    evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
 
     @model_validator(mode="after")
     def _validate_background_requires_local(self) -> "GuiConfig":
@@ -496,9 +508,11 @@ class Config(BaseSettings):
         return Path(self.agents.defaults.workspace).expanduser()
 
     def _match_provider(
-        self, model: str | None = None,
+        self,
+        model: str | None = None,
         *,
         preset: ModelPresetConfig | None = None,
+        provider: str | None = None,
     ) -> tuple["ProviderConfig | None", str | None]:
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import (
@@ -507,7 +521,7 @@ class Config(BaseSettings):
         )
 
         resolved = preset or self.resolve_preset()
-        forced = resolved.provider
+        forced = provider if provider is not None else resolved.provider
 
         def _custom_provider_by_name(name: str) -> tuple[ProviderConfig, str] | None:
             normalized = name.replace("-", "_").lower()
@@ -603,9 +617,10 @@ class Config(BaseSettings):
         model: str | None = None,
         *,
         preset: ModelPresetConfig | None = None,
+        provider: str | None = None,
     ) -> ProviderConfig | None:
         """Get matched provider config (api_key, api_base, extra_headers). Falls back to first available."""
-        p, _ = self._match_provider(model, preset=preset)
+        p, _ = self._match_provider(model, preset=preset, provider=provider)
         return p
 
     def get_provider_name(
@@ -613,9 +628,10 @@ class Config(BaseSettings):
         model: str | None = None,
         *,
         preset: ModelPresetConfig | None = None,
+        provider: str | None = None,
     ) -> str | None:
         """Get the registry name of the matched provider (e.g. "deepseek", "openrouter")."""
-        _, name = self._match_provider(model, preset=preset)
+        _, name = self._match_provider(model, preset=preset, provider=provider)
         return name
 
     def get_api_key(
@@ -623,9 +639,10 @@ class Config(BaseSettings):
         model: str | None = None,
         *,
         preset: ModelPresetConfig | None = None,
+        provider: str | None = None,
     ) -> str | None:
         """Get API key for the given model. Falls back to first available key."""
-        p = self.get_provider(model, preset=preset)
+        p = self.get_provider(model, preset=preset, provider=provider)
         return p.api_key if p else None
 
     def get_api_base(
@@ -633,11 +650,12 @@ class Config(BaseSettings):
         model: str | None = None,
         *,
         preset: ModelPresetConfig | None = None,
+        provider: str | None = None,
     ) -> str | None:
         """Get API base URL for the given model, falling back to the provider default when present."""
         from nanobot.providers.registry import find_by_name
 
-        p, name = self._match_provider(model, preset=preset)
+        p, name = self._match_provider(model, preset=preset, provider=provider)
         if p and p.api_base:
             return p.api_base
         if name:

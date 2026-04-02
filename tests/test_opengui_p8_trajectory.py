@@ -99,7 +99,11 @@ def tmp_workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _dry_run_tool(tmp_workspace: Path, extra_responses: list[Any] | None = None) -> Any:
+def _dry_run_tool(
+    tmp_workspace: Path,
+    extra_responses: list[Any] | None = None,
+    gui_overrides: dict[str, Any] | None = None,
+) -> Any:
     """Build a GuiSubagentTool with dry-run backend and two standard action responses."""
     from nanobot.agent.tools.gui import GuiSubagentTool
 
@@ -119,8 +123,11 @@ def _dry_run_tool(tmp_workspace: Path, extra_responses: list[Any] | None = None)
         responses.extend(extra_responses)
 
     provider = _MockNanobotProvider(responses)
+    gui_config = {"backend": "dry-run"}
+    if gui_overrides:
+        gui_config.update(gui_overrides)
     return GuiSubagentTool(
-        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        gui_config=Config(gui=gui_config).gui,
         provider=provider,
         model=provider.get_default_model(),
         workspace=tmp_workspace,
@@ -186,6 +193,76 @@ async def test_summarizer_failure_non_fatal(
     result = json.loads(raw)
     assert "success" in result, "execute() must return JSON with 'success' key"
     assert len(extract_calls) == 1, "_extract_skill must still be called after summarizer failure"
+
+
+@pytest.mark.asyncio
+async def test_gui_evaluation_runs_from_background_postprocessing(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "opengui.skills.extractor.SkillExtractor.extract_from_file",
+        AsyncMock(return_value=None),
+    )
+    eval_mock = AsyncMock(return_value={"success": True, "reason": "final state matches"})
+    monkeypatch.setattr("nanobot.agent.tools.gui.evaluate_gui_trajectory", eval_mock)
+
+    tool = _dry_run_tool(
+        tmp_workspace,
+        gui_overrides={
+            "evaluation": {
+                "enabled": True,
+                "judgeModel": "judge-model",
+                "apiKey": "judge-key",
+                "apiBase": "https://judge.example/v1",
+            }
+        },
+    )
+
+    await tool.execute(task="test task")
+    await tool._wait_for_pending_postprocessing()
+
+    eval_mock.assert_awaited_once()
+    kwargs = eval_mock.await_args.kwargs
+    assert kwargs["instruction"] == "test task"
+    assert kwargs["model"] == "judge-model"
+    assert kwargs["api_key"] == "judge-key"
+    assert kwargs["api_base"] == "https://judge.example/v1"
+    assert isinstance(kwargs["trace_path"], Path)
+
+
+@pytest.mark.asyncio
+async def test_gui_evaluation_failure_is_non_fatal(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    extract_mock = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "opengui.skills.extractor.SkillExtractor.extract_from_file",
+        extract_mock,
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.evaluate_gui_trajectory",
+        AsyncMock(side_effect=RuntimeError("judge unavailable")),
+    )
+
+    tool = _dry_run_tool(
+        tmp_workspace,
+        gui_overrides={
+            "evaluation": {
+                "enabled": True,
+                "judgeModel": "judge-model",
+                "apiKey": "judge-key",
+            }
+        },
+    )
+
+    raw = await tool.execute(task="test task")
+    await tool._wait_for_pending_postprocessing()
+
+    result = json.loads(raw)
+    assert result["success"] is True
+    extract_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio

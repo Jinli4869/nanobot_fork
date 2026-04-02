@@ -34,6 +34,35 @@ def test_gui_config_accepts_embedding_model_alias() -> None:
     assert config.gui.embedding_model == "text-embedding-3-small"
 
 
+def test_gui_config_accepts_model_provider_and_evaluation_aliases() -> None:
+    """GuiConfig must expose independent GUI model/provider and evaluation settings."""
+    from nanobot.config.schema import Config
+
+    config = Config.model_validate(
+        {
+            "gui": {
+                "backend": "dry-run",
+                "model": "qwen-vl-max",
+                "provider": "openrouter",
+                "evaluation": {
+                    "enabled": True,
+                    "judgeModel": "qwen3-vl-plus",
+                    "apiKey": "judge-key",
+                    "apiBase": "https://judge.example/v1",
+                },
+            }
+        }
+    )
+
+    assert config.gui is not None
+    assert config.gui.model == "qwen-vl-max"
+    assert config.gui.provider == "openrouter"
+    assert config.gui.evaluation.enabled is True
+    assert config.gui.evaluation.judge_model == "qwen3-vl-plus"
+    assert config.gui.evaluation.api_key == "judge-key"
+    assert config.gui.evaluation.api_base == "https://judge.example/v1"
+
+
 # ---------------------------------------------------------------------------
 # 2. Embedding adapter wiring when embedding_model is configured
 # ---------------------------------------------------------------------------

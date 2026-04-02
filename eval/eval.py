@@ -10,10 +10,11 @@ from typing import Any
 from openai import OpenAI
 import json_repair
 
-
-
-DEFAULT_JUDGE_MODEL = "qwen3-vl-plus"
-DEFAULT_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+from nanobot.utils.gui_evaluation import (
+    DEFAULT_API_BASE,
+    DEFAULT_JUDGE_MODEL,
+    evaluate_gui_trajectory_sync,
+)
 
 
 @dataclass
@@ -240,8 +241,6 @@ def run_eval(
     if not api_key:
         raise SystemExit("Missing api-key (or OPENAI_API_KEY).")
 
-    client = OpenAI(api_key=api_key, base_url=api_base) if api_base else OpenAI(api_key=api_key)
-
     records: list[dict[str, Any]] = []
 
     for task in tasks:
@@ -261,28 +260,16 @@ def run_eval(
             )
             continue
 
-        traj_rows = load_traj_rows(traj_path)
-        steps = len(traj_rows)
-        screenshots = load_screenshots_for_judge(traj_path, traj_rows)
-
-        success, reason = judge_success(
-            client=client,
-            task=task,
-            traj_rows=traj_rows,
-            screenshots=screenshots,
+        record = evaluate_gui_trajectory_sync(
+            instruction=instruction_text,
+            trace_path=traj_path,
             model=model,
+            api_key=api_key,
+            api_base=api_base,
+            task_id=task.task_id,
+            output_path=None,
         )
-
-        records.append(
-            {
-                "task_id": task.task_id,
-                "instruction": instruction_text,
-                "traj_path": str(traj_path),
-                "success": success,
-                "reason": reason,
-                "steps": steps,
-            }
-        )
+        records.append(record)
 
     # 汇总指标：success_rate = success=true 的数量 / 总条数
     total = len(records)

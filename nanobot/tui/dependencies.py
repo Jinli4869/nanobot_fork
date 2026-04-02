@@ -17,7 +17,7 @@ from nanobot.config.paths import get_cron_dir
 from nanobot.cron.service import CronService
 from nanobot.session.manager import SessionManager
 
-from nanobot.cli.commands import _load_runtime_config, _make_provider
+from nanobot.cli.commands import _load_runtime_config, _make_provider, _resolve_gui_runtime
 from nanobot.tui.contracts import (
     RuntimeInspectionContract,
     SessionContract,
@@ -164,15 +164,15 @@ def get_task_launch_service(request: Request) -> TaskLaunchService:
     registry = get_operations_registry(request)
 
     gui_config = config.gui
-    provider = _make_provider(config) if gui_config is not None else None
+    gui_provider, gui_model = _resolve_gui_runtime(config) if gui_config is not None else (None, None)
 
     def _gui_tool() -> Any:
-        if gui_config is None or provider is None:
+        if gui_config is None or gui_provider is None or gui_model is None:
             raise RuntimeError("nanobot gui launches require gui config")
         return GuiSubagentTool(
             gui_config=gui_config,
-            provider=provider,
-            model=config.agents.defaults.model,
+            provider=gui_provider,
+            model=gui_model,
             workspace=config.workspace_path,
         )
 
@@ -220,6 +220,7 @@ def get_chat_runtime_factory(
 
     def _factory() -> AgentLoop:
         provider = _make_provider(resolved_config)
+        gui_provider, gui_model = _resolve_gui_runtime(resolved_config)
         cron_store_path = get_cron_dir() / "jobs.json"
         cron = CronService(cron_store_path)
         return AgentLoop(
@@ -238,6 +239,8 @@ def get_chat_runtime_factory(
             mcp_servers=resolved_config.tools.mcp_servers,
             channels_config=resolved_config.channels,
             gui_config=resolved_config.gui,
+            gui_provider=gui_provider,
+            gui_model=gui_model,
         )
 
     return _factory

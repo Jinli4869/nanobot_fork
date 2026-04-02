@@ -249,6 +249,8 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         gui_config: "GuiConfig | None" = None,
+        gui_provider: LLMProvider | None = None,
+        gui_model: str | None = None,
         timezone: str | None = None,
         session_ttl_minutes: int = 0,
         consolidation_ratio: float = 0.5,
@@ -324,6 +326,8 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._gui_config = gui_config
+        self._gui_provider = gui_provider
+        self._gui_model = gui_model
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
@@ -433,6 +437,25 @@ class AgentLoop:
         model = extra.pop("model", None) or resolved.model
         context_window_tokens = extra.pop("context_window_tokens", None) or resolved.context_window_tokens
         gui_config = extra.pop("gui_config", getattr(config, "gui", None))
+        gui_provider = extra.pop("gui_provider", None)
+        gui_model = extra.pop("gui_model", None)
+        if gui_config is not None:
+            gui_model = gui_model or getattr(gui_config, "model", None) or model
+            if gui_provider is None:
+                gui_provider_name = getattr(gui_config, "provider", None)
+                inherited_provider = gui_provider_name in (None, "auto", resolved.provider)
+                if gui_model == model and inherited_provider:
+                    gui_provider = provider
+                else:
+                    gui_preset = ModelPresetConfig(
+                        model=gui_model,
+                        provider=gui_provider_name or resolved.provider,
+                        max_tokens=resolved.max_tokens,
+                        context_window_tokens=resolved.context_window_tokens,
+                        temperature=resolved.temperature,
+                        reasoning_effort=resolved.reasoning_effort,
+                    )
+                    gui_provider = make_provider(config, preset=gui_preset)
         provider_snapshot_loader = extra.pop("provider_snapshot_loader", None)
         preset_snapshot_loader = extra.pop("preset_snapshot_loader", None) or preset_helpers.make_preset_snapshot_loader(
             config,
@@ -455,6 +478,8 @@ class AgentLoop:
             mcp_servers=config.tools.mcp_servers,
             channels_config=config.channels,
             gui_config=gui_config,
+            gui_provider=gui_provider,
+            gui_model=gui_model,
             timezone=defaults.timezone,
             unified_session=defaults.unified_session,
             disabled_skills=defaults.disabled_skills,
@@ -589,8 +614,8 @@ class AgentLoop:
             self.tools.register(
                 GuiSubagentTool(
                     gui_config=self._gui_config,
-                    provider=self.provider,
-                    model=self.model,
+                    provider=self._gui_provider or self.provider,
+                    model=self._gui_model or self.model,
                     workspace=self.workspace,
                 )
             )
