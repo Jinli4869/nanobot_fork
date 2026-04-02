@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Nanobot Web Workspace
+milestone: v1.5
+milestone_name: New OpenGUI Skills Architecture
 status: unknown
 stopped_at: Phase 25 context gathered
-last_updated: "2026-04-02T07:14:10.473Z"
+last_updated: "2026-04-02T07:15:25.340Z"
 last_activity: 2026-04-02 - Phase 24 executed, verified, and closed with schema, task-skill, and grounding contracts ready for Phase 25
 progress:
-  total_phases: 11
-  completed_phases: 7
-  total_plans: 18
-  completed_plans: 18
+  total_phases: 4
+  completed_phases: 4
+  total_plans: 11
+  completed_plans: 11
   percent: 94
 ---
 
@@ -222,6 +222,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-04-02 - Phase 24 executed, verified, and closed with schema, task-skill, and grounding contracts ready for Phase 25
 
-Last session: 2026-04-02T07:14:10.465Z
+Last session: 2026-04-02T07:15:25.337Z
 Stopped at: Phase 25 context gathered
 Resume file: .planning/phases/25-multi-layer-execution/25-CONTEXT.md
