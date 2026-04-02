@@ -178,7 +178,7 @@ Plans:
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
 | 24 | 3/3 | Complete    | 2026-04-02 | 4 |
-| 25 | 2/2 | Complete   | 2026-04-02 | 4 |
+| 25 | 2/2 | Complete    | 2026-04-02 | 4 |
 | 26 | Quality-Gated Extraction | Build the step-level and trajectory-level critics and the extraction pipeline that converts validated trajectories into shortcut-layer skill candidates. | EXTR-01, EXTR-02, EXTR-03, EXTR-04 | 4 |
 | 27 | Storage, Search, and Agent Integration | Stand up the two separate versioned skill stores with unified hybrid search, then wire GuiAgent to search both layers and inject referenced app memory context. | STOR-01, STOR-02, INTEG-01, INTEG-02 | 4 |
 
