@@ -1,20 +1,20 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.5
-milestone_name: New OpenGUI Skills Architecture
-current_phase: 27
-current_phase_name: storage-search-agent-integration
+milestone: v1.6
+milestone_name: Shortcut Extraction and Stable Execution
+current_phase: null
+current_phase_name: null
 current_plan: Not started
-status: completed
-stopped_at: Completed 27-02-PLAN.md
-last_updated: "2026-04-02T12:58:09.855Z"
+status: defining_requirements
+stopped_at: Milestone initialized
+last_updated: "2026-04-02T13:30:00.000Z"
 last_activity: 2026-04-02
 progress:
-  total_phases: 11
-  completed_phases: 10
-  total_plans: 24
-  completed_plans: 24
-  percent: 96
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 10
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -24,62 +24,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 27 — storage-search-agent-integration
+**Current focus:** Milestone v1.6 definition and roadmap setup
 
 ## Current Position
 
-**Current Phase:** 27
-**Current Phase Name:** storage-search-agent-integration
-**Total Phases:** 11
+**Current Phase:** Not started
+**Current Phase Name:** Defining requirements
+**Total Phases:** 4
 **Current Plan:** Not started
-**Total Plans in Phase:** 2
-**Status:** Milestone complete
+**Total Plans in Phase:** —
+**Status:** Defining requirements and roadmap
 
 ## Performance Metrics
 
-**Progress:** [██████████] 96%
+**Progress:** [----------] 0%
 
-| Execution | Duration | Tasks | Files |
-|-----------|----------|-------|-------|
-| 17-01 | 99 min | 2 | 19 |
-| 17-02 | 38 min | 2 | 5 |
-| 18-01 | 5 min | 2 | 10 |
-| 18-02 | 10 min | 2 | 10 |
-| 18-03 | 6 min | 2 | 5 |
-| 19-01 | 8 min | 2 | 9 |
-| 19-02 | 11 min | 2 | 7 |
-| 19-03 | 9 min | 2 | 10 |
-| 20-01 | 22 min | 2 | 12 |
-| 20-02 | 18 min | 2 | 12 |
-| 20-03 | 6 min | 2 | 10 |
-| 21-02 | 7 min | 2 | 6 |
-
-**Velocity:**
-
-- Total plans completed (tracked): 12
-- Average duration: 20 min
-- Total execution time: 239 min
-
-**By Phase:**
-
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 17 | 2 | 137 min | 69 min |
-| 18 | 3 | 21 min | 7 min |
-| 19 | 3 | 28 min | 9 min |
-| 20 | 3 | 46 min | 15 min |
-| 21 | 2 | 31 min | 16 min |
-
-*Updated after each plan completion*
-| Phase 22 P01 | 4 | 2 tasks | 2 files |
-| Phase 22 P02 | 7 | 2 tasks | 4 files |
-| Phase 24 P01 | 2 min | 2 tasks | 4 files |
-| Phase 24 P02 | 4min | 2 tasks | 3 files |
-| Phase 24 P03 | 1min | 2 tasks | 4 files |
-| Phase 25 P01 | 4 | 2 tasks | 4 files |
-| Phase 25 P02 | 4 min | 2 tasks | 3 files |
-| Phase 27 P01 | 6 min | 1 tasks | 3 files |
-| Phase 27-storage-search-agent-integration P02 | 5 min | 2 tasks | 3 files |
+Milestone v1.6 has just been initialized. Performance metrics will populate as plans complete.
 
 ## Accumulated Context
 
@@ -88,6 +48,9 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 Decisions are logged in PROJECT.md Key Decisions table.
 
 - [v1.0]: All 8 phases completed — core protocols, tests, agent loop, subagent, desktop backend, CLI, wiring, cleanup
+- [v1.5]: Shortcut/task schemas, executors, and unified search are shipped; v1.6 should productionize them instead of creating a parallel shortcut system
+- [v1.6]: Shortcut reuse must be gated by current-screen applicability, not retrieval score alone
+- [v1.6]: Stable shortcut execution must re-bind live targets, wait for settle, and verify post-step state before continuing
 - [v1.1]: Decorator pattern for BackgroundDesktopBackend (thin wrapper + DISPLAY env var; zero coordinate offset for Xvfb)
 - [v1.1]: Xvfb subprocess management via asyncio.subprocess — no Python deps, no real Xvfb needed in CI (mock at boundary)
 - [v1.1]: macOS CGVirtualDisplay and Windows CreateDesktop deferred to v1.2
@@ -197,13 +160,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ### Pending Todos
 
-1. Discuss Phase 27 — storage, search, and agent integration (STOR-01, STOR-02, INTEG-01, INTEG-02)
-2. Plan Phase 27 — versioned stores, unified search, and GuiAgent wiring
+1. Discuss Phase 28 — shortcut extraction productionization (SXTR-01..04)
+2. Plan Phase 28 — cut over GUI postprocessing to the new shortcut promotion path
 
 ### Blockers/Concerns
 
-- v1.2 closeout artifacts still exist in `.planning/phases/16-host-integration-and-verification/` and should not be overwritten during v1.3 work.
-- The web milestone must avoid broad runtime refactors that would entangle `nanobot`, `opengui`, and the new frontend.
+- The current production GUI path still extracts legacy skills after runs; v1.6 must close that gap without regressing the shipped v1.5 schema/store/search contracts.
+- Shortcut stability work must preserve safe fallback behavior so shortcut use never makes recoverable tasks fail outright.
 
 ### Quick Tasks Completed
 
@@ -244,6 +207,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-04-02
 
-Last session: 2026-04-02T12:48:21.616Z
-Stopped at: Completed 27-02-PLAN.md
+Last session: 2026-04-02T13:30:00.000Z
+Stopped at: Milestone v1.6 initialized
 Resume file: None
