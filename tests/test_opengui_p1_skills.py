@@ -23,7 +23,7 @@ import pytest
 
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse
-from opengui.skills.data import Skill, SkillStep
+from opengui.skills import ParameterSlot, ShortcutSkill, Skill, SkillStep, StateDescriptor
 from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
@@ -125,6 +125,14 @@ def _make_skill(
 # ---------------------------------------------------------------------------
 # SkillLibrary — CRUD tests (sync)
 # ---------------------------------------------------------------------------
+
+
+def test_opengui_skills_module_exports_legacy_and_shortcut_types() -> None:
+    assert Skill.__name__ == "Skill"
+    assert SkillStep.__name__ == "SkillStep"
+    assert StateDescriptor.__name__ == "StateDescriptor"
+    assert ParameterSlot.__name__ == "ParameterSlot"
+    assert ShortcutSkill.__name__ == "ShortcutSkill"
 
 
 def test_skill_library_crud(tmp_path: Path) -> None:
