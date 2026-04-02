@@ -243,7 +243,11 @@ Plans:
 
 **Depends on:** Phases 25-26
 **Requirements:** STOR-01, STOR-02, INTEG-01, INTEG-02
-**Plans:** TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 27-01-PLAN.md — Create versioned ShortcutSkillStore, TaskSkillStore, and UnifiedSkillSearch with hybrid BM25+FAISS search
+- [ ] 27-02-PLAN.md — Wire GuiAgent two-layer skill lookup and memory context injection, update GuiSubagentTool wiring
 
 **Success Criteria** (what must be TRUE):
 1. ShortcutSkill and TaskSkill records persist to separate, versioned JSON files on disk; loading each store back produces the same typed objects that were saved.
@@ -279,4 +283,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-04-02 after planning Phase 26 quality-gated extraction (2 plans)*
+*Last updated: 2026-04-02 after planning Phase 27 storage, search, and agent integration (2 plans)*
