@@ -414,7 +414,7 @@ class GuiSubagentTool(Tool):
             return None
 
     def _load_policy_context(self) -> str | None:
-        policy_context, _ = self._load_policy_context_and_memory_store()
+        policy_context, _ = GuiSubagentTool._load_policy_context_and_memory_store(self)
         return policy_context
 
     def _load_policy_context_and_memory_store(self) -> tuple[str | None, Any | None]:
