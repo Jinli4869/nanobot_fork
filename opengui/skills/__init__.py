@@ -22,6 +22,12 @@ from opengui.skills.multi_layer_executor import (
     TaskSkillExecutor,
 )
 from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescriptor
+from opengui.skills.shortcut_store import (
+    ShortcutSkillStore,
+    SkillSearchResult,
+    TaskSkillStore,
+    UnifiedSkillSearch,
+)
 from opengui.skills.shortcut_extractor import (
     ExtractionPipeline,
     ExtractionRejected,
@@ -57,6 +63,8 @@ __all__ = [
     "SkillLibrary",
     "SkillStep",
     "ShortcutSkill",
+    "ShortcutSkillStore",
+    "SkillSearchResult",
     "StateDescriptor",
     "StateValidator",
     "StepCritic",
@@ -66,6 +74,8 @@ __all__ = [
     "TaskNode",
     "TaskSkill",
     "TaskSkillExecutor",
+    "TaskSkillStore",
     "TrajectoryCritic",
     "TrajectoryVerdict",
+    "UnifiedSkillSearch",
 ]
