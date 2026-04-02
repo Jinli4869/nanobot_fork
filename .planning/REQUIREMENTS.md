@@ -9,10 +9,10 @@ Requirements for turning the shipped shortcut architecture into a stable product
 
 ### SXTR - Shortcut Extraction
 
-- [ ] **SXTR-01**: Successful GUI runs can promote shortcut candidates from trace step events only, excluding summary/result noise and malformed artifacts.
-- [ ] **SXTR-02**: Each promoted shortcut records normalized app/platform identifiers, reusable parameter slots, structured state conditions, and provenance back to the source trace.
-- [ ] **SXTR-03**: The promotion pipeline rejects brittle shortcuts using explicit gates for minimum usable steps, unsupported patterns, and low-quality evidence.
-- [ ] **SXTR-04**: Duplicate or near-duplicate shortcut candidates are merged, versioned, or rejected instead of being stored as repeated library entries.
+- [x] **SXTR-01**: Successful GUI runs can promote shortcut candidates from trace step events only, excluding summary/result noise and malformed artifacts.
+- [x] **SXTR-02**: Each promoted shortcut records normalized app/platform identifiers, reusable parameter slots, structured state conditions, and provenance back to the source trace.
+- [x] **SXTR-03**: The promotion pipeline rejects brittle shortcuts using explicit gates for minimum usable steps, unsupported patterns, and low-quality evidence.
+- [x] **SXTR-04**: Duplicate or near-duplicate shortcut candidates are merged, versioned, or rejected instead of being stored as repeated library entries.
 
 ### SUSE - Shortcut Use
 
@@ -60,10 +60,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SXTR-01 | Phase 28 | Pending |
-| SXTR-02 | Phase 28 | Pending |
-| SXTR-03 | Phase 28 | Pending |
-| SXTR-04 | Phase 28 | Pending |
+| SXTR-01 | Phase 28 | Complete |
+| SXTR-02 | Phase 28 | Complete |
+| SXTR-03 | Phase 28 | Complete |
+| SXTR-04 | Phase 28 | Complete |
 | SUSE-01 | Phase 29 | Pending |
 | SUSE-02 | Phase 29 | Pending |
 | SUSE-03 | Phase 30 | Pending |

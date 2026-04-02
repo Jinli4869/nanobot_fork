@@ -43,15 +43,16 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 ### Phase 28: Shortcut Extraction Productionization
 
 **Goal:** Replace the legacy post-run extraction path with trace-backed shortcut promotion into `ShortcutSkillStore`, including quality gates, provenance, and duplicate/version handling.
+**Status:** Complete (2026-04-02)
 
 **Depends on:** Phase 27
 **Requirements:** SXTR-01, SXTR-02, SXTR-03, SXTR-04
-**Plans:** 3/3 planned
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] 28-01-PLAN.md - Cut over GUI postprocessing from legacy extraction to the new shortcut promotion pipeline
-- [ ] 28-02-PLAN.md - Add provenance, gating, and merge/version handling for promoted shortcuts
-- [ ] 28-03-PLAN.md - Lock the productionized extraction path with focused regression coverage
+- [x] 28-01-PLAN.md - Cut over GUI postprocessing from legacy extraction to the new shortcut promotion pipeline
+- [x] 28-02-PLAN.md - Add provenance, gating, and merge/version handling for promoted shortcuts
+- [x] 28-03-PLAN.md - Lock the productionized extraction path with focused regression coverage
 
 **Success Criteria** (what must be TRUE):
 1. Successful GUI runs can promote shortcut candidates from trace step events directly into the new shortcut store without depending on the legacy `SkillLibrary` path.
