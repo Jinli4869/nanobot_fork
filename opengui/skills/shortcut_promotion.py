@@ -4,12 +4,25 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
+from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.shortcut import ShortcutSkill
 from opengui.skills.shortcut_extractor import ExtractionPipeline, ExtractionSuccess
 
 logger = logging.getLogger(__name__)
+_SUPPORTED_ACTION_TYPES = frozenset({
+    "tap",
+    "click",
+    "input_text",
+    "hotkey",
+    "scroll",
+    "swipe",
+    "press",
+    "wait",
+})
 
 
 class ShortcutPromotionPipeline:
@@ -46,15 +59,30 @@ class ShortcutPromotionPipeline:
             "platform": self._platform or str(metadata_row.get("platform", "unknown")),
             "app": self._derive_app_hint(steps),
         }
+        metadata["app"] = normalize_app_identifier(
+            str(metadata["platform"]),
+            str(metadata["app"]),
+        )
+
+        gate_reason = self._gate_candidate_rows(steps, metadata)
+        if gate_reason is not None:
+            logger.info("Skipping shortcut promotion for %s: %s", trace_path, gate_reason)
+            return None
 
         result = await ExtractionPipeline().run(steps, metadata)
         if not isinstance(result, ExtractionSuccess):
             logger.info("Skipping shortcut promotion for %s: %s", trace_path, result.reason)
             return None
 
-        store.add(result.candidate)
-        logger.info("Promoted shortcut %s from %s", result.candidate.skill_id, trace_path)
-        return result.candidate.skill_id
+        enriched = self._enrich_candidate(result.candidate, trace_path, steps, metadata)
+        decision, skill_id = await store.add_or_merge(enriched)
+        logger.info(
+            "Promoted shortcut %s from %s via %s",
+            skill_id or enriched.skill_id,
+            trace_path,
+            decision,
+        )
+        return skill_id
 
     def _load_trace_rows(self, trace_path: Path) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
@@ -125,6 +153,60 @@ class ShortcutPromotionPipeline:
                 continue
             promotable_steps.append(row)
         return promotable_steps
+
+    def _gate_candidate_rows(
+        self,
+        steps: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> str | None:
+        if len(steps) < 2:
+            return "too_few_promotable_steps"
+        if str(metadata.get("app", "unknown")) == "unknown":
+            return "unknown_app"
+        if all(not str(step.get("model_output", "")).strip() for step in steps):
+            return "empty_model_output"
+        unsupported = [
+            str(step.get("action", {}).get("action_type", "")).strip()
+            for step in steps
+            if str(step.get("action", {}).get("action_type", "")).strip()
+            not in _SUPPORTED_ACTION_TYPES
+        ]
+        if unsupported:
+            return f"unsupported_action_type:{unsupported[0]}"
+        return None
+
+    def _enrich_candidate(
+        self,
+        candidate: ShortcutSkill,
+        trace_path: Path,
+        steps: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> ShortcutSkill:
+        return ShortcutSkill(
+            skill_id=candidate.skill_id,
+            name=candidate.name,
+            description=candidate.description,
+            app=candidate.app,
+            platform=candidate.platform,
+            steps=candidate.steps,
+            parameter_slots=candidate.parameter_slots,
+            preconditions=candidate.preconditions,
+            postconditions=candidate.postconditions,
+            tags=candidate.tags,
+            source_task=str(metadata.get("task", "")).strip() or None,
+            source_trace_path=str(trace_path),
+            source_run_id=trace_path.parent.name or None,
+            source_step_indices=tuple(
+                int(step["step_index"])
+                for step in steps
+                if step.get("step_index") is not None
+            ),
+            promotion_version=1,
+            shortcut_version=max(candidate.shortcut_version, 1),
+            merged_from_ids=candidate.merged_from_ids,
+            promoted_at=time.time(),
+            created_at=candidate.created_at,
+        )
 
     @staticmethod
     def _attempt_succeeded(row: dict[str, Any]) -> bool:
