@@ -101,6 +101,8 @@ class AgentLoop:
         mcp_servers: dict | None = None,
         channels_config: ChannelsConfig | None = None,
         gui_config: "GuiConfig | None" = None,
+        gui_provider: LLMProvider | None = None,
+        gui_model: str | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -119,6 +121,8 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._gui_config = gui_config
+        self._gui_provider = gui_provider
+        self._gui_model = gui_model
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -187,8 +191,8 @@ class AgentLoop:
             self.tools.register(
                 GuiSubagentTool(
                     gui_config=self._gui_config,
-                    provider=self.provider,
-                    model=self.model,
+                    provider=self._gui_provider or self.provider,
+                    model=self._gui_model or self.model,
                     workspace=self.workspace,
                 )
             )

@@ -375,15 +375,20 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_provider(config: Config):
+def _make_provider(
+    config: Config,
+    *,
+    model_override: str | None = None,
+    provider_override: str | None = None,
+):
     """Create the appropriate LLM provider from config."""
     from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
     from nanobot.providers.base import GenerationSettings
     from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 
-    model = config.agents.defaults.model
-    provider_name = config.get_provider_name(model)
-    p = config.get_provider(model)
+    model = model_override or config.agents.defaults.model
+    provider_name = config.get_provider_name(model, provider=provider_override)
+    p = config.get_provider(model, provider=provider_override)
 
     # OpenAI Codex (OAuth)
     if provider_name == "openai_codex" or model.startswith("openai-codex/"):
@@ -393,7 +398,7 @@ def _make_provider(config: Config):
         from nanobot.providers.custom_provider import CustomProvider
         provider = CustomProvider(
             api_key=p.api_key if p else "no-key",
-            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
+            api_base=config.get_api_base(model, provider=provider_override) or "http://localhost:8000/v1",
             default_model=model,
             extra_headers=p.extra_headers if p else None,
         )
@@ -414,7 +419,7 @@ def _make_provider(config: Config):
         from nanobot.providers.custom_provider import CustomProvider
         provider = CustomProvider(
             api_key=p.api_key if p else "no-key",
-            api_base=config.get_api_base(model) or "http://localhost:8000/v3",
+            api_base=config.get_api_base(model, provider=provider_override) or "http://localhost:8000/v3",
             default_model=model,
         )
     else:
@@ -427,7 +432,7 @@ def _make_provider(config: Config):
             raise typer.Exit(1)
         provider = LiteLLMProvider(
             api_key=p.api_key if p else None,
-            api_base=config.get_api_base(model),
+            api_base=config.get_api_base(model, provider=provider_override),
             default_model=model,
             extra_headers=p.extra_headers if p else None,
             provider_name=provider_name,
@@ -440,6 +445,20 @@ def _make_provider(config: Config):
         reasoning_effort=defaults.reasoning_effort,
     )
     return provider
+
+
+def _resolve_gui_runtime(config: Config):
+    """Resolve the GUI provider/model pair, inheriting main-agent settings by default."""
+    if config.gui is None:
+        return None, None
+
+    gui_model = config.gui.model or config.agents.defaults.model
+    gui_provider = _make_provider(
+        config,
+        model_override=gui_model,
+        provider_override=config.gui.provider,
+    )
+    return gui_provider, gui_model
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -523,6 +542,7 @@ def gateway(
     sync_workspace_templates(config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(config)
+    gui_provider, gui_model = _resolve_gui_runtime(config)
     session_manager = SessionManager(config.workspace_path)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
@@ -550,6 +570,8 @@ def gateway(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         gui_config=config.gui,
+        gui_provider=gui_provider,
+        gui_model=gui_model,
     )
 
     # Set cron callback (needs agent)
@@ -725,6 +747,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
+    gui_provider, gui_model = _resolve_gui_runtime(config)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(config.workspace_path):
@@ -754,6 +777,8 @@ def agent(
         mcp_servers=config.tools.mcp_servers,
         channels_config=config.channels,
         gui_config=config.gui,
+        gui_provider=gui_provider,
+        gui_model=gui_model,
     )
 
     # Shared reference for progress callbacks

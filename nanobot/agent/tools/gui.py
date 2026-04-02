@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -16,6 +17,7 @@ import numpy as np
 
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
+from nanobot.utils.gui_evaluation import evaluate_gui_trajectory
 from opengui.agent import GuiAgent
 from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 from opengui.skills.normalization import get_gui_skill_store_root
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
+DEFAULT_GUI_EVALUATION_FILENAME = "evaluation.json"
 _EMBEDDING_BATCH_SIZE = 10
 _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
     {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
@@ -266,7 +269,7 @@ class GuiSubagentTool(Tool):
             summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
             error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
-        self._schedule_trajectory_postprocessing(trace_path, result.success, skill_library)
+        self._schedule_trajectory_postprocessing(trace_path, result.success, skill_library, task)
 
         return json.dumps(
             {
@@ -285,12 +288,13 @@ class GuiSubagentTool(Tool):
         trace_path: Path | None,
         is_success: bool,
         skill_library: Any,
+        task: str,
     ) -> None:
         if trace_path is None or not trace_path.exists():
             return
 
         task = asyncio.create_task(
-            self._run_trajectory_postprocessing(trace_path, is_success, skill_library),
+            self._run_trajectory_postprocessing(trace_path, is_success, skill_library, task),
             name=f"gui-postprocess-{trace_path.stem}",
         )
         self._background_postprocess_tasks.add(task)
@@ -301,11 +305,55 @@ class GuiSubagentTool(Tool):
         trace_path: Path,
         is_success: bool,
         skill_library: Any,
+        task: str,
     ) -> None:
         trajectory_summary = await self._summarize_trajectory(trace_path)
         if trajectory_summary:
             logger.info("Trajectory summary: %s", trajectory_summary[:200])
         await self._extract_skill(trace_path, is_success, skill_library)
+        await self._maybe_run_evaluation(task=task, trace_path=trace_path, is_success=is_success)
+
+    async def _maybe_run_evaluation(
+        self,
+        *,
+        task: str,
+        trace_path: Path,
+        is_success: bool,
+    ) -> dict[str, Any] | None:
+        evaluation = self._gui_config.evaluation
+        if not evaluation.enabled:
+            return None
+        if not is_success:
+            logger.info("Skipping GUI evaluation for unsuccessful task: %s", task)
+            return None
+        if not trace_path.exists():
+            logger.info("Skipping GUI evaluation because trace is missing: %s", trace_path)
+            return None
+
+        api_key = evaluation.api_key or os.getenv("OPENAI_API_KEY", "")
+        if not api_key:
+            logger.info("Skipping GUI evaluation because no api_key is configured")
+            return None
+
+        try:
+            result = await evaluate_gui_trajectory(
+                instruction=task,
+                trace_path=trace_path,
+                model=evaluation.judge_model,
+                api_key=api_key,
+                api_base=evaluation.api_base,
+                task_id=trace_path.parent.name,
+                output_path=trace_path.parent / DEFAULT_GUI_EVALUATION_FILENAME,
+            )
+            logger.info(
+                "GUI evaluation completed: success=%s reason=%s",
+                result.get("success"),
+                result.get("reason"),
+            )
+            return result
+        except Exception:
+            logger.warning("GUI evaluation failed for %s", trace_path, exc_info=True)
+            return None
 
     async def _wait_for_pending_postprocessing(self) -> None:
         if not self._background_postprocess_tasks:
