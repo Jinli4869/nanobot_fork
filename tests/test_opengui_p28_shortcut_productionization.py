@@ -285,11 +285,17 @@ def test_promoted_shortcut_round_trips_with_provenance() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.promotion_store_roundtrip
+@pytest.mark.parametrize(
+    "promotion_store_roundtrip",
+    [True],
+    ids=["promotion_store_roundtrip"],
+)
 async def test_promotion_pipeline_persists_full_shortcut_contract_after_store_reload(
     tmp_path: Path,
+    promotion_store_roundtrip: bool,
 ) -> None:
     from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+    assert promotion_store_roundtrip is True
 
     trace_path = tmp_path / "trace.jsonl"
     _write_jsonl(
