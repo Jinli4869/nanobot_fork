@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: New OpenGUI Skills Architecture
 status: unknown
-stopped_at: Phase 25 context gathered
-last_updated: "2026-04-02T07:15:25.340Z"
-last_activity: 2026-04-02 - Phase 24 executed, verified, and closed with schema, task-skill, and grounding contracts ready for Phase 25
+stopped_at: Completed 25-01-PLAN.md
+last_updated: "2026-04-02T08:15:19.738Z"
+last_activity: 2026-04-02
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 11
-  completed_plans: 11
-  percent: 94
+  total_phases: 11
+  completed_phases: 7
+  total_plans: 20
+  completed_plans: 19
+  percent: 95
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 
 ## Current Position
 
-Phase: 25 (multi-layer-execution) — READY TO PLAN
-Plan: not started
+Phase: 25 (multi-layer-execution) — EXECUTING
+Plan: 1 of 2
 
 ## Performance Metrics
 
-**Progress:** [█████████░] 94%
+**Progress:** [██████████] 95%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -69,6 +69,7 @@ Plan: not started
 | Phase 24 P01 | 2 min | 2 tasks | 4 files |
 | Phase 24 P02 | 4min | 2 tasks | 3 files |
 | Phase 24 P03 | 1min | 2 tasks | 4 files |
+| Phase 25 P01 | 4 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -174,6 +175,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 24]: TaskSkill keeps memory_context_id as an opaque string pointer — Preserves a stable schema contract in Phase 24 without pulling memory lookup behavior into the model layer before Phase 27.
 - [Phase 24]: Grounding returns structured parameter metadata instead of executable Action objects — Keeps Phase 24 contract-only and lets Phase 25 executors own action construction and runtime execution semantics.
 - [Phase 24]: LLMGrounder accepts the existing `LLMProvider` protocol and parses JSON or tool-call argument payloads into `resolved_params`.
+- [Phase 25]: ShortcutExecutor in multi_layer_executor.py is separate from legacy executor.py — incompatible fail-open and template-fallback semantics
+- [Phase 25]: ConditionEvaluator optional injection defaults to always-pass _AlwaysPassEvaluator for dry-run and test scenarios without LLM/device
+- [Phase 25]: All step actions normalize through parse_action() regardless of grounding mode — fixed steps feed fixed_values, grounded steps feed resolved_params
 
 ### Pending Todos
 
@@ -220,8 +224,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last activity: 2026-04-02 - Phase 24 executed, verified, and closed with schema, task-skill, and grounding contracts ready for Phase 25
+Last activity: 2026-04-02
 
-Last session: 2026-04-02T07:15:25.337Z
-Stopped at: Phase 25 context gathered
-Resume file: .planning/phases/25-multi-layer-execution/25-CONTEXT.md
+Last session: 2026-04-02T08:15:19.735Z
+Stopped at: Completed 25-01-PLAN.md
+Resume file: None

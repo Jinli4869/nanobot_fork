@@ -24,9 +24,9 @@ Requirements for the new OpenGUI skills architecture milestone. Replaces the fla
 
 ### EXEC — Multi-layer Execution Engine
 
-- [ ] **EXEC-01**: ShortcutExecutor verifies pre/post contracts at each step boundary and reports violations
+- [x] **EXEC-01**: ShortcutExecutor verifies pre/post contracts at each step boundary and reports violations
 - [ ] **EXEC-02**: TaskSkillExecutor resolves shortcut references, executes ATOM fallback steps, and evaluates conditional branches
-- [ ] **EXEC-03**: Both executors route all action parameter resolution through GrounderProtocol
+- [x] **EXEC-03**: Both executors route all action parameter resolution through GrounderProtocol
 
 ### EXTR — Quality-Gated Skill Extraction
 
@@ -88,9 +88,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | GRND-01 | Phase 24 | Complete |
 | GRND-02 | Phase 24 | Complete |
 | GRND-03 | Phase 24 | Complete |
-| EXEC-01 | Phase 25 | Pending |
+| EXEC-01 | Phase 25 | Complete |
 | EXEC-02 | Phase 25 | Pending |
-| EXEC-03 | Phase 25 | Pending |
+| EXEC-03 | Phase 25 | Complete |
 | EXTR-01 | Phase 26 | Pending |
 | EXTR-02 | Phase 26 | Pending |
 | EXTR-03 | Phase 26 | Pending |
