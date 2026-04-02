@@ -39,6 +39,14 @@ def _make_shortcut_skill(
     parameter_slots: tuple[ParameterSlot, ...] = (),
     preconditions: tuple[StateDescriptor, ...] = (),
     postconditions: tuple[StateDescriptor, ...] = (),
+    source_task: str | None = None,
+    source_trace_path: str | None = None,
+    source_run_id: str | None = None,
+    source_step_indices: tuple[int, ...] = (),
+    promotion_version: int = 1,
+    shortcut_version: int = 1,
+    merged_from_ids: tuple[str, ...] = (),
+    promoted_at: float | None = None,
 ) -> ShortcutSkill:
     return ShortcutSkill(
         skill_id=skill_id,
@@ -51,6 +59,14 @@ def _make_shortcut_skill(
         preconditions=preconditions,
         postconditions=postconditions,
         tags=tags,
+        source_task=source_task,
+        source_trace_path=source_trace_path,
+        source_run_id=source_run_id,
+        source_step_indices=source_step_indices,
+        promotion_version=promotion_version,
+        shortcut_version=shortcut_version,
+        merged_from_ids=merged_from_ids,
+        promoted_at=promoted_at,
         created_at=1700000000.0,
     )
 
@@ -103,6 +119,14 @@ async def test_shortcut_store_round_trip(tmp_path: Path) -> None:
         ),
         preconditions=(StateDescriptor(kind="app_open", value="mail"),),
         postconditions=(StateDescriptor(kind="screen_visible", value="compose"),),
+        source_task="Send a project update",
+        source_trace_path="/tmp/gui_runs/run-123/trace.jsonl",
+        source_run_id="run-123",
+        source_step_indices=(2, 4),
+        promotion_version=1,
+        shortcut_version=3,
+        merged_from_ids=("shortcut-compose-email-v2",),
+        promoted_at=1700000002.5,
     )
 
     store = ShortcutSkillStore(tmp_path)
@@ -110,6 +134,12 @@ async def test_shortcut_store_round_trip(tmp_path: Path) -> None:
 
     reloaded = ShortcutSkillStore(tmp_path)
     assert reloaded.get(skill.skill_id) == skill
+    reloaded_skill = reloaded.get(skill.skill_id)
+    assert reloaded_skill is not None
+    assert reloaded_skill.source_trace_path == "/tmp/gui_runs/run-123/trace.jsonl"
+    assert reloaded_skill.source_step_indices == (2, 4)
+    assert reloaded_skill.shortcut_version == 3
+    assert reloaded_skill.merged_from_ids == ("shortcut-compose-email-v2",)
 
 
 @pytest.mark.asyncio
