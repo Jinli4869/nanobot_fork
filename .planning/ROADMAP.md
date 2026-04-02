@@ -13,7 +13,7 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 - ○ **v1.4 Capability-Aware Planning And Routing** — Phases 21-23 (planned)
 - ○ **v1.5 New OpenGUI Skills Architecture** — Phases 24-27 (planned)
 
-## Current Milestone: v1.3 Nanobot Web Workspace
+## Completed Milestone: v1.3 Nanobot Web Workspace
 
 **Goal:** Add a local-first browser workspace for nanobot that combines chat and operations in one app while keeping the new FastAPI + React + Vite stack isolated under `nanobot/tui`.
 
@@ -103,7 +103,7 @@ Plans:
 3. Regression coverage proves the web surface works without regressing existing CLI-first behavior.
 4. The milestone closes with a verification pass and manual smoke path for local browser usage.
 
-## Upcoming Milestone: v1.4 Capability-Aware Planning And Routing
+## Completed Milestone: v1.4 Capability-Aware Planning And Routing
 
 **Goal:** Upgrade nanobot planning and execution so mixed tasks can prefer live shell/tool/MCP routes when they are more appropriate than GUI automation, while retaining GUI as a reliable fallback.
 

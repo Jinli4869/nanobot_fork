@@ -1,7 +1,7 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Nanobot Web Workspace
+milestone: v1.5
+milestone_name: New OpenGUI Skills Architecture
 status: unknown
 stopped_at: Phase 24 complete; ready to discuss Phase 25
 last_updated: "2026-04-02T04:04:22.511Z"
