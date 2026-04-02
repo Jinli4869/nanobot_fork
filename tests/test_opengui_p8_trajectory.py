@@ -147,21 +147,18 @@ async def test_summarizer_called_post_run(
     """summarize_file should be awaited with a Path after a successful GUI run."""
     from nanobot.agent.tools.gui import GuiSubagentTool  # noqa: F401 — import check
 
-    monkeypatch.setattr(
-        "opengui.skills.extractor.SkillExtractor.extract_from_file",
-        AsyncMock(return_value=None),
-    )
-
     tool = _dry_run_tool(tmp_workspace)
+    promote_mock = AsyncMock(return_value=None)
     with patch(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
         return_value="Summary text",
-    ) as mock_summarize:
+    ) as mock_summarize, patch.object(type(tool), "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
     mock_summarize.assert_awaited_once()
+    promote_mock.assert_awaited_once()
     call_arg = mock_summarize.call_args[0][0]  # first positional arg
     assert isinstance(call_arg, Path), f"Expected Path, got {type(call_arg)}"
 
@@ -170,30 +167,21 @@ async def test_summarizer_called_post_run(
 async def test_summarizer_failure_non_fatal(
     tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If summarize_file raises, execute() should still return valid JSON and _extract_skill runs."""
-    extract_calls: list[Path] = []
-
-    async def fake_extract(self_inner, trajectory_path: Path, *, is_success: bool = True):
-        extract_calls.append(trajectory_path)
-        return None
-
-    monkeypatch.setattr(
-        "opengui.skills.extractor.SkillExtractor.extract_from_file",
-        fake_extract,
-    )
+    """If summarize_file raises, execute() should still return valid JSON and promotion still runs."""
 
     tool = _dry_run_tool(tmp_workspace)
+    promote_mock = AsyncMock(return_value=None)
     with patch(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
         side_effect=RuntimeError("summarizer exploded"),
-    ):
+    ), patch.object(type(tool), "_promote_shortcut", new=promote_mock):
         raw = await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
     result = json.loads(raw)
     assert "success" in result, "execute() must return JSON with 'success' key"
-    assert len(extract_calls) == 1, "_extract_skill must still be called after summarizer failure"
+    promote_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -201,10 +189,6 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
     tmp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "opengui.skills.extractor.SkillExtractor.extract_from_file",
-        AsyncMock(return_value=None),
-    )
     eval_mock = AsyncMock(return_value={"success": True, "reason": "final state matches"})
     monkeypatch.setattr("nanobot.agent.tools.gui.evaluate_gui_trajectory", eval_mock)
 
@@ -219,11 +203,14 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
             }
         },
     )
+    promote_mock = AsyncMock(return_value=None)
 
-    await tool.execute(task="test task")
-    await tool._wait_for_pending_postprocessing()
+    with patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+        await tool.execute(task="test task")
+        await tool._wait_for_pending_postprocessing()
 
     eval_mock.assert_awaited_once()
+    promote_mock.assert_awaited_once()
     kwargs = eval_mock.await_args.kwargs
     assert kwargs["instruction"] == "test task"
     assert kwargs["model"] == "judge-model"
@@ -274,11 +261,6 @@ async def test_gui_evaluation_failure_is_non_fatal(
     tmp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    extract_mock = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        "opengui.skills.extractor.SkillExtractor.extract_from_file",
-        extract_mock,
-    )
     monkeypatch.setattr(
         "nanobot.agent.tools.gui.evaluate_gui_trajectory",
         AsyncMock(side_effect=RuntimeError("judge unavailable")),
@@ -294,13 +276,15 @@ async def test_gui_evaluation_failure_is_non_fatal(
             }
         },
     )
+    promote_mock = AsyncMock(return_value=None)
 
-    raw = await tool.execute(task="test task")
-    await tool._wait_for_pending_postprocessing()
+    with patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+        raw = await tool.execute(task="test task")
+        await tool._wait_for_pending_postprocessing()
 
     result = json.loads(raw)
     assert result["success"] is True
-    extract_mock.assert_awaited_once()
+    promote_mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -320,12 +304,8 @@ async def test_summarizer_skipped_when_no_trace(
         )
 
     monkeypatch.setattr("opengui.agent.GuiAgent.run", fake_run)
-    monkeypatch.setattr(
-        "opengui.skills.extractor.SkillExtractor.extract_from_file",
-        AsyncMock(return_value=None),
-    )
-
     tool = _dry_run_tool(tmp_workspace)
+    promote_mock = AsyncMock(return_value=None)
 
     # recorder.path will also be None because agent.run() didn't write anything
     # and we need to ensure the recorder itself returns None for its path.
@@ -343,11 +323,12 @@ async def test_summarizer_skipped_when_no_trace(
     with patch(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
-    ) as mock_summarize:
+    ) as mock_summarize, patch.object(type(tool), "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
     mock_summarize.assert_not_awaited()
+    promote_mock.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
