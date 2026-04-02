@@ -272,7 +272,7 @@ class GuiSubagentTool(Tool):
             summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
             error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
-        self._schedule_trajectory_postprocessing(trace_path, result.success, skill_library, task)
+        self._schedule_trajectory_postprocessing(trace_path, result.success, active_backend.platform, task)
 
         return json.dumps(
             {
@@ -290,31 +290,33 @@ class GuiSubagentTool(Tool):
         self,
         trace_path: Path | None,
         is_success: bool,
-        skill_library: Any,
+        platform: str,
         task: str,
     ) -> None:
         if trace_path is None or not trace_path.exists():
             return
 
-        task = asyncio.create_task(
-            self._run_trajectory_postprocessing(trace_path, is_success, skill_library, task),
+        background_task = asyncio.create_task(
+            self._run_trajectory_postprocessing(trace_path, is_success, platform, task),
             name=f"gui-postprocess-{trace_path.stem}",
         )
-        self._background_postprocess_tasks.add(task)
-        task.add_done_callback(self._handle_background_postprocess_done)
+        self._background_postprocess_tasks.add(background_task)
+        background_task.add_done_callback(self._handle_background_postprocess_done)
 
     async def _run_trajectory_postprocessing(
         self,
         trace_path: Path,
         is_success: bool,
-        skill_library: Any,
+        platform: str,
         task: str,
     ) -> None:
-        trajectory_summary = await self._summarize_trajectory(trace_path)
+        trajectory_summary, _, _ = await asyncio.gather(
+            self._summarize_trajectory(trace_path),
+            self._promote_shortcut(trace_path, is_success, platform),
+            self._maybe_run_evaluation(task=task, trace_path=trace_path, is_success=is_success),
+        )
         if trajectory_summary:
             logger.info("Trajectory summary: %s", trajectory_summary[:200])
-        await self._extract_skill(trace_path, is_success, skill_library)
-        await self._maybe_run_evaluation(task=task, trace_path=trace_path, is_success=is_success)
 
     async def _maybe_run_evaluation(
         self,
@@ -630,30 +632,26 @@ class GuiSubagentTool(Tool):
             except FileExistsError:
                 continue
 
-    async def _extract_skill(self, trace_path: Path | None, is_success: bool, skill_library: Any) -> None:
+    async def _promote_shortcut(self, trace_path: Path | None, is_success: bool, platform: str) -> str | None:
         if trace_path is None or not trace_path.exists():
-            return
+            return None
+        if not is_success:
+            logger.info("Skipping shortcut promotion for unsuccessful task: %s", trace_path)
+            return None
 
-        from opengui.skills.extractor import SkillExtractor
+        from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+        from opengui.skills.shortcut_store import ShortcutSkillStore
 
         try:
-            extractor = SkillExtractor(llm=self._llm_adapter)
-            skill = await extractor.extract_from_file(trace_path, is_success=is_success)
-            usage = extractor.total_usage
-            logger.info("Extraction usage: %s", usage)
-            _write_extraction_usage(trace_path, usage)
-            if skill is None:
-                logger.debug("No skill extracted from trajectory %s", trace_path)
-                return
-            decision, skill_id = await skill_library.add_or_merge(skill)
-            logger.info(
-                "Extracted GUI skill %s from %s with decision=%s",
-                skill_id or skill.skill_id,
-                trace_path,
-                decision,
+            store = ShortcutSkillStore(
+                store_dir=get_gui_skill_store_root(self._workspace),
+                embedding_provider=self._embedding_adapter,
             )
+            pipeline = ShortcutPromotionPipeline(platform=platform)
+            return await pipeline.promote_from_trace(trace_path, is_success=is_success, store=store)
         except Exception:
-            logger.warning("Skill extraction failed for %s", trace_path, exc_info=True)
+            logger.warning("Shortcut promotion failed for %s", trace_path, exc_info=True)
+            return None
 
     async def _summarize_trajectory(self, trace_path: Path | None) -> str:
         """Summarize the trajectory via LLM; return empty string on error or when unavailable."""
