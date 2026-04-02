@@ -915,7 +915,7 @@ async def test_gui_tool_intervention_flow_returns_structured_resume_result(
     with (
         patch.object(type(tool), "_build_intervention_handler", return_value=_ResumeHandler(), create=True),
         patch.object(type(tool), "_summarize_trajectory", new=AsyncMock(return_value="")),
-        patch.object(type(tool), "_extract_skill", new=AsyncMock()),
+        patch.object(type(tool), "_promote_shortcut", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("Handle payroll login"))
         await tool._wait_for_pending_postprocessing()
@@ -961,7 +961,7 @@ async def test_gui_tool_intervention_trace_payload_is_scrubbed(
     with (
         patch.object(type(tool), "_build_intervention_handler", return_value=_CancelHandler(), create=True),
         patch.object(type(tool), "_summarize_trajectory", new=AsyncMock(return_value="")),
-        patch.object(type(tool), "_extract_skill", new=AsyncMock()),
+        patch.object(type(tool), "_promote_shortcut", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("Handle payroll login"))
         await tool._wait_for_pending_postprocessing()
@@ -1003,18 +1003,63 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes(tmp_pa
     release_postprocess = asyncio.Event()
     postprocess_started = asyncio.Event()
 
-    async def fake_postprocess(self, trace_path: Path, is_success: bool, platform: str, task: str) -> None:
-        del self, trace_path, is_success, platform, task
+    async def fake_promote(trace_path: Path | None, is_success: bool, platform: str) -> None:
+        del trace_path, is_success, platform
         postprocess_started.set()
         await release_postprocess.wait()
 
     with (
         patch("opengui.agent.GuiAgent.run", new=fake_run),
-        patch.object(type(tool), "_run_trajectory_postprocessing", new=fake_postprocess),
+        patch.object(type(tool), "_promote_shortcut", new=AsyncMock(side_effect=fake_promote)),
+        patch.object(type(tool), "_summarize_trajectory", new=AsyncMock(return_value="background summary")),
+        patch.object(type(tool), "_maybe_run_evaluation", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("test"))
         await asyncio.wait_for(postprocess_started.wait(), timeout=1.0)
         assert payload["success"] is True
+        assert payload["summary"] == "completed test"
+        assert payload["steps_taken"] == 1
+        assert payload["trace_path"] is not None
         assert tool._background_postprocess_tasks
         release_postprocess.set()
         await tool._wait_for_pending_postprocessing()
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_promotion_failure_is_non_fatal(tmp_path: Path) -> None:
+    from opengui.agent import AgentResult
+
+    tool = _make_gui_tool(background=False)
+    tool._workspace = tmp_path
+
+    async def fake_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None) -> AgentResult:
+        del max_retries, app_hint
+        self._trajectory_recorder.start()
+        self._trajectory_recorder.record_step(action={"action_type": "wait"}, model_output="wait")
+        trace_path = self._trajectory_recorder.finish(success=True)
+        return AgentResult(
+            success=True,
+            summary=f"completed {task}",
+            model_summary=None,
+            trace_path=str(trace_path),
+            steps_taken=1,
+            error=None,
+        )
+
+    with (
+        patch("opengui.agent.GuiAgent.run", new=fake_run),
+        patch.object(
+            type(tool),
+            "_promote_shortcut",
+            new=AsyncMock(side_effect=RuntimeError("promotion exploded")),
+        ),
+        patch.object(type(tool), "_summarize_trajectory", new=AsyncMock(return_value="background summary")),
+        patch.object(type(tool), "_maybe_run_evaluation", new=AsyncMock(return_value=None)),
+    ):
+        payload = json.loads(await tool.execute("test"))
+        await tool._wait_for_pending_postprocessing()
+
+    assert payload["success"] is True
+    assert payload["summary"] == "completed test"
+    assert payload["steps_taken"] == 1
+    assert payload["trace_path"] is not None
