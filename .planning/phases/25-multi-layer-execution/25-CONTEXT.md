@@ -30,7 +30,8 @@ Implement `ShortcutExecutor` and `TaskSkillExecutor` — the execution layer for
 ### Shortcut resolution in TaskSkillExecutor
 - TaskSkillExecutor accepts a `shortcut_resolver: Callable[[str], ShortcutSkill | None]` at construction
 - Tests pass a lambda or dict-lookup; Phase 27 wires in the real store's `get_by_id`
-- When `shortcut_id` cannot be resolved: fall back to any inline ATOM (SkillStep) fallback steps on the same node; if there are no fallback steps, abort with a structured missing-shortcut report
+- Because `ShortcutRefNode` does not encode embedded fallback steps in the Phase 24 schema, "same node" fallback is represented structurally as the maximal contiguous run of inline ATOM (`SkillStep`) siblings immediately following that `ShortcutRefNode` in the same tuple
+- When `shortcut_id` cannot be resolved: execute that contiguous inline ATOM fallback block; if there is no such fallback block, abort with a structured missing-shortcut report
 - TaskSkillExecutor receives an injected `ShortcutExecutor` instance at construction — explicit dependency, easy to stub, no implicit sub-executor construction
 
 ### param_bindings semantics
