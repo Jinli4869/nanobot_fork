@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import tomllib
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -13,6 +14,7 @@ from opengui.agent import GuiAgent
 from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
+from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.trajectory.recorder import TrajectoryRecorder
 
@@ -408,6 +410,66 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     )
     assert "Step 3" in current_text
     assert "Task: Open Settings" in current_text
+
+
+@pytest.mark.asyncio
+async def test_agent_waits_for_ui_to_settle_before_observing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    original_sleep = asyncio.sleep
+
+    class _SettlingBackend(DryRunBackend):
+        async def execute(self, action, timeout: float = 5.0) -> str:
+            events.append(f"execute:{action.action_type}")
+            return await super().execute(action, timeout=timeout)
+
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            events.append(f"observe:{Path(screenshot_path).name}")
+            return await super().observe(screenshot_path, timeout=timeout)
+
+    async def fake_sleep(delay: float) -> None:
+        events.append(f"sleep:{delay}")
+        await original_sleep(0)
+
+    monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
+
+    agent = GuiAgent(
+        _ScriptedLLM([
+            LLMResponse(
+                content="tap the screen",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="computer_use",
+                    arguments={"action_type": "tap", "x": 10, "y": 20},
+                )],
+            ),
+            LLMResponse(
+                content="finish task",
+                tool_calls=[ToolCall(
+                    id="call-2",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            ),
+        ]),
+        _SettlingBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "settle"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Tap once")
+
+    assert result.success
+    assert events[:4] == [
+        "observe:step_000.png",
+        "execute:tap",
+        "sleep:0.25",
+        "observe:step_001.png",
+    ]
 
 
 def test_pyproject_includes_opengui_in_build() -> None:

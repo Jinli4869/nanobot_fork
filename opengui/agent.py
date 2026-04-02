@@ -402,6 +402,8 @@ class GuiAgent:
     _MAX_TOOL_RETRIES = 2
     _MODEL_RELATIVE_GRID_HINTS = ("qwen", "gemini")
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
+    _POST_ACTION_SETTLE_SECONDS = 0.25
+    _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
 
     def __init__(
         self,
@@ -961,6 +963,10 @@ class GuiAgent:
             except Exception as exc:
                 result_text = f"Action failed: {exc}"
 
+            settle_seconds = self._post_action_settle_seconds(action)
+            if settle_seconds > 0:
+                await asyncio.sleep(settle_seconds)
+
             # Observe next state
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
             next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
@@ -1006,6 +1012,11 @@ class GuiAgent:
         if coords and all(0 <= value <= 999 for value in coords):
             return replace(action, relative=True)
         return action
+
+    def _post_action_settle_seconds(self, action: Action) -> float:
+        if action.action_type in self._NO_SETTLE_ACTIONS:
+            return 0.0
+        return self._POST_ACTION_SETTLE_SECONDS
 
     # ------------------------------------------------------------------
     # Message helpers

@@ -323,3 +323,114 @@ def test_planner_router_exported_from_agent_package() -> None:
 
     for cls in (TaskPlanner, PlanNode, TreeRouter, NodeResult, RouterContext):
         assert isinstance(cls, type), f"{cls!r} is not a class"
+
+
+def test_evaluate_gui_trajectory_counts_only_step_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.utils.gui_evaluation import evaluate_gui_trajectory_sync
+
+    trace_path = tmp_path / "trace.jsonl"
+    rows = [
+        {"type": "metadata", "screenshot_file": "meta.png"},
+        {"type": "step", "step_num": 1, "action": "tap", "screenshot_file": "step_001.png"},
+        {"type": "attempt_result"},
+        {"type": "step", "step_num": 2, "action": "done", "screenshot_file": "step_002.png"},
+    ]
+    trace_path.write_text(
+        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    for name in ("meta.png", "step_001.png", "step_002.png"):
+        (tmp_path / name).write_bytes(b"png")
+
+    captured: dict[str, Any] = {}
+
+    def fake_judge_success(*, client, instruction, traj_rows, screenshots, model, task_id):
+        captured["traj_rows"] = traj_rows
+        captured["screenshots"] = screenshots
+        return True, "ok"
+
+    monkeypatch.setattr("nanobot.utils.gui_evaluation.judge_success", fake_judge_success)
+    monkeypatch.setattr("nanobot.utils.gui_evaluation.OpenAI", lambda **kwargs: object())
+
+    result = evaluate_gui_trajectory_sync(
+        instruction="test instruction",
+        trace_path=trace_path,
+        model="judge-model",
+        api_key="judge-key",
+        api_base="https://judge.example/v1",
+        task_id="task-1",
+        output_path=None,
+    )
+
+    assert result["steps"] == 2
+    assert [row.get("type") for row in captured["traj_rows"]] == ["step", "step"]
+    assert len(captured["screenshots"]) == 2
+
+
+def test_eval_script_uses_step_only_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from eval.eval import run_eval
+
+    dataset_csv = tmp_path / "dataset.csv"
+    dataset_csv.write_text(
+        "task_id,instruction,instruction_ch\n"
+        "task-1,Open settings,\n",
+        encoding="utf-8",
+    )
+
+    traj_root = tmp_path / "traces"
+    task_dir = traj_root / "task-1"
+    task_dir.mkdir(parents=True)
+    (task_dir / "traj.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"type": "metadata"}),
+                json.dumps({"type": "step", "step_num": 1}),
+                json.dumps({"type": "step", "step_num": 2}),
+                json.dumps({"type": "result"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_eval(*, instruction, trace_path, model, api_key, api_base, task_id, output_path):
+        rows = [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        return {
+            "task_id": task_id,
+            "instruction": instruction,
+            "trace_path": str(trace_path),
+            "judge_model": model,
+            "success": True,
+            "reason": "ok",
+            "steps": sum(1 for row in rows if row.get("type") == "step"),
+        }
+
+    monkeypatch.setattr("eval.eval.evaluate_gui_trajectory_sync", fake_eval)
+
+    output_dir = tmp_path / "results"
+    run_eval(
+        dataset_csv=dataset_csv,
+        traj_root=traj_root,
+        output_dir=output_dir,
+        model="judge-model",
+        api_key="judge-key",
+        api_base="https://judge.example/v1",
+        max_samples=None,
+    )
+
+    per_task = [
+        json.loads(line)
+        for line in (output_dir / "per_task_results.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+
+    assert per_task[0]["steps"] == 2
+    assert summary["steps_stats_all"]["mean"] == 2.0

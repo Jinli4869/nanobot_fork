@@ -29,6 +29,10 @@ def load_traj_rows(traj_path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def filter_step_rows(traj_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [row for row in traj_rows if row.get("type") == "step"]
+
+
 def load_screenshots_for_judge(
     traj_path: Path,
     traj_rows: list[dict[str, Any]],
@@ -159,7 +163,7 @@ def evaluate_gui_trajectory_sync(
         raise ValueError("Missing evaluation api_key")
 
     client = OpenAI(api_key=api_key, base_url=api_base) if api_base else OpenAI(api_key=api_key)
-    traj_rows = load_traj_rows(trace_path)
+    traj_rows = filter_step_rows(load_traj_rows(trace_path))
     screenshots = load_screenshots_for_judge(trace_path, traj_rows)
     success, reason = judge_success(
         client=client,
