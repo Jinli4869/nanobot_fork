@@ -72,6 +72,14 @@ class ShortcutSkill:
     preconditions: tuple[StateDescriptor, ...] = ()
     postconditions: tuple[StateDescriptor, ...] = ()
     tags: tuple[str, ...] = ()
+    source_task: str | None = None
+    source_trace_path: str | None = None
+    source_run_id: str | None = None
+    source_step_indices: tuple[int, ...] = ()
+    promotion_version: int = 1
+    shortcut_version: int = 1
+    merged_from_ids: tuple[str, ...] = ()
+    promoted_at: float | None = None
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +94,14 @@ class ShortcutSkill:
             "preconditions": [state.to_dict() for state in self.preconditions],
             "postconditions": [state.to_dict() for state in self.postconditions],
             "tags": list(self.tags),
+            "source_task": self.source_task,
+            "source_trace_path": self.source_trace_path,
+            "source_run_id": self.source_run_id,
+            "source_step_indices": list(self.source_step_indices),
+            "promotion_version": self.promotion_version,
+            "shortcut_version": self.shortcut_version,
+            "merged_from_ids": list(self.merged_from_ids),
+            "promoted_at": self.promoted_at,
             "created_at": self.created_at,
         }
 
@@ -111,5 +127,13 @@ class ShortcutSkill:
                 for state in data.get("postconditions", [])
             ),
             tags=tuple(data.get("tags", ())),
+            source_task=data.get("source_task"),
+            source_trace_path=data.get("source_trace_path"),
+            source_run_id=data.get("source_run_id"),
+            source_step_indices=tuple(int(index) for index in data.get("source_step_indices", ())),
+            promotion_version=int(data.get("promotion_version", 1)),
+            shortcut_version=int(data.get("shortcut_version", 1)),
+            merged_from_ids=tuple(str(skill_id) for skill_id in data.get("merged_from_ids", ())),
+            promoted_at=data.get("promoted_at"),
             created_at=data.get("created_at", time.time()),
         )
