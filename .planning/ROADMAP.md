@@ -177,7 +177,7 @@ Plans:
 
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
-| 24 | 2/3 | In Progress|  | 4 |
+| 24 | 3/3 | Complete   | 2026-04-02 | 4 |
 | 25 | Multi-layer Execution | Implement ShortcutExecutor and TaskSkillExecutor so shortcut-layer and task-level skills can execute with contract verification and grounded parameter resolution. | EXEC-01, EXEC-02, EXEC-03 | 4 |
 | 26 | Quality-Gated Extraction | Build the step-level and trajectory-level critics and the extraction pipeline that converts validated trajectories into shortcut-layer skill candidates. | EXTR-01, EXTR-02, EXTR-03, EXTR-04 | 4 |
 | 27 | Storage, Search, and Agent Integration | Stand up the two separate versioned skill stores with unified hybrid search, then wire GuiAgent to search both layers and inject referenced app memory context. | STOR-01, STOR-02, INTEG-01, INTEG-02 | 4 |
@@ -188,7 +188,7 @@ Plans:
 
 **Depends on:** Phase 23
 **Requirements:** SCHEMA-01, SCHEMA-02, SCHEMA-03, SCHEMA-04, SCHEMA-05, SCHEMA-06, GRND-01, GRND-02, GRND-03
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] 24-01-PLAN.md — Define shared schema primitives and the `ShortcutSkill` round-trip contract
