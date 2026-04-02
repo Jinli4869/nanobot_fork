@@ -236,7 +236,7 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
 }
 ```
 
-**Full config with GUI subagent (DashScope + Android):**
+**Full config with GUI subagent (main agent on DashScope, GUI agent on OpenRouter):**
 
 ```json
 {
@@ -254,6 +254,10 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
   "providers": {
     "dashscope": {
       "apiKey": "sk-..."
+    },
+    "openrouter": {
+      "apiKey": "sk-or-...",
+      "apiBase": "https://openrouter.ai/api/v1"
     }
   },
 
@@ -270,16 +274,100 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
 
   "gui": {
     "backend": "adb",
+    "model": "openrouter/qwen/qwen2.5-vl-72b-instruct",
+    "provider": "openrouter",
     "adb": { "serial": null },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
     "skillThreshold": 0.6,
-    "enableSkillExecution": true
+    "enableSkillExecution": true,
+    "evaluation": {
+      "enabled": true,
+      "judgeModel": "qwen3-vl-plus",
+      "apiKey": "sk-judge-...",
+      "apiBase": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    }
   }
 }
 ```
 
 > **Note on `embeddingModel`:** When set, nanobot uses the DashScope embedding endpoint for semantic skill search. If omitted, skill matching falls back to BM25 keyword search.
+>
+> **Note on `gui.model` / `gui.provider`:** These are optional overrides for GUI tasks only. If omitted, the GUI subagent inherits `agents.defaults.model` and `agents.defaults.provider`.
+>
+> **Note on `gui.evaluation.judgeModel`:** This judge model is only used for optional post-run evaluation. It does not change the model that actually performs the GUI task.
+
+### Using a different provider/model for GUI tasks
+
+The main nanobot agent and the GUI subagent now support separate runtime selection:
+
+- `agents.defaults.model` / `agents.defaults.provider`
+  Main agent model/provider for planning, tool orchestration, chat, and non-GUI work
+- `gui.model` / `gui.provider`
+  GUI-only override for `gui_task`
+- `gui.evaluation.judgeModel`
+  Judge model used only when post-run GUI evaluation is enabled
+
+Typical pattern:
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "model": "qwen3.5-plus",
+      "provider": "dashscope"
+    }
+  },
+  "providers": {
+    "dashscope": {
+      "apiKey": "sk-main-..."
+    },
+    "openrouter": {
+      "apiKey": "sk-or-...",
+      "apiBase": "https://openrouter.ai/api/v1"
+    }
+  },
+  "gui": {
+    "backend": "local",
+    "model": "openrouter/qwen/qwen2.5-vl-72b-instruct",
+    "provider": "openrouter"
+  }
+}
+```
+
+In that setup:
+
+- the main agent stays on `qwen3.5-plus`
+- GUI execution uses `openrouter/qwen/qwen2.5-vl-72b-instruct`
+- the provider named by `gui.provider` must exist under the top-level `providers` block
+
+If you omit `gui.provider`, nanobot falls back to the same provider-resolution logic used by the main agent and tries to infer the provider from `gui.model`.
+
+### Optional GUI evaluation
+
+If you want nanobot to evaluate each successful GUI run after the task finishes, enable `gui.evaluation`:
+
+```json
+{
+  "gui": {
+    "backend": "adb",
+    "evaluation": {
+      "enabled": true,
+      "judgeModel": "qwen3-vl-plus",
+      "apiKey": "sk-judge-...",
+      "apiBase": "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    }
+  }
+}
+```
+
+Behavior:
+
+- evaluation runs only after a successful GUI task with a saved `trace.jsonl`
+- evaluation runs in the background postprocessing path and does not block the main GUI result
+- the evaluation result is written as `evaluation.json` next to the GUI run trace
+- if `apiKey` is omitted, nanobot falls back to `OPENAI_API_KEY`
+- `judgeModel` can use a different provider/model pair than both the main agent and the GUI agent, as long as `apiBase` and `apiKey` point to a compatible endpoint
 
 ### GUI section reference
 
@@ -288,6 +376,8 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `backend` | `"adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
+| `model` | `string \| null` | `null` | GUI-only model override; inherits `agents.defaults.model` when omitted |
+| `provider` | `string \| null` | `null` | GUI-only provider override; inherits main-agent provider resolution when omitted |
 | `adb.serial` | `string \| null` | `null` | ADB device serial; `null` = auto-detect |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent server URL |
 | `hdc.serial` | `string \| null` | `null` | HDC device serial; `null` = auto-detect |
@@ -300,6 +390,10 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `displayWidth` | `int` | `1280` | Virtual display width in pixels |
 | `displayHeight` | `int` | `720` | Virtual display height in pixels |
 | `enableSkillExecution` | `bool` | `false` | Enable learned skill replay (see [Skills System](#skills-system)) |
+| `evaluation.enabled` | `bool` | `false` | Run post-task evaluation for successful GUI runs |
+| `evaluation.judgeModel` | `string` | `"qwen3-vl-plus"` | Judge model used for evaluation only |
+| `evaluation.apiKey` | `string` | `""` | API key for the judge endpoint; falls back to `OPENAI_API_KEY` when empty |
+| `evaluation.apiBase` | `string \| null` | `"https://dashscope.aliyuncs.com/compatible-mode/v1"` | OpenAI-compatible base URL for the judge endpoint |
 
 ### Switching backends
 
