@@ -1,7 +1,7 @@
 # Feature Research
 
-**Domain:** Cross-platform background GUI automation
-**Researched:** 2026-03-20
+**Domain:** GUI-agent shortcut extraction and stable shortcut execution
+**Researched:** 2026-04-02
 **Confidence:** MEDIUM
 
 ## Feature Landscape
@@ -10,101 +10,94 @@
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| macOS background execution path | Linux background mode already shipped; users will expect parity on supported desktop OSes | HIGH | Must either create a real off-screen display or fail explicitly when permissions/API support are missing. |
-| Windows background execution path | Cross-platform desktop automation feels incomplete without Windows support | HIGH | Hidden-desktop rendering differences mean capability checks must be part of the feature. |
-| Safe intervention request action | Background automation needs a sanctioned way to pause for passwords, OTP, payment, or manual review | MEDIUM | The agent loop should surface this as an explicit action, not an implementation detail. |
-| Foreground handoff and resume | A notification alone is not enough; users need a predictable way to enter and leave the automation context | MEDIUM | Resume must refresh observation state before continuing. |
-| Clear platform fallback behavior | Users need to know whether a run is isolated, degraded to foreground, or blocked | LOW | Avoid silent fallback because it breaks trust. |
+| Trace-to-shortcut extraction on successful runs | The repo already defines shortcut schemas; users expect successful traces to feed them automatically | MEDIUM | The current production path still extracts only legacy skills |
+| Screen-aware shortcut applicability checks before execution | AppAgentX-style shortcut use only works if the current screen really matches | HIGH | Selection should combine task text, app/platform, and current screen evidence |
+| Live parameter binding instead of stale replay | Reusable shortcuts must adapt to current text targets, elements, and slight UI drift | HIGH | Existing grounding contracts are the right integration seam |
+| Safe fallback when shortcut reuse is unsafe or fails | Shortcut use must never make the base agent worse | HIGH | Fallback path should preserve run continuity and diagnostics |
+| Step-by-step stability guards | Users care less about shortcut elegance than whether it actually finishes reliably | HIGH | Requires settle/wait semantics plus post-step validation |
 
 ### Differentiators (Competitive Advantage)
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Multi-layer intervention detection | Reduces unsafe autonomous actions and cuts false positives | MEDIUM | Combine model signaled intervention with deterministic policy gates. |
-| Notification abstraction for local and remote operators | Makes background runs practical beyond a single interactive terminal | MEDIUM | Keep transport behind a protocol so CLI/nanobot can choose channels later. |
-| Capability-aware handoff UX | Lets the same CLI / nanobot flow explain platform limitations cleanly | MEDIUM | Important on Windows where some app classes may not render in hidden desktops. |
+| Shortcut health telemetry and demotion signals | Makes shortcut quality observable instead of mysterious | MEDIUM | Helps prune brittle shortcuts over time |
+| Merge/version handling for duplicate shortcuts | Keeps the library clean as more traces arrive | MEDIUM | Avoids store pollution from repeated near-identical traces |
+| Cross-surface shortcut stability contract | Reuse the same architecture on Android, local desktop, iOS, and HDC | HIGH | Important for OpenGUI's portable-agent positioning |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
 | Feature | Why Requested | Why Problematic | Alternative |
 |---------|---------------|-----------------|-------------|
-| Automatic password / payment completion after intervention detection | Seems like a smoother user flow | Violates the milestone’s safety boundary and creates credential leakage risk | Require explicit user intervention and resume confirmation. |
-| Full live remote viewing / VNC streaming in v1.2 | Sounds helpful for monitoring | Adds substantial infrastructure and testing scope unrelated to the core milestone | Defer to later milestone after basic handoff works. |
-| Silent fallback from background to foreground | Feels convenient | Users lose trust when automation suddenly steals focus | Emit a visible warning or block the run with a capability error. |
+| Immediate graph database adoption | AppAgentX uses richer memory/graph storage | Adds infrastructure before the shortcut pipeline itself is trustworthy | Stabilize schema, gating, and runtime first; revisit storage later |
+| Promote every successful trace automatically | Feels like the fastest way to grow the library | Creates brittle, duplicate, low-value shortcuts that reduce trust | Require explicit gates, provenance, and health signals |
+| Replay recorded coordinates exactly | Seems simple and efficient | Breaks under layout drift, animation timing, and partial page changes | Re-ground live targets and verify observable state transitions |
 
 ## Feature Dependencies
 
-```text
-Platform background execution
-    └──requires──> platform capability detection
-                         └──requires──> explicit runtime errors / fallback policy
+`Stable shortcut execution`
+    `requires` -> `Shortcut applicability evaluation`
+    `requires` -> `Live target/parameter binding`
+    `requires` -> `Post-step validation`
 
-Intervention handoff
-    └──requires──> request_intervention action
-                         └──requires──> agent-loop pause/resume semantics
+`Shortcut applicability evaluation`
+    `requires` -> `Persisted shortcut metadata + provenance`
 
-Notifications ──enhances──> intervention handoff
-
-Silent fallback ──conflicts──> trustworthy background execution
-```
+`Shortcut health telemetry`
+    `enhances` -> `Promotion gates`
+    `enhances` -> `Shortcut demotion / cleanup`
 
 ### Dependency Notes
 
-- **Platform background execution requires capability detection:** the backend has to know whether the OS/API/permissions make isolation possible before it starts.
-- **Intervention handoff requires an explicit action type:** otherwise pause/resume becomes ad hoc logic scattered across the backend and agent loop.
-- **Notifications enhance intervention handoff:** they are not the handoff itself, but they make background execution usable outside a watched terminal.
-- **Silent fallback conflicts with trustworthy background execution:** if the product promises background mode, unannounced foreground execution is a behavioral regression.
+- **Execution requires applicability evaluation:** running a shortcut without current-screen checks is the fastest path to instability.
+- **Applicability evaluation requires richer metadata:** extraction has to emit enough structured state and provenance for safe runtime decisions.
+- **Telemetry enhances promotion and cleanup:** without observable failure patterns, the library only grows and never improves.
 
 ## MVP Definition
 
-### Launch With (v1)
+### Launch With (v1.6)
 
-- [ ] macOS background execution capability with explicit permission/capability checks — essential platform parity milestone goal
-- [ ] Windows background execution capability with documented app-class limits — essential platform parity milestone goal
-- [ ] `request_intervention` / equivalent pause-resume flow in the agent loop — required safety primitive
-- [ ] Foreground handoff and resume path for desktop runs — required to make intervention usable
-- [ ] Regression tests for lifecycle, fallbacks, and sensitive-state pauses — required to keep shipped Linux behavior stable
+- [ ] Shortcut candidates promoted from successful trace step events into the new shortcut store
+- [ ] Screen-aware retrieval and selection before shortcut execution
+- [ ] Stable execution path with settle/verify/fallback behavior
+- [ ] Regression coverage and logs proving shortcut use is safer than naive replay
 
-### Add After Validation (v1.x)
+### Add After Validation (v1.6.x)
 
-- [ ] Cross-platform desktop notification transports — add once the core handoff state machine is stable
-- [ ] Android-specific intervention UX improvements — add once desktop handoff semantics are proven
+- [ ] Shortcut health scoring and automatic demotion once enough runtime evidence exists
+- [ ] Better duplicate clustering / version lineage for similar shortcuts
 
 ### Future Consideration (v2+)
 
-- [ ] Live observer / remote attach views — defer until background execution semantics are stable
-- [ ] Rich intervention policy packs per app domain — defer until real usage shows recurring patterns
+- [ ] Task-level skill synthesis from repeated shortcut compositions
+- [ ] OmniParser-first shortcut binding and graph-backed association memory
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
 |---------|------------|---------------------|----------|
-| macOS isolated background execution | HIGH | HIGH | P1 |
-| Windows isolated background execution | HIGH | HIGH | P1 |
-| Intervention request + pause/resume | HIGH | MEDIUM | P1 |
-| Foreground handoff UX | HIGH | MEDIUM | P1 |
-| Notification abstraction | MEDIUM | MEDIUM | P2 |
-| Android intervention parity | MEDIUM | MEDIUM | P2 |
+| Trace-to-shortcut extraction in production path | HIGH | MEDIUM | P1 |
+| Screen-aware shortcut applicability checks | HIGH | HIGH | P1 |
+| Live binding and safe fallback | HIGH | HIGH | P1 |
+| Step settle/verification guarantees | HIGH | HIGH | P1 |
+| Shortcut telemetry and library hygiene | MEDIUM | MEDIUM | P2 |
+| Graph-backed shortcut association memory | MEDIUM | HIGH | P3 |
 
-**Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
-- P3: Nice to have, future consideration
+## Competitor / Reference Analysis
 
-## Competitor Feature Analysis
-
-| Feature | Competitor A | Competitor B | Our Approach |
-|---------|--------------|--------------|--------------|
-| Background desktop isolation | Browser/GUI testing stacks often use virtual displays or hidden sessions | Power-user desktop tools often rely on OS-specific isolation and warn about limits | Match the proven OS-native isolation model, but keep it behind the existing backend abstraction. |
-| Human handoff | Many automation systems rely on manual pause buttons | Some RPA tools expose “attended” checkpoints | Make intervention a first-class model/backend signal rather than a separate operator-only workflow. |
-| Fallback handling | Some tools silently degrade | Better tools explain capability gaps up front | Prefer explicit warnings or hard block over silent degradation. |
+| Feature | AppAgentX | Mobile-Agent-v3.5/mobile_use | Our Approach |
+|---------|-----------|-------------------------------|--------------|
+| Shortcut concept | Evolves high-level shortcuts from history and evaluates execution conditions | Does not emphasize shortcut libraries, but enforces disciplined action/observation loops | Keep OpenGUI's shortcut/task schema but make the runtime production-ready |
+| Shortcut use gate | Explicit shortcut association, evaluation, prioritization, and template generation | Emphasizes step-by-step action correctness and waiting for screen changes | Add a screen-aware shortcut selector before execution |
+| Runtime stability | Template generation from current screen context | Explicit wait action and screenshot/history discipline | Combine live grounding with settle-and-verify execution contracts |
 
 ## Sources
 
-- `.planning/todos/pending/2026-03-20-background-gui-execution-with-user-intervention-handoff.md`
-- Existing OpenGUI milestone goals in `.planning/PROJECT.md`
-- Windows desktop/session documentation and known hidden-desktop constraints
+- `/Users/jinli/Documents/Personal/AppAgentX/README.md`
+- `/Users/jinli/Documents/Personal/AppAgentX/deployment.py`
+- `/Users/jinli/Documents/Personal/MobileAgent/Mobile-Agent-v3.5/mobile_use/utils.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py`
 
 ---
-*Feature research for: cross-platform background GUI automation*
-*Researched: 2026-03-20*
+*Feature research for: shortcut extraction and stable shortcut execution*
+*Researched: 2026-04-02*

@@ -1,77 +1,58 @@
-# Requirements: OpenGUI v1.5
+# Requirements: OpenGUI v1.6
 
-**Defined:** 2026-04-01
+**Defined:** 2026-04-02
 **Core Value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously, while accumulating reusable skills and execution history over time.
 
-## v1.5 Requirements
+## v1.6 Requirements
 
-Requirements for the new OpenGUI skills architecture milestone. Replaces the flat single-layer skill system with a two-layer tree (shortcut + task-level), backed by a pluggable grounding protocol, quality-gated extraction, and layer-aware storage.
+Requirements for turning the shipped shortcut architecture into a stable production path.
 
-### SCHEMA — New Skill Data Models
+### SXTR - Shortcut Extraction
 
-- [x] **SCHEMA-01**: Shortcut skill defines pre/post conditions as structured, checkable state descriptors (not free-form strings)
-- [x] **SCHEMA-02**: Shortcut skill declares typed parameter slots (name, type, description) for runtime grounding
-- [x] **SCHEMA-03**: Task-level skill references shortcut skills by ID with parameter binding declarations
-- [x] **SCHEMA-04**: Task-level skill supports inline ATOM fallback steps for actions not covered by a shortcut
-- [x] **SCHEMA-05**: Task-level skill supports conditional branch nodes with checkable condition expressions
-- [x] **SCHEMA-06**: Task-level skill carries an optional pointer to an app memory context entry in the existing memory system
+- [ ] **SXTR-01**: Successful GUI runs can promote shortcut candidates from trace step events only, excluding summary/result noise and malformed artifacts.
+- [ ] **SXTR-02**: Each promoted shortcut records normalized app/platform identifiers, reusable parameter slots, structured state conditions, and provenance back to the source trace.
+- [ ] **SXTR-03**: The promotion pipeline rejects brittle shortcuts using explicit gates for minimum usable steps, unsupported patterns, and low-quality evidence.
+- [ ] **SXTR-04**: Duplicate or near-duplicate shortcut candidates are merged, versioned, or rejected instead of being stored as repeated library entries.
 
-### GRND — Pluggable Grounding Protocol
+### SUSE - Shortcut Use
 
-- [x] **GRND-01**: GrounderProtocol defines a common async interface for resolving semantic step targets to concrete action parameters
-- [x] **GRND-02**: LLMGrounder implements GrounderProtocol wrapping the existing vision-LLM grounding path
-- [x] **GRND-03**: Grounding results expose the grounder used, confidence score, and fallback metadata
+- [ ] **SUSE-01**: GuiAgent can retrieve shortcut candidates using task text plus current app/platform context before entering the full step-by-step loop.
+- [ ] **SUSE-02**: Runtime selection executes a shortcut only when current screen evidence satisfies its applicability checks; otherwise the run continues without shortcut reuse.
+- [ ] **SUSE-03**: Shortcut execution binds live parameters and targets from the current observation instead of replaying stale recorded coordinates or assumptions.
+- [ ] **SUSE-04**: If a shortcut becomes invalid or unavailable mid-run, execution falls back cleanly to task-level or default agent behavior without terminating an otherwise recoverable task.
 
-### EXEC — Multi-layer Execution Engine
+### SSTA - Shortcut Stability
 
-- [x] **EXEC-01**: ShortcutExecutor verifies pre/post contracts at each step boundary and reports violations
-- [x] **EXEC-02**: TaskSkillExecutor resolves shortcut references, executes ATOM fallback steps, and evaluates conditional branches
-- [x] **EXEC-03**: Both executors route all action parameter resolution through GrounderProtocol
+- [ ] **SSTA-01**: Each shortcut step waits for action completion and captures the next observation only after the UI has settled enough to evaluate the effect.
+- [ ] **SSTA-02**: Shortcut execution verifies post-step state after every action and surfaces structured failure reasons when drift or contract violations occur.
+- [ ] **SSTA-03**: Shortcut runs emit structured telemetry for retrieval, applicability, grounding, settle, validation, fallback, and final outcome so unstable shortcuts can be diagnosed.
+- [ ] **SSTA-04**: Regression coverage proves shortcut extraction and execution remain stable across representative mobile and desktop execution seams or their CI-safe equivalents.
 
-### EXTR — Quality-Gated Skill Extraction
+## Future Requirements (v1.7+)
 
-- [x] **EXTR-01**: Step-level critic evaluates each trajectory step for correctness before skill extraction
-- [x] **EXTR-02**: Trajectory-level critic evaluates overall trajectory quality before a skill is promoted to the library
-- [x] **EXTR-03**: Extraction pipeline only promotes skills from trajectories passing both critics
-- [x] **EXTR-04**: Extractor produces shortcut-layer skill candidates from validated trajectory step sequences
+### STSK - Task-level Shortcut Composition
 
-### STOR — Two-Layer Skill Store
+- **STSK-01**: Repeated shortcut sequences can be promoted into stable task-level skills with explicit composition semantics.
+- **STSK-02**: Task-level skills can accumulate shortcut health feedback and choose between equivalent shortcut alternatives.
 
-- [x] **STOR-01**: Shortcut skills and task-level skills are persisted in separate, versioned JSON stores
-- [x] **STOR-02**: Unified skill search covers both layers with layer-aware relevance scoring
+### OPER - Shortcut Operations and Lifecycle
 
-### INTEG — Agent Integration
+- **OPER-01**: Shortcut health scores can demote or quarantine unstable shortcuts automatically after repeated failures.
+- **OPER-02**: Operators can inspect shortcut provenance, merge history, and failure signatures directly from stable artifacts.
 
-- [x] **INTEG-01**: GuiAgent searches both skill layers during pre-task skill lookup and selects the most appropriate match
-- [x] **INTEG-02**: GuiAgent injects the app memory context referenced by a task-level skill into the execution context before running
+### GRND - Grounding Extensions
 
-## Future Requirements (v1.6+)
-
-### Orchestration Layer (deferred)
-
-- **ORCH-01**: Orchestration-layer skills define high-level strategy templates composed of task-level skills and explicit OR-branch nodes
-- **ORCH-02**: Main agent can delegate orchestration skill execution with OR-branch resolution at the agent level
-- **ORCH-03**: Orchestration skills support GUI + tool/MCP collaborative workflows with explicit capability boundaries
-
-### Grounding Extensions (deferred)
-
-- **GRND-04**: OmniParser implements GrounderProtocol for structured element detection as an alternative to LLM grounding
-- **GRND-05**: Grounding cache avoids redundant LLM/OmniParser calls for repeated screen elements within a session
-
-### Skill Promotion Pipeline (deferred)
-
-- **EXTR-05**: Extractor can synthesize task-level skill candidates by composing shortcut sequences from validated trajectories
-- **EXTR-06**: Skill promotion includes a live sandbox verification step before a candidate enters the stable library
+- **GRND-04**: Alternative grounding backends such as OmniParser can implement the same shortcut runtime contract without schema changes.
+- **GRND-05**: Shortcut applicability evaluation can incorporate richer structural UI evidence without requiring a new storage model.
 
 ## Out of Scope
 
 | Feature | Reason |
 |---------|--------|
-| Migration of existing skills.json | Old skills carry pixel-coordinate data that doesn't generalize; quality-gated re-extraction is safer |
-| Orchestration layer | Deferred to v1.6 — shortcut + task-level must be stable first |
-| OmniParser grounding backend | Deferred to v1.6 via GrounderProtocol — LLM grounder covers v1.5 needs |
-| Skill sandbox verification before promotion | Deferred — critics provide sufficient quality gate for v1.5 |
-| Persistent FAISS index | Deferred — in-session FAISS rebuild is acceptable at current scale |
+| Neo4j/Pinecone or graph-backed shortcut storage | Infrastructure expansion is not the core blocker; v1.6 should stabilize the existing store/search architecture first |
+| Full orchestration-layer skills | Shortcut extraction and execution need to be trustworthy before adding another abstraction layer |
+| Manual review on every promoted shortcut | Too expensive for the default path; v1.6 should rely on explicit gates plus diagnostics |
+| Direct migration of all legacy skills into the new shortcut store | Existing legacy skills do not necessarily meet the new stability and provenance requirements |
 
 ## Traceability
 
@@ -79,32 +60,24 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | Phase 24 | Complete |
-| SCHEMA-02 | Phase 24 | Complete |
-| SCHEMA-03 | Phase 24 | Complete |
-| SCHEMA-04 | Phase 24 | Complete |
-| SCHEMA-05 | Phase 24 | Complete |
-| SCHEMA-06 | Phase 24 | Complete |
-| GRND-01 | Phase 24 | Complete |
-| GRND-02 | Phase 24 | Complete |
-| GRND-03 | Phase 24 | Complete |
-| EXEC-01 | Phase 25 | Complete |
-| EXEC-02 | Phase 25 | Complete |
-| EXEC-03 | Phase 25 | Complete |
-| EXTR-01 | Phase 26 | Complete |
-| EXTR-02 | Phase 26 | Complete |
-| EXTR-03 | Phase 26 | Complete |
-| EXTR-04 | Phase 26 | Complete |
-| STOR-01 | Phase 27 | Complete |
-| STOR-02 | Phase 27 | Complete |
-| INTEG-01 | Phase 27 | Complete |
-| INTEG-02 | Phase 27 | Complete |
+| SXTR-01 | Phase 28 | Pending |
+| SXTR-02 | Phase 28 | Pending |
+| SXTR-03 | Phase 28 | Pending |
+| SXTR-04 | Phase 28 | Pending |
+| SUSE-01 | Phase 29 | Pending |
+| SUSE-02 | Phase 29 | Pending |
+| SUSE-03 | Phase 30 | Pending |
+| SUSE-04 | Phase 30 | Pending |
+| SSTA-01 | Phase 30 | Pending |
+| SSTA-02 | Phase 30 | Pending |
+| SSTA-03 | Phase 31 | Pending |
+| SSTA-04 | Phase 31 | Pending |
 
 **Coverage:**
-- v1.5 requirements: 20 total
-- Mapped to phases: 20 (roadmap complete)
-- Unmapped: 0
+- v1.6 requirements: 12 total
+- Mapped to phases: 12
+- Unmapped: 0 ✓
 
 ---
-*Requirements defined: 2026-04-01*
-*Last updated: 2026-04-02 after completing Phase 26 Quality-Gated Extraction*
+*Requirements defined: 2026-04-02*
+*Last updated: 2026-04-02 after initial definition for milestone v1.6*
