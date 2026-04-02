@@ -425,6 +425,8 @@ class GuiAgent:
         installed_apps: list[str] | None = None,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
+        unified_skill_search: Any = None,
+        memory_store: Any = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -444,6 +446,8 @@ class GuiAgent:
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
         self._intervention_handler = intervention_handler
+        self._unified_skill_search = unified_skill_search
+        self._memory_store = memory_store
 
     # ------------------------------------------------------------------
     # Public API
@@ -471,16 +475,25 @@ class GuiAgent:
         # 3. Search skill library (once)
         skill_match = await self._search_skill(task)
 
+        matched_skill: Any | None = None
+        final_score: float | None = None
+        if skill_match is not None:
+            if hasattr(skill_match, "layer"):
+                matched_skill = skill_match.skill
+                final_score = skill_match.score
+            else:
+                matched_skill, final_score = skill_match
+            memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
+
         # 4. If skill matched, attempt skill execution first
         skill_context: str | None = None
-        if skill_match is not None and self._skill_executor is not None:
-            skill, final_score = skill_match
+        if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
                 ExecutionPhase.SKILL,
-                reason=f"Matched skill: {skill.name} (score={final_score:.2f})",
+                reason=f"Matched skill: {matched_skill.name} (score={final_score:.2f})",
             )
             try:
-                skill_result = await self._skill_executor.execute(skill)
+                skill_result = await self._skill_executor.execute(matched_skill)
                 skill_context = skill_result.execution_summary
                 if skill_result.state.value == "succeeded":
                     # Skill succeeded — fall through to agent for confirmation
@@ -1520,8 +1533,23 @@ class GuiAgent:
             context=context,
         )
 
-    async def _search_skill(self, task: str) -> tuple[Any, float] | None:
-        """Search skill library and return (skill, final_score) if above threshold."""
+    async def _search_skill(self, task: str) -> Any | None:
+        """Search skill libraries and return the top match when above threshold."""
+        if self._unified_skill_search is not None:
+            search_results = await self._unified_skill_search.search(task, top_k=1)
+            if not search_results:
+                return None
+            result = search_results[0]
+            if result.score >= self._skill_threshold:
+                logger.info(
+                    "Skill match: %s (layer=%s, score=%.2f)",
+                    result.skill.name,
+                    result.layer,
+                    result.score,
+                )
+                return result
+            return None
+
         if self._skill_library is None:
             return None
         from opengui.skills.data import compute_confidence
@@ -1536,11 +1564,38 @@ class GuiAgent:
             return (skill, final_score)
         return None
 
+    async def _inject_skill_memory_context(
+        self,
+        skill: Any,
+        existing_context: str | None,
+    ) -> str | None:
+        """Inject app memory context referenced by a TaskSkill.memory_context_id."""
+        from opengui.skills.task_skill import TaskSkill as _TaskSkill
+
+        if not isinstance(skill, _TaskSkill) or skill.memory_context_id is None:
+            return existing_context
+        if self._memory_store is None:
+            return existing_context
+
+        entry = self._memory_store.get(skill.memory_context_id)
+        if entry is None:
+            logger.warning(
+                "Skill %s references missing memory context %s",
+                skill.skill_id,
+                skill.memory_context_id,
+            )
+            return existing_context
+
+        injected = f"[Skill memory context]\n{entry.content}"
+        return f"{injected}\n\n{existing_context}" if existing_context else injected
+
     async def _skill_maintenance(
-        self, skill_match: tuple[Any, float] | None, success: bool
+        self, skill_match: Any | None, success: bool
     ) -> None:
         """Post-run: update confidence, discard low-confidence, check merge."""
         if skill_match is None or self._skill_library is None:
+            return
+        if hasattr(skill_match, "layer"):
             return
         from dataclasses import replace
         from opengui.skills.data import compute_confidence
