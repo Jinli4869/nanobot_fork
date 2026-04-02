@@ -222,6 +222,42 @@ async def test_shortcut_store_search(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_shortcut_store_search_returns_canonical_skill_id_after_merge(tmp_path: Path) -> None:
+    store = ShortcutSkillStore(tmp_path)
+    old = _make_shortcut_skill(
+        skill_id="shortcut-compose-v1",
+        name="Compose Email",
+        description="Create a brand new draft message",
+        source_trace_path="/tmp/gui_runs/run-123/trace.jsonl",
+        source_step_indices=(2, 4),
+    )
+    new = _make_shortcut_skill(
+        skill_id="shortcut-compose-v2",
+        name="Compose Message",
+        description="Create a brand new draft message and focus the editor",
+        source_trace_path="/tmp/gui_runs/run-456/trace.jsonl",
+        source_step_indices=(3, 5),
+    )
+
+    first_decision, first_id = await store.add_or_merge(old)
+    second_decision, second_id = await store.add_or_merge(new)
+
+    assert first_decision == "ADD"
+    assert first_id == "shortcut-compose-v1"
+    assert second_decision == "MERGE"
+    assert second_id == "shortcut-compose-v1"
+
+    merged = store.get("shortcut-compose-v1")
+    assert merged is not None
+    assert merged.shortcut_version == 2
+
+    results = await store.search("compose a new message", top_k=3)
+
+    assert results
+    assert results[0][0].skill_id == "shortcut-compose-v1"
+
+
+@pytest.mark.asyncio
 async def test_task_store_search(tmp_path: Path) -> None:
     store = TaskSkillStore(tmp_path)
     store.add(

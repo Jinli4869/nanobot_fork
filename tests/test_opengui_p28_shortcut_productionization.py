@@ -16,7 +16,11 @@ from nanobot.providers.base import ToolCallRequest
 from opengui.skills import ShortcutSkill, ShortcutSkillStore
 from opengui.skills.data import SkillStep
 from opengui.skills.shortcut import ParameterSlot, StateDescriptor
-from opengui.skills.shortcut_extractor import ExtractionRejected
+from opengui.skills.shortcut_extractor import (
+    ExtractionRejected,
+    ExtractionSuccess,
+    TrajectoryVerdict,
+)
 
 
 def _nanobot_tool_response(
@@ -147,7 +151,7 @@ async def test_gui_postprocessing_uses_shortcut_promotion_not_legacy_extractor(
 
 
 @pytest.mark.asyncio
-async def test_promotion_pipeline_filters_final_successful_attempt_steps_only(tmp_path: Path) -> None:
+async def test_promotion_pipeline_ignores_retry_noise_before_final_success(tmp_path: Path) -> None:
     from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
 
     trace_path = tmp_path / "trace.jsonl"
@@ -235,6 +239,38 @@ async def test_promotion_pipeline_skips_non_step_or_malformed_trace_without_stor
     assert result is None
     run_mock.assert_not_awaited()
     store.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_promotion_pipeline_rejects_summary_result_noise(tmp_path: Path) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "summary-noise.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "phase_change", "from_phase": "agent", "to_phase": "agent", "summary": "Opened compose view"}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "   ", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "input_text", "text": "hello"}, "model_output": "", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true, "summary": "Attempt completed"}',
+            '{"type": "result", "success": true, "summary": "Message sent"}',
+        ],
+    )
+
+    store = ShortcutSkillStore(tmp_path / "shortcut_store")
+    run_mock = AsyncMock()
+    with patch("opengui.skills.shortcut_extractor.ExtractionPipeline.run", new=run_mock):
+        promoted_id = await ShortcutPromotionPipeline().promote_from_trace(
+            trace_path,
+            is_success=True,
+            store=store,
+        )
+
+    assert promoted_id is None
+    run_mock.assert_not_awaited()
+    assert store.list_all(platform="android") == []
 
 
 def test_promoted_shortcut_round_trips_with_provenance() -> None:
@@ -388,62 +424,92 @@ async def test_promotion_pipeline_rejects_low_value_candidates(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_shortcut_store_add_or_merge_merges_duplicate_promotions(
+async def test_duplicate_promotions_do_not_increase_shortcut_store_count(
     tmp_path: Path,
 ) -> None:
-    store = ShortcutSkillStore(tmp_path)
-    old = ShortcutSkill(
-        skill_id="shortcut-compose-v1",
-        name="Compose Email",
-        description="Open compose flow",
-        app="com.example.mail",
-        platform="android",
-        steps=(
-            SkillStep(action_type="tap", target="compose"),
-            SkillStep(action_type="input_text", target="body {{message}}"),
+    def _candidate(skill_id: str, name: str, description: str, created_at: float) -> ShortcutSkill:
+        return ShortcutSkill(
+            skill_id=skill_id,
+            name=name,
+            description=description,
+            app="com.example.mail",
+            platform="android",
+            steps=(
+                SkillStep(action_type="tap", target="compose"),
+                SkillStep(action_type="input_text", target="body {{message}}"),
+            ),
+            parameter_slots=(
+                ParameterSlot(name="message", type="string", description="Email body"),
+            ),
+            preconditions=(StateDescriptor(kind="screen_state", value="Inbox visible"),),
+            postconditions=(StateDescriptor(kind="screen_state", value="Composer visible"),),
+            created_at=created_at,
+        )
+
+    trace_specs = [
+        (
+            tmp_path / "run-1" / "trace.jsonl",
+            _candidate("shortcut-compose-v1", "Compose Email", "Open compose flow", 1700000000.0),
         ),
-        parameter_slots=(
-            ParameterSlot(name="message", type="string", description="Email body"),
+        (
+            tmp_path / "run-2" / "trace.jsonl",
+            _candidate(
+                "shortcut-compose-v2",
+                "Compose Message",
+                "Open compose flow and focus the editor",
+                1700000001.0,
+            ),
         ),
-        preconditions=(StateDescriptor(kind="screen_state", value="Inbox visible"),),
-        postconditions=(StateDescriptor(kind="screen_state", value="Composer visible"),),
-        source_trace_path="/tmp/gui_runs/run-123/trace.jsonl",
-        source_step_indices=(2, 4),
-        shortcut_version=1,
-        created_at=1700000000.0,
-    )
-    new = ShortcutSkill(
-        skill_id="shortcut-compose-v2",
-        name="Compose Message",
-        description="Open compose flow and focus the editor",
-        app="com.example.mail",
-        platform="android",
-        steps=(
-            SkillStep(action_type="tap", target="compose"),
-            SkillStep(action_type="input_text", target="body {{message}}"),
-        ),
-        parameter_slots=(
-            ParameterSlot(name="message", type="string", description="Email body"),
-        ),
-        preconditions=(StateDescriptor(kind="screen_state", value="Inbox visible"),),
-        postconditions=(StateDescriptor(kind="screen_state", value="Composer visible"),),
-        source_trace_path="/tmp/gui_runs/run-456/trace.jsonl",
-        source_step_indices=(3, 5),
-        shortcut_version=1,
-        created_at=1700000001.0,
+    ]
+    for trace_path, _ in trace_specs:
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_jsonl(
+            trace_path,
+            [
+                '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+                '{"type": "attempt_start", "attempt": 1}',
+                '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Open compose", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+                '{"type": "step", "step_index": 4, "phase": "agent", "action": {"action_type": "input_text", "text": "hello"}, "model_output": "Type message", "observation": {"app": "com.example.mail"}}',
+                '{"type": "attempt_result", "attempt": 1, "success": true}',
+                '{"type": "result", "success": true}',
+            ],
+        )
+
+    outcomes = iter(
+        [
+            ExtractionSuccess(
+                candidate=trace_specs[0][1],
+                step_verdicts=(),
+                trajectory_verdict=TrajectoryVerdict(passed=True, reason="ok"),
+            ),
+            ExtractionSuccess(
+                candidate=trace_specs[1][1],
+                step_verdicts=(),
+                trajectory_verdict=TrajectoryVerdict(passed=True, reason="ok"),
+            ),
+        ]
     )
 
-    first_decision, first_id = await store.add_or_merge(old)
-    second_decision, second_id = await store.add_or_merge(new)
+    async def fake_run(
+        self,
+        steps: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> ExtractionSuccess:
+        del self, steps, metadata
+        return next(outcomes)
 
-    assert first_decision == "ADD"
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    store = ShortcutSkillStore(tmp_path / "shortcut_store")
+    pipeline = ShortcutPromotionPipeline()
+    with patch("opengui.skills.shortcut_extractor.ExtractionPipeline.run", new=fake_run):
+        first_id = await pipeline.promote_from_trace(trace_specs[0][0], is_success=True, store=store)
+        second_id = await pipeline.promote_from_trace(trace_specs[1][0], is_success=True, store=store)
+
     assert first_id == "shortcut-compose-v1"
-    assert second_decision == "MERGE"
     assert second_id == "shortcut-compose-v1"
-
+    assert len(store.list_all(platform="android")) == 1
     stored = store.list_all(platform="android", app="com.example.mail")
-
-    assert len(stored) == 1
     assert stored[0].skill_id == "shortcut-compose-v1"
     assert stored[0].shortcut_version == 2
     assert stored[0].merged_from_ids == ("shortcut-compose-v2",)
