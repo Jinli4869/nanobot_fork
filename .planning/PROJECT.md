@@ -10,13 +10,14 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ## Current State
 
-- **Shipped through:** v1.1 Background Execution
+- **Shipped through:** v1.4 Capability-Aware Planning And Routing
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, standalone CLI, nanobot GUI tool integration
 - **Background execution:** Linux background desktop automation is supported through `XvfbDisplayManager` and `BackgroundDesktopBackend`
 - **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
-- **Verification state:** Milestone v1.2 implementation is in host-integration closeout while planning begins for the next host-facing surface
+- **Verification state:** v1.5 Phase 24 is complete; Phases 25-27 remain for execution, extraction, storage, and agent integration
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
 - **Planner status:** Phase 21 added a live route catalog plus bounded routing-memory hints; Phase 22 completed real route-aware `tool` and `mcp` dispatch with fallback chains and observability logging
+- **Skills architecture status:** Phase 24 established `ShortcutSkill`, `TaskSkill`, and the import-safe `GrounderProtocol` / `LLMGrounder` contract layer for v1.5
 
 ## Current Milestone: v1.5 New OpenGUI Skills Architecture
 
@@ -65,12 +66,18 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **CAP-02**: Planner context can include routing-relevant memory hints without dumping unrelated memory — v1.4 Phase 21
 - ✓ **CAP-03**: Router can execute `tool` plan nodes through real dispatch instead of placeholder-only success responses — v1.4 Phase 22
 - ✓ **CAP-04**: Router can execute `mcp` plan nodes through real dispatch with route validation and fallback behavior — v1.4 Phase 22
+- ✓ **SCHEMA-01**: Shortcut skill defines structured pre/post condition descriptors — v1.5 Phase 24
+- ✓ **SCHEMA-02**: Shortcut skill declares typed parameter slots for runtime grounding — v1.5 Phase 24
+- ✓ **SCHEMA-03**: Task-level skill references shortcut skills by ID with parameter bindings — v1.5 Phase 24
+- ✓ **SCHEMA-04**: Task-level skill supports inline ATOM fallback steps — v1.5 Phase 24
+- ✓ **SCHEMA-05**: Task-level skill supports conditional branch nodes with structured conditions — v1.5 Phase 24
+- ✓ **SCHEMA-06**: Task-level skill carries an optional app-memory context pointer — v1.5 Phase 24
+- ✓ **GRND-01**: GrounderProtocol defines the common async grounding interface — v1.5 Phase 24
+- ✓ **GRND-02**: LLMGrounder implements the pluggable grounding protocol — v1.5 Phase 24
+- ✓ **GRND-03**: Grounding results expose grounder identity, confidence, and fallback metadata — v1.5 Phase 24
 
 ### Active
 
-- [ ] ShortcutSkill schema with typed pre/post contracts and parameter slots
-- [ ] TaskSkill schema with shortcut references, ATOM fallbacks, conditional branches, and memory context pointer
-- [ ] GrounderProtocol interface with LLMGrounder implementation
 - [ ] ShortcutExecutor and TaskSkillExecutor with contract verification
 - [ ] Step-level and trajectory-level quality critics for skill extraction
 - [ ] Two-layer skill store (separate shortcut and task-level JSON stores with unified search)
@@ -129,4 +136,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-04-01 after starting milestone v1.5 New OpenGUI Skills Architecture*
+*Last updated: 2026-04-02 after completing Phase 24 Schema and Grounding*
