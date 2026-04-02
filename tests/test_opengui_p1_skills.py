@@ -134,6 +134,12 @@ def test_opengui_skills_module_exports_legacy_and_shortcut_types() -> None:
     assert ParameterSlot.__name__ == "ParameterSlot"
     assert ShortcutSkill.__name__ == "ShortcutSkill"
 
+    # Phase 25 exports must coexist with all legacy exports
+    import opengui.skills as skills_pkg
+    exported = set(skills_pkg.__all__)
+    assert "ConditionEvaluator" in exported, "Phase 25 ConditionEvaluator missing from __all__"
+    assert "ShortcutExecutor" in exported, "Phase 25 ShortcutExecutor missing from __all__"
+
 
 def test_skill_library_crud(tmp_path: Path) -> None:
     """add() stores a skill; get() retrieves it; count reflects changes; remove() deletes it."""
