@@ -211,7 +211,7 @@ Plans:
 
 Plans:
 - [x] 25-01-PLAN.md — Add the new Phase 25 executor module, shortcut contract enforcement, and the shared grounding seam (completed 2026-04-02)
-- [ ] 25-02-PLAN.md — Implement task-skill traversal, explicit contiguous fallback semantics, and regression coverage
+- [x] 25-02-PLAN.md — Implement task-skill traversal, explicit contiguous fallback semantics, and regression coverage
 
 **Success Criteria** (what must be TRUE):
 1. ShortcutExecutor runs a ShortcutSkill step-by-step, and a detectable pre/post contract violation at any boundary produces a structured violation report rather than a silent failure.
@@ -225,7 +225,11 @@ Plans:
 
 **Depends on:** Phase 24
 **Requirements:** EXTR-01, EXTR-02, EXTR-03, EXTR-04
-**Plans:** TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 26-01-PLAN.md — Define critic protocols, verdict/result dataclasses, and ShortcutSkillProducer
+- [ ] 26-02-PLAN.md — Add ExtractionPipeline orchestrator with critic sequencing and package exports
 
 **Success Criteria** (what must be TRUE):
 1. Step-level critic evaluates an individual trajectory step and returns a structured verdict (pass/fail with reason), and a trajectory containing a step that fails the critic is not passed to the trajectory-level critic.
@@ -275,4 +279,4 @@ Plans:
 
 ---
 *Roadmap defined: 2026-03-21*
-*Last updated: 2026-04-01 after defining v1.5 New OpenGUI Skills Architecture roadmap (phases 24-27)*
+*Last updated: 2026-04-02 after planning Phase 26 quality-gated extraction (2 plans)*
