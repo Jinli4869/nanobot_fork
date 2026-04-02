@@ -402,7 +402,7 @@ class GuiAgent:
     _MAX_TOOL_RETRIES = 2
     _MODEL_RELATIVE_GRID_HINTS = ("qwen", "gemini")
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
-    _POST_ACTION_SETTLE_SECONDS = 0.25
+    _POST_ACTION_SETTLE_SECONDS = 0.50
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
 
     def __init__(
