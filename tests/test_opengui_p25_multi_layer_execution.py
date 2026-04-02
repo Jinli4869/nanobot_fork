@@ -334,3 +334,393 @@ def test_opengui_skills_exports_phase_25_shortcut_executor_types() -> None:
     assert "SkillStep" in exported, "Legacy SkillStep removed from __all__"
     assert "SkillExecutor" in exported, "Legacy SkillExecutor removed from __all__"
     assert "ShortcutSkill" in exported, "Phase 24 ShortcutSkill removed from __all__"
+
+
+# ===========================================================================
+# Phase 25 Wave 2 — Task-layer execution tests
+# ===========================================================================
+#
+# These tests cover TaskSkillExecutor traversal semantics:
+#   - Resolved shortcut: execute the shortcut and skip the contiguous inline
+#     fallback block represented by contiguous SkillStep siblings after it.
+#   - Missing shortcut with contiguous inline fallback: execute the fallback
+#     steps through the same grounder path (EXEC-03 grounding seam).
+#   - Missing shortcut without contiguous inline fallback: return
+#     MissingShortcutReport with fallback_block_length=0.
+#   - BranchNode evaluation through ConditionEvaluator.
+#   - Top-level inline SkillStep routed through the shared grounder.
+#   - Package exports for task-layer types.
+#
+# All tests import task-layer symbols lazily (inside function body) so that
+# TDD RED phase failures are isolated to individual tests, not collection.
+
+
+def _make_task_skill(
+    *,
+    skill_id: str = "ts-test",
+    steps: tuple,  # type: ignore[type-arg]
+) -> "TaskSkill":  # noqa: F821
+    """Helper factory: construct a TaskSkill with the given node tuple."""
+    from opengui.skills.task_skill import TaskSkill
+
+    return TaskSkill(
+        skill_id=skill_id,
+        name="Test TaskSkill",
+        description="A task skill for testing",
+        app="com.example.app",
+        platform="android",
+        steps=steps,
+    )
+
+
+def _make_task_executor(
+    backend: _FakeBackend,
+    grounder: "_StubGrounder",
+    *,
+    resolver,  # type: ignore[type-arg]
+    condition_evaluator=None,
+    tmp_path: Path,
+) -> "TaskSkillExecutor":  # noqa: F821
+    """Helper factory: construct a TaskSkillExecutor with the given collaborators."""
+    from opengui.skills.multi_layer_executor import TaskSkillExecutor
+
+    shortcut_executor = ShortcutExecutor(
+        backend=backend,
+        grounder=grounder,
+        condition_evaluator=condition_evaluator,
+        screenshot_dir=tmp_path,
+    )
+    return TaskSkillExecutor(
+        shortcut_executor=shortcut_executor,
+        shortcut_resolver=resolver,
+        condition_evaluator=condition_evaluator,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Resolved shortcut skips the contiguous inline fallback block
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_skill_executor_skips_contiguous_atom_fallback_when_shortcut_resolves(
+    tmp_path: Path,
+) -> None:
+    """Resolved ShortcutRefNode executes the shortcut and skips the contiguous inline fallback
+    SkillStep siblings that structurally represent the locked same-node fallback block."""
+    from opengui.skills.multi_layer_executor import MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor
+    from opengui.skills.task_skill import ShortcutRefNode, TaskSkill
+
+    # The shortcut that the resolver will return
+    tap_step = SkillStep(
+        action_type="tap",
+        target="resolved_button",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 10.0, "y": 20.0},
+    )
+    resolved_shortcut = _make_shortcut(
+        skill_id="resolved-sc",
+        steps=(tap_step,),
+    )
+
+    # Contiguous inline fallback: these are the SkillStep siblings immediately after the
+    # ShortcutRefNode — they represent the locked same-node fallback in the current schema.
+    fallback_step_1 = SkillStep(
+        action_type="tap",
+        target="fallback_step_1",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 99.0, "y": 99.0},
+    )
+    fallback_step_2 = SkillStep(
+        action_type="tap",
+        target="fallback_step_2",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 98.0, "y": 98.0},
+    )
+
+    # Build task: [ShortcutRefNode → fallback_step_1 → fallback_step_2]
+    ref_node = ShortcutRefNode(shortcut_id="resolved-sc", param_bindings={})
+    task_skill = _make_task_skill(
+        skill_id="ts-skip-fallback",
+        steps=(ref_node, fallback_step_1, fallback_step_2),
+    )
+
+    backend = _FakeBackend()
+    grounder = _NeverCalledGrounder()  # fallback steps must not be executed
+
+    def resolver(shortcut_id: str):
+        if shortcut_id == "resolved-sc":
+            return resolved_shortcut
+        return None
+
+    executor = _make_task_executor(
+        backend, grounder, resolver=resolver, tmp_path=tmp_path
+    )
+    result = await executor.execute(task_skill)
+
+    assert isinstance(result, TaskExecutionSuccess)
+    assert result.is_missing_shortcut is False
+    assert result.is_violation is False
+    assert result.task_skill_id == "ts-skip-fallback"
+    # The resolved shortcut's step was executed; fallback steps were skipped
+    assert "resolved-sc" in result.executed_shortcut_ids
+    # Only 1 action executed (the shortcut's tap), not the 2 fallback taps
+    assert len(backend.executed_actions) == 1
+    assert backend.executed_actions[0].x == 10.0
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Missing shortcut executes the contiguous inline fallback block
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_skill_executor_runs_contiguous_atom_fallback_when_shortcut_missing(
+    tmp_path: Path,
+) -> None:
+    """Unresolved ShortcutRefNode executes the contiguous inline fallback SkillStep
+    siblings in order through the shared grounding seam (EXEC-03 grounding seam shared
+    with ShortcutExecutor). The run continues past the fallback block to subsequent nodes."""
+    from opengui.skills.multi_layer_executor import MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor
+    from opengui.skills.task_skill import ShortcutRefNode, TaskSkill
+
+    # Contiguous inline fallback steps immediately after the ShortcutRefNode
+    fallback_step_a = SkillStep(
+        action_type="tap",
+        target="fallback_a",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 11.0, "y": 22.0},
+    )
+    fallback_step_b = SkillStep(
+        action_type="tap",
+        target="fallback_b",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 33.0, "y": 44.0},
+    )
+
+    # Build task: [ShortcutRefNode(missing) → fallback_step_a → fallback_step_b]
+    ref_node = ShortcutRefNode(shortcut_id="missing-sc", param_bindings={})
+    task_skill = _make_task_skill(
+        skill_id="ts-run-fallback",
+        steps=(ref_node, fallback_step_a, fallback_step_b),
+    )
+
+    backend = _FakeBackend()
+    grounder = _NeverCalledGrounder()  # fallback steps are fixed, no grounder needed
+
+    def resolver(shortcut_id: str):
+        return None  # always missing
+
+    executor = _make_task_executor(
+        backend, grounder, resolver=resolver, tmp_path=tmp_path
+    )
+    result = await executor.execute(task_skill)
+
+    # Must succeed using the fallback; this is NOT a MissingShortcutReport
+    assert isinstance(result, TaskExecutionSuccess), (
+        f"Expected TaskExecutionSuccess but got {type(result).__name__}"
+    )
+    assert result.is_missing_shortcut is False
+    assert result.task_skill_id == "ts-run-fallback"
+    # Both contiguous inline fallback steps were executed
+    assert len(backend.executed_actions) == 2
+    assert backend.executed_actions[0].x == 11.0
+    assert backend.executed_actions[1].x == 33.0
+
+
+# ---------------------------------------------------------------------------
+# Test 8: Missing shortcut without contiguous inline fallback → MissingShortcutReport
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_skill_executor_returns_missing_shortcut_report_without_contiguous_atom_fallback(
+    tmp_path: Path,
+) -> None:
+    """Unresolved ShortcutRefNode with no contiguous SkillStep siblings returns
+    MissingShortcutReport with fallback_block_length=0 immediately."""
+    from opengui.skills.multi_layer_executor import MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor
+    from opengui.skills.task_skill import BranchNode, ShortcutRefNode, TaskSkill
+
+    # BranchNode is NOT part of a contiguous inline fallback block
+    branch_node = BranchNode(
+        condition=StateDescriptor(kind="app_open", value="com.example.app"),
+        then_steps=(),
+        else_steps=(),
+    )
+
+    # Build task: [ShortcutRefNode(missing) → BranchNode]
+    # Since the next sibling is a BranchNode (not a SkillStep), fallback_block_length=0
+    ref_node = ShortcutRefNode(shortcut_id="also-missing-sc", param_bindings={})
+    task_skill = _make_task_skill(
+        skill_id="ts-no-fallback",
+        steps=(ref_node, branch_node),
+    )
+
+    backend = _FakeBackend()
+    grounder = _NeverCalledGrounder()
+
+    def resolver(shortcut_id: str):
+        return None
+
+    executor = _make_task_executor(
+        backend, grounder, resolver=resolver, tmp_path=tmp_path
+    )
+    result = await executor.execute(task_skill)
+
+    assert isinstance(result, MissingShortcutReport)
+    assert result.is_missing_shortcut is True
+    assert result.task_skill_id == "ts-no-fallback"
+    assert result.shortcut_id == "also-missing-sc"
+    assert result.node_index == 0
+    assert result.fallback_block_length == 0
+    # No backend actions should have run
+    assert backend.executed_actions == []
+
+
+# ---------------------------------------------------------------------------
+# Test 9: BranchNode evaluates condition and routes to the correct branch
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_skill_executor_evaluates_branch_condition(tmp_path: Path) -> None:
+    """BranchNode.condition is evaluated through ConditionEvaluator; then_steps run
+    when the condition is True and else_steps run when False."""
+    from opengui.skills.multi_layer_executor import MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor
+    from opengui.skills.task_skill import BranchNode, ShortcutRefNode, TaskSkill
+
+    then_step = SkillStep(
+        action_type="tap",
+        target="then_button",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 1.0, "y": 1.0},
+    )
+    else_step = SkillStep(
+        action_type="tap",
+        target="else_button",
+        fixed=True,
+        fixed_values={"action_type": "tap", "x": 2.0, "y": 2.0},
+    )
+
+    branch_condition = StateDescriptor(kind="screen_visible", value="confirm_dialog")
+
+    # --- Case A: condition evaluates True → then_steps runs ---
+    branch_node = BranchNode(
+        condition=branch_condition,
+        then_steps=(then_step,),
+        else_steps=(else_step,),
+    )
+    task_skill_true = _make_task_skill(
+        skill_id="ts-branch-true",
+        steps=(branch_node,),
+    )
+
+    backend_true = _FakeBackend()
+    grounder_true = _NeverCalledGrounder()
+    # Condition evaluates True
+    evaluator_true = _SequenceConditionEvaluator(results=[True])
+
+    executor_true = _make_task_executor(
+        backend_true,
+        grounder_true,
+        resolver=lambda _: None,
+        condition_evaluator=evaluator_true,
+        tmp_path=tmp_path,
+    )
+    result_true = await executor_true.execute(task_skill_true)
+
+    assert isinstance(result_true, TaskExecutionSuccess)
+    assert result_true.branch_trace == (True,)
+    assert len(backend_true.executed_actions) == 1
+    assert backend_true.executed_actions[0].x == 1.0  # then_step ran
+
+    # --- Case B: condition evaluates False → else_steps runs ---
+    task_skill_false = _make_task_skill(
+        skill_id="ts-branch-false",
+        steps=(branch_node,),
+    )
+
+    backend_false = _FakeBackend()
+    grounder_false = _NeverCalledGrounder()
+    evaluator_false = _SequenceConditionEvaluator(results=[False])
+
+    executor_false = _make_task_executor(
+        backend_false,
+        grounder_false,
+        resolver=lambda _: None,
+        condition_evaluator=evaluator_false,
+        tmp_path=tmp_path,
+    )
+    result_false = await executor_false.execute(task_skill_false)
+
+    assert isinstance(result_false, TaskExecutionSuccess)
+    assert result_false.branch_trace == (False,)
+    assert len(backend_false.executed_actions) == 1
+    assert backend_false.executed_actions[0].x == 2.0  # else_step ran
+
+
+# ---------------------------------------------------------------------------
+# Test 10: Top-level inline SkillStep routes through the shared grounder
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_task_skill_executor_routes_top_level_atom_through_grounder(
+    tmp_path: Path,
+) -> None:
+    """A top-level SkillStep node in a TaskSkill uses the same grounder path as
+    ShortcutExecutor — proving EXEC-03: inline ATOM execution and resolved shortcut
+    execution share the same grounding and action-normalization path."""
+    from opengui.skills.multi_layer_executor import MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor
+    from opengui.skills.task_skill import TaskSkill
+
+    # Non-fixed step: must go through the grounder
+    atom_step = SkillStep(action_type="tap", target="some_button")
+    task_skill = _make_task_skill(
+        skill_id="ts-top-atom",
+        steps=(atom_step,),
+    )
+
+    backend = _FakeBackend()
+    grounder = _StubGrounder(
+        resolved_params_sequence=[{"action_type": "tap", "x": 77.0, "y": 88.0}]
+    )
+
+    executor = _make_task_executor(
+        backend, grounder, resolver=lambda _: None, tmp_path=tmp_path
+    )
+    result = await executor.execute(task_skill)
+
+    assert isinstance(result, TaskExecutionSuccess)
+    assert result.is_violation is False
+    # Grounder was called exactly once for the inline atom
+    assert len(grounder.calls) == 1
+    # Backend received the grounder-resolved Action
+    assert len(backend.executed_actions) == 1
+    assert backend.executed_actions[0].x == 77.0
+    assert backend.executed_actions[0].y == 88.0
+
+
+# ---------------------------------------------------------------------------
+# Test 11: Package exports include task-layer types
+# ---------------------------------------------------------------------------
+
+
+def test_opengui_skills_exports_phase_25_task_executor_types() -> None:
+    """opengui.skills.__all__ includes MissingShortcutReport, TaskExecutionSuccess,
+    and TaskSkillExecutor alongside all previously exported types."""
+    import opengui.skills as skills_pkg
+
+    exported = set(skills_pkg.__all__)
+
+    # Phase 25 Wave 2 new task-layer types
+    assert "MissingShortcutReport" in exported, "__all__ missing MissingShortcutReport"
+    assert "TaskExecutionSuccess" in exported, "__all__ missing TaskExecutionSuccess"
+    assert "TaskSkillExecutor" in exported, "__all__ missing TaskSkillExecutor"
+
+    # Wave 1 shortcut-layer types must remain intact
+    assert "ConditionEvaluator" in exported, "__all__ missing ConditionEvaluator"
+    assert "ContractViolationReport" in exported, "__all__ missing ContractViolationReport"
+    assert "ShortcutExecutionSuccess" in exported, "__all__ missing ShortcutExecutionSuccess"
+    assert "ShortcutExecutor" in exported, "__all__ missing ShortcutExecutor"
