@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: Nanobot Web Workspace
 status: unknown
-stopped_at: Completed 24-03-PLAN.md
-last_updated: "2026-04-02T03:59:56.098Z"
-last_activity: 2026-04-01 - Roadmap defined for v1.5 New OpenGUI Skills Architecture — phases 24-27, 20 requirements mapped, all phases with success criteria derived
+stopped_at: Phase 24 complete; ready to discuss Phase 25
+last_updated: "2026-04-02T04:04:22.511Z"
+last_activity: 2026-04-02 - Phase 24 executed, verified, and closed with schema, task-skill, and grounding contracts ready for Phase 25
 progress:
   total_phases: 4
   completed_phases: 4
@@ -18,15 +18,15 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-01)
+See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 24 — schema-and-grounding
+**Current focus:** Phase 25 — multi-layer-execution
 
 ## Current Position
 
-Phase: 24 (schema-and-grounding) — EXECUTING
-Plan: 2 of 3
+Phase: 25 (multi-layer-execution) — READY TO PLAN
+Plan: not started
 
 ## Performance Metrics
 
@@ -170,13 +170,15 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [v1.5-roadmap]: Fresh start on skill data — old skills.json kept as reference, new stores start empty; quality-gated re-extraction produces better seeds than migrating brittle pixel-coordinate skills
 - [Phase 24]: ShortcutSkill reuses the legacy SkillStep contract so Phase 24 adds schema without changing the existing executor path.
 - [Phase 24]: StateDescriptor omits negated from serialized output when false so shortcut schema payloads stay compact while preserving round-trip fidelity.
+- [Phase 24]: TaskSkill persists mixed task nodes with explicit `kind` tags (`shortcut_ref`, `atom_step`, `branch`) instead of field-shape inference.
 - [Phase 24]: TaskSkill keeps memory_context_id as an opaque string pointer — Preserves a stable schema contract in Phase 24 without pulling memory lookup behavior into the model layer before Phase 27.
 - [Phase 24]: Grounding returns structured parameter metadata instead of executable Action objects — Keeps Phase 24 contract-only and lets Phase 25 executors own action construction and runtime execution semantics.
+- [Phase 24]: LLMGrounder accepts the existing `LLMProvider` protocol and parses JSON or tool-call argument payloads into `resolved_params`.
 
 ### Pending Todos
 
-1. Execute Phase 24 plan 02 — task-skill recursive grammar (SCHEMA-03..06)
-2. Execute Phase 24 plan 03 — grounding protocol and LLM grounder contracts (GRND-01..03)
+1. Discuss Phase 25 — multi-layer execution (EXEC-01..03)
+2. Plan Phase 25 — executors, grounding integration, and contract verification
 
 ### Blockers/Concerns
 
@@ -218,10 +220,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last activity: 2026-04-01 - Roadmap defined for v1.5 New OpenGUI Skills Architecture — phases 24-27, 20 requirements mapped, all phases with success criteria derived
+Last activity: 2026-04-02 - Phase 24 executed, verified, and closed with schema, task-skill, and grounding contracts ready for Phase 25
 
-Last session: 2026-04-02T03:59:56.087Z
-Stopped at: Completed 24-03-PLAN.md
-Resume file: None
-pleted 24-02-PLAN.md
+Last session: 2026-04-02T04:03:27Z
+Stopped at: Phase 24 complete; ready to discuss Phase 25
 Resume file: None
