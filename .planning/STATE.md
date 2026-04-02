@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: Nanobot Web Workspace
-status: Roadmap defined
-stopped_at: Phase 24 context gathered
-last_updated: "2026-04-02T02:52:13.039Z"
-last_activity: 2026-04-01 — v1.5 roadmap created (phases 24-27, 20 requirements mapped)
+milestone: v1.5
+milestone_name: New OpenGUI Skills Architecture
+status: in_progress
+stopped_at: Completed 24-01-PLAN.md
+last_updated: "2026-04-02T03:51:23.355Z"
+last_activity: 2026-04-01 - Roadmap defined for v1.5 New OpenGUI Skills Architecture — phases 24-27, 20 requirements mapped, all phases with success criteria derived
 progress:
-  total_phases: 11
-  completed_phases: 6
-  total_plans: 15
-  completed_plans: 15
+  total_phases: 4
+  completed_phases: 4
+  total_plans: 11
+  completed_plans: 11
   percent: 100
 ---
 
@@ -21,18 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-01)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Milestone v1.5 — Phase 24 next (Schema and Grounding)
+**Current focus:** Phase 24 — schema-and-grounding
 
 ## Current Position
 
-Phase: Not started (roadmap defined, planning next)
-Plan: —
-Status: Roadmap defined
-Last activity: 2026-04-01 — v1.5 roadmap created (phases 24-27, 20 requirements mapped)
+Phase: 24 (schema-and-grounding) — EXECUTING
+Plan: 2 of 3
 
 ## Performance Metrics
 
-**Progress:** [██████████] 100% (v1.4 phases complete; v1.5 not started)
+**Progress:** [██████████] 100%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -68,6 +66,7 @@ Last activity: 2026-04-01 — v1.5 roadmap created (phases 24-27, 20 requirement
 *Updated after each plan completion*
 | Phase 22 P01 | 4 | 2 tasks | 2 files |
 | Phase 22 P02 | 7 | 2 tasks | 4 files |
+| Phase 24 P01 | 2 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -167,11 +166,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [v1.5-roadmap]: Phase 25 (execution) and Phase 26 (extraction) both depend on Phase 24 schemas but are independent of each other; execution needs the runtime contracts, extraction only needs schema shapes to produce skill candidates
 - [v1.5-roadmap]: Phase 27 is the capstone: persists what extraction produces, enables search across both layers, and wires GuiAgent to consume both layers with memory context injection
 - [v1.5-roadmap]: Fresh start on skill data — old skills.json kept as reference, new stores start empty; quality-gated re-extraction produces better seeds than migrating brittle pixel-coordinate skills
+- [Phase 24]: ShortcutSkill reuses the legacy SkillStep contract so Phase 24 adds schema without changing the existing executor path.
+- [Phase 24]: StateDescriptor omits negated from serialized output when false so shortcut schema payloads stay compact while preserving round-trip fidelity.
 
 ### Pending Todos
 
-1. Keep future web transport and operations work behind `nanobot/tui` contracts without broad nanobot runtime refactors
-2. Start Phase 24 planning — Schema and Grounding (SCHEMA-01..06, GRND-01..03)
+1. Execute Phase 24 plan 02 — task-skill recursive grammar (SCHEMA-03..06)
+2. Execute Phase 24 plan 03 — grounding protocol and LLM grounder contracts (GRND-01..03)
 
 ### Blockers/Concerns
 
@@ -215,6 +216,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-04-01 - Roadmap defined for v1.5 New OpenGUI Skills Architecture — phases 24-27, 20 requirements mapped, all phases with success criteria derived
 
-Last session: 2026-04-02T02:52:13.030Z
-Stopped at: Phase 24 context gathered
-Resume file: .planning/phases/24-schema-and-grounding/24-CONTEXT.md
+Last session: 2026-04-02T03:51:23.353Z
+Stopped at: Completed 24-01-PLAN.md
+Resume file: None

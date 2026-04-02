@@ -9,8 +9,8 @@ Requirements for the new OpenGUI skills architecture milestone. Replaces the fla
 
 ### SCHEMA — New Skill Data Models
 
-- [ ] **SCHEMA-01**: Shortcut skill defines pre/post conditions as structured, checkable state descriptors (not free-form strings)
-- [ ] **SCHEMA-02**: Shortcut skill declares typed parameter slots (name, type, description) for runtime grounding
+- [x] **SCHEMA-01**: Shortcut skill defines pre/post conditions as structured, checkable state descriptors (not free-form strings)
+- [x] **SCHEMA-02**: Shortcut skill declares typed parameter slots (name, type, description) for runtime grounding
 - [ ] **SCHEMA-03**: Task-level skill references shortcut skills by ID with parameter binding declarations
 - [ ] **SCHEMA-04**: Task-level skill supports inline ATOM fallback steps for actions not covered by a shortcut
 - [ ] **SCHEMA-05**: Task-level skill supports conditional branch nodes with checkable condition expressions
@@ -79,8 +79,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SCHEMA-01 | Phase 24 | Pending |
-| SCHEMA-02 | Phase 24 | Pending |
+| SCHEMA-01 | Phase 24 | Complete |
+| SCHEMA-02 | Phase 24 | Complete |
 | SCHEMA-03 | Phase 24 | Pending |
 | SCHEMA-04 | Phase 24 | Pending |
 | SCHEMA-05 | Phase 24 | Pending |
