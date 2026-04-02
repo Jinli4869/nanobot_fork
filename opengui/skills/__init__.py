@@ -38,6 +38,7 @@ from opengui.skills.shortcut_extractor import (
     TrajectoryCritic,
     TrajectoryVerdict,
 )
+from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
 from opengui.skills.task_skill import BranchNode, ShortcutRefNode, TaskNode, TaskSkill
 
 __all__ = [
@@ -54,6 +55,7 @@ __all__ = [
     "ShortcutExecutionSuccess",
     "ShortcutExecutor",
     "ShortcutSkillProducer",
+    "ShortcutPromotionPipeline",
     "ShortcutRefNode",
     "ShortcutStepResult",
     "Skill",
