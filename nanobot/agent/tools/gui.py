@@ -207,8 +207,9 @@ class GuiSubagentTool(Tool):
         return await self._run_task(active_backend, task, **kwargs)
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
-        policy_context = self._load_policy_context()
+        policy_context, memory_store = self._load_policy_context_and_memory_store()
         skill_library = self._get_skill_library(active_backend.platform)
+        unified_skill_search = self._get_unified_skill_search(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
             output_dir=run_dir,
@@ -260,6 +261,8 @@ class GuiSubagentTool(Tool):
             skill_threshold=self._gui_config.skill_threshold,
             skill_executor=skill_executor,
             intervention_handler=self._build_intervention_handler(active_backend, task),
+            unified_skill_search=unified_skill_search,
+            memory_store=memory_store,
         )
 
         result = await agent.run(task=task)
@@ -411,6 +414,10 @@ class GuiSubagentTool(Tool):
             return None
 
     def _load_policy_context(self) -> str | None:
+        policy_context, _ = self._load_policy_context_and_memory_store()
+        return policy_context
+
+    def _load_policy_context_and_memory_store(self) -> tuple[str | None, Any | None]:
         """Load all POLICY entries as raw text for direct injection into the GUI agent system prompt.
 
         Policies must always be present regardless of task relevance, so they are loaded
@@ -423,12 +430,12 @@ class GuiSubagentTool(Tool):
             memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
             policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
             if not policy_entries:
-                return None
+                return None, memory_store
             lines = [f"- {entry.content}" for entry in policy_entries]
-            return "\n".join(lines)
+            return "\n".join(lines), memory_store
         except Exception:
             logger.warning("Failed to load GUI policy memory", exc_info=True)
-            return None
+            return None, None
 
     def _build_embedding_adapter(self) -> NanobotEmbeddingAdapter:
         """Build a NanobotEmbeddingAdapter backed by litellm.aembedding.
@@ -587,6 +594,31 @@ class GuiSubagentTool(Tool):
                 merge_llm=self._llm_adapter,
             )
         return self._skill_libraries[platform]
+
+    def _get_unified_skill_search(self, platform: str) -> Any:
+        """Build UnifiedSkillSearch from both ShortcutSkillStore and TaskSkillStore."""
+        cache_key = f"unified_{platform}"
+        if cache_key not in self._skill_libraries:
+            from opengui.skills.shortcut_store import (
+                ShortcutSkillStore,
+                TaskSkillStore,
+                UnifiedSkillSearch,
+            )
+
+            store_dir = get_gui_skill_store_root(self._workspace)
+            shortcut_store = ShortcutSkillStore(
+                store_dir=store_dir,
+                embedding_provider=self._embedding_adapter,
+            )
+            task_store = TaskSkillStore(
+                store_dir=store_dir,
+                embedding_provider=self._embedding_adapter,
+            )
+            self._skill_libraries[cache_key] = UnifiedSkillSearch(
+                shortcut_store=shortcut_store,
+                task_store=task_store,
+            )
+        return self._skill_libraries[cache_key]
 
     def _make_run_dir(self) -> Path:
         runs_root = self._workspace / self._gui_config.artifacts_dir
