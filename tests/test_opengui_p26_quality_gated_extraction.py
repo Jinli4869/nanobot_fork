@@ -24,6 +24,7 @@ import pytest
 
 from opengui.skills.shortcut import ShortcutSkill, StateDescriptor
 from opengui.skills.shortcut_extractor import (
+    ExtractionPipeline,
     ExtractionRejected,
     ExtractionSuccess,
     ShortcutSkillProducer,
@@ -52,6 +53,37 @@ class _FakeTrajectoryCritic:
                 failed_step_index=len(steps) - 1 if steps else None,
             )
         return TrajectoryVerdict(passed=True, reason="all steps valid")
+
+
+class _CountingStepCritic:
+    def __init__(self, verdicts: list[StepVerdict] | None = None) -> None:
+        self.calls: list[tuple[dict[str, Any], int]] = []
+        self._verdicts = verdicts or []
+
+    async def evaluate(self, step: dict[str, Any], step_index: int) -> StepVerdict:
+        self.calls.append((step, step_index))
+        if step_index < len(self._verdicts):
+            return self._verdicts[step_index]
+        return StepVerdict(step_index=step_index, passed=True, reason="ok")
+
+
+class _CountingTrajectoryCritic:
+    def __init__(self, verdict: TrajectoryVerdict | None = None) -> None:
+        self.calls: list[tuple[list[dict[str, Any]], dict[str, Any]]] = []
+        self._verdict = verdict or TrajectoryVerdict(passed=True, reason="all steps valid")
+
+    async def evaluate(self, steps: list[dict[str, Any]], metadata: dict[str, Any]) -> TrajectoryVerdict:
+        self.calls.append((steps, metadata))
+        return self._verdict
+
+
+class _CountingProducer(ShortcutSkillProducer):
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[dict[str, Any]], str, str]] = []
+
+    def produce(self, steps: list[dict[str, Any]], *, app: str, platform: str) -> ShortcutSkill:
+        self.calls.append((steps, app, platform))
+        return super().produce(steps, app=app, platform=platform)
 
 
 def _make_step(
@@ -271,3 +303,158 @@ async def test_shortcut_extractor_module_compiles() -> None:
     )
     _, stderr = await process.communicate()
     assert process.returncode == 0, stderr.decode()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "steps",
+    [
+        [],
+        [_make_step(step_index=0)],
+    ],
+)
+async def test_pipeline_rejects_too_few_steps_without_running_critics(
+    steps: list[dict[str, Any]],
+) -> None:
+    step_critic = _CountingStepCritic()
+    trajectory_critic = _CountingTrajectoryCritic()
+    producer = _CountingProducer()
+    pipeline = ExtractionPipeline(
+        step_critic=step_critic,
+        trajectory_critic=trajectory_critic,
+        producer=producer,
+    )
+
+    result = await pipeline.run(
+        steps,
+        {"app": "com.example.app", "platform": "android", "success": True, "task": "Open settings"},
+    )
+
+    assert result == ExtractionRejected(
+        reason="too_few_steps",
+        failed_step_verdict=None,
+        failed_trajectory_verdict=None,
+    )
+    assert step_critic.calls == []
+    assert trajectory_critic.calls == []
+    assert producer.calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_returns_success_after_both_critics_pass() -> None:
+    step_critic = _CountingStepCritic()
+    trajectory_critic = _CountingTrajectoryCritic()
+    producer = _CountingProducer()
+    pipeline = ExtractionPipeline(
+        step_critic=step_critic,
+        trajectory_critic=trajectory_critic,
+        producer=producer,
+    )
+    steps = [_make_step(step_index=0), _make_step(step_index=1)]
+
+    result = await pipeline.run(
+        steps,
+        {"app": "com.example.app", "platform": "android", "success": True, "task": "Open settings"},
+    )
+
+    assert isinstance(result, ExtractionSuccess)
+    assert len(result.step_verdicts) == 2
+    assert all(verdict.passed for verdict in result.step_verdicts)
+    assert result.trajectory_verdict.passed is True
+    assert isinstance(result.candidate, ShortcutSkill)
+    assert len(step_critic.calls) == 2
+    assert len(trajectory_critic.calls) == 1
+    assert len(producer.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_pipeline_stops_after_step_critic_failure() -> None:
+    failed_step = StepVerdict(step_index=1, passed=False, reason="missing target")
+    step_critic = _CountingStepCritic(
+        verdicts=[
+            StepVerdict(step_index=0, passed=True, reason="ok"),
+            failed_step,
+        ]
+    )
+    trajectory_critic = _CountingTrajectoryCritic()
+    producer = _CountingProducer()
+    pipeline = ExtractionPipeline(
+        step_critic=step_critic,
+        trajectory_critic=trajectory_critic,
+        producer=producer,
+    )
+    steps = [_make_step(step_index=0), _make_step(step_index=1, model_output="")]
+
+    result = await pipeline.run(
+        steps,
+        {"app": "com.example.app", "platform": "android", "success": True, "task": "Open settings"},
+    )
+
+    assert result == ExtractionRejected(
+        reason="step_critic",
+        failed_step_verdict=failed_step,
+        failed_trajectory_verdict=None,
+    )
+    assert len(step_critic.calls) == 2
+    assert trajectory_critic.calls == []
+    assert producer.calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_stops_after_trajectory_critic_failure() -> None:
+    trajectory_verdict = TrajectoryVerdict(
+        passed=False,
+        reason="contradictory steps",
+        failed_step_index=1,
+    )
+    step_critic = _CountingStepCritic()
+    trajectory_critic = _CountingTrajectoryCritic(verdict=trajectory_verdict)
+    producer = _CountingProducer()
+    pipeline = ExtractionPipeline(
+        step_critic=step_critic,
+        trajectory_critic=trajectory_critic,
+        producer=producer,
+    )
+    steps = [_make_step(step_index=0), _make_step(step_index=1)]
+
+    result = await pipeline.run(
+        steps,
+        {"app": "com.example.app", "platform": "android", "success": True, "task": "Open settings"},
+    )
+
+    assert result == ExtractionRejected(
+        reason="trajectory_critic",
+        failed_step_verdict=None,
+        failed_trajectory_verdict=trajectory_verdict,
+    )
+    assert len(step_critic.calls) == 2
+    assert len(trajectory_critic.calls) == 1
+    assert producer.calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_defaults_to_always_pass_critics() -> None:
+    pipeline = ExtractionPipeline()
+    steps = [_make_step(step_index=0), _make_step(step_index=1)]
+
+    result = await pipeline.run(
+        steps,
+        {"app": "com.example.app", "platform": "android", "success": True, "task": "Open settings"},
+    )
+
+    assert isinstance(result, ExtractionSuccess)
+    assert len(result.step_verdicts) == 2
+    assert result.trajectory_verdict.passed is True
+
+
+def test_pipeline_symbols_are_exported_from_package() -> None:
+    from opengui import skills
+
+    assert skills.ExtractionPipeline is ExtractionPipeline
+    assert skills.ExtractionRejected is ExtractionRejected
+    assert skills.ExtractionSuccess is ExtractionSuccess
+    assert skills.ShortcutSkillProducer is ShortcutSkillProducer
+    assert skills.StepCritic is StepCritic
+    assert skills.StepVerdict is StepVerdict
+    assert skills.TrajectoryCritic is TrajectoryCritic
+    assert skills.TrajectoryVerdict is TrajectoryVerdict
