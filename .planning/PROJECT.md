@@ -14,10 +14,10 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, standalone CLI, nanobot GUI tool integration
 - **Background execution:** Linux background desktop automation is supported through `XvfbDisplayManager` and `BackgroundDesktopBackend`
 - **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
-- **Verification state:** v1.5 Phases 24-26 are complete; Phase 27 remains for storage and agent integration
+- **Verification state:** v1.5 Phases 24-27 are complete, including storage/search persistence and GuiAgent two-layer skill integration
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
 - **Planner status:** Phase 21 added a live route catalog plus bounded routing-memory hints; Phase 22 completed real route-aware `tool` and `mcp` dispatch with fallback chains and observability logging
-- **Skills architecture status:** Phase 24 established `ShortcutSkill`, `TaskSkill`, and the import-safe `GrounderProtocol` / `LLMGrounder` contract layer; Phase 25 added `ShortcutExecutor` with contract verification and `TaskSkillExecutor` with same-node fallback traversal
+- **Skills architecture status:** Phase 24 established `ShortcutSkill`, `TaskSkill`, and the import-safe `GrounderProtocol` / `LLMGrounder` contract layer; Phase 25 added `ShortcutExecutor` with contract verification and `TaskSkillExecutor` with same-node fallback traversal; Phases 26-27 now add quality-gated extraction, separate versioned stores, unified search, and live GuiAgent integration
 
 ## Current Milestone: v1.5 New OpenGUI Skills Architecture
 
@@ -76,12 +76,15 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **GRND-02**: LLMGrounder implements the pluggable grounding protocol — v1.5 Phase 24
 - ✓ **GRND-03**: Grounding results expose grounder identity, confidence, and fallback metadata — v1.5 Phase 24
 - ✓ **EXTR-01..04**: Quality-gated extraction primitives, pipeline, and shortcut-skill production — Validated in Phase 26: quality-gated-extraction
+- ✓ **STOR-01**: Shortcut skills and task-level skills persist in separate, versioned JSON stores — Validated in Phase 27: storage-search-agent-integration
+- ✓ **STOR-02**: Unified search covers shortcut and task skill layers with layer-aware scoring — Validated in Phase 27: storage-search-agent-integration
+- ✓ **INTEG-01**: GuiAgent searches both skill layers during pre-task lookup and selects the best match — Validated in Phase 27: storage-search-agent-integration
+- ✓ **INTEG-02**: GuiAgent injects referenced app memory context before execution when a task skill points to stored memory — Validated in Phase 27: storage-search-agent-integration
 
 ### Active
 
 - ✓ ShortcutExecutor and TaskSkillExecutor with contract verification — Validated in Phase 25: multi-layer-execution
-- [ ] Two-layer skill store (separate shortcut and task-level JSON stores with unified search)
-- [ ] GuiAgent integration searching both layers with app memory context injection
+- ✓ v1.5 New OpenGUI Skills Architecture milestone complete — Validated in Phase 27: storage-search-agent-integration
 
 ### Out of Scope
 
@@ -136,4 +139,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-04-02 after completing Phase 26 Quality-Gated Extraction*
+*Last updated: 2026-04-02 after completing Phase 27 Storage, Search, and Agent Integration*
