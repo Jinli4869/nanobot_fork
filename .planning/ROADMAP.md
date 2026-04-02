@@ -207,7 +207,11 @@ Plans:
 
 **Depends on:** Phase 24
 **Requirements:** EXEC-01, EXEC-02, EXEC-03
-**Plans:** TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 25-01-PLAN.md — Add the new Phase 25 executor module, shortcut contract enforcement, and the shared grounding seam
+- [ ] 25-02-PLAN.md — Implement task-skill traversal, explicit contiguous fallback semantics, and regression coverage
 
 **Success Criteria** (what must be TRUE):
 1. ShortcutExecutor runs a ShortcutSkill step-by-step, and a detectable pre/post contract violation at any boundary produces a structured violation report rather than a silent failure.
