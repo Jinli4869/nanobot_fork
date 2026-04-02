@@ -12,11 +12,14 @@ from opengui.skills.executor import (
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
 from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescriptor
+from opengui.skills.task_skill import BranchNode, ShortcutRefNode, TaskNode, TaskSkill
 
 __all__ = [
+    "BranchNode",
     "ExecutionState",
     "LLMStateValidator",
     "ParameterSlot",
+    "ShortcutRefNode",
     "Skill",
     "SkillExecutionResult",
     "SkillExecutor",
@@ -27,4 +30,6 @@ __all__ = [
     "StateValidator",
     "StateDescriptor",
     "StepResult",
+    "TaskNode",
+    "TaskSkill",
 ]
