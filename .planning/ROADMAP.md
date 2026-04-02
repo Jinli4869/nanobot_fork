@@ -180,7 +180,7 @@ Plans:
 | 24 | 3/3 | Complete    | 2026-04-02 | 4 |
 | 25 | 2/2 | Complete    | 2026-04-02 | 4 |
 | 26 | Quality-Gated Extraction | Complete    | 2026-04-02 | 4 |
-| 27 | 1/2 | In Progress|  | 4 |
+| 27 | 2/2 | Complete    | 2026-04-02 | 4 |
 
 ### Phase 24: Schema and Grounding
 
@@ -243,7 +243,7 @@ Plans:
 
 **Depends on:** Phases 25-26
 **Requirements:** STOR-01, STOR-02, INTEG-01, INTEG-02
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 27-01-PLAN.md — Create versioned ShortcutSkillStore, TaskSkillStore, and UnifiedSkillSearch with hybrid BM25+FAISS search

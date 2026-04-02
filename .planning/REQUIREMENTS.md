@@ -42,8 +42,8 @@ Requirements for the new OpenGUI skills architecture milestone. Replaces the fla
 
 ### INTEG — Agent Integration
 
-- [ ] **INTEG-01**: GuiAgent searches both skill layers during pre-task skill lookup and selects the most appropriate match
-- [ ] **INTEG-02**: GuiAgent injects the app memory context referenced by a task-level skill into the execution context before running
+- [x] **INTEG-01**: GuiAgent searches both skill layers during pre-task skill lookup and selects the most appropriate match
+- [x] **INTEG-02**: GuiAgent injects the app memory context referenced by a task-level skill into the execution context before running
 
 ## Future Requirements (v1.6+)
 
@@ -97,8 +97,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXTR-04 | Phase 26 | Complete |
 | STOR-01 | Phase 27 | Complete |
 | STOR-02 | Phase 27 | Complete |
-| INTEG-01 | Phase 27 | Pending |
-| INTEG-02 | Phase 27 | Pending |
+| INTEG-01 | Phase 27 | Complete |
+| INTEG-02 | Phase 27 | Complete |
 
 **Coverage:**
 - v1.5 requirements: 20 total
