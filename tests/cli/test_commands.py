@@ -357,6 +357,41 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
 
 
+def test_make_provider_honors_gui_model_and_provider_override():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "dashscope",
+                    "model": "qwen3.5-plus",
+                }
+            },
+            "providers": {
+                "dashscope": {
+                    "apiKey": "dash-key",
+                },
+                "openrouter": {
+                    "apiKey": "or-key",
+                    "apiBase": "https://openrouter.ai/api/v1",
+                },
+            },
+        }
+    )
+
+    with patch("nanobot.providers.litellm_provider.LiteLLMProvider") as mock_litellm_provider:
+        _make_provider(
+            config,
+            model_override="anthropic/claude-3.7-sonnet",
+            provider_override="openrouter",
+        )
+
+    kwargs = mock_litellm_provider.call_args.kwargs
+    assert kwargs["default_model"] == "anthropic/claude-3.7-sonnet"
+    assert kwargs["provider_name"] == "openrouter"
+    assert kwargs["api_key"] == "or-key"
+    assert kwargs["api_base"] == "https://openrouter.ai/api/v1"
+
+
 def test_gateway_keeps_gateway_port_default_when_tui_config_exists(monkeypatch):
     config = Config.model_validate(
         {
