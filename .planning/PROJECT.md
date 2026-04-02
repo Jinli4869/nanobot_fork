@@ -10,10 +10,10 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ## Current State
 
-- **Shipped through:** v1.5 New OpenGUI Skills Architecture
+- **Shipped through:** v1.6 Phase 28 Shortcut Extraction Productionization
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, iOS WDA backend, HarmonyOS HDC backend, standalone CLI, nanobot GUI tool integration
-- **Shortcut architecture status:** Phase 24 shipped `ShortcutSkill`, `TaskSkill`, and grounding contracts; Phase 25 shipped multi-layer executors; Phases 26-27 shipped quality-gated primitives plus versioned stores and unified search
-- **Current production gap:** `GuiSubagentTool` still performs post-run extraction through the legacy `SkillExtractor` / `SkillLibrary` flow instead of promoting and consuming the new shortcut-layer architecture end-to-end
+- **Shortcut architecture status:** Phase 24 shipped `ShortcutSkill`, `TaskSkill`, and grounding contracts; Phase 25 shipped multi-layer executors; Phases 26-27 shipped quality-gated primitives plus versioned stores and unified search; Phase 28 shipped production trace-backed shortcut promotion with provenance, gates, and merge/version handling
+- **Current production gap:** Shortcut promotion is now live in production; the remaining v1.6 gap is screen-aware retrieval/applicability plus stable shortcut execution and fallback on live screens
 - **Reference direction for v1.6:** AppAgentX demonstrates screen-aware shortcut applicability evaluation and template generation from live context; Mobile-Agent-v3.5 reinforces action/observation discipline so shortcut execution stays stable instead of brittle
 
 ## Current Milestone: v1.6 Shortcut Extraction and Stable Execution
@@ -80,10 +80,10 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **STOR-02**: Unified search covers shortcut and task skill layers with layer-aware scoring - v1.5 Phase 27
 - ✓ **INTEG-01**: GuiAgent searches both skill layers during pre-task lookup and selects the best match - v1.5 Phase 27
 - ✓ **INTEG-02**: GuiAgent injects referenced app memory context before execution when a task skill points to stored memory - v1.5 Phase 27
+- ✓ **SXTR-01..04**: Production shortcut promotion now uses trace-backed step filtering, persisted provenance, explicit quality gates, and duplicate/version handling - v1.6 Phase 28
 
 ### Active
 
-- [ ] Production shortcut promotion flows from trace artifacts into the new shortcut store instead of the legacy skill-only path
 - [ ] Shortcut reuse includes screen-aware applicability checks before execution
 - [ ] Shortcut runtime execution is stabilized with live binding, settle/verification, and safe fallback
 - [ ] Shortcut health is diagnosable through telemetry and regression coverage
@@ -111,7 +111,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 | `[0,999]` relative coordinates | Preserve resolution portability | ✓ Good |
 | JSON storage before graph or SQL migration | Lower complexity at current scale | ✓ Good |
 | Three-layer skills tree: shortcut -> task-level -> orchestration (v1.5 built shortcut + task-level) | Current flat SkillStep list had no composition semantics, no typed contracts, and no quality gate | ✓ Good |
-| v1.6 should finish the shipped shortcut architecture instead of creating a parallel one | The repo already has shortcut/task schemas, stores, search, and executors; the missing part is production-path adoption | - Pending |
+| v1.6 should finish the shipped shortcut architecture instead of creating a parallel one | The repo already has shortcut/task schemas, stores, search, and executors; the missing part is production-path adoption | ✓ Good |
 | Shortcut selection must check current-screen applicability, not just retrieval score | Search relevance alone is not a safe execution signal | - Pending |
 | Shortcut execution must re-bind live targets and verify post-step state | Replay-only shortcuts are too brittle across UI drift and timing changes | - Pending |
 
@@ -124,4 +124,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Shortcut stability should rely on observable contracts and logs, not opaque one-shot LLM guesses.
 
 ---
-*Last updated: 2026-04-02 after starting milestone v1.6 Shortcut Extraction and Stable Execution*
+*Last updated: 2026-04-03 after completing Phase 28 of milestone v1.6 Shortcut Extraction and Stable Execution*
