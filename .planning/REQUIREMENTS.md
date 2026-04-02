@@ -37,8 +37,8 @@ Requirements for the new OpenGUI skills architecture milestone. Replaces the fla
 
 ### STOR — Two-Layer Skill Store
 
-- [ ] **STOR-01**: Shortcut skills and task-level skills are persisted in separate, versioned JSON stores
-- [ ] **STOR-02**: Unified skill search covers both layers with layer-aware relevance scoring
+- [x] **STOR-01**: Shortcut skills and task-level skills are persisted in separate, versioned JSON stores
+- [x] **STOR-02**: Unified skill search covers both layers with layer-aware relevance scoring
 
 ### INTEG — Agent Integration
 
@@ -95,8 +95,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXTR-02 | Phase 26 | Complete |
 | EXTR-03 | Phase 26 | Complete |
 | EXTR-04 | Phase 26 | Complete |
-| STOR-01 | Phase 27 | Pending |
-| STOR-02 | Phase 27 | Pending |
+| STOR-01 | Phase 27 | Complete |
+| STOR-02 | Phase 27 | Complete |
 | INTEG-01 | Phase 27 | Pending |
 | INTEG-02 | Phase 27 | Pending |
 

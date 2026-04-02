@@ -2,16 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: New OpenGUI Skills Architecture
-status: ready_to_plan
-stopped_at: Completed 26-02-PLAN.md
-last_updated: "2026-04-02T11:20:00.000Z"
+current_phase: 27
+current_phase_name: storage-search-agent-integration
+current_plan: 2
+status: executing
+stopped_at: Completed 27-01-PLAN.md
+last_updated: "2026-04-02T12:36:50.281Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 11
   completed_phases: 9
-  total_plans: 22
-  completed_plans: 22
-  percent: 82
+  total_plans: 24
+  completed_plans: 23
+  percent: 96
 ---
 
 # Project State
@@ -21,16 +24,20 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 27 — storage-search-and-agent-integration
+**Current focus:** Phase 27 — storage-search-agent-integration
 
 ## Current Position
 
-Phase: 27 (storage-search-and-agent-integration) — READY TO PLAN
-Plan: 0 of 0
+**Current Phase:** 27
+**Current Phase Name:** storage-search-agent-integration
+**Total Phases:** 11
+**Current Plan:** 2
+**Total Plans in Phase:** 2
+**Status:** Ready to execute
 
 ## Performance Metrics
 
-**Progress:** [████████░░] 82%
+**Progress:** [██████████] 96%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -71,6 +78,7 @@ Plan: 0 of 0
 | Phase 24 P03 | 1min | 2 tasks | 4 files |
 | Phase 25 P01 | 4 | 2 tasks | 4 files |
 | Phase 25 P02 | 4 min | 2 tasks | 3 files |
+| Phase 27 P01 | 6 min | 1 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -184,6 +192,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 25 P02]: BranchNode subtrees recursively processed via _walk_nodes — enables nested branches without special-casing
 - [Phase 26]: ExtractionPipeline rejects trajectories with fewer than two steps before invoking any critic, then short-circuits from step critic to trajectory critic to producer in strict order
 - [Phase 26]: Phase 26 public extraction types are exported from opengui.skills so callers can adopt the pipeline without deep module imports
+- [Phase 27]: Run BM25 plus optional FAISS search inside each store, then merge via UnifiedSkillSearch with layer weights.
 
 ### Pending Todos
 
@@ -232,8 +241,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last activity: 2026-04-02 - Completed quick task 260402-q5f: 现在执行gui任务，我希望动作执行完成之后再进行截图，而不是动作还没执行结束就截图;另外，eval.py上，/Users/jinli/.nanobot/workspace/gui_runs/2026-04-02_184228_600485/trace_20260402_184228.jsonl和/Users/jinli/.nanobot/workspace/gui_runs/2026-04-02_184228_600485/evaluation.json，应该只读type为step的步骤计入步数
+Last activity: 2026-04-02
 
-Last session: 2026-04-02T08:22:00.000Z
-Stopped at: Completed 25-02-PLAN.md
+Last session: 2026-04-02T12:36:50.278Z
+Stopped at: Completed 27-01-PLAN.md
 Resume file: None
