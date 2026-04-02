@@ -1,16 +1,20 @@
 """
 opengui.skills.multi_layer_executor
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Phase 25 shortcut-layer executor with structured contract verification and
-pluggable grounding.
+Phase 25 two-layer executor with structured contract verification and pluggable
+grounding.
 
 Public symbols
 --------------
-ConditionEvaluator     — @runtime_checkable Protocol for pre/post condition checks
+ConditionEvaluator      — @runtime_checkable Protocol for pre/post condition checks
 ContractViolationReport — frozen dataclass returned on the first failed condition
-ShortcutStepResult     — per-step execution record in the success path
+ShortcutStepResult      — per-step execution record in the success path
 ShortcutExecutionSuccess — full success result holding all step records
-ShortcutExecutor       — dataclass executor for ShortcutSkill objects
+ShortcutExecutor        — dataclass executor for ShortcutSkill objects
+MissingShortcutReport   — frozen dataclass returned when a ShortcutRefNode cannot be
+                           resolved and no contiguous inline fallback block exists
+TaskExecutionSuccess    — full success result for TaskSkillExecutor execution
+TaskSkillExecutor       — dataclass executor for TaskSkill objects
 
 Design decisions (Phase 25)
 ----------------------------
@@ -26,6 +30,15 @@ Design decisions (Phase 25)
   live device or LLM.
 * Literal `params` values passed into `execute()` are merged with the grounder's
   `resolved_params`, with caller-supplied values winning on key conflicts.
+* `TaskSkillExecutor` delegates shortcut execution to the injected
+  `ShortcutExecutor` and routes inline `SkillStep` nodes through the same shared
+  `_execute_step` helper that `ShortcutExecutor` uses — ensuring EXEC-03: the
+  grounding and action-normalisation path is identical for both.
+* The locked same-node fallback rule: because `ShortcutRefNode` has no embedded
+  ``fallback_steps`` field in the Phase 24 schema, the fallback block is derived
+  structurally as the maximal contiguous run of `SkillStep` siblings immediately
+  after the `ShortcutRefNode` in the enclosing tuple.  `BranchNode` siblings are
+  never part of a fallback block.
 """
 
 from __future__ import annotations
@@ -33,6 +46,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
@@ -42,6 +56,7 @@ from opengui.grounding.protocol import GrounderProtocol, GroundingContext, Groun
 from opengui.interfaces import DeviceBackend
 from opengui.skills.data import SkillStep
 from opengui.skills.shortcut import ShortcutSkill, StateDescriptor
+from opengui.skills.task_skill import BranchNode, ShortcutRefNode, TaskNode, TaskSkill
 
 logger = logging.getLogger(__name__)
 
@@ -325,10 +340,334 @@ class ShortcutExecutor:
         return action, grounding
 
 
+# ---------------------------------------------------------------------------
+# Task-layer result / report dataclasses
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MissingShortcutReport:
+    """Returned by ``TaskSkillExecutor.execute()`` when a ``ShortcutRefNode`` cannot
+    be resolved **and** no contiguous inline fallback block exists at that position.
+
+    ``fallback_block_length`` encodes the length of the fallback block that was
+    structurally scanned; when it is ``0`` the next sibling was not a ``SkillStep``
+    (or the ``ShortcutRefNode`` was the last node in the tuple).
+
+    The ``is_missing_shortcut`` discriminator field lets callers pattern-match::
+
+        result = await executor.execute(task)
+        if result.is_missing_shortcut:
+            # MissingShortcutReport — handle gracefully
+            ...
+    """
+
+    task_skill_id: str
+    shortcut_id: str
+    node_index: int
+    fallback_block_length: int
+    is_missing_shortcut: Literal[True] = True
+
+
+@dataclass(frozen=True)
+class TaskExecutionSuccess:
+    """Returned by ``TaskSkillExecutor.execute()`` when the task skill completes
+    without contract violations or unresolvable shortcuts.
+
+    ``step_results`` accumulates every ``ShortcutStepResult`` generated during the
+    run, both from resolved shortcut delegation and from inline atom execution.
+    ``executed_shortcut_ids`` lists shortcut IDs in execution order.
+    ``branch_trace`` records the boolean outcome of each ``BranchNode`` evaluation.
+    """
+
+    task_skill_id: str
+    step_results: tuple[ShortcutStepResult, ...]
+    executed_shortcut_ids: tuple[str, ...]
+    branch_trace: tuple[bool, ...]
+    is_violation: Literal[False] = False
+    is_missing_shortcut: Literal[False] = False
+
+
+# ---------------------------------------------------------------------------
+# TaskSkillExecutor
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TaskSkillExecutor:
+    """Execute a :class:`~opengui.skills.task_skill.TaskSkill` by walking its
+    node sequence and applying the locked same-node fallback rule for missing
+    shortcuts.
+
+    Parameters
+    ----------
+    shortcut_executor:
+        A fully configured :class:`ShortcutExecutor` used for both resolved-
+        shortcut delegation and inline ``SkillStep`` execution (EXEC-03 shared
+        grounding seam).
+    shortcut_resolver:
+        Callable that maps a shortcut_id string to a :class:`ShortcutSkill`
+        instance, or ``None`` when the shortcut is not found.
+    condition_evaluator:
+        Optional :class:`ConditionEvaluator` used to evaluate ``BranchNode``
+        conditions.  When ``None``, all branch conditions evaluate to ``True``
+        (always-pass default), which enables dry-run and test scenarios.
+
+    Traversal rules
+    ---------------
+    For each node in ``TaskSkill.steps`` (index ``i``):
+
+    * **ShortcutRefNode**:
+        1. Measure the contiguous fallback block: the maximal run of ``SkillStep``
+           siblings at positions ``i+1, i+2, …`` that are all ``SkillStep`` instances
+           (stop at the first non-``SkillStep`` sibling or end of tuple).
+        2. Attempt ``shortcut_resolver(node.shortcut_id)``.
+        3. If resolved: delegate to ``shortcut_executor`` with ``node.param_bindings``;
+           advance the cursor past the entire fallback block (skip those siblings).
+        4. If missing and ``fallback_block_length > 0``: execute fallback steps
+           in-order through the shared step runner; advance past all of them.
+        5. If missing and ``fallback_block_length == 0``: return
+           ``MissingShortcutReport`` immediately.
+
+    * **SkillStep** (inline atom at top level):
+        Route through the shared ``_execute_step`` helper on the injected
+        ``shortcut_executor`` using an anonymous ``ShortcutSkill`` context.
+
+    * **BranchNode**:
+        Evaluate ``node.condition`` via the ``condition_evaluator``; execute only the
+        selected branch subtree recursively; append the boolean to ``branch_trace``.
+    """
+
+    shortcut_executor: ShortcutExecutor
+    shortcut_resolver: Callable[[str], ShortcutSkill | None]
+    condition_evaluator: ConditionEvaluator | None = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def execute(
+        self,
+        task_skill: TaskSkill,
+        *,
+        timeout: float = 5.0,
+    ) -> TaskExecutionSuccess | ContractViolationReport | MissingShortcutReport:
+        """Execute *task_skill* by traversing its node sequence.
+
+        Returns
+        -------
+        :class:`TaskExecutionSuccess`
+            All nodes completed without error.
+        :class:`ContractViolationReport`
+            A resolved shortcut failed a pre- or post-condition check.
+        :class:`MissingShortcutReport`
+            A shortcut could not be resolved and no contiguous inline fallback
+            block was available at that position.
+        """
+        all_step_results: list[ShortcutStepResult] = []
+        executed_shortcut_ids: list[str] = []
+        branch_trace: list[bool] = []
+
+        outcome = await self._walk_nodes(
+            nodes=task_skill.steps,
+            task_skill=task_skill,
+            all_step_results=all_step_results,
+            executed_shortcut_ids=executed_shortcut_ids,
+            branch_trace=branch_trace,
+            timeout=timeout,
+        )
+        if outcome is not None:
+            # A ContractViolationReport or MissingShortcutReport was returned
+            return outcome
+
+        return TaskExecutionSuccess(
+            task_skill_id=task_skill.skill_id,
+            step_results=tuple(all_step_results),
+            executed_shortcut_ids=tuple(executed_shortcut_ids),
+            branch_trace=tuple(branch_trace),
+        )
+
+    # ------------------------------------------------------------------
+    # Private traversal helpers
+    # ------------------------------------------------------------------
+
+    async def _walk_nodes(
+        self,
+        nodes: tuple[TaskNode, ...],
+        *,
+        task_skill: TaskSkill,
+        all_step_results: list[ShortcutStepResult],
+        executed_shortcut_ids: list[str],
+        branch_trace: list[bool],
+        timeout: float,
+    ) -> ContractViolationReport | MissingShortcutReport | None:
+        """Walk *nodes* in order, applying all traversal rules.
+
+        Returns ``None`` on success, or the first early-exit report.
+        """
+        evaluator: ConditionEvaluator = (
+            self.condition_evaluator or _AlwaysPassEvaluator()
+        )
+        index = 0
+        while index < len(nodes):
+            node = nodes[index]
+
+            if isinstance(node, ShortcutRefNode):
+                # Measure contiguous fallback block before resolution attempt
+                fallback_start = index + 1
+                fallback_end = fallback_start
+                while fallback_end < len(nodes) and isinstance(nodes[fallback_end], SkillStep):
+                    fallback_end += 1
+                fallback_block: tuple[SkillStep, ...] = tuple(
+                    nodes[fallback_start:fallback_end]  # type: ignore[misc]
+                )
+                fallback_block_length = len(fallback_block)
+
+                resolved_shortcut = self.shortcut_resolver(node.shortcut_id)
+
+                if resolved_shortcut is not None:
+                    # Execute the resolved shortcut and skip the fallback block
+                    shortcut_result = await self.shortcut_executor.execute(
+                        resolved_shortcut,
+                        params=dict(node.param_bindings),
+                        timeout=timeout,
+                    )
+                    if isinstance(shortcut_result, ContractViolationReport):
+                        return shortcut_result
+                    all_step_results.extend(shortcut_result.step_results)
+                    executed_shortcut_ids.append(node.shortcut_id)
+                    # Advance past shortcut ref node AND its fallback block
+                    index = fallback_end
+                else:
+                    # Shortcut missing
+                    if fallback_block_length == 0:
+                        # No contiguous inline fallback available
+                        return MissingShortcutReport(
+                            task_skill_id=task_skill.skill_id,
+                            shortcut_id=node.shortcut_id,
+                            node_index=index,
+                            fallback_block_length=0,
+                        )
+                    # Execute fallback block inline through the shared step runner
+                    for fallback_step in fallback_block:
+                        step_result = await self._run_inline_step(
+                            step=fallback_step,
+                            task_skill=task_skill,
+                            timeout=timeout,
+                        )
+                        all_step_results.append(step_result)
+                    # Advance past shortcut ref node AND the consumed fallback block
+                    index = fallback_end
+
+            elif isinstance(node, SkillStep):
+                # Top-level inline atom: run through shared step runner
+                step_result = await self._run_inline_step(
+                    step=node,
+                    task_skill=task_skill,
+                    timeout=timeout,
+                )
+                all_step_results.append(step_result)
+                index += 1
+
+            elif isinstance(node, BranchNode):
+                # Evaluate condition; execute selected branch subtree
+                branch_screenshot = self.shortcut_executor._screenshot_path(
+                    task_skill.skill_id, index, "branch"
+                )
+                await self.shortcut_executor.backend.observe(
+                    branch_screenshot, timeout=timeout
+                )
+                condition_result = await evaluator.evaluate(
+                    node.condition, branch_screenshot
+                )
+                branch_trace.append(condition_result)
+
+                branch_subtree = node.then_steps if condition_result else node.else_steps
+                sub_outcome = await self._walk_nodes(
+                    nodes=branch_subtree,
+                    task_skill=task_skill,
+                    all_step_results=all_step_results,
+                    executed_shortcut_ids=executed_shortcut_ids,
+                    branch_trace=branch_trace,
+                    timeout=timeout,
+                )
+                if sub_outcome is not None:
+                    return sub_outcome
+                index += 1
+
+            else:
+                logger.warning(
+                    "TaskSkillExecutor: unknown node type %r at index %d — skipping",
+                    type(node).__name__,
+                    index,
+                )
+                index += 1
+
+        return None
+
+    async def _run_inline_step(
+        self,
+        *,
+        step: SkillStep,
+        task_skill: TaskSkill,
+        timeout: float,
+    ) -> ShortcutStepResult:
+        """Execute a single inline ``SkillStep`` through the shared step runner.
+
+        Constructs a minimal ``ShortcutSkill`` context so the shared
+        ``_execute_step`` helper on the injected ``ShortcutExecutor`` can resolve
+        grounding metadata, then executes the resulting action via the backend.
+        The step index used for the screenshot path is derived from the current
+        total step count accumulated so far (caller responsibility for ordering).
+        """
+        # Build a minimal ShortcutSkill so _execute_step has its required context.
+        # parameter_slots is empty — inline atoms don't carry slot definitions.
+        inline_context = ShortcutSkill(
+            skill_id=task_skill.skill_id,
+            name=task_skill.name,
+            description=task_skill.description,
+            app=task_skill.app,
+            platform=task_skill.platform,
+            steps=(step,),
+        )
+        # Use a pseudo-index based on current time to generate a unique screenshot path.
+        # The exact index value is not semantically load-bearing here; uniqueness is.
+        import time as _time
+        pseudo_index = int(_time.monotonic() * 1000) % 100000
+        pre_screenshot_path = self.shortcut_executor._screenshot_path(
+            task_skill.skill_id, pseudo_index, "inline"
+        )
+        observation = await self.shortcut_executor.backend.observe(
+            pre_screenshot_path, timeout=timeout
+        )
+
+        action, grounding = await self.shortcut_executor._execute_step(
+            step=step,
+            shortcut=inline_context,
+            params={},
+            screenshot_path=pre_screenshot_path,
+            observation=observation,
+            timeout=timeout,
+        )
+        backend_result = await self.shortcut_executor.backend.execute(
+            action, timeout=timeout
+        )
+        return ShortcutStepResult(
+            step_index=pseudo_index,
+            action=action,
+            backend_result=backend_result,
+            grounding=grounding,
+            screenshot_path=str(pre_screenshot_path),
+        )
+
+
 __all__ = [
     "ConditionEvaluator",
     "ContractViolationReport",
+    "MissingShortcutReport",
     "ShortcutExecutionSuccess",
     "ShortcutStepResult",
     "ShortcutExecutor",
+    "TaskExecutionSuccess",
+    "TaskSkillExecutor",
 ]
