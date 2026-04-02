@@ -178,7 +178,7 @@ Plans:
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
 | 24 | 3/3 | Complete    | 2026-04-02 | 4 |
-| 25 | Multi-layer Execution | Implement ShortcutExecutor and TaskSkillExecutor so shortcut-layer and task-level skills can execute with contract verification and grounded parameter resolution. | EXEC-01, EXEC-02, EXEC-03 | 4 |
+| 25 | 1/2 | In Progress|  | 4 |
 | 26 | Quality-Gated Extraction | Build the step-level and trajectory-level critics and the extraction pipeline that converts validated trajectories into shortcut-layer skill candidates. | EXTR-01, EXTR-02, EXTR-03, EXTR-04 | 4 |
 | 27 | Storage, Search, and Agent Integration | Stand up the two separate versioned skill stores with unified hybrid search, then wire GuiAgent to search both layers and inject referenced app memory context. | STOR-01, STOR-02, INTEG-01, INTEG-02 | 4 |
 
@@ -207,7 +207,7 @@ Plans:
 
 **Depends on:** Phase 24
 **Requirements:** EXEC-01, EXEC-02, EXEC-03
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 25-01-PLAN.md — Add the new Phase 25 executor module, shortcut contract enforcement, and the shared grounding seam
