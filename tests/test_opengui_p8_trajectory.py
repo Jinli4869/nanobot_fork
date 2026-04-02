@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -229,6 +230,43 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
     assert kwargs["api_key"] == "judge-key"
     assert kwargs["api_base"] == "https://judge.example/v1"
     assert isinstance(kwargs["trace_path"], Path)
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_returns_before_background_postprocessing_finishes_with_promotion(
+    tmp_workspace: Path,
+) -> None:
+    tool = _dry_run_tool(tmp_workspace)
+    release_postprocess = asyncio.Event()
+    postprocess_started = asyncio.Event()
+    captured: dict[str, Any] = {}
+
+    async def fake_postprocess(
+        self,
+        trace_path: Path,
+        is_success: bool,
+        platform: str,
+        task: str,
+    ) -> None:
+        del self
+        captured["trace_path"] = trace_path
+        captured["is_success"] = is_success
+        captured["platform"] = platform
+        captured["task"] = task
+        postprocess_started.set()
+        await release_postprocess.wait()
+
+    with patch.object(type(tool), "_run_trajectory_postprocessing", new=fake_postprocess):
+        raw = await tool.execute(task="test task")
+        await asyncio.wait_for(postprocess_started.wait(), timeout=1.0)
+        result = json.loads(raw)
+        assert result["success"] is True
+        assert captured["is_success"] is True
+        assert captured["platform"] == "dry-run"
+        assert captured["task"] == "test task"
+        assert tool._background_postprocess_tasks
+        release_postprocess.set()
+        await tool._wait_for_pending_postprocessing()
 
 
 @pytest.mark.asyncio
