@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.5
 milestone_name: New OpenGUI Skills Architecture
-status: unknown
-stopped_at: Completed 25-02-PLAN.md
-last_updated: "2026-04-02T10:55:00.000Z"
+status: ready_to_plan
+stopped_at: Completed 26-02-PLAN.md
+last_updated: "2026-04-02T10:45:00.000Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 11
-  completed_phases: 8
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  completed_phases: 9
+  total_plans: 22
+  completed_plans: 22
+  percent: 82
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 25 — multi-layer-execution
+**Current focus:** Phase 27 — storage-search-and-agent-integration
 
 ## Current Position
 
-Phase: 25 (multi-layer-execution) — COMPLETE
-Plan: 2 of 2
+Phase: 27 (storage-search-and-agent-integration) — READY TO PLAN
+Plan: 0 of 0
 
 ## Performance Metrics
 
-**Progress:** [██████████] 100%
+**Progress:** [████████░░] 82%
 
 | Execution | Duration | Tasks | Files |
 |-----------|----------|-------|-------|
@@ -182,11 +182,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 25 P02]: TaskSkillExecutor delegates inline SkillStep execution to ShortcutExecutor._execute_step — ensures EXEC-03 grounding seam is truly shared, not duplicated
 - [Phase 25 P02]: Fallback block measured before shortcut resolution attempt — avoids partial execution ambiguity on resolution edge cases
 - [Phase 25 P02]: BranchNode subtrees recursively processed via _walk_nodes — enables nested branches without special-casing
+- [Phase 26]: ExtractionPipeline rejects trajectories with fewer than two steps before invoking any critic, then short-circuits from step critic to trajectory critic to producer in strict order
+- [Phase 26]: Phase 26 public extraction types are exported from opengui.skills so callers can adopt the pipeline without deep module imports
 
 ### Pending Todos
 
-1. Discuss Phase 25 — multi-layer execution (EXEC-01..03)
-2. Plan Phase 25 — executors, grounding integration, and contract verification
+1. Discuss Phase 27 — storage, search, and agent integration (STOR-01, STOR-02, INTEG-01, INTEG-02)
+2. Plan Phase 27 — versioned stores, unified search, and GuiAgent wiring
 
 ### Blockers/Concerns
 

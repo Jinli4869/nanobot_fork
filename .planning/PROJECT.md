@@ -14,7 +14,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, standalone CLI, nanobot GUI tool integration
 - **Background execution:** Linux background desktop automation is supported through `XvfbDisplayManager` and `BackgroundDesktopBackend`
 - **Runtime contracts:** Phase 12 adds shared probe, mode-resolution, and process-wide serialization contracts for background execution
-- **Verification state:** v1.5 Phase 25 is complete; Phases 26-27 remain for extraction, storage, and agent integration
+- **Verification state:** v1.5 Phases 24-26 are complete; Phase 27 remains for storage and agent integration
 - **Accepted debt:** v1.1 shipped with audit-only traceability gaps in `11-02-SUMMARY.md` and partial Nyquist validation for phases 10 and 11
 - **Planner status:** Phase 21 added a live route catalog plus bounded routing-memory hints; Phase 22 completed real route-aware `tool` and `mcp` dispatch with fallback chains and observability logging
 - **Skills architecture status:** Phase 24 established `ShortcutSkill`, `TaskSkill`, and the import-safe `GrounderProtocol` / `LLMGrounder` contract layer; Phase 25 added `ShortcutExecutor` with contract verification and `TaskSkillExecutor` with same-node fallback traversal
@@ -75,11 +75,11 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - ✓ **GRND-01**: GrounderProtocol defines the common async grounding interface — v1.5 Phase 24
 - ✓ **GRND-02**: LLMGrounder implements the pluggable grounding protocol — v1.5 Phase 24
 - ✓ **GRND-03**: Grounding results expose grounder identity, confidence, and fallback metadata — v1.5 Phase 24
+- ✓ **EXTR-01..04**: Quality-gated extraction primitives, pipeline, and shortcut-skill production — Validated in Phase 26: quality-gated-extraction
 
 ### Active
 
 - ✓ ShortcutExecutor and TaskSkillExecutor with contract verification — Validated in Phase 25: multi-layer-execution
-- [ ] Step-level and trajectory-level quality critics for skill extraction
 - [ ] Two-layer skill store (separate shortcut and task-level JSON stores with unified search)
 - [ ] GuiAgent integration searching both layers with app memory context injection
 
@@ -123,7 +123,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 | Three-layer skills tree: shortcut → task-level → orchestration (v1.5 builds shortcut + task-level) | Current flat SkillStep list has no composition semantics, no typed contracts, and no quality gate | — Pending |
 | GrounderProtocol as pluggable interface (LLM/OmniParser/future) | Decouples skill definitions from grounding implementation; enables OmniParser and future grounders without schema changes | — Pending |
 | Fresh start on skill data: old skills.json kept as reference, new stores start empty | Migration of brittle pixel-coordinate skills would import fragility; quality-gated re-extraction produces better seeds | — Pending |
-| Both step-level and trajectory-level critics required before skill promotion | Mobile-Agent-v3 approach: filters bad steps and low-quality trajectories from being crystallized as reusable skills | — Pending |
+| Both step-level and trajectory-level critics required before skill promotion | Mobile-Agent-v3 approach: filters bad steps and low-quality trajectories from being crystallized as reusable skills | ✓ Good |
 
 ## Constraints
 
@@ -136,4 +136,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - The first web release is local-first and should default to localhost-safe behavior rather than assuming cloud hosting.
 
 ---
-*Last updated: 2026-04-02 after completing Phase 25 Multi-Layer Execution*
+*Last updated: 2026-04-02 after completing Phase 26 Quality-Gated Extraction*

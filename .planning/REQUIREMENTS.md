@@ -30,10 +30,10 @@ Requirements for the new OpenGUI skills architecture milestone. Replaces the fla
 
 ### EXTR — Quality-Gated Skill Extraction
 
-- [ ] **EXTR-01**: Step-level critic evaluates each trajectory step for correctness before skill extraction
-- [ ] **EXTR-02**: Trajectory-level critic evaluates overall trajectory quality before a skill is promoted to the library
-- [ ] **EXTR-03**: Extraction pipeline only promotes skills from trajectories passing both critics
-- [ ] **EXTR-04**: Extractor produces shortcut-layer skill candidates from validated trajectory step sequences
+- [x] **EXTR-01**: Step-level critic evaluates each trajectory step for correctness before skill extraction
+- [x] **EXTR-02**: Trajectory-level critic evaluates overall trajectory quality before a skill is promoted to the library
+- [x] **EXTR-03**: Extraction pipeline only promotes skills from trajectories passing both critics
+- [x] **EXTR-04**: Extractor produces shortcut-layer skill candidates from validated trajectory step sequences
 
 ### STOR — Two-Layer Skill Store
 
@@ -91,10 +91,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | EXEC-01 | Phase 25 | Complete |
 | EXEC-02 | Phase 25 | Complete |
 | EXEC-03 | Phase 25 | Complete |
-| EXTR-01 | Phase 26 | Pending |
-| EXTR-02 | Phase 26 | Pending |
-| EXTR-03 | Phase 26 | Pending |
-| EXTR-04 | Phase 26 | Pending |
+| EXTR-01 | Phase 26 | Complete |
+| EXTR-02 | Phase 26 | Complete |
+| EXTR-03 | Phase 26 | Complete |
+| EXTR-04 | Phase 26 | Complete |
 | STOR-01 | Phase 27 | Pending |
 | STOR-02 | Phase 27 | Pending |
 | INTEG-01 | Phase 27 | Pending |
@@ -107,4 +107,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-01*
-*Last updated: 2026-04-01 after roadmap creation — all 20 requirements mapped to phases 24-27*
+*Last updated: 2026-04-02 after completing Phase 26 Quality-Gated Extraction*

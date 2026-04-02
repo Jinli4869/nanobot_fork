@@ -179,7 +179,7 @@ Plans:
 |-------|------|------|--------------|------------------|
 | 24 | 3/3 | Complete    | 2026-04-02 | 4 |
 | 25 | 2/2 | Complete    | 2026-04-02 | 4 |
-| 26 | Quality-Gated Extraction | Build the step-level and trajectory-level critics and the extraction pipeline that converts validated trajectories into shortcut-layer skill candidates. | EXTR-01, EXTR-02, EXTR-03, EXTR-04 | 4 |
+| 26 | Quality-Gated Extraction | Complete    | 2026-04-02 | 4 |
 | 27 | Storage, Search, and Agent Integration | Stand up the two separate versioned skill stores with unified hybrid search, then wire GuiAgent to search both layers and inject referenced app memory context. | STOR-01, STOR-02, INTEG-01, INTEG-02 | 4 |
 
 ### Phase 24: Schema and Grounding
@@ -225,11 +225,11 @@ Plans:
 
 **Depends on:** Phase 24
 **Requirements:** EXTR-01, EXTR-02, EXTR-03, EXTR-04
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
-- [ ] 26-01-PLAN.md — Define critic protocols, verdict/result dataclasses, and ShortcutSkillProducer
-- [ ] 26-02-PLAN.md — Add ExtractionPipeline orchestrator with critic sequencing and package exports
+- [x] 26-01-PLAN.md — Define critic protocols, verdict/result dataclasses, and ShortcutSkillProducer
+- [x] 26-02-PLAN.md — Add ExtractionPipeline orchestrator with critic sequencing and package exports
 
 **Success Criteria** (what must be TRUE):
 1. Step-level critic evaluates an individual trajectory step and returns a structured verdict (pass/fail with reason), and a trajectory containing a step that fails the critic is not passed to the trajectory-level critic.
