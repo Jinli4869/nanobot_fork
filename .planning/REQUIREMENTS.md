@@ -18,9 +18,9 @@ Requirements for the new OpenGUI skills architecture milestone. Replaces the fla
 
 ### GRND — Pluggable Grounding Protocol
 
-- [ ] **GRND-01**: GrounderProtocol defines a common async interface for resolving semantic step targets to concrete action parameters
-- [ ] **GRND-02**: LLMGrounder implements GrounderProtocol wrapping the existing vision-LLM grounding path
-- [ ] **GRND-03**: Grounding results expose the grounder used, confidence score, and fallback metadata
+- [x] **GRND-01**: GrounderProtocol defines a common async interface for resolving semantic step targets to concrete action parameters
+- [x] **GRND-02**: LLMGrounder implements GrounderProtocol wrapping the existing vision-LLM grounding path
+- [x] **GRND-03**: Grounding results expose the grounder used, confidence score, and fallback metadata
 
 ### EXEC — Multi-layer Execution Engine
 
@@ -85,9 +85,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SCHEMA-04 | Phase 24 | Complete |
 | SCHEMA-05 | Phase 24 | Complete |
 | SCHEMA-06 | Phase 24 | Complete |
-| GRND-01 | Phase 24 | Pending |
-| GRND-02 | Phase 24 | Pending |
-| GRND-03 | Phase 24 | Pending |
+| GRND-01 | Phase 24 | Complete |
+| GRND-02 | Phase 24 | Complete |
+| GRND-03 | Phase 24 | Complete |
 | EXEC-01 | Phase 25 | Pending |
 | EXEC-02 | Phase 25 | Pending |
 | EXEC-03 | Phase 25 | Pending |
