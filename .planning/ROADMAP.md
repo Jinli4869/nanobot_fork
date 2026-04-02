@@ -8,10 +8,10 @@ OpenGUI has shipped two milestones so far: v1.0 established the reusable GUI sub
 
 - ✅ **v1.0 Core Foundations** — Phases 1-8 (shipped 2026-03-19)
 - ✅ **v1.1 Background Execution** — Phases 9-11 (shipped 2026-03-20) — [Archive](/Users/jinli/Documents/Personal/nanobot_fork/.planning/milestones/v1.1-ROADMAP.md)
-- ○ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (closeout in progress)
-- ○ **v1.3 Nanobot Web Workspace** — Phases 17-20 (in progress)
-- ○ **v1.4 Capability-Aware Planning And Routing** — Phases 21-23 (planned)
-- ○ **v1.5 New OpenGUI Skills Architecture** — Phases 24-27 (planned)
+- ✅ **v1.2 Cross-Platform Background Execution** — Phases 12-16 (shipped 2026-03-21)
+- ✅ **v1.3 Nanobot Web Workspace** — Phases 17-20 (shipped 2026-03-22)
+- ✅ **v1.4 Capability-Aware Planning And Routing** — Phases 21-23 (shipped 2026-03-28)
+- 🚧 **v1.5 New OpenGUI Skills Architecture** — Phases 24-27 (in progress)
 
 ## Completed Milestone: v1.3 Nanobot Web Workspace
 
