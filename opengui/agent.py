@@ -494,7 +494,8 @@ class GuiAgent:
             )
             try:
                 skill_result = await self._skill_executor.execute(matched_skill)
-                skill_context = skill_result.execution_summary
+                execution_summary = getattr(skill_result, "execution_summary", None)
+                skill_context = execution_summary if isinstance(execution_summary, str) else None
                 if skill_result.state.value == "succeeded":
                     # Skill succeeded — fall through to agent for confirmation
                     self._trajectory_recorder.set_phase(
