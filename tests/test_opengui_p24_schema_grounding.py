@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import importlib
+from pathlib import Path
+
 import pytest
 
 from opengui import skills as exported_skills
+from opengui.interfaces import LLMResponse, ToolCall
+from opengui.observation import Observation
 from opengui.skills.data import SkillStep
+from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescriptor
 from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescriptor
 from opengui.skills.task_skill import (
     BranchNode,
@@ -11,6 +17,19 @@ from opengui.skills.task_skill import (
     TaskSkill,
     _task_node_from_dict,
 )
+
+
+class _ScriptedGroundingLLM:
+    def __init__(self, response: LLMResponse) -> None:
+        self._response = response
+
+    async def chat(
+        self,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]] | None = None,
+        tool_choice: str | None = None,
+    ) -> LLMResponse:
+        return self._response
 
 
 def test_state_descriptor_round_trip() -> None:
@@ -265,3 +284,89 @@ def test_task_skill_round_trip() -> None:
 def test_task_node_rejects_unknown_kind() -> None:
     with pytest.raises(ValueError, match="unsupported task node type"):
         _task_node_from_dict({"kind": "mystery_node"})
+
+
+def test_grounding_result_round_trip() -> None:
+    from opengui.grounding.protocol import GroundingResult
+
+    result = GroundingResult(
+        grounder_id="llm:test",
+        confidence=0.85,
+        resolved_params={"text": "wifi"},
+        fallback_metadata={"strategy": "none"},
+    )
+
+    payload = result.to_dict()
+
+    assert payload == {
+        "grounder_id": "llm:test",
+        "confidence": 0.85,
+        "resolved_params": {"text": "wifi"},
+        "fallback_metadata": {"strategy": "none"},
+    }
+    assert GroundingResult.from_dict(payload) == result
+
+
+def test_fake_grounder_conforms_to_protocol() -> None:
+    from opengui.grounding.protocol import GrounderProtocol, GroundingContext, GroundingResult
+
+    class FakeGrounder:
+        async def ground(
+            self,
+            target: str,
+            context: GroundingContext,
+        ) -> GroundingResult:
+            return GroundingResult(
+                grounder_id="fake:grounder",
+                confidence=1.0,
+                resolved_params={"target": target, "task_hint": context.task_hint},
+                fallback_metadata=None,
+            )
+
+    assert isinstance(FakeGrounder(), GrounderProtocol)
+
+
+@pytest.mark.asyncio
+async def test_llm_grounder_returns_grounding_result() -> None:
+    from opengui.grounding.llm import LLMGrounder
+    from opengui.grounding.protocol import GroundingContext, GroundingResult
+
+    llm = _ScriptedGroundingLLM(
+        LLMResponse(content='{"confidence": 0.91, "resolved_params": {"text": "wifi"}}')
+    )
+    grounder = LLMGrounder(llm=llm, grounder_id="llm:test")
+    context = GroundingContext(
+        screenshot_path=Path("/tmp/fake.png"),
+        observation=Observation(
+            screenshot_path="/tmp/fake.png",
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="Settings",
+            platform="android",
+        ),
+        parameter_slots=(
+            ParameterSlot(
+                name="text",
+                type="str",
+                description="Text to enter",
+            ),
+        ),
+        task_hint="Toggle wifi",
+    )
+
+    result = await grounder.ground("wifi search box", context)
+
+    assert isinstance(result, GroundingResult)
+    assert result.grounder_id == "llm:test"
+    assert result.confidence == 0.91
+    assert result.resolved_params == {"text": "wifi"}
+
+
+def test_grounding_modules_import_cleanly() -> None:
+    grounding_pkg = importlib.import_module("opengui.grounding")
+    protocol_mod = importlib.import_module("opengui.grounding.protocol")
+    llm_mod = importlib.import_module("opengui.grounding.llm")
+
+    assert hasattr(grounding_pkg, "GrounderProtocol")
+    assert hasattr(protocol_mod, "GrounderProtocol")
+    assert hasattr(llm_mod, "LLMGrounder")
