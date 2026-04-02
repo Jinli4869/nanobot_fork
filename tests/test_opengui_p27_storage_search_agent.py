@@ -5,12 +5,16 @@ Phase 27 — Storage and unified skill search contract tests.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from opengui.agent import GuiAgent
+from opengui.memory.types import MemoryEntry, MemoryType
 from opengui.skills import (
     ShortcutSkillStore,
     ShortcutSkill,
@@ -18,7 +22,7 @@ from opengui.skills import (
     TaskSkillStore,
     UnifiedSkillSearch,
 )
-from opengui.skills.data import SkillStep
+from opengui.skills.data import Skill, SkillStep
 from opengui.skills.shortcut import ParameterSlot, StateDescriptor
 from opengui.skills.shortcut_store import SkillSearchResult
 from opengui.skills.task_skill import ShortcutRefNode
@@ -71,6 +75,15 @@ def _make_task_skill(
         memory_context_id=memory_context_id,
         tags=tags,
         created_at=1700000001.0,
+    )
+
+
+def _make_agent(**kwargs: object) -> GuiAgent:
+    return GuiAgent(
+        llm=Mock(),
+        backend=Mock(),
+        trajectory_recorder=Mock(),
+        **kwargs,
     )
 
 
@@ -281,6 +294,167 @@ async def test_shortcut_store_remove(tmp_path: Path) -> None:
 
     assert store.remove(skill.skill_id) is True
     assert await store.search("temporary shortcut", top_k=3) == []
+
+
+@pytest.mark.asyncio
+async def test_agent_skill_lookup() -> None:
+    skill = _make_shortcut_skill(
+        skill_id="shortcut-compose",
+        name="Compose Email",
+        description="Compose a new email",
+    )
+    unified_search = Mock()
+    unified_search.search = AsyncMock(
+        return_value=[
+            SkillSearchResult(skill=skill, layer="shortcut", score=0.82, raw_score=0.82),
+        ]
+    )
+    agent = _make_agent(unified_skill_search=unified_search, skill_threshold=0.6)
+
+    result = await agent._search_skill("compose email")
+
+    assert isinstance(result, SkillSearchResult)
+    assert result.skill == skill
+    assert result.layer == "shortcut"
+    assert result.score >= 0.6
+
+
+@pytest.mark.asyncio
+async def test_agent_skill_lookup_below_threshold() -> None:
+    skill = _make_shortcut_skill(
+        skill_id="shortcut-compose-low",
+        name="Compose Email",
+        description="Compose a new email",
+    )
+    unified_search = Mock()
+    unified_search.search = AsyncMock(
+        return_value=[
+            SkillSearchResult(skill=skill, layer="shortcut", score=0.32, raw_score=0.32),
+        ]
+    )
+    agent = _make_agent(unified_skill_search=unified_search, skill_threshold=0.6)
+
+    result = await agent._search_skill("compose email")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_agent_skill_lookup_logs_layer(caplog: pytest.LogCaptureFixture) -> None:
+    skill = _make_task_skill(
+        skill_id="task-send-update",
+        name="Send Weekly Update",
+        description="Send weekly update",
+    )
+    unified_search = Mock()
+    unified_search.search = AsyncMock(
+        return_value=[SkillSearchResult(skill=skill, layer="task", score=0.91, raw_score=0.91)]
+    )
+    agent = _make_agent(unified_skill_search=unified_search, skill_threshold=0.6)
+    caplog.set_level(logging.INFO, logger="opengui.agent")
+
+    result = await agent._search_skill("send weekly update")
+
+    assert result is not None
+    assert "layer=task" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_memory_context_injection() -> None:
+    skill = _make_task_skill(
+        skill_id="task-with-memory",
+        name="Task With Memory",
+        description="Uses app context",
+        memory_context_id="mem-123",
+    )
+    memory_store = Mock()
+    memory_store.get.return_value = MemoryEntry(
+        entry_id="mem-123",
+        memory_type=MemoryType.APP_GUIDE,
+        platform="android",
+        content="app context",
+    )
+    agent = _make_agent(memory_store=memory_store)
+
+    result = await agent._inject_skill_memory_context(skill, "existing")
+
+    assert result is not None
+    assert result.startswith("[Skill memory context]\napp context")
+    assert result.endswith("\n\nexisting")
+
+
+@pytest.mark.asyncio
+async def test_missing_memory_context(caplog: pytest.LogCaptureFixture) -> None:
+    skill = _make_task_skill(
+        skill_id="task-missing-memory",
+        name="Task Missing Memory",
+        description="Missing app context",
+        memory_context_id="missing-id",
+    )
+    memory_store = Mock()
+    memory_store.get.return_value = None
+    agent = _make_agent(memory_store=memory_store)
+    caplog.set_level(logging.WARNING, logger="opengui.agent")
+
+    result = await agent._inject_skill_memory_context(skill, "existing")
+
+    assert result == "existing"
+    assert "missing memory context missing-id" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_inject_shortcut_skill_noop() -> None:
+    agent = _make_agent(memory_store=Mock())
+
+    result = await agent._inject_skill_memory_context(
+        _make_shortcut_skill(
+            skill_id="shortcut-noop",
+            name="Shortcut Noop",
+            description="No memory injection",
+        ),
+        "existing",
+    )
+
+    assert result == "existing"
+
+
+@pytest.mark.asyncio
+async def test_inject_no_memory_store() -> None:
+    skill = _make_task_skill(
+        skill_id="task-no-store",
+        name="Task Without Store",
+        description="No memory store",
+        memory_context_id="mem-123",
+    )
+    agent = _make_agent()
+
+    result = await agent._inject_skill_memory_context(skill, "existing")
+
+    assert result == "existing"
+
+
+@pytest.mark.asyncio
+async def test_legacy_skill_library_fallback() -> None:
+    legacy_skill = Skill(
+        skill_id="legacy-compose",
+        name="Compose Email",
+        description="Legacy skill",
+        app="com.example.mail",
+        platform="android",
+        steps=(SkillStep(action_type="tap", target="compose"),),
+        success_count=1,
+        failure_count=0,
+    )
+    legacy_library = Mock()
+    legacy_library.search = AsyncMock(return_value=[(legacy_skill, 0.9)])
+    agent = _make_agent(skill_library=legacy_library, skill_threshold=0.6)
+
+    result = await agent._search_skill("compose email")
+
+    assert result is not None
+    assert result[0] == legacy_skill
+    assert result[1] == pytest.approx(0.9)
+    legacy_library.search.assert_awaited_once_with("compose email", top_k=1)
 
 
 def test_import_safety() -> None:
