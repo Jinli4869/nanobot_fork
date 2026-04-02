@@ -9,8 +9,9 @@ import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import numpy as np
 import pytest
@@ -148,6 +149,32 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
     definitions = registry.get_definitions()
     assert any(defn["function"]["name"] == tool.name for defn in definitions)
     assert tool.description
+
+
+def test_agent_loop_registers_gui_tool_with_gui_runtime_override(tmp_workspace: Path) -> None:
+    from nanobot.agent.loop import AgentLoop
+
+    bus = MagicMock()
+    bus.publish_outbound = AsyncMock()
+    main_provider = MagicMock()
+    main_provider.get_default_model.return_value = "main-model"
+    main_provider.generation = SimpleNamespace(max_tokens=4096)
+    gui_provider = MagicMock()
+
+    with patch("nanobot.agent.tools.gui.GuiSubagentTool", return_value=MagicMock()) as mock_gui_tool:
+        AgentLoop(
+            bus=bus,
+            provider=main_provider,
+            workspace=tmp_workspace,
+            model="main-model",
+            gui_config=Config(gui={"backend": "dry-run"}).gui,
+            gui_provider=gui_provider,
+            gui_model="gui-model",
+        )
+
+    kwargs = mock_gui_tool.call_args.kwargs
+    assert kwargs["provider"] is gui_provider
+    assert kwargs["model"] == "gui-model"
 
 
 @pytest.mark.asyncio
