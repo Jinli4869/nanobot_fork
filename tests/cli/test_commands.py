@@ -16,7 +16,7 @@ from nanobot.agent.memory import MemoryStore
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.cli import commands as cli_commands
 from nanobot.cli.commands import _load_runtime_config, app
-from nanobot.config.schema import Config
+from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.cron.service import CronJobSkippedError
 from nanobot.cron.session_turns import CRON_DEFER_UNTIL_IDLE_META, CRON_TRIGGER_META
 from nanobot.cron.types import CronJob, CronPayload
@@ -1038,6 +1038,42 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["base_url"] == "https://example.com/v1"
     assert kwargs["default_headers"]["APP-Code"] == "demo-app"
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
+
+
+def test_make_provider_honors_gui_model_and_provider_override():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "dashscope",
+                    "model": "qwen3.5-plus",
+                }
+            },
+            "providers": {
+                "dashscope": {
+                    "apiKey": "dash-key",
+                },
+                "openrouter": {
+                    "apiKey": "or-key",
+                    "apiBase": "https://openrouter.ai/api/v1",
+                },
+            },
+        }
+    )
+
+    gui_preset = ModelPresetConfig(
+        model="anthropic/claude-3.7-sonnet",
+        provider="openrouter",
+    )
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as mock_async_openai:
+        provider = make_provider(config, preset=gui_preset)
+        asyncio.run(provider._ensure_client())
+
+    kwargs = mock_async_openai.call_args.kwargs
+    assert provider.get_default_model() == "anthropic/claude-3.7-sonnet"
+    assert kwargs["api_key"] == "or-key"
+    assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
+
 
 def test_make_provider_treats_dynamic_custom_provider_as_direct():
     config = Config.model_validate(
