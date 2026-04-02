@@ -164,3 +164,74 @@ class ShortcutSkillProducer:
     def _slugify(self, value: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
         return slug or "step"
+
+
+class _AlwaysPassStepCritic:
+    """Default step critic that accepts every extracted step."""
+
+    async def evaluate(self, step: dict[str, Any], step_index: int) -> StepVerdict:
+        return StepVerdict(step_index=step_index, passed=True, reason="always-pass default")
+
+
+class _AlwaysPassTrajectoryCritic:
+    """Default trajectory critic that accepts every extracted trajectory."""
+
+    async def evaluate(self, steps: list[dict[str, Any]], metadata: dict[str, Any]) -> TrajectoryVerdict:
+        return TrajectoryVerdict(passed=True, reason="always-pass default")
+
+
+class ExtractionPipeline:
+    """Run quality gates before turning a trajectory into a shortcut skill."""
+
+    def __init__(
+        self,
+        *,
+        step_critic: StepCritic | None = None,
+        trajectory_critic: TrajectoryCritic | None = None,
+        producer: ShortcutSkillProducer | None = None,
+    ) -> None:
+        self._step_critic: StepCritic = step_critic or _AlwaysPassStepCritic()
+        self._trajectory_critic: TrajectoryCritic = trajectory_critic or _AlwaysPassTrajectoryCritic()
+        self._producer: ShortcutSkillProducer = producer or ShortcutSkillProducer()
+
+    async def run(
+        self,
+        steps: list[dict[str, Any]],
+        metadata: dict[str, Any],
+    ) -> ExtractionSuccess | ExtractionRejected:
+        if len(steps) < 2:
+            return ExtractionRejected(
+                reason="too_few_steps",
+                failed_step_verdict=None,
+                failed_trajectory_verdict=None,
+            )
+
+        step_verdicts: list[StepVerdict] = []
+        for step_index, step in enumerate(steps):
+            verdict = await self._step_critic.evaluate(step, step_index)
+            step_verdicts.append(verdict)
+            if not verdict.passed:
+                return ExtractionRejected(
+                    reason="step_critic",
+                    failed_step_verdict=verdict,
+                    failed_trajectory_verdict=None,
+                )
+
+        trajectory_verdict = await self._trajectory_critic.evaluate(steps, metadata)
+        if not trajectory_verdict.passed:
+            return ExtractionRejected(
+                reason="trajectory_critic",
+                failed_step_verdict=None,
+                failed_trajectory_verdict=trajectory_verdict,
+            )
+
+        candidate = self._producer.produce(
+            steps,
+            app=str(metadata.get("app", "unknown")),
+            platform=str(metadata.get("platform", "unknown")),
+        )
+        return ExtractionSuccess(
+            candidate=candidate,
+            step_verdicts=tuple(step_verdicts),
+            trajectory_verdict=trajectory_verdict,
+        )
