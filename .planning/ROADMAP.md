@@ -37,7 +37,7 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 |-------|------|------|--------------|------------------|
 | 28 | Shortcut Extraction Productionization | Replace legacy post-run extraction with trace-backed shortcut promotion into the new shortcut store, including gating, provenance, and merge/version behavior. | SXTR-01, SXTR-02, SXTR-03, SXTR-04 | 4 |
 | 29 | 2/2 | Complete    | 2026-04-03 | 4 |
-| 30 | Stable Shortcut Execution and Fallback | Execute selected shortcuts through live binding, settle/verification checks, and clean fallback to non-shortcut flows. | SUSE-03, SUSE-04, SSTA-01, SSTA-02 | 4 |
+| 30 | 3/3 | Complete   | 2026-04-03 | 4 |
 | 31 | Shortcut Observability and Regression Hardening | Make shortcut health diagnosable and prove the new path stays stable across representative execution seams. | SSTA-03, SSTA-04 | 4 |
 
 ### Phase 28: Shortcut Extraction Productionization
@@ -84,12 +84,12 @@ Plans:
 
 **Depends on:** Phase 29
 **Requirements:** SUSE-03, SUSE-04, SSTA-01, SSTA-02
-**Plans:** 3/3 planned
+**Plans:** 3/3 plans complete
 
 Plans:
-- [ ] 30-01-PLAN.md - Add live target/parameter binding for selected shortcuts in the runtime path
-- [ ] 30-02-PLAN.md - Add settle timing and post-step validation for each shortcut step
-- [ ] 30-03-PLAN.md - Implement safe fallback from shortcut drift back to task-level or default execution
+- [x] 30-01-PLAN.md - Add live target/parameter binding for selected shortcuts in the runtime path
+- [x] 30-02-PLAN.md - Add settle timing and post-step validation for each shortcut step
+- [x] 30-03-PLAN.md - Implement safe fallback from shortcut drift back to task-level or default execution
 
 **Success Criteria** (what must be TRUE):
 1. Selected shortcuts bind live targets and parameters from the current observation instead of replaying stale recorded coordinates.
