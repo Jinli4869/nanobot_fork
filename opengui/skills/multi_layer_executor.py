@@ -379,8 +379,16 @@ class ShortcutExecutor:
         )
         grounding = await self.grounder.ground(step.target, context)
 
-        # Merge: caller-supplied literal params win over grounder-returned params
-        merged: dict[str, Any] = {"action_type": step.action_type, **grounding.resolved_params}
+        # Merge in three layers (lowest to highest priority):
+        # 1. step.parameters: static action fields preserved by ShortcutExtractor
+        #    during promotion (e.g. "text", "key", fallback coordinates from trace).
+        # 2. grounding.resolved_params: live values from the grounder that override
+        #    any stale recorded coordinates or dynamic parameters.
+        # 3. params (caller overrides): literal bindings supplied by the execute()
+        #    caller always win.
+        merged: dict[str, Any] = {"action_type": step.action_type, **step.parameters}
+        for key, value in grounding.resolved_params.items():
+            merged[key] = value
         for key, value in params.items():
             merged[key] = value
 
