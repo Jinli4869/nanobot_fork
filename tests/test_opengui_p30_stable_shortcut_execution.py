@@ -72,6 +72,32 @@ class _FakeValidator:
         return self._result
 
 
+class _CapturingRecorder:
+    """Minimal trajectory recorder fake for fallback event assertions."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def start(self, **kwargs: object) -> None:
+        pass
+
+    def finish(self, **kwargs: object) -> None:
+        pass
+
+    def set_phase(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def record_event(self, event: str, **payload: object) -> None:
+        self.events.append((event, payload))
+
+    def record_step(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    @property
+    def path(self) -> Path | None:
+        return None
+
+
 def _make_shortcut(*, action_type: str = "tap") -> ShortcutSkill:
     fixed_values: dict[str, object] = {"action_type": action_type}
     if action_type == "tap":
@@ -434,3 +460,195 @@ async def test_post_step_validation(tmp_path: Path) -> None:
     assert result.failed_condition == postcondition
     assert len(captured_screenshots) == 1
     assert "post" in captured_screenshots[0].name
+
+
+@pytest.mark.asyncio
+async def test_contract_violation_fallback(tmp_path: Path) -> None:
+    """SUSE-04: Contract violations fall back into the normal agent loop."""
+
+    violation = ContractViolationReport(
+        skill_id="sc-fallback-01",
+        step_index=1,
+        failed_condition=StateDescriptor(kind="screen_state", value="target_visible"),
+        boundary="post",
+    )
+    shortcut_executor = MagicMock()
+    shortcut_executor.execute = AsyncMock(return_value=violation)
+    recorder = _CapturingRecorder()
+
+    agent = GuiAgent(
+        llm=MagicMock(),
+        backend=_FakeBackend(),
+        trajectory_recorder=recorder,
+        shortcut_executor=shortcut_executor,
+        artifacts_root=tmp_path,
+    )
+    agent._retrieve_memory = AsyncMock(return_value=None)
+    agent._search_skill = AsyncMock(return_value=None)
+    agent._retrieve_shortcut_candidates = AsyncMock(return_value=[_make_result(_make_shortcut())])
+    agent._evaluate_shortcut_applicability = AsyncMock(
+        return_value=ApplicabilityDecision(
+            outcome="run",
+            shortcut_id="sc-tap",
+            reason="ok",
+            score=0.9,
+        )
+    )
+    agent._inject_skill_memory_context = AsyncMock(side_effect=lambda skill, context: context)
+    agent._make_run_dir = lambda task, attempt: tmp_path / f"attempt-{attempt}"
+    agent._log_attempt_event = AsyncMock()
+    agent._skill_maintenance = AsyncMock()
+
+    run_once_calls: list[dict[str, object]] = []
+
+    async def fake_run_once(
+        task: str,
+        *,
+        app_hint: str | None,
+        run_dir: Path,
+        memory_context: str | None = None,
+        skill_context: str | None = None,
+    ) -> AgentResult:
+        run_once_calls.append(
+            {
+                "task": task,
+                "app_hint": app_hint,
+                "run_dir": run_dir,
+                "memory_context": memory_context,
+                "skill_context": skill_context,
+            }
+        )
+        return AgentResult(success=True, summary="done", trace_path=str(run_dir))
+
+    agent._run_once = fake_run_once
+
+    result = await agent.run("open settings", max_retries=1)
+
+    assert result.success is True
+    assert shortcut_executor.execute.await_count == 1
+    assert len(run_once_calls) == 1
+    assert run_once_calls[0]["skill_context"] is None
+    assert not isinstance(result.error, str) or "sc-fallback-01" not in result.error
+
+
+@pytest.mark.asyncio
+async def test_fallback_no_worse(tmp_path: Path) -> None:
+    """SUSE-04: A crashing shortcut executor is no worse than skipping shortcuts."""
+
+    crashing_executor = MagicMock()
+    crashing_executor.execute = AsyncMock(side_effect=RuntimeError("backend io failure"))
+    normal_outcome = AgentResult(success=True, summary="done via normal path")
+
+    async def fake_run_once(
+        task: str,
+        *,
+        app_hint: str | None,
+        run_dir: Path,
+        memory_context: str | None = None,
+        skill_context: str | None = None,
+    ) -> AgentResult:
+        return normal_outcome
+
+    def make_agent(shortcut_executor: object | None) -> GuiAgent:
+        agent = GuiAgent(
+            llm=MagicMock(),
+            backend=_FakeBackend(),
+            trajectory_recorder=_CapturingRecorder(),
+            shortcut_executor=shortcut_executor,
+            artifacts_root=tmp_path / f"agent-{id(shortcut_executor)}",
+        )
+        agent._retrieve_memory = AsyncMock(return_value=None)
+        agent._search_skill = AsyncMock(return_value=None)
+        agent._inject_skill_memory_context = AsyncMock(side_effect=lambda skill, context: context)
+        agent._make_run_dir = lambda task, attempt: tmp_path / f"agent-{id(shortcut_executor)}" / f"attempt-{attempt}"
+        agent._log_attempt_event = AsyncMock()
+        agent._skill_maintenance = AsyncMock()
+        agent._run_once = fake_run_once
+        return agent
+
+    approved = _make_shortcut()
+    candidate = _make_result(approved)
+    decision = ApplicabilityDecision(
+        outcome="run",
+        shortcut_id=approved.skill_id,
+        reason="ok",
+        score=0.9,
+    )
+
+    agent_with_crash = make_agent(crashing_executor)
+    agent_with_crash._retrieve_shortcut_candidates = AsyncMock(return_value=[candidate])
+    agent_with_crash._evaluate_shortcut_applicability = AsyncMock(return_value=decision)
+
+    result_with_crash = await agent_with_crash.run("open app", max_retries=1)
+
+    agent_no_shortcut = make_agent(None)
+    agent_no_shortcut._retrieve_shortcut_candidates = AsyncMock(return_value=[])
+    agent_no_shortcut._evaluate_shortcut_applicability = AsyncMock()
+
+    result_no_shortcut = await agent_no_shortcut.run("open app", max_retries=1)
+
+    crashing_executor.execute.assert_awaited_once()
+    assert result_with_crash.success == result_no_shortcut.success
+    assert result_with_crash.summary == result_no_shortcut.summary
+    assert "RuntimeError" not in (result_with_crash.error or "")
+
+
+@pytest.mark.asyncio
+async def test_shortcut_trajectory_event(tmp_path: Path) -> None:
+    """SSTA-02: Violation telemetry includes the structured contract fields."""
+
+    violation = ContractViolationReport(
+        skill_id="sc-drift-001",
+        step_index=2,
+        failed_condition=StateDescriptor(kind="screen_state", value="confirm_visible"),
+        boundary="post",
+    )
+    shortcut_executor = MagicMock()
+    shortcut_executor.execute = AsyncMock(return_value=violation)
+    recorder = _CapturingRecorder()
+
+    agent = GuiAgent(
+        llm=MagicMock(),
+        backend=_FakeBackend(),
+        trajectory_recorder=recorder,
+        shortcut_executor=shortcut_executor,
+        artifacts_root=tmp_path,
+    )
+    approved = ShortcutSkill(
+        skill_id="sc-drift-001",
+        name="Drift",
+        description="trajectory event test",
+        app="com.example.app",
+        platform="android",
+    )
+    agent._retrieve_memory = AsyncMock(return_value=None)
+    agent._search_skill = AsyncMock(return_value=None)
+    agent._retrieve_shortcut_candidates = AsyncMock(return_value=[_make_result(approved, score=0.85)])
+    agent._evaluate_shortcut_applicability = AsyncMock(
+        return_value=ApplicabilityDecision(
+            outcome="run",
+            shortcut_id=approved.skill_id,
+            reason="ok",
+            score=0.85,
+        )
+    )
+    agent._inject_skill_memory_context = AsyncMock(side_effect=lambda skill, context: context)
+    agent._make_run_dir = lambda task, attempt: tmp_path / f"attempt-{attempt}"
+    agent._log_attempt_event = AsyncMock()
+    agent._skill_maintenance = AsyncMock()
+    agent._run_once = AsyncMock(
+        return_value=AgentResult(success=True, summary="ok", trace_path=str(tmp_path / "attempt-0"))
+    )
+
+    await agent.run("open settings", max_retries=1)
+
+    violation_events = [
+        payload
+        for event, payload in recorder.events
+        if event == "shortcut_execution" and payload.get("outcome") == "violation"
+    ]
+    assert len(violation_events) == 1
+    assert violation_events[0]["skill_id"] == "sc-drift-001"
+    assert violation_events[0]["step_index"] == 2
+    assert violation_events[0]["boundary"] == "post"
+    assert violation_events[0]["failed_condition"] == "confirm_visible"
