@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
-stopped_at: Completed 31-01-PLAN.md
-last_updated: "2026-04-03T10:38:30Z"
+stopped_at: Completed 31-02-PLAN.md
+last_updated: "2026-04-03T10:45:23.631Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 10
-  completed_plans: 9
-  percent: 90
+  completed_plans: 10
+  percent: 100
 ---
 
 # Project State
@@ -32,7 +32,7 @@ Plan: 2 of 2
 
 ## Performance Metrics
 
-**Progress:** [█████████░] 90%
+**Progress:** [██████████] 100%
 
 | Phase/Plan | Duration | Scope | Files |
 |------------|----------|-------|-------|
@@ -41,6 +41,7 @@ Plan: 2 of 2
 | Phase 31 P01 | 3m 20s | 1 tasks | 4 files |
 
 Phase 28 is complete and verified. Milestone tracking is now focused on Phase 30 execution and fallback hardening.
+| Phase 31 P02 | 8m | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -170,6 +171,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 31 P01]: shortcut_grounding emits after backend.execute() so both grounding and execution are confirmed before the event fires
 - [Phase 31 P01]: shortcut_settle emits inside if settle > 0 block after asyncio.sleep() so payload settle_seconds matches what was actually waited
 - [Phase 31 P01]: recorder injection in GuiAgent.run() placed immediately before execute() so it takes effect on each dispatch without creating a second recorder
+- [Phase 31]: Three-layer non-fixed step merge order: step.parameters (lowest) -> grounding.resolved_params -> caller params (highest). Grounding overrides stale coords; step.parameters provides static typed fields.
+- [Phase 31]: Do not mark promoted shortcut steps fixed=True as a workaround — the seam must remain a non-fixed path so live coordinate re-grounding works correctly.
 
 ### Pending Todos
 
@@ -222,6 +225,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-04-03
 
-Last session: 2026-04-03T06:50:35.519Z
-Stopped at: Completed 30-03-PLAN.md
+Last session: 2026-04-03T10:45:23.628Z
+Stopped at: Completed 31-02-PLAN.md
 Resume file: None
