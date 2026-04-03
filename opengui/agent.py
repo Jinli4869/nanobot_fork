@@ -134,6 +134,17 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
 }
 
 
+def _summarize_shortcut_success(result: Any) -> str:
+    """Build a concise shortcut execution summary for subsequent agent steps."""
+    lines = [f"Shortcut '{result.skill_id}' executed {len(result.step_results)} step(s):"]
+    for step_result in result.step_results:
+        action_desc = getattr(step_result.action, "action_type", "unknown")
+        lines.append(
+            f"Step {step_result.step_index}: {action_desc} -> {step_result.backend_result}"
+        )
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Agent-side protocol implementations for SkillExecutor
 # ---------------------------------------------------------------------------
@@ -426,6 +437,7 @@ class GuiAgent:
         memory_retriever: Any = None,
         skill_library: Any = None,
         skill_executor: Any = None,
+        shortcut_executor: Any = None,
         memory_top_k: int = 5,
         skill_threshold: float = 0.6,
         installed_apps: list[str] | None = None,
@@ -449,6 +461,7 @@ class GuiAgent:
         self._policy_context = policy_context
         self._skill_library = skill_library
         self._skill_executor = skill_executor
+        self._shortcut_executor = shortcut_executor
         self._memory_top_k = memory_top_k
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
@@ -574,35 +587,56 @@ class GuiAgent:
                         memory_context = await self._inject_skill_memory_context(
                             matched_skill, memory_context
                         )
-                        if self._skill_executor is not None:
+                        if self._shortcut_executor is not None:
+                            score_text = f"{final_score:.2f}" if final_score is not None else "n/a"
                             self._trajectory_recorder.set_phase(
                                 ExecutionPhase.SKILL,
                                 reason=(
-                                    f"Applicability approved shortcut: "
-                                    f"{matched_skill.name} "
-                                    f"(score={final_score:.2f if final_score is not None else 'n/a'})"
+                                    f"Executing approved shortcut '{matched_skill.name}' "
+                                    f"via ShortcutExecutor (score={score_text})"
                                 ),
                             )
                             try:
-                                skill_result = await self._skill_executor.execute(matched_skill)
-                                exec_summary = getattr(skill_result, "execution_summary", None)
-                                skill_context = (
-                                    exec_summary if isinstance(exec_summary, str) else None
-                                )
-                                if skill_result.state.value == "succeeded":
+                                shortcut_result = await self._shortcut_executor.execute(matched_skill)
+                                if shortcut_result.is_violation:
+                                    self._trajectory_recorder.record_event(
+                                        "shortcut_execution", outcome="violation",
+                                        skill_id=shortcut_result.skill_id,
+                                        step_index=shortcut_result.step_index,
+                                        boundary=shortcut_result.boundary,
+                                        failed_condition=shortcut_result.failed_condition.value,
+                                    )
+                                    matched_skill = None
+                                    skill_context = None
+                                    self._trajectory_recorder.set_phase(
+                                        ExecutionPhase.AGENT,
+                                        reason=(
+                                            "Shortcut contract violation, falling back "
+                                            "to free exploration"
+                                        ),
+                                    )
+                                else:
+                                    skill_context = _summarize_shortcut_success(shortcut_result)
+                                    self._trajectory_recorder.record_event(
+                                        "shortcut_execution", outcome="success",
+                                        skill_id=shortcut_result.skill_id,
+                                        steps_taken=len(shortcut_result.step_results),
+                                    )
                                     self._trajectory_recorder.set_phase(
                                         ExecutionPhase.AGENT,
                                         reason="Shortcut complete, agent confirms",
                                     )
-                                else:
-                                    self._trajectory_recorder.set_phase(
-                                        ExecutionPhase.AGENT,
-                                        reason="Shortcut partially succeeded, agent completes",
-                                    )
-                            except Exception:
+                            except Exception as exc:
+                                self._trajectory_recorder.record_event(
+                                    "shortcut_execution", outcome="exception",
+                                    error_type=type(exc).__name__,
+                                    error_message=str(exc),
+                                )
+                                matched_skill = None
+                                skill_context = None
                                 self._trajectory_recorder.set_phase(
                                     ExecutionPhase.AGENT,
-                                    reason="Shortcut execution failed, falling back",
+                                    reason="Shortcut execution raised exception, falling back",
                                 )
                         _shortcut_attempted = True
 
