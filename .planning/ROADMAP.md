@@ -38,7 +38,7 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 | 28 | Shortcut Extraction Productionization | Replace legacy post-run extraction with trace-backed shortcut promotion into the new shortcut store, including gating, provenance, and merge/version behavior. | SXTR-01, SXTR-02, SXTR-03, SXTR-04 | 4 |
 | 29 | 2/2 | Complete    | 2026-04-03 | 4 |
 | 30 | 3/3 | Complete   | 2026-04-03 | 4 |
-| 31 | 2/2 | Complete   | 2026-04-03 | 4 |
+| 31 | 2/2 | Complete    | 2026-04-03 | 4 |
 
 ### Phase 28: Shortcut Extraction Productionization
 
