@@ -17,7 +17,7 @@ Requirements for turning the shipped shortcut architecture into a stable product
 ### SUSE - Shortcut Use
 
 - [x] **SUSE-01**: GuiAgent can retrieve shortcut candidates using task text plus current app/platform context before entering the full step-by-step loop.
-- [ ] **SUSE-02**: Runtime selection executes a shortcut only when current screen evidence satisfies its applicability checks; otherwise the run continues without shortcut reuse.
+- [x] **SUSE-02**: Runtime selection executes a shortcut only when current screen evidence satisfies its applicability checks; otherwise the run continues without shortcut reuse.
 - [ ] **SUSE-03**: Shortcut execution binds live parameters and targets from the current observation instead of replaying stale recorded coordinates or assumptions.
 - [ ] **SUSE-04**: If a shortcut becomes invalid or unavailable mid-run, execution falls back cleanly to task-level or default agent behavior without terminating an otherwise recoverable task.
 
@@ -65,7 +65,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SXTR-03 | Phase 28 | Complete |
 | SXTR-04 | Phase 28 | Complete |
 | SUSE-01 | Phase 29 | Complete |
-| SUSE-02 | Phase 29 | Pending |
+| SUSE-02 | Phase 29 | Complete |
 | SUSE-03 | Phase 30 | Pending |
 | SUSE-04 | Phase 30 | Pending |
 | SSTA-01 | Phase 30 | Pending |

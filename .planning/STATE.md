@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: unknown
-stopped_at: Completed 29-01-PLAN.md
-last_updated: "2026-04-03T04:29:39.010Z"
+stopped_at: Completed 29-02-PLAN.md
+last_updated: "2026-04-03T04:40:42.393Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # Project State
@@ -30,7 +30,7 @@ Plan: 1 of 2
 
 ## Performance Metrics
 
-**Progress:** [████████░░] 80%
+**Progress:** [██████████] 100%
 
 Phase 28 is complete and verified. Milestone tracking is now focused on Phase 29 planning and execution.
 
@@ -153,6 +153,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 29]: filter_candidates_by_context falls back to platform-only when app filter yields empty list, preserving recall
 - [Phase 29]: shortcut_candidates stored in run() but not yet used for execution gating — Plan 02 adds applicability evaluation gate
 - [Phase 29]: _AlwaysPassEvaluator default enables test/dry-run scenarios without LLM or device dependency
+- [Phase 29-shortcut-retrieval-applicability-routing]: Applicability evaluation takes pre-loop observation at attempt==0 so screenshot is temporally close to execution; all 4 code paths emit shortcut_applicability trajectory event for full traceability
+- [Phase 29-shortcut-retrieval-applicability-routing]: ShortcutApplicabilityRouter wired only when enable_skill_execution=True because LLMStateValidator is only constructed in that branch; _shortcut_attempted flag drives retry clearing
 
 ### Pending Todos
 
@@ -199,11 +201,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
+| Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 
 ## Session Continuity
 
 Last activity: 2026-04-03
 
-Last session: 2026-04-03T04:29:39.001Z
-Stopped at: Completed 29-01-PLAN.md
+Last session: 2026-04-03T04:40:42.390Z
+Stopped at: Completed 29-02-PLAN.md
 Resume file: None
