@@ -10,6 +10,7 @@ ConditionEvaluator      — @runtime_checkable Protocol for pre/post condition c
 ContractViolationReport — frozen dataclass returned on the first failed condition
 ShortcutStepResult      — per-step execution record in the success path
 ShortcutExecutionSuccess — full success result holding all step records
+LLMConditionEvaluator   — adapter from LLMStateValidator.validate() to ConditionEvaluator
 ShortcutExecutor        — dataclass executor for ShortcutSkill objects
 MissingShortcutReport   — frozen dataclass returned when a ShortcutRefNode cannot be
                            resolved and no contiguous inline fallback block exists
@@ -43,13 +44,14 @@ Design decisions (Phase 25)
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 import typing
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, ClassVar, Literal, Protocol, runtime_checkable
 
 from opengui.action import Action, parse_action
 from opengui.grounding.protocol import GrounderProtocol, GroundingContext, GroundingResult
@@ -153,6 +155,17 @@ class _AlwaysPassEvaluator:
         return True
 
 
+class LLMConditionEvaluator:
+    """Adapt ``LLMStateValidator.validate()`` to the ``ConditionEvaluator`` protocol."""
+
+    def __init__(self, state_validator: Any) -> None:
+        self._validator = state_validator
+
+    async def evaluate(self, condition: StateDescriptor, screenshot: Path) -> bool:
+        result = await self._validator.validate(condition.value, screenshot)
+        return (not result) if condition.negated else result
+
+
 # ---------------------------------------------------------------------------
 # ShortcutExecutor
 # ---------------------------------------------------------------------------
@@ -179,12 +192,18 @@ class ShortcutExecutor:
         in tests for deterministic isolation.
     """
 
+    _POST_ACTION_SETTLE_SECONDS: ClassVar[float] = 0.50
+    _NO_SETTLE_ACTIONS: ClassVar[frozenset[str]] = frozenset(
+        {"wait", "done", "request_intervention"}
+    )
+
     backend: DeviceBackend
     grounder: GrounderProtocol
     condition_evaluator: ConditionEvaluator | None = None
     screenshot_dir: Path = field(
         default_factory=lambda: Path(tempfile.gettempdir()) / "opengui-skill-execution"
     )
+    post_action_settle_seconds: float = field(default=0.50)
 
     # ------------------------------------------------------------------
     # Public API
@@ -257,6 +276,10 @@ class ShortcutExecutor:
             )
             backend_result = await self.backend.execute(action, timeout=timeout)
 
+            settle = self._settle_seconds_for(action)
+            if settle > 0:
+                await asyncio.sleep(settle)
+
             step_result = ShortcutStepResult(
                 step_index=step_index,
                 action=action,
@@ -293,6 +316,12 @@ class ShortcutExecutor:
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _settle_seconds_for(self, action: Action) -> float:
+        """Return settle duration for *action*; exempt action types return ``0.0``."""
+        if action.action_type in self._NO_SETTLE_ACTIONS:
+            return 0.0
+        return self.post_action_settle_seconds
 
     def _screenshot_path(self, skill_id: str, step_index: int, boundary: str) -> Path:
         """Build a deterministic screenshot path for a step boundary."""
@@ -664,6 +693,7 @@ class TaskSkillExecutor:
 __all__ = [
     "ConditionEvaluator",
     "ContractViolationReport",
+    "LLMConditionEvaluator",
     "MissingShortcutReport",
     "ShortcutExecutionSuccess",
     "ShortcutStepResult",
