@@ -204,6 +204,7 @@ class ShortcutExecutor:
         default_factory=lambda: Path(tempfile.gettempdir()) / "opengui-skill-execution"
     )
     post_action_settle_seconds: float = field(default=0.50)
+    trajectory_recorder: Any = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -276,9 +277,27 @@ class ShortcutExecutor:
             )
             backend_result = await self.backend.execute(action, timeout=timeout)
 
+            # Emit grounding telemetry for non-fixed (grounded) steps only.
+            if self.trajectory_recorder is not None and grounding is not None:
+                self.trajectory_recorder.record_event(
+                    "shortcut_grounding",
+                    skill_id=shortcut.skill_id,
+                    step_index=step_index,
+                    target=step.target,
+                    resolved_params=grounding.resolved_params,
+                )
+
             settle = self._settle_seconds_for(action)
             if settle > 0:
                 await asyncio.sleep(settle)
+                if self.trajectory_recorder is not None:
+                    self.trajectory_recorder.record_event(
+                        "shortcut_settle",
+                        skill_id=shortcut.skill_id,
+                        step_index=step_index,
+                        action_type=action.action_type,
+                        settle_seconds=settle,
+                    )
 
             step_result = ShortcutStepResult(
                 step_index=step_index,
