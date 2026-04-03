@@ -4,7 +4,7 @@ milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
 stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-03T10:51:16.260Z"
+last_updated: "2026-04-03T11:59:37Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
@@ -218,12 +218,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
+| 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last activity: 2026-04-03
+Last activity: 2026-04-03 - Completed quick task 260403-rhj: 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt
 
 Last session: 2026-04-03T10:45:23.628Z
 Stopped at: Completed 31-02-PLAN.md
