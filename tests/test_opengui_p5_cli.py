@@ -401,6 +401,9 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
         "skill_library": [],
         "validator": [],
         "skill_executor": [],
+        "grounder": [],
+        "runner": [],
+        "screenshots": [],
     }
 
     class FakeEmbeddingProvider:
@@ -437,15 +440,32 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
         def __init__(self, provider: Any) -> None:
             calls["validator"].append(provider)
 
+    class FakeGrounder:
+        def __init__(self, **kwargs: Any) -> None:
+            calls["grounder"].append(kwargs)
+
+    class FakeRunner:
+        def __init__(self, **kwargs: Any) -> None:
+            calls["runner"].append(kwargs)
+
+    class FakeScreenshots:
+        def __init__(self, **kwargs: Any) -> None:
+            calls["screenshots"].append(kwargs)
+
     class FakeSkillExecutor:
-        def __init__(self, backend: Any, state_validator: Any = None) -> None:
-            calls["skill_executor"].append({"backend": backend, "state_validator": state_validator})
+        def __init__(self, backend: Any, state_validator: Any = None, **kwargs: Any) -> None:
+            calls["skill_executor"].append(
+                {"backend": backend, "state_validator": state_validator, **kwargs}
+            )
 
     monkeypatch.setattr(cli, "OpenAICompatibleEmbeddingProvider", FakeEmbeddingProvider)
     monkeypatch.setattr(cli, "MemoryStore", FakeMemoryStore)
     monkeypatch.setattr(cli, "MemoryRetriever", FakeMemoryRetriever)
     monkeypatch.setattr(cli, "SkillLibrary", FakeSkillLibrary)
     monkeypatch.setattr(cli, "LLMStateValidator", FakeValidator)
+    monkeypatch.setattr(cli, "_AgentActionGrounder", FakeGrounder)
+    monkeypatch.setattr(cli, "_AgentSubgoalRunner", FakeRunner)
+    monkeypatch.setattr(cli, "_AgentScreenshotProvider", FakeScreenshots)
     monkeypatch.setattr(cli, "SkillExecutor", FakeSkillExecutor)
 
     provider = object()
@@ -461,10 +481,18 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             model="embed-model",
             api_key="embed-key",
         ),
+        agent_profile="qwen3vl",
     )
+    artifacts_root = Path("/tmp/opengui-skill-artifacts")
 
     memory_retriever, skill_library, skill_executor = asyncio.run(
-        cli.build_optional_components(with_embedding, provider=provider, backend=backend)
+        cli.build_optional_components(
+            with_embedding,
+            provider=provider,
+            backend=backend,
+            model_name=with_embedding.provider.model,
+            artifacts_root=artifacts_root,
+        )
     )
 
     assert memory_retriever is not None
@@ -477,6 +505,9 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
     assert calls["skill_library"][0]["merge_llm"] is provider
     assert calls["validator"] == [provider]
     assert calls["skill_executor"][0]["backend"] is backend
+    assert calls["grounder"][0]["agent_profile"] == "qwen3vl"
+    assert calls["runner"][0]["agent_profile"] == "qwen3vl"
+    assert calls["screenshots"][0]["artifacts_root"] == artifacts_root
 
     before = {key: len(value) for key, value in calls.items()}
     no_embedding = cli.CliConfig(
@@ -487,7 +518,15 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
         )
     )
 
-    disabled = asyncio.run(cli.build_optional_components(no_embedding, provider=provider, backend=backend))
+    disabled = asyncio.run(
+        cli.build_optional_components(
+            no_embedding,
+            provider=provider,
+            backend=backend,
+            model_name=no_embedding.provider.model,
+            artifacts_root=artifacts_root,
+        )
+    )
 
     assert disabled == (None, None, None)
     assert {key: len(value) for key, value in calls.items()} == before

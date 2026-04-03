@@ -27,6 +27,7 @@ from opengui.agent_profiles import (
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
     normalize_profile_response,
+    prompt_contract_for_profile,
     profile_tool_definition,
     profile_uses_native_tools,
 )
@@ -165,9 +166,10 @@ class _AgentActionGrounder:
 
     _MAX_RETRIES = 2
 
-    def __init__(self, llm: LLMProvider, model: str) -> None:
+    def __init__(self, llm: LLMProvider, model: str, agent_profile: str | None = None) -> None:
         self._llm = llm
         self._model = model
+        self._agent_profile = canonicalize_agent_profile(agent_profile)
 
     async def ground(
         self,
@@ -187,8 +189,7 @@ class _AgentActionGrounder:
             f"Look at the screenshot carefully. Perform the following action:\n"
             f"  action_type: {step.action_type}\n"
             f"  target: {target}{extra_ctx}\n\n"
-            f"Respond with ONLY a computer_use tool call. "
-            f"You MUST use action_type='{step.action_type}'."
+            f"{self._profile_response_instruction(target_action=step.action_type)}"
         )
         import base64
         if isinstance(screenshot, Path):
@@ -206,13 +207,26 @@ class _AgentActionGrounder:
 
         for attempt in range(self._MAX_RETRIES + 1):
             try:
+                native_tools_enabled = profile_uses_native_tools(self._agent_profile)
                 response = await self._llm.chat(
                     messages=messages,
-                    tools=[_COMPUTER_USE_TOOL],
-                    tool_choice="required",
+                    tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                    tool_choice="required" if native_tools_enabled else None,
                 )
             except Exception as exc:
                 raise RuntimeError(f"ActionGrounder LLM call failed: {exc}") from exc
+
+            try:
+                response = normalize_profile_response(self._agent_profile, response)
+            except Exception as exc:
+                if attempt < self._MAX_RETRIES:
+                    messages.append({"role": "assistant", "content": response.content or ""})
+                    messages.append({
+                        "role": "user",
+                        "content": f"Format error: {exc}. Follow the configured profile format exactly.",
+                    })
+                    continue
+                raise RuntimeError(f"ActionGrounder profile parse failed: {exc}") from exc
 
             if response.tool_calls:
                 tc = response.tool_calls[0]
@@ -242,6 +256,18 @@ class _AgentActionGrounder:
 
         raise RuntimeError("ActionGrounder: unexpected exit from retry loop.")
 
+    def _profile_response_instruction(self, *, target_action: str) -> str:
+        if self._agent_profile == "default":
+            return f"Respond with ONLY a computer_use tool call. You MUST use action_type='{target_action}'."
+        contract = prompt_contract_for_profile(self._agent_profile)
+        format_lines = " ".join(contract["format"])
+        rules = " ".join(contract["rules"][:2])
+        return (
+            f"Respond using the configured `{self._agent_profile}` profile format. "
+            f"Choose the profile-native action that corresponds to canonical action_type='{target_action}'. "
+            f"{format_lines} {rules}"
+        )
+
 
 class _AgentSubgoalRunner:
     """Mini vision-action loop to recover to a desired screen state.
@@ -257,6 +283,7 @@ class _AgentSubgoalRunner:
         state_validator: Any,
         model: str,
         artifacts_root: "Path",
+        agent_profile: str | None = None,
     ) -> None:
         self._llm = llm
         self._backend = backend
@@ -264,6 +291,7 @@ class _AgentSubgoalRunner:
         self._model = model
         self._artifacts_root = Path(artifacts_root)
         self._step_counter = 0
+        self._agent_profile = canonicalize_agent_profile(agent_profile)
 
     async def run_subgoal(
         self,
@@ -288,7 +316,7 @@ class _AgentSubgoalRunner:
                 f"Your current sub-goal is: {goal}\n\n"
                 f"Previous sub-steps:\n{history_text}\n\n"
                 f"Look at the screenshot and choose ONE action that moves you "
-                f"closer to the sub-goal. Respond with ONLY a computer_use tool call."
+                f"closer to the sub-goal. {self._profile_subgoal_instruction()}"
             )
 
             import base64
@@ -307,14 +335,22 @@ class _AgentSubgoalRunner:
             }]
 
             try:
+                native_tools_enabled = profile_uses_native_tools(self._agent_profile)
                 response = await self._llm.chat(
                     messages=messages,
-                    tools=[_COMPUTER_USE_TOOL],
-                    tool_choice="required",
+                    tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                    tool_choice="required" if native_tools_enabled else None,
                 )
             except Exception as exc:
                 logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
                 return SubgoalResult(success=False, steps_taken=i, action_summaries=summaries, error=str(exc))
+
+            try:
+                response = normalize_profile_response(self._agent_profile, response)
+            except Exception as exc:
+                logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
+                summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
+                continue
 
             if not response.tool_calls or response.tool_calls[0].name != "computer_use":
                 logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
@@ -379,6 +415,15 @@ class _AgentSubgoalRunner:
             steps_taken=max_steps,
             action_summaries=summaries,
             error=f"Subgoal not reached after {max_steps} sub-steps",
+        )
+
+    def _profile_subgoal_instruction(self) -> str:
+        if self._agent_profile == "default":
+            return "Respond with ONLY a computer_use tool call."
+        contract = prompt_contract_for_profile(self._agent_profile)
+        return (
+            f"Respond using the configured `{self._agent_profile}` profile format. "
+            f"{' '.join(contract['format'])}"
         )
 
 
