@@ -643,3 +643,76 @@ async def test_normal_path_unchanged_when_no_shortcut() -> None:
         result = await agent.run("test task")
 
     assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Task 2 tests — nanobot wiring of ShortcutApplicabilityRouter
+# ---------------------------------------------------------------------------
+
+
+def test_nanobot_wires_applicability_router(tmp_path: Path) -> None:
+    """When enable_skill_execution=True, the constructed GuiAgent receives a
+    non-None _shortcut_applicability_router wired with the real LLMStateValidator.
+    """
+    from typing import Any
+    from unittest.mock import MagicMock
+
+    from nanobot.config.schema import Config
+    from nanobot.providers.base import LLMProvider as NanobotLLMProvider
+    from opengui.agent import GuiAgent
+
+    class _StubNanobotProvider(NanobotLLMProvider):
+        def __init__(self) -> None:
+            super().__init__(api_key="test-key")
+
+        async def chat(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("Should not be called")
+
+        async def chat_with_retry(self, *args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("Should not be called")
+
+        def get_default_model(self) -> str:
+            return "test-model"
+
+    (tmp_path / "gui_runs").mkdir()
+    (tmp_path / "gui_skills").mkdir()
+
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    provider = _StubNanobotProvider()
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run", "enable_skill_execution": True}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_path,
+    )
+
+    # Capture the shortcut_applicability_router argument passed to GuiAgent.__init__
+    captured_router: list[Any] = []
+    original_init = GuiAgent.__init__
+
+    def capturing_init(self_agent: Any, **kwargs: Any) -> None:
+        captured_router.append(kwargs.get("shortcut_applicability_router"))
+        original_init(self_agent, **kwargs)
+
+    from opengui.agent import AgentResult
+
+    with patch.object(GuiAgent, "__init__", capturing_init):
+        # Mock _run_task's backend operations so nothing real runs
+        mock_backend = MagicMock()
+        mock_backend.platform = "desktop"
+        mock_backend.observe = MagicMock()
+        mock_backend.preflight = MagicMock()
+        # Patch agent.run to avoid actually running the agent loop
+        with patch.object(
+            GuiAgent,
+            "run",
+            AsyncMock(return_value=AgentResult(success=True, summary="done")),
+        ):
+            import asyncio
+            asyncio.run(tool._run_task(mock_backend, "test"))
+
+    assert len(captured_router) == 1, "GuiAgent.__init__ should have been called once"
+    assert captured_router[0] is not None, (
+        "shortcut_applicability_router must be non-None when enable_skill_execution=True"
+    )
