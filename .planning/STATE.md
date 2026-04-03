@@ -4,7 +4,7 @@ milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
 stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-03T12:43:24Z"
+last_updated: "2026-04-03T13:38:54Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
@@ -221,12 +221,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
 | 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
 | 260403-soi | 把 gui.agent_profile 配置项正式补上 | 2026-04-03 | a322466 | [260403-soi-gui-agent-profile](./quick/260403-soi-gui-agent-profile/) |
+| 260403-u0t | 更新 opengui README 和 README_CN，说明支持的 profile 和如何通过 config.json/CLI 设置 | 2026-04-03 | c7da030 | [260403-u0t-opengui-readme-readme-cn-profile-config-](./quick/260403-u0t-opengui-readme-readme-cn-profile-config-/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last activity: 2026-04-03 - Completed quick task 260403-soi: 把 gui.agent_profile 配置项正式补上
+Last activity: 2026-04-03 - Completed quick task 260403-u0t: 更新 opengui README 和 README_CN，说明支持的 profile 和如何通过 config.json/CLI 设置
 
 Last session: 2026-04-03T10:45:23.628Z
 Stopped at: Completed 31-02-PLAN.md
