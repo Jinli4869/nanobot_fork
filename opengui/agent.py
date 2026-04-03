@@ -597,6 +597,7 @@ class GuiAgent:
                                 ),
                             )
                             try:
+                                self._shortcut_executor.trajectory_recorder = self._trajectory_recorder
                                 shortcut_result = await self._shortcut_executor.execute(matched_skill)
                                 if shortcut_result.is_violation:
                                     self._trajectory_recorder.record_event(
