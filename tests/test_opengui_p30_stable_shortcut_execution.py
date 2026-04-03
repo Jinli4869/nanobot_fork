@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from opengui.action import Action
+from opengui.action import Action, parse_action
+from opengui.agent import AgentResult, GuiAgent
 from opengui.grounding.protocol import GroundingResult
 from opengui.observation import Observation
 from opengui.skills.data import SkillStep
 from opengui.skills.multi_layer_executor import (
     LLMConditionEvaluator,
     ShortcutExecutionSuccess,
+    ShortcutStepResult,
     ShortcutExecutor,
 )
 from opengui.skills.shortcut import ShortcutSkill, StateDescriptor
+from opengui.skills.shortcut_router import ApplicabilityDecision
+from opengui.skills.shortcut_store import SkillSearchResult
+from opengui.trajectory.recorder import TrajectoryRecorder
 
 
 class _FakeBackend:
@@ -88,6 +95,25 @@ def _make_shortcut(*, action_type: str = "tap") -> ShortcutSkill:
     )
 
 
+def _make_result(shortcut: ShortcutSkill, score: float = 0.9) -> SkillSearchResult:
+    return SkillSearchResult(skill=shortcut, layer="shortcut", score=score, raw_score=score)
+
+
+def _make_shortcut_success(skill_id: str) -> ShortcutExecutionSuccess:
+    return ShortcutExecutionSuccess(
+        skill_id=skill_id,
+        step_results=(
+            ShortcutStepResult(
+                step_index=0,
+                action=parse_action({"action_type": "tap", "x": 10, "y": 20}),
+                backend_result="ok:tap",
+                grounding=None,
+                screenshot_path="/tmp/pre.png",
+            ),
+        ),
+    )
+
+
 @pytest.mark.asyncio
 async def test_llm_condition_evaluator() -> None:
     validator = _FakeValidator(result=True)
@@ -150,3 +176,160 @@ def test_shortcut_executor_exports_llm_condition_evaluator() -> None:
     from opengui.skills import multi_layer_executor
 
     assert "LLMConditionEvaluator" in multi_layer_executor.__all__
+
+
+@pytest.mark.asyncio
+async def test_shortcut_executor_wiring(tmp_path: Path) -> None:
+    recorder = TrajectoryRecorder(output_dir=tmp_path / "trace", task="open app", platform="android")
+    backend = _FakeBackend()
+    approved = _make_shortcut(action_type="tap")
+    shortcut_executor = MagicMock()
+    shortcut_executor.execute = AsyncMock(return_value=_make_shortcut_success(approved.skill_id))
+    skill_executor = MagicMock()
+    skill_executor.execute = AsyncMock()
+
+    agent = GuiAgent(
+        llm=MagicMock(),
+        backend=backend,
+        trajectory_recorder=recorder,
+        skill_executor=skill_executor,
+        shortcut_executor=shortcut_executor,
+    )
+    agent._retrieve_memory = AsyncMock(return_value=None)
+    agent._search_skill = AsyncMock(return_value=None)
+    agent._retrieve_shortcut_candidates = AsyncMock(return_value=[_make_result(approved)])
+    agent._evaluate_shortcut_applicability = AsyncMock(
+        return_value=ApplicabilityDecision(
+            outcome="run",
+            shortcut_id=approved.skill_id,
+            score=0.9,
+            reason="ok",
+        )
+    )
+    agent._inject_skill_memory_context = AsyncMock(side_effect=lambda skill, context: context)
+    agent._make_run_dir = lambda task, attempt: tmp_path / f"attempt-{attempt}"
+    agent._log_attempt_event = AsyncMock()
+    agent._skill_maintenance = AsyncMock()
+    agent._run_once = AsyncMock(
+        return_value=AgentResult(success=True, summary="done", trace_path=str(tmp_path / "attempt-0"))
+    )
+
+    await agent.run("open app", max_retries=1)
+
+    shortcut_executor.execute.assert_awaited_once_with(approved)
+    skill_executor.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_live_binding_uses_shortcut_execution_success(tmp_path: Path) -> None:
+    recorder = TrajectoryRecorder(output_dir=tmp_path / "trace", task="open app", platform="android")
+    backend = _FakeBackend()
+    approved = _make_shortcut(action_type="tap")
+    shortcut_executor = MagicMock()
+    shortcut_executor.execute = AsyncMock(return_value=_make_shortcut_success(approved.skill_id))
+
+    agent = GuiAgent(
+        llm=MagicMock(),
+        backend=backend,
+        trajectory_recorder=recorder,
+        shortcut_executor=shortcut_executor,
+    )
+    agent._retrieve_memory = AsyncMock(return_value=None)
+    agent._search_skill = AsyncMock(return_value=None)
+    agent._retrieve_shortcut_candidates = AsyncMock(return_value=[_make_result(approved)])
+    agent._evaluate_shortcut_applicability = AsyncMock(
+        return_value=ApplicabilityDecision(
+            outcome="run",
+            shortcut_id=approved.skill_id,
+            score=0.9,
+            reason="ok",
+        )
+    )
+    agent._inject_skill_memory_context = AsyncMock(side_effect=lambda skill, context: context)
+    agent._make_run_dir = lambda task, attempt: tmp_path / f"attempt-{attempt}"
+    agent._log_attempt_event = AsyncMock()
+    agent._skill_maintenance = AsyncMock()
+    agent._run_once = AsyncMock(
+        return_value=AgentResult(success=True, summary="done", trace_path=str(tmp_path / "attempt-0"))
+    )
+
+    await agent.run("open app", max_retries=1)
+
+    skill_context = agent._run_once.await_args.kwargs["skill_context"]
+    assert "Shortcut 'sc-tap' executed 1 step(s):" in skill_context
+    assert "Step 0: tap" in skill_context
+
+    assert recorder.path is not None
+    events = [json.loads(line) for line in recorder.path.read_text().splitlines() if line.strip()]
+    shortcut_events = [event for event in events if event.get("type") == "shortcut_execution"]
+    assert shortcut_events
+    assert shortcut_events[-1]["outcome"] == "success"
+    assert shortcut_events[-1]["skill_id"] == approved.skill_id
+
+
+@pytest.mark.asyncio
+async def test_nanobot_wires_shortcut_executor(tmp_path: Path) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    captured_gui_agent_kwargs: dict[str, object] = {}
+    constructed: dict[str, object] = {}
+
+    class _FakeGuiAgent:
+        def __init__(self, **kwargs: object) -> None:
+            captured_gui_agent_kwargs.update(kwargs)
+
+        async def run(self, task: str) -> AgentResult:
+            return AgentResult(success=True, summary=task, trace_path=str(tmp_path / "agent-trace"))
+
+    class _FakeStateValidator:
+        def __init__(self, llm: object) -> None:
+            self.llm = llm
+
+    class _FakeSkillExecutor:
+        def __init__(self, **kwargs: object) -> None:
+            constructed["skill_executor"] = kwargs
+
+    class _FakeConditionEvaluator:
+        def __init__(self, validator: object) -> None:
+            constructed["condition_evaluator"] = validator
+
+    class _FakeGrounder:
+        def __init__(self, llm: object) -> None:
+            constructed["grounder_llm"] = llm
+
+    class _FakeShortcutExecutor:
+        def __init__(self, **kwargs: object) -> None:
+            constructed["shortcut_executor"] = kwargs
+
+    class _FakeRouter:
+        def __init__(self, **kwargs: object) -> None:
+            constructed["router"] = kwargs
+
+    tool = GuiSubagentTool.__new__(GuiSubagentTool)
+    tool._gui_config = SimpleNamespace(enable_skill_execution=True, max_steps=3, skill_threshold=0.5)
+    tool._llm_adapter = object()
+    tool._model = "test-model"
+    tool._load_policy_context_and_memory_store = lambda: (None, None)
+    tool._get_skill_library = lambda platform: None
+    tool._get_unified_skill_search = lambda platform: None
+    tool._make_run_dir = lambda: tmp_path / "run"
+    tool._build_intervention_handler = lambda active_backend, task: None
+    tool._resolve_trace_path = lambda recorder_path, agent_trace_path: Path(agent_trace_path)
+    tool._schedule_trajectory_postprocessing = lambda *args, **kwargs: None
+
+    active_backend = SimpleNamespace(platform="android")
+
+    with patch("nanobot.agent.tools.gui.GuiAgent", _FakeGuiAgent), \
+        patch("opengui.skills.executor.LLMStateValidator", _FakeStateValidator), \
+        patch("opengui.skills.executor.SkillExecutor", _FakeSkillExecutor), \
+        patch("opengui.skills.multi_layer_executor.LLMConditionEvaluator", _FakeConditionEvaluator), \
+        patch("opengui.skills.multi_layer_executor.ShortcutExecutor", _FakeShortcutExecutor), \
+        patch("opengui.grounding.llm.LLMGrounder", _FakeGrounder), \
+        patch("opengui.skills.shortcut_router.ShortcutApplicabilityRouter", _FakeRouter):
+        payload = await GuiSubagentTool._run_task(tool, active_backend, "open app")
+
+    parsed = json.loads(payload)
+    assert parsed["success"] is True
+    assert captured_gui_agent_kwargs["shortcut_executor"] is not None
+    assert captured_gui_agent_kwargs["shortcut_applicability_router"] is not None
+    assert constructed["shortcut_executor"]["condition_evaluator"] is constructed["router"]["condition_evaluator"]
