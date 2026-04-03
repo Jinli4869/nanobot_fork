@@ -276,6 +276,7 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
     "backend": "adb",
     "model": "openrouter/qwen/qwen2.5-vl-72b-instruct",
     "provider": "openrouter",
+    "agentProfile": "qwen3vl",
     "adb": { "serial": null },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
@@ -294,6 +295,8 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
 > **Note on `embeddingModel`:** When set, nanobot uses the DashScope embedding endpoint for semantic skill search. If omitted, skill matching falls back to BM25 keyword search.
 >
 > **Note on `gui.model` / `gui.provider`:** These are optional overrides for GUI tasks only. If omitted, the GUI subagent inherits `agents.defaults.model` and `agents.defaults.provider`.
+>
+> **Note on `gui.agentProfile`:** Use this when your GUI model expects a non-default action/prompt contract. Supported values are `default`, `general_e2e`, `qwen3vl`, `mai_ui`, `gelab`, and `seed`.
 >
 > **Note on `gui.evaluation.judgeModel`:** This judge model is only used for optional post-run evaluation. It does not change the model that actually performs the GUI task.
 
@@ -378,6 +381,7 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `backend` | `"adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
 | `model` | `string \| null` | `null` | GUI-only model override; inherits `agents.defaults.model` when omitted |
 | `provider` | `string \| null` | `null` | GUI-only provider override; inherits main-agent provider resolution when omitted |
+| `agentProfile` | `string \| null` | `null` | Prompt/action profile for GUI-only models; defaults to native tool-calling when omitted |
 | `adb.serial` | `string \| null` | `null` | ADB device serial; `null` = auto-detect |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent server URL |
 | `hdc.serial` | `string \| null` | `null` | HDC device serial; `null` = auto-detect |
