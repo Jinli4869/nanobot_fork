@@ -425,6 +425,7 @@ class GuiConfig(Base):
     backend: Literal["adb", "hdc", "local", "dry-run"] = "adb"
     model: str | None = None
     provider: str | None = None
+    agent_profile: str | None = None
     adb: AdbConfig = Field(default_factory=AdbConfig)
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
@@ -439,6 +440,16 @@ class GuiConfig(Base):
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
+
+    @field_validator("agent_profile")
+    @classmethod
+    def _validate_agent_profile(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        from opengui.agent_profiles import canonicalize_agent_profile
+
+        return canonicalize_agent_profile(value)
 
     @model_validator(mode="after")
     def _validate_background_requires_local(self) -> "GuiConfig":

@@ -314,14 +314,19 @@ def test_gui_config_defaults() -> None:
     assert config.artifacts_dir == "gui_runs"
     assert config.max_steps == 15
     assert config.skill_threshold == pytest.approx(0.6)
+    assert config.agent_profile is None
 
 
 def test_gui_config_validation() -> None:
     from nanobot.config.schema import GuiConfig
 
     assert GuiConfig(backend="dry-run").backend == "dry-run"
+    assert GuiConfig(agent_profile="qwen3vl").agent_profile == "qwen3vl"
+    assert GuiConfig.model_validate({"agentProfile": "gelab"}).agent_profile == "gelab"
     with pytest.raises(ValidationError):
         GuiConfig(backend="invalid")
+    with pytest.raises(ValidationError):
+        GuiConfig(agent_profile="invalid-profile")
 
 
 def test_config_gui_none_by_default() -> None:
