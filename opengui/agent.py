@@ -31,6 +31,12 @@ from opengui.interfaces import (
     LLMResponse,
     ProgressCallback,
 )
+from opengui.skills.shortcut_router import (
+    ApplicabilityDecision,
+    ShortcutApplicabilityRouter,
+    filter_candidates_by_context,
+)
+from opengui.skills.normalization import normalize_app_identifier
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
@@ -427,6 +433,7 @@ class GuiAgent:
         policy_context: str | None = None,
         unified_skill_search: Any = None,
         memory_store: Any = None,
+        shortcut_applicability_router: ShortcutApplicabilityRouter | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -448,6 +455,7 @@ class GuiAgent:
         self._intervention_handler = intervention_handler
         self._unified_skill_search = unified_skill_search
         self._memory_store = memory_store
+        self._shortcut_applicability_router = shortcut_applicability_router
 
     # ------------------------------------------------------------------
     # Public API
@@ -484,6 +492,11 @@ class GuiAgent:
             else:
                 matched_skill, final_score = skill_match
             memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
+
+        # 3b. Retrieve shortcut candidates (multi-candidate, filtered by platform + app)
+        shortcut_candidates = await self._retrieve_shortcut_candidates(
+            task, platform=self.backend.platform, app_hint=app_hint,
+        )
 
         # 4. If skill matched, attempt skill execution first
         skill_context: str | None = None
@@ -1564,6 +1577,59 @@ class GuiAgent:
         if final_score >= self._skill_threshold:
             return (skill, final_score)
         return None
+
+    async def _retrieve_shortcut_candidates(
+        self,
+        task: str,
+        *,
+        platform: str,
+        app_hint: str | None = None,
+    ) -> list:
+        """Retrieve shortcut candidates filtered by platform and optional app context.
+
+        Calls ``UnifiedSkillSearch.search(task, top_k=5)``, keeps only results
+        at or above ``skill_threshold``, then applies platform + app filtering via
+        ``filter_candidates_by_context``.  Emits a ``shortcut_retrieval`` trajectory
+        event regardless of whether any candidates are found.
+
+        Returns an empty list when ``unified_skill_search`` is not configured.
+        The returned list is stored in ``run()`` for use by Plan 02's applicability
+        gate; the existing score-only ``_search_skill`` path is left unchanged.
+        """
+        if self._unified_skill_search is None:
+            return []
+
+        search_results = await self._unified_skill_search.search(task, top_k=5)
+        candidates = [r for r in search_results if r.score >= self._skill_threshold]
+        filtered = filter_candidates_by_context(
+            candidates, platform=platform, app_hint=app_hint,
+        )
+
+        self._trajectory_recorder.record_event(
+            "shortcut_retrieval",
+            task=task,
+            platform=platform,
+            app_hint=app_hint,
+            candidate_count=len(filtered),
+            candidates=[
+                {
+                    "skill_id": r.skill.skill_id,
+                    "name": r.skill.name,
+                    "score": round(r.score, 4),
+                }
+                for r in filtered
+            ],
+        )
+
+        if filtered:
+            logger.info(
+                "Shortcut retrieval: %d candidate(s) for task=%r platform=%s",
+                len(filtered),
+                task,
+                platform,
+            )
+
+        return filtered
 
     async def _inject_skill_memory_context(
         self,
