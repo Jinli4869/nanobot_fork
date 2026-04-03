@@ -54,7 +54,7 @@ created: 2026-04-03
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_phase30_shortcut_execution.py` — stubs for SUSE-03, SUSE-04, SSTA-01, SSTA-02
+- [ ] `tests/test_opengui_p30_stable_shortcut_execution.py` — stubs for SUSE-03, SUSE-04, SSTA-01, SSTA-02
 - [ ] `tests/conftest.py` — shared fixtures (extend existing if present)
 
 *Existing pytest infrastructure is present; Wave 0 adds new test stubs only.*
