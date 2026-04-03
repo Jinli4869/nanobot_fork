@@ -218,6 +218,7 @@ class GuiSubagentTool(Tool):
         )
 
         skill_executor = None
+        shortcut_applicability_router = None
         if self._gui_config.enable_skill_execution:
             from opengui.agent import (
                 _AgentActionGrounder,
@@ -225,6 +226,7 @@ class GuiSubagentTool(Tool):
                 _AgentSubgoalRunner,
             )
             from opengui.skills.executor import LLMStateValidator, SkillExecutor
+            from opengui.skills.shortcut_router import ShortcutApplicabilityRouter
 
             state_validator = LLMStateValidator(self._llm_adapter)
             skill_executor = SkillExecutor(
@@ -248,6 +250,11 @@ class GuiSubagentTool(Tool):
                 stop_on_failure=False,
                 max_recovery_steps=3,
             )
+            # Wire the real LLMStateValidator as ConditionEvaluator so applicability
+            # checks use live VLM judgement rather than the always-pass default.
+            shortcut_applicability_router = ShortcutApplicabilityRouter(
+                condition_evaluator=state_validator,
+            )
 
         agent = GuiAgent(
             llm=self._llm_adapter,
@@ -263,6 +270,7 @@ class GuiSubagentTool(Tool):
             intervention_handler=self._build_intervention_handler(active_backend, task),
             unified_skill_search=unified_skill_search,
             memory_store=memory_store,
+            shortcut_applicability_router=shortcut_applicability_router,
         )
 
         result = await agent.run(task=task)
