@@ -10,10 +10,10 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ## Current State
 
-- **Shipped through:** v1.6 Phase 28 Shortcut Extraction Productionization
+- **Shipped through:** v1.6 Phase 29 Shortcut Retrieval and Applicability Routing
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, iOS WDA backend, HarmonyOS HDC backend, standalone CLI, nanobot GUI tool integration
-- **Shortcut architecture status:** Phase 24 shipped `ShortcutSkill`, `TaskSkill`, and grounding contracts; Phase 25 shipped multi-layer executors; Phases 26-27 shipped quality-gated primitives plus versioned stores and unified search; Phase 28 shipped production trace-backed shortcut promotion with provenance, gates, and merge/version handling
-- **Current production gap:** Shortcut promotion is now live in production; the remaining v1.6 gap is screen-aware retrieval/applicability plus stable shortcut execution and fallback on live screens
+- **Shortcut architecture status:** Phase 24 shipped `ShortcutSkill`, `TaskSkill`, and grounding contracts; Phase 25 shipped multi-layer executors; Phases 26-27 shipped quality-gated primitives plus versioned stores and unified search; Phase 28 shipped production trace-backed shortcut promotion with provenance, gates, and merge/version handling; Phase 29 shipped multi-candidate retrieval with app/platform filtering and screen-aware applicability evaluation (`shortcut_router.py`, `_retrieve_shortcut_candidates`, `_evaluate_shortcut_applicability`)
+- **Current production gap:** Retrieval and applicability routing are now live; the remaining v1.6 gap is stable shortcut execution with live target binding, post-step settle/verification, and safe fallback
 - **Reference direction for v1.6:** AppAgentX demonstrates screen-aware shortcut applicability evaluation and template generation from live context; Mobile-Agent-v3.5 reinforces action/observation discipline so shortcut execution stays stable instead of brittle
 
 ## Current Milestone: v1.6 Shortcut Extraction and Stable Execution
