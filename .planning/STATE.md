@@ -2,19 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
-current_phase: "29"
-current_phase_name: shortcut-retrieval-and-applicability-routing
-current_plan: Not started
-status: ready_for_planning
-stopped_at: Phase 28 verified and closed
-last_updated: "2026-04-02T17:17:29Z"
-last_activity: 2026-04-02
+status: unknown
+stopped_at: Completed 29-01-PLAN.md
+last_updated: "2026-04-03T04:29:39.010Z"
+last_activity: 2026-04-03
 progress:
   total_phases: 4
   completed_phases: 1
-  total_plans: 10
-  completed_plans: 3
-  percent: 25
+  total_plans: 5
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -24,20 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 29 — shortcut-retrieval-and-applicability-routing
+**Current focus:** Phase 29 — shortcut-retrieval-applicability-routing
 
 ## Current Position
 
-**Current Phase:** 29
-**Current Phase Name:** shortcut-retrieval-and-applicability-routing
-**Total Phases:** 4
-**Current Plan:** Not started
-**Total Plans in Phase:** 2
-**Status:** Ready for planning
+Phase: 29 (shortcut-retrieval-applicability-routing) — EXECUTING
+Plan: 1 of 2
 
 ## Performance Metrics
 
-**Progress:** [███░░░░░░░] 25%
+**Progress:** [████████░░] 80%
 
 Phase 28 is complete and verified. Milestone tracking is now focused on Phase 29 planning and execution.
 
@@ -157,6 +150,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 26]: ExtractionPipeline rejects trajectories with fewer than two steps before invoking any critic, then short-circuits from step critic to trajectory critic to producer in strict order
 - [Phase 26]: Phase 26 public extraction types are exported from opengui.skills so callers can adopt the pipeline without deep module imports
 - [Phase 27]: Run BM25 plus optional FAISS search inside each store, then merge via UnifiedSkillSearch with layer weights.
+- [Phase 29]: filter_candidates_by_context falls back to platform-only when app filter yields empty list, preserving recall
+- [Phase 29]: shortcut_candidates stored in run() but not yet used for execution gating — Plan 02 adds applicability evaluation gate
+- [Phase 29]: _AlwaysPassEvaluator default enables test/dry-run scenarios without LLM or device dependency
 
 ### Pending Todos
 
@@ -202,11 +198,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
+| Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last activity: 2026-04-02
+Last activity: 2026-04-03
 
-Last session: 2026-04-02T13:30:00.000Z
-Stopped at: Milestone v1.6 initialized
+Last session: 2026-04-03T04:29:39.001Z
+Stopped at: Completed 29-01-PLAN.md
 Resume file: None
