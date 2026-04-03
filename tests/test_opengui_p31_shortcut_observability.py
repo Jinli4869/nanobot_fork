@@ -5,12 +5,16 @@ Tests in this module cover:
 2. Full-trace artifact coverage: a real GuiAgent run must produce a JSONL file
    containing shortcut_retrieval, shortcut_applicability, shortcut_grounding,
    shortcut_settle, and shortcut_execution events in one trace.
+3. Regression seams: Android and macOS JSONL traces promote correctly and execute
+   through ShortcutExecutor with extracted SkillStep.parameters consumed for
+   non-fixed steps.
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -423,3 +427,292 @@ async def test_full_trace_event_coverage(tmp_path: Path) -> None:
         f"Trace artifact is missing event types: {missing}. "
         f"Found: {sorted(event_types)}"
     )
+
+
+# ===========================================================================
+# Regression seam helpers
+# ===========================================================================
+
+
+class _FakeDesktopBackend:
+    """Minimal DeviceBackend simulating a macOS desktop environment."""
+
+    def __init__(self) -> None:
+        self.executed_actions: list[Action] = []
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.touch()
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=2560,
+            screen_height=1600,
+            foreground_app="com.apple.safari",
+            platform="macos",
+        )
+
+    async def execute(self, action: Action, timeout: float = 5.0) -> str:
+        self.executed_actions.append(action)
+        return f"ok:{action.action_type}"
+
+    async def preflight(self) -> None:
+        pass
+
+    async def list_apps(self) -> list[str]:
+        return []
+
+    @property
+    def platform(self) -> str:
+        return "macos"
+
+
+class _FixtureGrounder:
+    """Deterministic grounder keyed by target string.
+
+    Accepts a mapping of target -> resolved_params and returns a real
+    GroundingResult for each requested target.  Raises AssertionError for
+    targets not registered in the fixture map.
+    """
+
+    def __init__(self, targets: dict[str, dict[str, Any]]) -> None:
+        self._targets = targets
+
+    async def ground(self, target: str, context: object) -> GroundingResult:
+        if target not in self._targets:
+            raise AssertionError(
+                f"_FixtureGrounder: unexpected target {target!r}. "
+                f"Registered targets: {list(self._targets)}"
+            )
+        return GroundingResult(
+            grounder_id="fixture",
+            confidence=1.0,
+            resolved_params=self._targets[target],
+        )
+
+
+def _write_jsonl(trace_path: Path, lines: list[str]) -> None:
+    """Write JSONL trace lines to *trace_path*, creating parent directories."""
+    trace_path.parent.mkdir(parents=True, exist_ok=True)
+    trace_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ===========================================================================
+# Regression seam tests (Phase 31 plan 02)
+# ===========================================================================
+
+
+ANDROID_TRACE_LINES = [
+    '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+    '{"type": "attempt_start", "attempt": 1}',
+    (
+        '{"type": "step", "step_index": 0, "phase": "agent",'
+        ' "action": {"action_type": "tap", "x": 100, "y": 200},'
+        ' "model_output": "Open compose for recipient",'
+        ' "valid_state": "Inbox visible", "expected_state": "Composer visible",'
+        ' "observation": {"app": "com.example.mail"}}'
+    ),
+    (
+        '{"type": "step", "step_index": 1, "phase": "agent",'
+        ' "action": {"action_type": "input_text", "text": "hello"},'
+        ' "model_output": "Type message into body",'
+        ' "valid_state": "Composer visible", "expected_state": "Draft text entered",'
+        ' "observation": {"app": "com.example.mail"}}'
+    ),
+    '{"type": "attempt_result", "attempt": 1, "success": true}',
+    '{"type": "result", "success": true}',
+]
+
+MACOS_TRACE_LINES = [
+    '{"type": "metadata", "task": "Open Safari preferences", "platform": "macos"}',
+    '{"type": "attempt_start", "attempt": 1}',
+    (
+        '{"type": "step", "step_index": 0, "phase": "agent",'
+        ' "action": {"action_type": "tap", "x": 400, "y": 50},'
+        ' "model_output": "Click Safari menu",'
+        ' "valid_state": "Safari open", "expected_state": "Safari menu visible",'
+        ' "observation": {"app": "com.apple.safari"}}'
+    ),
+    (
+        '{"type": "step", "step_index": 1, "phase": "agent",'
+        ' "action": {"action_type": "tap", "x": 420, "y": 120},'
+        ' "model_output": "Click Preferences item",'
+        ' "valid_state": "Safari menu visible", "expected_state": "Preferences open",'
+        ' "observation": {"app": "com.apple.safari"}}'
+    ),
+    '{"type": "attempt_result", "attempt": 1, "success": true}',
+    '{"type": "result", "success": true}',
+]
+
+
+@pytest.mark.asyncio
+async def test_extracted_step_parameters_feed_non_fixed_execution(tmp_path: Path) -> None:
+    """step.parameters extracted from a trace must be consumed for non-fixed steps.
+
+    Build a promoted-style ShortcutSkill manually with one non-fixed input_text
+    step where step.parameters == {"text": "hello"}.  The grounder returns empty
+    resolved_params so the only source of "text" is step.parameters.  Assert
+    success and that the executed action carried text="hello".
+    """
+    step = SkillStep(
+        action_type="input_text",
+        target="Type message into body",
+        parameters={"text": "hello"},
+        fixed=False,
+    )
+    shortcut = ShortcutSkill(
+        skill_id="sc-param-merge",
+        name="param merge test",
+        description="Verifies step.parameters are consumed for non-fixed steps",
+        app="com.example.mail",
+        platform="android",
+        steps=(step,),
+    )
+
+    backend = _FakeBackend()
+    executor = ShortcutExecutor(
+        backend=backend,
+        grounder=_FixtureGrounder({"Type message into body": {}}),
+        screenshot_dir=tmp_path / "param_merge",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(shortcut)
+
+    assert isinstance(result, ShortcutExecutionSuccess)
+    assert len(backend.executed_actions) == 1
+    executed = backend.executed_actions[0]
+    assert executed.action_type == "input_text"
+    assert executed.text == "hello", (
+        f"Expected text='hello' from step.parameters but got text={executed.text!r}. "
+        "ShortcutExecutor must seed the merged payload with step.parameters before "
+        "overlaying grounding.resolved_params."
+    )
+
+
+@pytest.mark.asyncio
+async def test_android_extraction_execution_seam(tmp_path: Path) -> None:
+    """Android JSONL trace promotes into a store and the promoted shortcut executes.
+
+    End-to-end seam: write trace -> promote via ShortcutPromotionPipeline ->
+    execute via ShortcutExecutor with _FakeBackend and _FixtureGrounder.
+    Asserts:
+    - Promotion succeeds and exactly one Android shortcut is stored.
+    - ShortcutExecutionSuccess returned.
+    - len(backend.executed_actions) == 2.
+    - Tap used the live coordinates from _FixtureGrounder (540, 960).
+    - input_text payload carried "hello" from promoted step.parameters.
+    - Promoted shortcut platform == "android".
+    """
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+    from opengui.skills.shortcut_store import ShortcutSkillStore
+
+    trace_path = tmp_path / "android_trace" / "trace.jsonl"
+    _write_jsonl(trace_path, ANDROID_TRACE_LINES)
+
+    store = ShortcutSkillStore(tmp_path / "android_store")
+    pipeline = ShortcutPromotionPipeline()
+    skill_id = await pipeline.promote_from_trace(
+        trace_path,
+        is_success=True,
+        store=store,
+    )
+
+    assert skill_id is not None, "Promotion must succeed for a valid Android trace"
+    promoted = store.list_all(platform="android")
+    assert len(promoted) == 1, f"Expected 1 promoted Android shortcut, got {len(promoted)}"
+    assert promoted[0].platform == "android"
+
+    shortcut = promoted[0]
+    backend = _FakeBackend()
+    executor = ShortcutExecutor(
+        backend=backend,
+        grounder=_FixtureGrounder(
+            {
+                "Open compose for recipient": {"x": 540, "y": 960},
+                "Type message into body": {},
+            }
+        ),
+        screenshot_dir=tmp_path / "android_exec",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(shortcut)
+
+    assert isinstance(result, ShortcutExecutionSuccess), (
+        f"Expected ShortcutExecutionSuccess but got {result!r}"
+    )
+    assert len(backend.executed_actions) == 2, (
+        f"Expected 2 executed actions, got {len(backend.executed_actions)}"
+    )
+
+    tap_action = backend.executed_actions[0]
+    assert tap_action.action_type == "tap"
+    assert tap_action.x == 540, (
+        f"Tap x must come from the grounder (540) but got {tap_action.x}"
+    )
+    assert tap_action.y == 960, (
+        f"Tap y must come from the grounder (960) but got {tap_action.y}"
+    )
+
+    text_action = backend.executed_actions[1]
+    assert text_action.action_type == "input_text"
+    assert text_action.text == "hello", (
+        f"input_text payload must carry 'hello' from promoted step.parameters, "
+        f"got text={text_action.text!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_macos_extraction_execution_seam(tmp_path: Path) -> None:
+    """macOS JSONL trace promotes into a store and the promoted shortcut executes.
+
+    End-to-end seam: write trace -> promote via ShortcutPromotionPipeline ->
+    execute via ShortcutExecutor with _FakeDesktopBackend and _FixtureGrounder.
+    Asserts:
+    - Promotion succeeds and exactly one macOS shortcut is stored.
+    - ShortcutExecutionSuccess returned.
+    - len(backend.executed_actions) == 2.
+    - promoted[0].platform == "macos".
+    """
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+    from opengui.skills.shortcut_store import ShortcutSkillStore
+
+    trace_path = tmp_path / "macos_trace" / "trace.jsonl"
+    _write_jsonl(trace_path, MACOS_TRACE_LINES)
+
+    store = ShortcutSkillStore(tmp_path / "macos_store")
+    pipeline = ShortcutPromotionPipeline()
+    skill_id = await pipeline.promote_from_trace(
+        trace_path,
+        is_success=True,
+        store=store,
+    )
+
+    assert skill_id is not None, "Promotion must succeed for a valid macOS trace"
+    promoted = store.list_all(platform="macos")
+    assert len(promoted) == 1, f"Expected 1 promoted macOS shortcut, got {len(promoted)}"
+    assert promoted[0].platform == "macos"
+
+    shortcut = promoted[0]
+    backend = _FakeDesktopBackend()
+    executor = ShortcutExecutor(
+        backend=backend,
+        grounder=_FixtureGrounder(
+            {
+                "Click Safari menu": {"x": 800, "y": 50},
+                "Click Preferences item": {"x": 820, "y": 120},
+            }
+        ),
+        screenshot_dir=tmp_path / "macos_exec",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(shortcut)
+
+    assert isinstance(result, ShortcutExecutionSuccess), (
+        f"Expected ShortcutExecutionSuccess but got {result!r}"
+    )
+    assert len(backend.executed_actions) == 2, (
+        f"Expected 2 executed actions for macOS seam, got {len(backend.executed_actions)}"
+    )
+    assert promoted[0].platform == "macos"
