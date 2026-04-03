@@ -23,6 +23,13 @@ from pathlib import Path
 from typing import Any
 
 from opengui.action import Action, ActionError, describe_action, parse_action
+from opengui.agent_profiles import (
+    canonicalize_agent_profile,
+    coordinate_mode_for_profile,
+    normalize_profile_response,
+    profile_tool_definition,
+    profile_uses_native_tools,
+)
 from opengui.interfaces import (
     DeviceBackend,
     InterventionHandler,
@@ -417,9 +424,8 @@ class GuiAgent:
     """
 
     _MAX_TOOL_RETRIES = 2
-    _MODEL_RELATIVE_GRID_HINTS = ("qwen", "gemini")
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
-    _POST_ACTION_SETTLE_SECONDS = 0.50
+    _POST_ACTION_SETTLE_SECONDS = 0.25
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
 
     def __init__(
@@ -446,10 +452,12 @@ class GuiAgent:
         unified_skill_search: Any = None,
         memory_store: Any = None,
         shortcut_applicability_router: ShortcutApplicabilityRouter | None = None,
+        agent_profile: str | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
         self.model = model
+        self.agent_profile = canonicalize_agent_profile(agent_profile)
         self.artifacts_root = Path(artifacts_root)
         self.max_steps = max_steps
         self.step_timeout = step_timeout
@@ -983,11 +991,23 @@ class GuiAgent:
             retries_left -= 1
 
             # Call LLM
+            native_tools_enabled = profile_uses_native_tools(self.agent_profile)
             response: LLMResponse = await self.llm.chat(
                 messages=messages,
-                tools=[_COMPUTER_USE_TOOL],
-                tool_choice="required",
+                tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                tool_choice="required" if native_tools_enabled else None,
             )
+
+            try:
+                response = normalize_profile_response(self.agent_profile, response)
+            except ValueError as exc:
+                if retries_left > 0:
+                    messages.append({
+                        "role": "user",
+                        "content": f"Format error: {exc}. Follow the required response format exactly.",
+                    })
+                    continue
+                raise RuntimeError(f"Failed to parse profile response after retries: {exc}") from exc
 
             # Append assistant message
             assistant_msg = self._build_assistant_message(response)
@@ -1136,11 +1156,10 @@ class GuiAgent:
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
 
     def _coordinate_mode(self) -> str:
-        return "relative_999" if self._model_uses_relative_grid() else "absolute"
+        return coordinate_mode_for_profile(self.agent_profile, self.model)
 
     def _model_uses_relative_grid(self) -> bool:
-        model = self.model.lower()
-        return any(hint in model for hint in self._MODEL_RELATIVE_GRID_HINTS)
+        return self._coordinate_mode() == "relative_999"
 
     def _normalize_relative_coordinates(self, action: Action) -> Action:
         if action.relative or action.action_type not in self._COORDINATE_ACTIONS:
@@ -1177,9 +1196,11 @@ class GuiAgent:
             "content": build_system_prompt(
                 platform=self.backend.platform,
                 coordinate_mode=self._coordinate_mode(),
-                tool_definition=_COMPUTER_USE_TOOL,
+                tool_definition=profile_tool_definition(self.agent_profile),
                 memory_context=memory_context,
+                skill_context=skill_context,
                 installed_apps=self._installed_apps,
+                agent_profile=self.agent_profile,
             ),
         }]
 

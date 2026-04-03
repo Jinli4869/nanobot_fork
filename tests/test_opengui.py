@@ -11,6 +11,7 @@ import pytest
 
 from opengui.action import ActionError, parse_action, resolve_coordinate
 from opengui.agent import GuiAgent
+from opengui.agent_profiles import normalize_profile_response
 from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
@@ -104,6 +105,17 @@ def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
     assert "native tool-calling mechanism" in prompt
 
 
+def test_build_system_prompt_supports_general_e2e_profile() -> None:
+    prompt = build_system_prompt(
+        platform="android",
+        agent_profile="general_e2e",
+    )
+
+    assert "Thought:" in prompt
+    assert 'Action: {"action_type": "click"' in prompt
+    assert "Do not use native tool calling" in prompt
+
+
 def test_annotate_android_apps_filters_unmapped_packages() -> None:
     from opengui.skills.normalization import annotate_android_apps
 
@@ -194,6 +206,65 @@ def test_agent_keeps_absolute_coordinates_for_other_models(tmp_path: Path) -> No
 
     assert agent._normalize_relative_coordinates(action).relative is False
     assert agent._coordinate_mode() == "absolute"
+
+
+def test_qwen3vl_profile_normalizes_content_only_response() -> None:
+    response = LLMResponse(
+        content=(
+            'Thought: I found the target\n'
+            'Action: "Tap the login button"\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 500,
+        "y": 250,
+        "relative": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content=(
+                'Thought: I should wait briefly\n'
+                'Action: "Wait for the screen to settle"\n'
+                '<tool_call>{"name":"mobile_use","arguments":{"action":"wait"}}</tool_call>'
+            ),
+            tool_calls=None,
+        ),
+        LLMResponse(
+            content=(
+                'Thought: The task is complete\n'
+                'Action: "Finish successfully"\n'
+                '<tool_call>{"name":"mobile_use","arguments":{"action":"terminate","status":"success"}}</tool_call>'
+            ),
+            tool_calls=None,
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen profile"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+        agent_profile="qwen3vl",
+    )
+
+    result = await agent.run("Wait and finish", max_retries=1)
+
+    assert result.success
+    assert len(llm.calls) == 2
+    assert "Action:" in llm.calls[0][0]["content"]
 
 
 @pytest.mark.asyncio

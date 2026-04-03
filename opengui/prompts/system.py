@@ -9,44 +9,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
-def _default_tool_definition() -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": "computer_use",
-            "description": "Perform one GUI action on the current device screen.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action_type": {
-                        "type": "string",
-                        "enum": [
-                            "tap", "double_tap", "long_press", "swipe", "drag",
-                            "input_text", "hotkey", "scroll",
-                            "wait", "open_app", "close_app",
-                            "back", "home", "done", "request_intervention",
-                        ],
-                    },
-                    "x": {"type": "number"},
-                    "y": {"type": "number"},
-                    "x2": {"type": "number"},
-                    "y2": {"type": "number"},
-                    "text": {"type": "string"},
-                    "key": {"type": "array", "items": {"type": "string"}},
-                    "pixels": {"type": "integer"},
-                    "duration_ms": {"type": "integer"},
-                    "relative": {"type": "boolean"},
-                "status": {
-                    "type": "string",
-                    "enum": ["success", "failure"],
-                },
-            },
-                "required": ["action_type"],
-            },
-        },
-    }
-
+from opengui.agent_profiles import (
+    canonicalize_agent_profile,
+    profile_tool_definition,
+    prompt_contract_for_profile,
+)
 
 def build_system_prompt(
     *,
@@ -56,10 +23,13 @@ def build_system_prompt(
     skill_context: str | None = None,
     tool_definition: dict[str, Any] | None = None,
     installed_apps: list[str] | None = None,
+    agent_profile: str = "default",
 ) -> str:
     """Build a Mobile-Agent-style system prompt while keeping native tool calls."""
+    profile_name = canonicalize_agent_profile(agent_profile)
+    prompt_contract = prompt_contract_for_profile(profile_name)
     tool_schema = json.dumps(
-        tool_definition or _default_tool_definition(),
+        tool_definition or profile_tool_definition(profile_name),
         ensure_ascii=False,
     )
 
@@ -92,6 +62,10 @@ def build_system_prompt(
         "- Click the center of the intended UI element unless the task clearly requires an edge.",
         coordinate_rules,
     ]
+
+    if prompt_contract["environment"]:
+        sections.extend([""])
+        sections.extend(prompt_contract["environment"])
 
     if platform != "unknown":
         sections.extend(["", f"- Platform: {platform}"])
@@ -152,15 +126,9 @@ def build_system_prompt(
         "# Response format",
         "",
         "Response format for every step:",
-        "1) `Action:` followed by one short imperative describing the next UI move.",
-        "2) Call the `computer_use` tool exactly once using the provider's native tool-calling mechanism.",
-        "",
-        "Rules:",
-        "- Output exactly one short `Action:` line in assistant text.",
-        "- Put structured arguments only in the native tool call, not in assistant text.",
-        "- Execute one action per step.",
-        "- If the task is complete, call `computer_use` with `action_type=\"done\"` and the appropriate status.",
-        "- If the task reaches a sensitive, blocked, or unsafe state, call `computer_use` with `action_type=\"request_intervention\"` and a short reason instead of continuing or using `done`.",
     ])
+    sections.extend(prompt_contract["format"])
+    sections.extend(["", "Rules:"])
+    sections.extend(prompt_contract["rules"])
 
     return "\n".join(sections)

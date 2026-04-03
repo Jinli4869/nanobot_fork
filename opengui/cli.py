@@ -19,6 +19,7 @@ import yaml
 from openai import AsyncOpenAI
 
 from opengui.agent import AgentResult, GuiAgent
+from opengui.agent_profiles import SUPPORTED_AGENT_PROFILES
 from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import (
@@ -148,6 +149,7 @@ class CliConfig:
     max_steps: int = 15
     memory_dir: Path | None = None
     skills_dir: Path | None = None
+    agent_profile: str | None = None
     background: bool = False
     background_config: BackgroundConfig = field(default_factory=BackgroundConfig)
 
@@ -232,6 +234,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Execution backend",
     )
     parser.add_argument("--dry-run", action="store_true", help="Shortcut for --backend dry-run")
+    parser.add_argument(
+        "--agent-profile",
+        choices=SUPPORTED_AGENT_PROFILES,
+        default=None,
+        help="Prompt/action profile to emulate for the GUI agent.",
+    )
     parser.add_argument("--json", dest="json_output", action="store_true", help="Emit JSON output")
     parser.add_argument("--config", type=Path, help="Config file path")
     parser.add_argument(
@@ -377,6 +385,7 @@ def load_config(path: Path | None = None) -> CliConfig:
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
         memory_dir=_optional_path(raw.get("memory_dir")),
         skills_dir=_optional_path(raw.get("skills_dir")),
+        agent_profile=_optional_string(raw, "agent_profile"),
     )
 
 
@@ -472,6 +481,7 @@ async def _execute_agent(
         skill_executor=skill_executor,
         installed_apps=installed_apps,
         intervention_handler=_build_intervention_handler(backend),
+        agent_profile=args.agent_profile or config.agent_profile,
     )
     return await agent.run(task)
 
