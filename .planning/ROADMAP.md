@@ -36,7 +36,7 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
 | 28 | Shortcut Extraction Productionization | Replace legacy post-run extraction with trace-backed shortcut promotion into the new shortcut store, including gating, provenance, and merge/version behavior. | SXTR-01, SXTR-02, SXTR-03, SXTR-04 | 4 |
-| 29 | Shortcut Retrieval and Applicability Routing | Retrieve shortcut candidates for the current task and decide whether any shortcut is safe to execute on the live screen. | SUSE-01, SUSE-02 | 4 |
+| 29 | 1/2 | In Progress|  | 4 |
 | 30 | Stable Shortcut Execution and Fallback | Execute selected shortcuts through live binding, settle/verification checks, and clean fallback to non-shortcut flows. | SUSE-03, SUSE-04, SSTA-01, SSTA-02 | 4 |
 | 31 | Shortcut Observability and Regression Hardening | Make shortcut health diagnosable and prove the new path stays stable across representative execution seams. | SSTA-03, SSTA-04 | 4 |
 
@@ -66,7 +66,7 @@ Plans:
 
 **Depends on:** Phase 28
 **Requirements:** SUSE-01, SUSE-02
-**Plans:** 2/2 planned
+**Plans:** 1/2 plans executed
 
 Plans:
 - [ ] 29-01-PLAN.md - Build shortcut candidate retrieval using task plus current app/platform context
