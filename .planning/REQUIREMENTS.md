@@ -25,7 +25,7 @@ Requirements for turning the shipped shortcut architecture into a stable product
 
 - [x] **SSTA-01**: Each shortcut step waits for action completion and captures the next observation only after the UI has settled enough to evaluate the effect.
 - [x] **SSTA-02**: Shortcut execution verifies post-step state after every action and surfaces structured failure reasons when drift or contract violations occur.
-- [ ] **SSTA-03**: Shortcut runs emit structured telemetry for retrieval, applicability, grounding, settle, validation, fallback, and final outcome so unstable shortcuts can be diagnosed.
+- [x] **SSTA-03**: Shortcut runs emit structured telemetry for retrieval, applicability, grounding, settle, validation, fallback, and final outcome so unstable shortcuts can be diagnosed.
 - [ ] **SSTA-04**: Regression coverage proves shortcut extraction and execution remain stable across representative mobile and desktop execution seams or their CI-safe equivalents.
 
 ## Future Requirements (v1.7+)
@@ -70,7 +70,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SUSE-04 | Phase 30 | Complete |
 | SSTA-01 | Phase 30 | Complete |
 | SSTA-02 | Phase 30 | Complete |
-| SSTA-03 | Phase 31 | Pending |
+| SSTA-03 | Phase 31 | Complete |
 | SSTA-04 | Phase 31 | Pending |
 
 **Coverage:**
