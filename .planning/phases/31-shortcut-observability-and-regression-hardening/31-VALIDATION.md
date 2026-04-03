@@ -41,9 +41,9 @@ created: 2026-04-03
 | 31-01-01 | 01 | 1 | SSTA-03 | unit | `pytest tests/ -k "test_grounding_telemetry" -x -q` | ❌ W0 | ⬜ pending |
 | 31-01-02 | 01 | 1 | SSTA-03 | unit | `pytest tests/ -k "test_settle_telemetry" -x -q` | ❌ W0 | ⬜ pending |
 | 31-01-03 | 01 | 1 | SSTA-03 | unit | `pytest tests/ -k "test_full_trace_event_coverage" -x -q` | ❌ W0 | ⬜ pending |
-| 31-02-01 | 02 | 1 | SSTA-04 | integration-safe | `pytest tests/ -k "test_android_extraction_execution_seam" -x -q` | ❌ W0 | ⬜ pending |
-| 31-02-02 | 02 | 1 | SSTA-04 | integration-safe | `pytest tests/ -k "test_macos_extraction_execution_seam" -x -q` | ❌ W0 | ⬜ pending |
-| 31-02-03 | 02 | 1 | SSTA-04 | regression | `pytest tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py tests/test_opengui_p30_stable_shortcut_execution.py -q` | ✅ | ⬜ pending |
+| 31-02-01 | 02 | 2 | SSTA-04 | integration-safe | `pytest tests/ -k "test_android_extraction_execution_seam" -x -q` | ❌ W0 | ⬜ pending |
+| 31-02-02 | 02 | 2 | SSTA-04 | integration-safe | `pytest tests/ -k "test_macos_extraction_execution_seam" -x -q` | ❌ W0 | ⬜ pending |
+| 31-02-03 | 02 | 2 | SSTA-04 | regression | `pytest tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py tests/test_opengui_p30_stable_shortcut_execution.py -q` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -54,6 +54,7 @@ created: 2026-04-03
 - [ ] `tests/test_opengui_p31_shortcut_observability.py` — stubs for SSTA-03 (grounding/settle telemetry) and SSTA-04 (android + desktop seams)
 
 *Existing test infrastructure covers all prior-phase regression checks; only the new Phase 31 file is missing.*
+*Plan 02 verification is Wave 2 because it appends seam coverage to the shared Phase 31 test module created/populated by Plan 01.*
 
 ---
 
