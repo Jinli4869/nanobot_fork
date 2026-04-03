@@ -18,7 +18,13 @@ import numpy as np
 import yaml
 from openai import AsyncOpenAI
 
-from opengui.agent import AgentResult, GuiAgent
+from opengui.agent import (
+    AgentResult,
+    GuiAgent,
+    _AgentActionGrounder,
+    _AgentScreenshotProvider,
+    _AgentSubgoalRunner,
+)
 from opengui.agent_profiles import SUPPORTED_AGENT_PROFILES
 from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
@@ -413,6 +419,8 @@ async def build_optional_components(
     *,
     provider: OpenAICompatibleLLMProvider,
     backend: Any,
+    model_name: str,
+    artifacts_root: Path,
 ) -> tuple[Any | None, Any | None, Any | None]:
     if config.embedding is None:
         return None, None, None
@@ -431,9 +439,27 @@ async def build_optional_components(
         embedding_provider=embedding_provider,
         merge_llm=provider,
     )
+    state_validator = LLMStateValidator(provider)
     skill_executor = SkillExecutor(
         backend=backend,
-        state_validator=LLMStateValidator(provider),
+        state_validator=state_validator,
+        action_grounder=_AgentActionGrounder(
+            llm=provider,
+            model=model_name,
+            agent_profile=config.agent_profile,
+        ),
+        subgoal_runner=_AgentSubgoalRunner(
+            llm=provider,
+            backend=backend,
+            state_validator=state_validator,
+            model=model_name,
+            artifacts_root=artifacts_root,
+            agent_profile=config.agent_profile,
+        ),
+        screenshot_provider=_AgentScreenshotProvider(
+            backend=backend,
+            artifacts_root=artifacts_root,
+        ),
     )
     return memory_retriever, skill_library, skill_executor
 
@@ -446,10 +472,13 @@ async def _execute_agent(
     task: str,
 ) -> AgentResult:
     """Assemble and run the GUI agent with the given backend and provider."""
+    run_root = DEFAULT_RUNS_DIR / datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
     memory_retriever, skill_library, skill_executor = await build_optional_components(
         config,
         provider=provider,
         backend=backend,
+        model_name=config.provider.model,
+        artifacts_root=run_root,
     )
 
     # Resolve installed apps: read from cache, or fetch and cache
@@ -466,7 +495,6 @@ async def _execute_agent(
         except Exception:
             installed_apps = None
 
-    run_root = DEFAULT_RUNS_DIR / datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
     recorder = TrajectoryRecorder(output_dir=run_root, task=task, platform=backend.platform)
     agent = GuiAgent(
         llm=provider,

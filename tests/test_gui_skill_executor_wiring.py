@@ -106,7 +106,7 @@ class TestSkillExecutorWiringDisabled:
                     except Exception:
                         pass  # GuiAgent.__init__ is mocked, run may raise
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
         # skill_executor must be None (or absent, which defaults to None)
         assert captured_kwargs.get("skill_executor") is None
@@ -146,7 +146,7 @@ class TestSkillExecutorWiringEnabled:
                     except Exception:
                         pass
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
         assert "skill_executor" in captured_kwargs
         assert isinstance(captured_kwargs["skill_executor"], SkillExecutor)
@@ -184,7 +184,7 @@ class TestSkillExecutorWiringEnabled:
                     except Exception:
                         pass
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
         skill_executor = captured_kwargs.get("skill_executor")
         assert isinstance(skill_executor, SkillExecutor)
@@ -222,7 +222,7 @@ class TestSkillExecutorWiringEnabled:
                     except Exception:
                         pass
 
-        asyncio.get_event_loop().run_until_complete(_run())
+        asyncio.run(_run())
 
         skill_executor = captured_kwargs.get("skill_executor")
         assert isinstance(skill_executor, SkillExecutor)

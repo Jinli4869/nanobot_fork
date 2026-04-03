@@ -10,13 +10,14 @@ from unittest.mock import AsyncMock
 import pytest
 
 from opengui.action import ActionError, parse_action, resolve_coordinate
-from opengui.agent import GuiAgent
+from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
 from opengui.agent_profiles import normalize_profile_response
 from opengui.backends.adb import AdbBackend
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
+from opengui.skills.data import SkillStep
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 
@@ -42,6 +43,49 @@ class _RecordingLLM(_ScriptedLLM):
     async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
         self.calls.append(copy.deepcopy(messages))
         return await super().chat(messages, tools=tools, tool_choice=tool_choice)
+
+
+class _RecordingValidator:
+    def __init__(self, returns: list[bool]) -> None:
+        self._returns = list(returns)
+        self.calls: list[dict[str, object]] = []
+
+    async def validate(self, valid_state: str, screenshot=None) -> bool:
+        self.calls.append({"valid_state": valid_state, "screenshot": screenshot})
+        if not self._returns:
+            raise AssertionError("No validator responses left.")
+        return self._returns.pop(0)
+
+
+class _SkillTestBackend:
+    def __init__(self) -> None:
+        self.platform = "dry-run"
+        self.executed_actions: list[object] = []
+        self.observe_calls: list[Path] = []
+
+    async def execute(self, action, timeout: float = 5.0) -> str:
+        del timeout
+        self.executed_actions.append(action)
+        return f"executed:{action.action_type}"
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        del timeout
+        self.observe_calls.append(screenshot_path)
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"png")
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1000,
+            screen_height=1000,
+            foreground_app="DryRun",
+            platform=self.platform,
+        )
+
+    async def preflight(self) -> None:
+        return None
+
+    async def list_apps(self) -> list[str]:
+        return []
 
 
 def test_parse_scroll_allows_center_default() -> None:
@@ -228,6 +272,68 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
         "y": 250,
         "relative": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
+    screenshot = tmp_path / "grounder.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([
+        LLMResponse(
+            content=(
+                'Thought: Tap the button\n'
+                'Action: "Tap login"\n'
+                '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>'
+            ),
+            tool_calls=None,
+        )
+    ])
+    grounder = _AgentActionGrounder(llm, model="qwen-vl-max", agent_profile="qwen3vl")
+    step = SkillStep(action_type="tap", target="Login button", parameters={"x_hint": "unused"})
+
+    action = await grounder.ground(step, screenshot, {})
+
+    assert action.action_type == "tap"
+    assert action.x == 500
+    assert action.y == 250
+    assert action.relative is True
+    assert len(llm.calls) == 1
+    assert llm.calls[0][0]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
+    screenshot = tmp_path / "subgoal.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([
+        LLMResponse(
+            content=(
+                'Thought: Move toward the target\n'
+                'Action: "Tap settings"\n'
+                '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[400,300]}}</tool_call>'
+            ),
+            tool_calls=None,
+        )
+    ])
+    backend = _SkillTestBackend()
+    validator = _RecordingValidator([True])
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=backend,
+        state_validator=validator,
+        model="qwen-vl-max",
+        artifacts_root=tmp_path / "artifacts",
+        agent_profile="qwen3vl",
+    )
+
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+
+    assert result.success is True
+    assert backend.executed_actions
+    action = backend.executed_actions[0]
+    assert action.action_type == "tap"
+    assert action.relative is True
+    assert validator.calls[0]["valid_state"] == "Settings screen visible"
 
 
 @pytest.mark.asyncio

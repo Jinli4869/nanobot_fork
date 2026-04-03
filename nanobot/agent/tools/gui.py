@@ -242,6 +242,7 @@ class GuiSubagentTool(Tool):
                 action_grounder=_AgentActionGrounder(
                     llm=self._llm_adapter,
                     model=self._model,
+                    agent_profile=getattr(self._gui_config, "agent_profile", None),
                 ),
                 subgoal_runner=_AgentSubgoalRunner(
                     llm=self._llm_adapter,
@@ -249,6 +250,7 @@ class GuiSubagentTool(Tool):
                     state_validator=state_validator,
                     model=self._model,
                     artifacts_root=run_dir,
+                    agent_profile=getattr(self._gui_config, "agent_profile", None),
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
                     backend=active_backend,
@@ -285,6 +287,7 @@ class GuiSubagentTool(Tool):
             unified_skill_search=unified_skill_search,
             memory_store=memory_store,
             shortcut_applicability_router=shortcut_applicability_router,
+            agent_profile=getattr(self._gui_config, "agent_profile", None),
         )
 
         result = await agent.run(task=task)
