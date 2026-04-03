@@ -4,7 +4,7 @@ milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
 stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-03T11:59:37Z"
+last_updated: "2026-04-03T12:20:34Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
@@ -219,12 +219,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
 | 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
+| 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last activity: 2026-04-03 - Completed quick task 260403-rhj: 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt
+Last activity: 2026-04-03 - Completed quick task 260403-s40: 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上
 
 Last session: 2026-04-03T10:45:23.628Z
 Stopped at: Completed 31-02-PLAN.md
