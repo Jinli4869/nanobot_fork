@@ -123,6 +123,9 @@ def test_cli_parses_task_and_backend_flags() -> None:
     dry_run = cli.parse_args(["--task", "Open Settings", "--backend", "adb", "--dry-run"])
     assert cli.resolve_backend_name(dry_run) == "dry-run"
 
+    profiled = cli.parse_args(["--task", "Open Settings", "--agent-profile", "qwen3vl"])
+    assert profiled.agent_profile == "qwen3vl"
+
     with pytest.raises(SystemExit):
         cli.parse_args([])
 
@@ -133,6 +136,7 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     default_config = _write_config(
         tmp_path / ".opengui" / "config.yaml",
         """
+        agent_profile: gelab
         provider:
           base_url: http://localhost:1234/v1
           model: qwen-gui
@@ -142,6 +146,7 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     monkeypatch.setenv("OPENAI_API_KEY", "env-key")
 
     cfg = cli.load_config()
+    assert cfg.agent_profile == "gelab"
     assert cfg.provider.base_url == "http://localhost:1234/v1"
     assert cfg.provider.model == "qwen-gui"
     assert cfg.provider.api_key == "env-key"
@@ -260,7 +265,7 @@ def test_cli_runs_dry_run_agent_loop(
     monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
     monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
 
-    exit_code = cli.main(["--dry-run", "--task", "Open Settings"])
+    exit_code = cli.main(["--dry-run", "--task", "Open Settings", "--agent-profile", "seed"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -276,6 +281,7 @@ def test_cli_runs_dry_run_agent_loop(
     assert recorder_state["output_dir"].parent == cli.DEFAULT_RUNS_DIR
     assert agent_state["backend"] is backend
     assert agent_state["model"] == "qwen-gui"
+    assert agent_state["agent_profile"] == "seed"
     assert agent_state["artifacts_root"] == recorder_state["output_dir"]
 
 
