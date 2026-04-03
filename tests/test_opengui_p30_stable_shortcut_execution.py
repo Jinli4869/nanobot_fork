@@ -15,6 +15,7 @@ from opengui.grounding.protocol import GroundingResult
 from opengui.observation import Observation
 from opengui.skills.data import SkillStep
 from opengui.skills.multi_layer_executor import (
+    ContractViolationReport,
     LLMConditionEvaluator,
     ShortcutExecutionSuccess,
     ShortcutStepResult,
@@ -333,3 +334,103 @@ async def test_nanobot_wires_shortcut_executor(tmp_path: Path) -> None:
     assert captured_gui_agent_kwargs["shortcut_executor"] is not None
     assert captured_gui_agent_kwargs["shortcut_applicability_router"] is not None
     assert constructed["shortcut_executor"]["condition_evaluator"] is constructed["router"]["condition_evaluator"]
+
+
+@pytest.mark.asyncio
+async def test_settle_timing(tmp_path: Path) -> None:
+    executor = ShortcutExecutor(
+        backend=_FakeBackend(),
+        grounder=_NeverCalledGrounder(),
+        screenshot_dir=tmp_path / "settle_test",
+        post_action_settle_seconds=0.2,
+    )
+
+    with patch("opengui.skills.multi_layer_executor.asyncio.sleep", new_callable=AsyncMock) as sleep_mock:
+        result = await executor.execute(_make_shortcut(action_type="tap"))
+
+    assert isinstance(result, ShortcutExecutionSuccess)
+    sleep_mock.assert_awaited_once_with(0.2)
+
+
+@pytest.mark.asyncio
+async def test_post_step_observation(tmp_path: Path) -> None:
+    call_log: list[str] = []
+
+    class _LoggingBackend:
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            screenshot_path.touch()
+            boundary = "pre" if "pre" in screenshot_path.name else "post"
+            call_log.append(f"observe_{boundary}")
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=1080,
+                screen_height=1920,
+                foreground_app="com.example.app",
+                platform="android",
+            )
+
+        async def execute(self, action: Action, timeout: float = 5.0) -> str:
+            call_log.append("execute")
+            return "ok"
+
+        @property
+        def platform(self) -> str:
+            return "android"
+
+    executor = ShortcutExecutor(
+        backend=_LoggingBackend(),
+        grounder=_NeverCalledGrounder(),
+        screenshot_dir=tmp_path / "order_test",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(_make_shortcut(action_type="tap"))
+
+    assert isinstance(result, ShortcutExecutionSuccess)
+    assert call_log == ["observe_pre", "execute", "observe_post"]
+
+
+@pytest.mark.asyncio
+async def test_post_step_validation(tmp_path: Path) -> None:
+    captured_screenshots: list[Path] = []
+    postcondition = StateDescriptor(kind="screen_state", value="confirm_screen_visible")
+
+    class _CapturingEvaluator:
+        async def evaluate(self, condition: StateDescriptor, screenshot: Path) -> bool:
+            captured_screenshots.append(screenshot)
+            return False
+
+    shortcut = ShortcutSkill(
+        skill_id="sc-post-validate",
+        name="PostVal",
+        description="tests post validation",
+        app="com.example.app",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="tap target",
+                fixed=True,
+                fixed_values={"action_type": "tap", "x": 10, "y": 20},
+            ),
+        ),
+        postconditions=(postcondition,),
+    )
+
+    executor = ShortcutExecutor(
+        backend=_FakeBackend(),
+        grounder=_NeverCalledGrounder(),
+        condition_evaluator=_CapturingEvaluator(),
+        screenshot_dir=tmp_path / "post_val",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(shortcut)
+
+    assert isinstance(result, ContractViolationReport)
+    assert result.boundary == "post"
+    assert result.step_index == 0
+    assert result.failed_condition == postcondition
+    assert len(captured_screenshots) == 1
+    assert "post" in captured_screenshots[0].name
