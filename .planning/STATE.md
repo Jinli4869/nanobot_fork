@@ -2,15 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
-status: unknown
-stopped_at: Completed 29-02-PLAN.md
-last_updated: "2026-04-03T04:46:03.978Z"
+current_phase: 30
+current_phase_name: stable-shortcut-execution-and-fallback
+current_plan: 3
+status: ready_for_verification
+stopped_at: Completed 30-03-PLAN.md
+last_updated: "2026-04-03T06:50:35.522Z"
 last_activity: 2026-04-03
 progress:
   total_phases: 4
-  completed_phases: 2
-  total_plans: 5
-  completed_plans: 5
+  completed_phases: 3
+  total_plans: 8
+  completed_plans: 8
   percent: 100
 ---
 
@@ -21,18 +24,29 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 29 — shortcut-retrieval-applicability-routing
+**Current focus:** Phase 30 — stable-shortcut-execution-and-fallback
+Status: Ready for verification
+Last Activity: 2026-04-03
 
 ## Current Position
 
-Phase: 29 (shortcut-retrieval-applicability-routing) — EXECUTING
-Plan: 1 of 2
+Current Phase: 30
+Current Phase Name: stable-shortcut-execution-and-fallback
+Current Plan: 3
+Total Plans in Phase: 3
+Phase: 30 (stable-shortcut-execution-and-fallback) — READY_FOR_VERIFICATION
+Plan: 3 of 3
 
 ## Performance Metrics
 
 **Progress:** [██████████] 100%
 
-Phase 28 is complete and verified. Milestone tracking is now focused on Phase 29 planning and execution.
+| Phase/Plan | Duration | Scope | Files |
+|------------|----------|-------|-------|
+| Phase 30 P02 | 5m | 1 tasks | 1 files |
+| Phase 30 P03 | 5m | 1 tasks | 1 files |
+
+Phase 28 is complete and verified. Milestone tracking is now focused on Phase 30 execution and fallback hardening.
 
 ## Accumulated Context
 
@@ -155,6 +169,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 29]: _AlwaysPassEvaluator default enables test/dry-run scenarios without LLM or device dependency
 - [Phase 29-shortcut-retrieval-applicability-routing]: Applicability evaluation takes pre-loop observation at attempt==0 so screenshot is temporally close to execution; all 4 code paths emit shortcut_applicability trajectory event for full traceability
 - [Phase 29-shortcut-retrieval-applicability-routing]: ShortcutApplicabilityRouter wired only when enable_skill_execution=True because LLMStateValidator is only constructed in that branch; _shortcut_attempted flag drives retry clearing
+- [Phase 30]: Plan 02 stayed test-only because the new settle and post-step assertions passed immediately against the existing Plan 01 runtime behavior.
+- [Phase 30]: Postcondition coverage now asserts the evaluator saw a post-boundary screenshot so settled UI state is verified explicitly.
+- [Phase 30]: Fallback telemetry assertions use a minimal in-memory recorder fake instead of JSONL file inspection to keep the tests deterministic.
 
 ### Pending Todos
 
@@ -207,6 +224,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-04-03
 
-Last session: 2026-04-03T04:40:42.390Z
-Stopped at: Completed 29-02-PLAN.md
+Last session: 2026-04-03T06:50:35.519Z
+Stopped at: Completed 30-03-PLAN.md
 Resume file: None
