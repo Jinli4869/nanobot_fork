@@ -205,14 +205,87 @@ def test_retrieval_emits_trajectory_event() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Task 2 stub — will be implemented in Task 2
+# Task 2 tests — _retrieve_shortcut_candidates in GuiAgent
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(reason="Plan 01 Task 2")
-def test_retrieval_in_agent_run() -> None:
+@pytest.mark.asyncio
+async def test_retrieval_in_agent_run() -> None:
     """
-    GuiAgent._retrieve_shortcut_candidates returns filtered list and emits
-    shortcut_retrieval trajectory event. Implemented in Task 2.
+    GuiAgent._retrieve_shortcut_candidates returns platform-filtered candidates
+    and emits a 'shortcut_retrieval' trajectory event with candidate_count=2.
     """
-    raise NotImplementedError("Task 2 not yet implemented")
+    import json
+    import tempfile
+
+    from opengui.agent import GuiAgent
+    from opengui.trajectory.recorder import TrajectoryRecorder
+
+    # Build mock shortcuts: 2 android (score=0.8) and 1 ios (score=0.9)
+    android_sc1 = _make_shortcut("sc-a1", "Android Action A", "com.tencent.mm", "android")
+    android_sc2 = _make_shortcut("sc-a2", "Android Action B", "com.eg.android.AlipayGphone", "android")
+    ios_sc1 = _make_shortcut("sc-i1", "iOS Action", "com.tencent.xin", "ios")
+
+    mock_search_results = [
+        _make_result(android_sc1, 0.8),
+        _make_result(android_sc2, 0.8),
+        _make_result(ios_sc1, 0.9),
+    ]
+
+    # Mock UnifiedSkillSearch
+    mock_search = MagicMock()
+    mock_search.search = AsyncMock(return_value=mock_search_results)
+
+    # Mock DeviceBackend
+    mock_backend = MagicMock()
+    mock_backend.platform = "android"
+
+    # Mock LLMProvider
+    mock_llm = MagicMock()
+
+    # Real TrajectoryRecorder — keep tmpdir alive for the duration of the test
+    with tempfile.TemporaryDirectory() as tmpdir:
+        recorder = TrajectoryRecorder(
+            output_dir=tmpdir,
+            task="open wechat",
+            platform="android",
+        )
+        recorder.start()
+
+        agent = GuiAgent(
+            llm=mock_llm,
+            backend=mock_backend,
+            trajectory_recorder=recorder,
+            unified_skill_search=mock_search,
+            skill_threshold=0.5,
+        )
+
+        result = await agent._retrieve_shortcut_candidates(
+            "open wechat", platform="android", app_hint=None
+        )
+
+        # Assertions inside the context so the tmpdir is still alive
+        # Should return only the 2 android candidates (ios filtered out)
+        assert len(result) == 2
+        skill_ids = {r.skill.skill_id for r in result}
+        assert skill_ids == {"sc-a1", "sc-a2"}
+
+        # Verify mock was called with top_k=5
+        mock_search.search.assert_called_once_with("open wechat", top_k=5)
+
+        # Verify trajectory recorder received the shortcut_retrieval event
+        trace_path = recorder.path
+        assert trace_path is not None and trace_path.exists()
+
+        events = [
+            json.loads(line)
+            for line in trace_path.read_text().splitlines()
+            if line.strip()
+        ]
+        retrieval_events = [e for e in events if e.get("type") == "shortcut_retrieval"]
+        assert len(retrieval_events) == 1
+
+        event = retrieval_events[0]
+        assert event["candidate_count"] == 2
+        assert event["task"] == "open wechat"
+        assert event["platform"] == "android"
