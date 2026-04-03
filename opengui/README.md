@@ -132,6 +132,8 @@ Options:
   --backend {adb,ios,hdc,local,dry-run}
                           Execution backend (default: local)
   --dry-run               Shortcut for --backend dry-run
+  --agent-profile {default,general_e2e,qwen3vl,mai_ui,gelab,seed}
+                          Prompt/action profile for GUI-only models
   --config PATH           Config file path (default: ~/.opengui/config.yaml)
   --refresh-apps          Force re-fetch and cache the installed app list
   --background            Run on virtual Xvfb display [Linux only]
@@ -165,11 +167,54 @@ opengui --backend local --background "Take a screenshot of the desktop"
 # Dry-run (no real actions taken, useful for testing config)
 opengui --dry-run "Click the save button"
 
+# Use a non-default GUI profile
+opengui --backend adb --agent-profile qwen3vl "Open Settings and enable Wi-Fi"
+
 # Force refresh the installed app list, then run
 opengui --backend adb --refresh-apps "Open WeChat"
 
 # Use a custom config file
 opengui --config ~/my-config.yaml "Open the calculator"
+```
+
+### Supported GUI agent profiles
+
+Use a profile when your GUI model does not speak OpenAI-style native tool calling and instead expects a different prompt or action syntax.
+
+| Profile | Best for | Expected action format |
+|---------|----------|------------------------|
+| `default` | OpenAI-style native tool calling | Native `computer_use` tool call |
+| `general_e2e` | MobileWorld `general_e2e` / `planner_executor` style agents | `Action: { ... }` JSON in plain text |
+| `qwen3vl` | Qwen3VL-style GUI agents | `<tool_call>...</tool_call>` JSON block |
+| `mai_ui` | MAI-UI-style GUI agents | `<tool_call>...</tool_call>` JSON block |
+| `gelab` | Gelab-style GUI agents | Tab-separated action line after reasoning |
+| `seed` | Seed GUI XML-style agents | XML-like function block inside `<tool_call>` |
+
+Notes:
+
+- Prefer the canonical profile names shown above.
+- `planner_executor` is treated as an alias of `general_e2e` in config-driven code paths, but the CLI flag should use `general_e2e`.
+- If you omit the profile, OpenGUI defaults to `default`, which expects native tool calling.
+
+### Setting the profile in standalone OpenGUI
+
+For one-off runs, pass the profile on the CLI:
+
+```bash
+opengui --backend adb --agent-profile qwen3vl "Open Settings and enable Wi-Fi"
+```
+
+For repeated use, set it in `~/.opengui/config.yaml`:
+
+```yaml
+provider:
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen-vl-max
+  api_key: ${DASHSCOPE_API_KEY}
+
+agent_profile: qwen3vl
+adb:
+  serial: emulator-5554
 ```
 
 ### Platform notes
@@ -299,6 +344,27 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
 > **Note on `gui.agentProfile`:** Use this when your GUI model expects a non-default action/prompt contract. Supported values are `default`, `general_e2e`, `qwen3vl`, `mai_ui`, `gelab`, and `seed`.
 >
 > **Note on `gui.evaluation.judgeModel`:** This judge model is only used for optional post-run evaluation. It does not change the model that actually performs the GUI task.
+
+### Setting the profile in nanobot `config.json`
+
+When OpenGUI runs through nanobot, set the profile under `gui.agentProfile`:
+
+```json
+{
+  "gui": {
+    "backend": "adb",
+    "model": "openrouter/qwen/qwen2.5-vl-72b-instruct",
+    "provider": "openrouter",
+    "agentProfile": "qwen3vl"
+  }
+}
+```
+
+Notes:
+
+- In JSON, use camelCase: `agentProfile`.
+- In Python or internally generated config objects, `agent_profile` is also accepted.
+- For config files, `planner_executor` is accepted as an alias and normalized to `general_e2e`, but using the canonical value is clearer.
 
 ### Using a different provider/model for GUI tasks
 
