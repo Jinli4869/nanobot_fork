@@ -289,3 +289,357 @@ async def test_retrieval_in_agent_run() -> None:
         assert event["candidate_count"] == 2
         assert event["task"] == "open wechat"
         assert event["platform"] == "android"
+
+
+# ---------------------------------------------------------------------------
+# Plan 02 tests — ShortcutApplicabilityRouter: named SUSE-02 behaviors
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_applicability_run_when_conditions_pass() -> None:
+    """ShortcutApplicabilityRouter with always-pass evaluator returns outcome='run'
+    for a shortcut with 2 preconditions.
+    """
+    shortcut = _make_shortcut(
+        "sc-run",
+        "WeChat Chat",
+        "com.tencent.mm",
+        "android",
+        preconditions=(
+            StateDescriptor(kind="app_visible", value="wechat"),
+            StateDescriptor(kind="screen_contains", value="chat_list"),
+        ),
+    )
+    router = ShortcutApplicabilityRouter()  # default always-pass evaluator
+    decision = await router.evaluate(shortcut, Path("/tmp/fake.png"))
+    assert decision.outcome == "run"
+    assert decision.shortcut_id == "sc-run"
+    assert decision.reason == "all_preconditions_satisfied"
+
+
+@pytest.mark.asyncio
+async def test_applicability_skip_when_condition_fails() -> None:
+    """Router with evaluator returning True for first, False for second gives 'skip'."""
+    shortcut = _make_shortcut(
+        "sc-skip",
+        "WeChat Chat",
+        "com.tencent.mm",
+        "android",
+        preconditions=(
+            StateDescriptor(kind="app_visible", value="wechat"),
+            StateDescriptor(kind="screen_contains", value="chat_list"),
+        ),
+    )
+    call_count = 0
+
+    class _SecondCallFailEvaluator:
+        async def evaluate(self, cond: StateDescriptor, screenshot: Path) -> bool:
+            nonlocal call_count
+            call_count += 1
+            return call_count < 2  # True on first, False on second
+
+    router = ShortcutApplicabilityRouter(condition_evaluator=_SecondCallFailEvaluator())
+    decision = await router.evaluate(shortcut, Path("/tmp/fake.png"))
+    assert decision.outcome == "skip"
+    assert decision.shortcut_id == "sc-skip"
+    assert decision.failed_condition is not None
+    assert decision.failed_condition.value == "chat_list"
+
+
+@pytest.mark.asyncio
+async def test_applicability_exception_produces_fallback() -> None:
+    """Router with evaluator that raises RuntimeError returns outcome='fallback' with
+    'evaluation_error' in reason.
+    """
+    shortcut = _make_shortcut(
+        "sc-fallback",
+        "Some Action",
+        "com.tencent.mm",
+        "android",
+        preconditions=(StateDescriptor(kind="app_visible", value="wechat"),),
+    )
+
+    class _RaisingEvaluator:
+        async def evaluate(self, cond: StateDescriptor, screenshot: Path) -> bool:
+            raise RuntimeError("LLM timeout")
+
+    router = ShortcutApplicabilityRouter(condition_evaluator=_RaisingEvaluator())
+    decision = await router.evaluate(shortcut, Path("/tmp/fake.png"))
+    assert decision.outcome == "fallback"
+    assert "evaluation_error" in decision.reason
+
+
+# ---------------------------------------------------------------------------
+# Plan 02 tests — _evaluate_shortcut_applicability in GuiAgent context
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_agent(
+    router: ShortcutApplicabilityRouter | None = None,
+) -> tuple:
+    """Build a minimal GuiAgent with mocked backend/LLM/recorder.
+
+    Returns (agent, recorder) so callers can inspect recorded events.
+    """
+    import tempfile
+
+    from opengui.agent import GuiAgent
+    from opengui.trajectory.recorder import TrajectoryRecorder
+
+    tmpdir = tempfile.mkdtemp()
+    mock_backend = MagicMock()
+    mock_backend.platform = "android"
+    mock_llm = MagicMock()
+    recorder = TrajectoryRecorder(
+        output_dir=tmpdir,
+        task="test task",
+        platform="android",
+    )
+    recorder.start()
+    agent = GuiAgent(
+        llm=mock_llm,
+        backend=mock_backend,
+        trajectory_recorder=recorder,
+        shortcut_applicability_router=router,
+    )
+    return agent, recorder
+
+
+@pytest.mark.asyncio
+async def test_fallback_when_no_candidates() -> None:
+    """_evaluate_shortcut_applicability with empty candidate list returns
+    ApplicabilityDecision(outcome='fallback', reason='no_candidates') and
+    emits a shortcut_applicability trajectory event.
+    """
+    import json
+
+    agent, recorder = _make_minimal_agent()
+    decision = await agent._evaluate_shortcut_applicability(
+        [], screenshot_path=Path("/tmp/test.png"), task="test"
+    )
+    assert decision.outcome == "fallback"
+    assert decision.reason == "no_candidates"
+
+    # Check trajectory event was written
+    trace_path = recorder.path
+    assert trace_path is not None and trace_path.exists()
+    events = [
+        json.loads(line)
+        for line in trace_path.read_text().splitlines()
+        if line.strip()
+    ]
+    applicability_events = [e for e in events if e.get("type") == "shortcut_applicability"]
+    assert len(applicability_events) == 1
+    assert applicability_events[0]["outcome"] == "fallback"
+    assert applicability_events[0]["reason"] == "no_candidates"
+
+
+@pytest.mark.asyncio
+async def test_applicability_emits_trajectory_event() -> None:
+    """After _evaluate_shortcut_applicability with one passing candidate, trajectory
+    recorder has a 'shortcut_applicability' event with outcome='run' and correct shortcut_id.
+    """
+    import json
+
+    shortcut = _make_shortcut(
+        "sc-traj",
+        "WeChat Action",
+        "com.tencent.mm",
+        "android",
+        preconditions=(),
+    )
+    candidate = _make_result(shortcut, 0.85)
+
+    router = ShortcutApplicabilityRouter()  # always-pass
+    agent, recorder = _make_minimal_agent(router=router)
+    decision = await agent._evaluate_shortcut_applicability(
+        [candidate], screenshot_path=Path("/tmp/test.png"), task="open wechat"
+    )
+    assert decision.outcome == "run"
+
+    trace_path = recorder.path
+    assert trace_path is not None and trace_path.exists()
+    events = [
+        json.loads(line)
+        for line in trace_path.read_text().splitlines()
+        if line.strip()
+    ]
+    applicability_events = [e for e in events if e.get("type") == "shortcut_applicability"]
+    assert len(applicability_events) == 1
+    evt = applicability_events[0]
+    assert evt["outcome"] == "run"
+    assert evt["shortcut_id"] == "sc-traj"
+
+
+@pytest.mark.asyncio
+async def test_applicability_selects_first_passing_candidate() -> None:
+    """Given 2 candidates, first fails precondition, second passes — decision returns
+    outcome='run' with shortcut_id matching the second candidate.
+    """
+    sc_fail = _make_shortcut(
+        "sc-fail",
+        "Failing Action",
+        "com.tencent.mm",
+        "android",
+        preconditions=(StateDescriptor(kind="app_visible", value="wechat"),),
+    )
+    sc_pass = _make_shortcut(
+        "sc-pass",
+        "Passing Action",
+        "com.tencent.mm",
+        "android",
+        preconditions=(StateDescriptor(kind="app_visible", value="wechat"),),
+    )
+    candidates = [_make_result(sc_fail, 0.9), _make_result(sc_pass, 0.8)]
+
+    evaluated_ids: list[str] = []
+
+    class _FailFirstEvaluator:
+        async def evaluate(self, cond: StateDescriptor, screenshot: Path) -> bool:
+            return cond.value != "wechat" or len(evaluated_ids) >= 1
+
+    # Track which shortcut is being evaluated by the router
+    original_evaluate = ShortcutApplicabilityRouter.evaluate
+
+    call_shortcut_ids: list[str] = []
+
+    async def patched_evaluate(
+        self_router: ShortcutApplicabilityRouter,
+        candidate: ShortcutSkill,
+        screenshot_path: Path,
+    ) -> ApplicabilityDecision:
+        call_shortcut_ids.append(candidate.skill_id)
+        if candidate.skill_id == "sc-fail":
+            return ApplicabilityDecision(
+                outcome="skip",
+                shortcut_id=candidate.skill_id,
+                reason="precondition_failed:app_visible:wechat",
+                failed_condition=StateDescriptor(kind="app_visible", value="wechat"),
+            )
+        return ApplicabilityDecision(
+            outcome="run",
+            shortcut_id=candidate.skill_id,
+            reason="all_preconditions_satisfied",
+        )
+
+    router = ShortcutApplicabilityRouter()
+    agent, _ = _make_minimal_agent(router=router)
+
+    with patch.object(ShortcutApplicabilityRouter, "evaluate", patched_evaluate):
+        decision = await agent._evaluate_shortcut_applicability(
+            candidates, screenshot_path=Path("/tmp/test.png"), task="test"
+        )
+
+    assert decision.outcome == "run"
+    assert decision.shortcut_id == "sc-pass"
+    assert "sc-fail" in call_shortcut_ids
+    assert "sc-pass" in call_shortcut_ids
+
+
+@pytest.mark.asyncio
+async def test_failed_shortcut_clears_for_retry() -> None:
+    """After a shortcut-assisted first attempt fails, the agent's run() clears
+    matched_skill before subsequent retries so retries use free exploration.
+
+    We verify this by checking that _run_once is called twice and the second
+    call receives skill_context=None (indicating no shortcut context injected).
+    """
+    import tempfile
+
+    from opengui.agent import AgentResult, GuiAgent
+    from opengui.trajectory.recorder import TrajectoryRecorder
+
+    tmpdir = tempfile.mkdtemp()
+    mock_backend = MagicMock()
+    mock_backend.platform = "android"
+    mock_backend.observe = AsyncMock(return_value=MagicMock(screenshot_path="/tmp/shot.png"))
+    mock_backend.preflight = AsyncMock()
+    mock_llm = MagicMock()
+    recorder = TrajectoryRecorder(
+        output_dir=tmpdir, task="test", platform="android"
+    )
+
+    # Shortcut that will be found
+    shortcut = _make_shortcut(
+        "sc-clear-test",
+        "Test Shortcut",
+        "com.tencent.mm",
+        "android",
+        preconditions=(),
+    )
+    candidate = _make_result(shortcut, 0.9)
+
+    mock_search = MagicMock()
+    mock_search.search = AsyncMock(return_value=[candidate])
+
+    # Router that always approves
+    router = ShortcutApplicabilityRouter()
+
+    run_once_calls: list[dict] = []
+    fail_count = [0]
+
+    async def mock_run_once(
+        task: str,
+        *,
+        app_hint: object,
+        run_dir: object,
+        memory_context: object,
+        skill_context: object,
+    ) -> AgentResult:
+        run_once_calls.append({"skill_context": skill_context})
+        fail_count[0] += 1
+        if fail_count[0] == 1:
+            return AgentResult(success=False, summary="shortcut failed", error="failed")
+        return AgentResult(success=True, summary="done")
+
+    agent = GuiAgent(
+        llm=mock_llm,
+        backend=mock_backend,
+        trajectory_recorder=recorder,
+        unified_skill_search=mock_search,
+        shortcut_applicability_router=router,
+        skill_threshold=0.5,
+    )
+
+    with patch.object(agent, "_run_once", mock_run_once):
+        result = await agent.run("test task", max_retries=2)
+
+    assert result.success is True
+    assert len(run_once_calls) == 2
+    # First call should have skill_context (shortcut was run)
+    # Second call should have NO skill context (shortcut was cleared)
+    assert run_once_calls[1]["skill_context"] is None
+
+
+@pytest.mark.asyncio
+async def test_normal_path_unchanged_when_no_shortcut() -> None:
+    """When no unified_skill_search is set, run() proceeds through the normal
+    retry loop without error.
+    """
+    import tempfile
+
+    from opengui.agent import AgentResult, GuiAgent
+    from opengui.trajectory.recorder import TrajectoryRecorder
+
+    tmpdir = tempfile.mkdtemp()
+    mock_backend = MagicMock()
+    mock_backend.platform = "android"
+    mock_llm = MagicMock()
+    recorder = TrajectoryRecorder(
+        output_dir=tmpdir, task="test", platform="android"
+    )
+
+    agent = GuiAgent(
+        llm=mock_llm,
+        backend=mock_backend,
+        trajectory_recorder=recorder,
+        # No unified_skill_search — no shortcuts at all
+    )
+
+    with patch.object(
+        agent, "_run_once", AsyncMock(return_value=AgentResult(success=True, summary="done"))
+    ):
+        result = await agent.run("test task")
+
+    assert result.success is True

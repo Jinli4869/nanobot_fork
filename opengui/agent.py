@@ -498,7 +498,9 @@ class GuiAgent:
             task, platform=self.backend.platform, app_hint=app_hint,
         )
 
-        # 4. If skill matched, attempt skill execution first
+        # 4. If skill matched (legacy path), attempt skill execution first.
+        # Shortcut candidates from step 3b are evaluated inside the retry loop
+        # at attempt 0 using a live screenshot so applicability is screen-aware.
         skill_context: str | None = None
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
@@ -532,9 +534,84 @@ class GuiAgent:
         last_steps_taken = 0
         result: AgentResult | None = None
 
+        # Tracks whether the first attempt used a shortcut so retries can clear
+        # matched_skill and skill_context to avoid stale shortcut context.
+        _shortcut_attempted: bool = False
+
         for attempt in range(max_retries):
             run_dir = self._make_run_dir(task, attempt)
             last_trace_path = str(run_dir)
+
+            # Attempt 0: evaluate shortcut applicability using a live screenshot.
+            # When applicability returns "run", the selected shortcut takes priority
+            # over any legacy _search_skill match and its execution result supplies
+            # skill_context for this attempt.
+            if attempt == 0 and shortcut_candidates:
+                pre_obs = await self.backend.observe(
+                    run_dir / "screenshots" / "pre_shortcut_check.png",
+                    timeout=self.step_timeout,
+                )
+                pre_screenshot = (
+                    Path(pre_obs.screenshot_path) if pre_obs.screenshot_path else None
+                )
+                applicability_decision = await self._evaluate_shortcut_applicability(
+                    shortcut_candidates,
+                    screenshot_path=pre_screenshot,
+                    task=task,
+                )
+                if applicability_decision.outcome == "run":
+                    # Find the candidate matching the approved shortcut_id
+                    approved = next(
+                        (
+                            r for r in shortcut_candidates
+                            if r.skill.skill_id == applicability_decision.shortcut_id
+                        ),
+                        None,
+                    )
+                    if approved is not None:
+                        matched_skill = approved.skill
+                        final_score = applicability_decision.score
+                        memory_context = await self._inject_skill_memory_context(
+                            matched_skill, memory_context
+                        )
+                        if self._skill_executor is not None:
+                            self._trajectory_recorder.set_phase(
+                                ExecutionPhase.SKILL,
+                                reason=(
+                                    f"Applicability approved shortcut: "
+                                    f"{matched_skill.name} "
+                                    f"(score={final_score:.2f if final_score is not None else 'n/a'})"
+                                ),
+                            )
+                            try:
+                                skill_result = await self._skill_executor.execute(matched_skill)
+                                exec_summary = getattr(skill_result, "execution_summary", None)
+                                skill_context = (
+                                    exec_summary if isinstance(exec_summary, str) else None
+                                )
+                                if skill_result.state.value == "succeeded":
+                                    self._trajectory_recorder.set_phase(
+                                        ExecutionPhase.AGENT,
+                                        reason="Shortcut complete, agent confirms",
+                                    )
+                                else:
+                                    self._trajectory_recorder.set_phase(
+                                        ExecutionPhase.AGENT,
+                                        reason="Shortcut partially succeeded, agent completes",
+                                    )
+                            except Exception:
+                                self._trajectory_recorder.set_phase(
+                                    ExecutionPhase.AGENT,
+                                    reason="Shortcut execution failed, falling back",
+                                )
+                        _shortcut_attempted = True
+
+            # On retries after a failed shortcut attempt, clear shortcut context so
+            # subsequent retries use free exploration instead of a stale shortcut.
+            if attempt > 0 and _shortcut_attempted:
+                matched_skill = None
+                skill_context = None
+
             await self._log_attempt_event(
                 run_dir,
                 "attempt_start",
@@ -1630,6 +1707,121 @@ class GuiAgent:
             )
 
         return filtered
+
+    async def _evaluate_shortcut_applicability(
+        self,
+        candidates: list,
+        *,
+        screenshot_path: Path | None,
+        task: str,
+    ) -> ApplicabilityDecision:
+        """Evaluate shortcut candidates against the live screen and return a decision.
+
+        Iterates candidates in score order and returns the first one whose
+        preconditions are satisfied.  When the candidate list is empty, or when
+        no router / screenshot is available, returns a structured decision with
+        a descriptive ``reason`` and emits a ``shortcut_applicability`` trajectory
+        event on every code path for full traceability.
+
+        Parameters
+        ----------
+        candidates:
+            Ordered list of :class:`~opengui.skills.shortcut_store.SkillSearchResult`
+            instances (highest-score first).
+        screenshot_path:
+            Path to the most recent screenshot for condition evaluation.
+        task:
+            The active task string, included in log output.
+        """
+        if not candidates:
+            decision = ApplicabilityDecision(outcome="fallback", reason="no_candidates")
+            self._trajectory_recorder.record_event(
+                "shortcut_applicability",
+                outcome=decision.outcome,
+                shortcut_id=None,
+                reason=decision.reason,
+            )
+            return decision
+
+        if self._shortcut_applicability_router is None or screenshot_path is None:
+            # No router or no screenshot — select first candidate by score as best-effort
+            best = candidates[0]
+            decision = ApplicabilityDecision(
+                outcome="run",
+                shortcut_id=best.skill.skill_id,
+                reason="no_applicability_router",
+                score=best.score,
+            )
+            self._trajectory_recorder.record_event(
+                "shortcut_applicability",
+                outcome=decision.outcome,
+                shortcut_id=decision.shortcut_id,
+                reason=decision.reason,
+                score=decision.score,
+            )
+            logger.info(
+                "Shortcut applicability (no router): selecting %r for task=%r",
+                decision.shortcut_id,
+                task,
+            )
+            return decision
+
+        # Evaluate candidates in score order; return first that passes all preconditions
+        last_decision: ApplicabilityDecision | None = None
+        for result in candidates:
+            candidate_decision = await self._shortcut_applicability_router.evaluate(
+                result.skill, Path(screenshot_path),
+            )
+            if candidate_decision.outcome == "run":
+                decision = ApplicabilityDecision(
+                    outcome="run",
+                    shortcut_id=result.skill.skill_id,
+                    reason=candidate_decision.reason,
+                    score=result.score,
+                )
+                self._trajectory_recorder.record_event(
+                    "shortcut_applicability",
+                    outcome=decision.outcome,
+                    shortcut_id=decision.shortcut_id,
+                    reason=decision.reason,
+                    score=decision.score,
+                )
+                logger.info(
+                    "Shortcut applicability: approved %r (score=%.2f) for task=%r",
+                    decision.shortcut_id,
+                    decision.score or 0.0,
+                    task,
+                )
+                return decision
+            last_decision = candidate_decision
+
+        # All candidates failed applicability — emit a single fallback event
+        assert last_decision is not None  # candidates was non-empty
+        fallback = ApplicabilityDecision(
+            outcome="fallback",
+            shortcut_id=None,
+            reason=f"all_candidates_failed:{last_decision.reason}",
+            failed_condition=last_decision.failed_condition,
+        )
+        self._trajectory_recorder.record_event(
+            "shortcut_applicability",
+            outcome=fallback.outcome,
+            shortcut_id=None,
+            reason=fallback.reason,
+            failed_condition=(
+                {
+                    "kind": fallback.failed_condition.kind,
+                    "value": fallback.failed_condition.value,
+                }
+                if fallback.failed_condition else None
+            ),
+        )
+        logger.info(
+            "Shortcut applicability: all %d candidate(s) failed for task=%r",
+            len(candidates),
+            task,
+        )
+        return fallback
 
     async def _inject_skill_memory_context(
         self,
