@@ -652,3 +652,64 @@ async def test_shortcut_trajectory_event(tmp_path: Path) -> None:
     assert violation_events[0]["step_index"] == 2
     assert violation_events[0]["boundary"] == "post"
     assert violation_events[0]["failed_condition"] == "confirm_visible"
+
+
+@pytest.mark.asyncio
+async def test_gui_agent_injects_live_trajectory_recorder_into_shortcut_executor(
+    tmp_path: Path,
+) -> None:
+    """SSTA-03 wiring regression: GuiAgent must assign self._trajectory_recorder onto
+    the shortcut_executor instance before execute() is awaited, so executor-emitted
+    events land in the same JSONL trace artifact.
+
+    Uses a MagicMock shortcut_executor and a real TrajectoryRecorder.  The test
+    captures the recorder that was assigned onto the executor at the moment execute()
+    was awaited, then asserts it is the same object as the agent's live recorder.
+    """
+    recorder = TrajectoryRecorder(output_dir=tmp_path / "trace", task="open app", platform="android")
+    backend = _FakeBackend()
+    approved = _make_shortcut(action_type="tap")
+
+    captured: dict[str, object] = {}
+
+    async def _capturing_execute(shortcut: object) -> ShortcutExecutionSuccess:
+        # Capture the recorder that was set on the mock before execute() is called.
+        captured["recorder"] = shortcut_executor.trajectory_recorder
+        return _make_shortcut_success(approved.skill_id)
+
+    shortcut_executor = MagicMock()
+    shortcut_executor.execute = _capturing_execute
+
+    agent = GuiAgent(
+        llm=MagicMock(),
+        backend=backend,
+        trajectory_recorder=recorder,
+        shortcut_executor=shortcut_executor,
+    )
+    agent._retrieve_memory = AsyncMock(return_value=None)
+    agent._search_skill = AsyncMock(return_value=None)
+    agent._retrieve_shortcut_candidates = AsyncMock(return_value=[_make_result(approved)])
+    agent._evaluate_shortcut_applicability = AsyncMock(
+        return_value=ApplicabilityDecision(
+            outcome="run",
+            shortcut_id=approved.skill_id,
+            score=0.9,
+            reason="ok",
+        )
+    )
+    agent._inject_skill_memory_context = AsyncMock(side_effect=lambda skill, context: context)
+    agent._make_run_dir = lambda task, attempt: tmp_path / f"attempt-{attempt}"
+    agent._log_attempt_event = AsyncMock()
+    agent._skill_maintenance = AsyncMock()
+    agent._run_once = AsyncMock(
+        return_value=AgentResult(success=True, summary="done", trace_path=str(tmp_path / "attempt-0"))
+    )
+
+    await agent.run("open app", max_retries=1)
+
+    # The recorder injected onto the executor must be the agent's live recorder.
+    assert "recorder" in captured, "execute() was never awaited"
+    assert captured["recorder"] is recorder, (
+        "GuiAgent must assign self._trajectory_recorder onto the shortcut executor "
+        "before execute() is called"
+    )
