@@ -10,10 +10,10 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ## Current State
 
-- **Shipped through:** v1.6 Phase 29 Shortcut Retrieval and Applicability Routing
+- **Shipped through:** v1.6 Phase 31 Shortcut Observability and Regression Hardening — **v1.6 milestone complete**
 - **Core surfaces:** Android ADB backend, DryRun backend, local desktop backend, iOS WDA backend, HarmonyOS HDC backend, standalone CLI, nanobot GUI tool integration
-- **Shortcut architecture status:** Phase 24 shipped `ShortcutSkill`, `TaskSkill`, and grounding contracts; Phase 25 shipped multi-layer executors; Phases 26-27 shipped quality-gated primitives plus versioned stores and unified search; Phase 28 shipped production trace-backed shortcut promotion with provenance, gates, and merge/version handling; Phase 29 shipped multi-candidate retrieval with app/platform filtering and screen-aware applicability evaluation (`shortcut_router.py`, `_retrieve_shortcut_candidates`, `_evaluate_shortcut_applicability`)
-- **Current production gap:** Retrieval and applicability routing are now live; the remaining v1.6 gap is stable shortcut execution with live target binding, post-step settle/verification, and safe fallback
+- **Shortcut architecture status:** Phase 24 shipped `ShortcutSkill`, `TaskSkill`, and grounding contracts; Phase 25 shipped multi-layer executors; Phases 26-27 shipped quality-gated primitives plus versioned stores and unified search; Phase 28 shipped production trace-backed shortcut promotion with provenance, gates, and merge/version handling; Phase 29 shipped multi-candidate retrieval with app/platform filtering and screen-aware applicability evaluation; Phase 30 shipped stable shortcut execution with live target binding, settle/verification, and safe fallback; Phase 31 shipped structured shortcut telemetry (`shortcut_grounding`, `shortcut_settle` events), live `TrajectoryRecorder` injection, and extraction-to-execution seam hardening via `step.parameters` three-layer merge
+- **Current production gap:** None — v1.6 milestone fully delivered
 - **Reference direction for v1.6:** AppAgentX demonstrates screen-aware shortcut applicability evaluation and template generation from live context; Mobile-Agent-v3.5 reinforces action/observation discipline so shortcut execution stays stable instead of brittle
 
 ## Current Milestone: v1.6 Shortcut Extraction and Stable Execution
@@ -84,9 +84,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ### Active
 
-- [ ] Shortcut reuse includes screen-aware applicability checks before execution
-- [ ] Shortcut runtime execution is stabilized with live binding, settle/verification, and safe fallback
-- [ ] Shortcut health is diagnosable through telemetry and regression coverage
+*(None — all v1.6 requirements validated)*
 
 ### Out of Scope
 
@@ -124,4 +122,4 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Shortcut stability should rely on observable contracts and logs, not opaque one-shot LLM guesses.
 
 ---
-*Last updated: 2026-04-03 after completing Phase 28 of milestone v1.6 Shortcut Extraction and Stable Execution*
+*Last updated: 2026-04-03 after completing Phase 31 — v1.6 milestone complete*
