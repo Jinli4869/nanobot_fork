@@ -222,12 +222,15 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
 | 260403-soi | 把 gui.agent_profile 配置项正式补上 | 2026-04-03 | a322466 | [260403-soi-gui-agent-profile](./quick/260403-soi-gui-agent-profile/) |
 | 260403-u0t | 更新 opengui README 和 README_CN，说明支持的 profile 和如何通过 config.json/CLI 设置 | 2026-04-03 | c7da030 | [260403-u0t-opengui-readme-readme-cn-profile-config-](./quick/260403-u0t-opengui-readme-readme-cn-profile-config-/) |
+| 260404-tas | 参考 gelab-zero 的输入链路改进 Android 中文输入：ADBKeyboard 失败后回退到 yadb，并保留 ASCII `input text` 兜底 | 2026-04-04 | uncommitted | [260404-tas-gelab-zero-action-tools-py](./quick/260404-tas-gelab-zero-action-tools-py/) |
+| 260404-te3 | 自动探测并切换 ADBKeyboard IME，使已安装但未激活 ADBKeyboard 的设备也能自动走中文输入广播链路 | 2026-04-04 | uncommitted | [260404-te3-adbkeyboard-ime](./quick/260404-te3-adbkeyboard-ime/) |
+| 260404-tot | 让 OpenGUI 自带并自动下发 yadb，不再依赖另一个本地仓库中的 yadb 资产 | 2026-04-04 | uncommitted | [260404-tot-opengui-yadb-yadb](./quick/260404-tot-opengui-yadb-yadb/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last activity: 2026-04-03 - Completed quick task 260403-u0t: 更新 opengui README 和 README_CN，说明支持的 profile 和如何通过 config.json/CLI 设置
+Last activity: 2026-04-04 - Completed quick task 260404-tot: 让 OpenGUI 自带并自动下发 yadb
 
 Last session: 2026-04-03T10:45:23.628Z
 Stopped at: Completed 31-02-PLAN.md
