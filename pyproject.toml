@@ -121,6 +121,7 @@ allow-direct-references = true
 include = [
     "nanobot/**/*.py",
     "opengui/**/*.py",
+    "opengui/assets/**/*",
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",

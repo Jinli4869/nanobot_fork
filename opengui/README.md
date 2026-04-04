@@ -224,7 +224,7 @@ adb:
 | macOS    | `local` | Accessibility permission required: **System Settings → Privacy & Security → Accessibility** → add your terminal |
 | Linux    | `local` | Install `xdotool` and `xclip`; use `--background` for headless CI |
 | Windows  | `local` | Use `--target-app-class` to hint the window type for background isolation |
-| Android  | `adb`   | Install [ADBKeyboard](https://github.com/senzhk/ADBKeyboard): `adb shell ime set com.android.adbkeyboard/.AdbIME` |
+| Android  | `adb`   | Install [ADBKeyboard](https://github.com/senzhk/ADBKeyboard): `adb shell ime set com.android.adbkeyboard/.AdbIME` . OpenGUI also bundles `yadb` and will push it to the device automatically when Unicode input falls back to the `yadb` path. |
 | iOS      | `ios`   | Requires WebDriverAgent running on device; install `pip install facebook-wda` |
 | HarmonyOS | `hdc`  | Requires HDC (Huawei Device Connector) on `$PATH`; UITest service must be running on device |
 
@@ -584,6 +584,7 @@ opengui --backend dry-run "..."    # dry-run
 > 2. Connect the device via USB and accept the pairing prompt
 > 3. Install ADBKeyboard (for text input): `adb install ADBKeyboard.apk`
 > 4. Activate it: `adb shell ime set com.android.adbkeyboard/.AdbIME`
+> 5. OpenGUI bundles `yadb` and will automatically push it to `/data/local/tmp/yadb` if ADBKeyboard broadcast input is unavailable.
 > 5. Verify: `adb devices` — your device serial should appear
 
 To target a specific device when multiple are connected:
