@@ -307,25 +307,28 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
 
 def normalize_profile_response(profile_name: str | None, response: LLMResponse) -> LLMResponse:
     profile = canonicalize_agent_profile(profile_name)
-    if profile == "default" or response.tool_calls:
+    if profile == "default":
         return response
 
     content = response.content or ""
-    if not content.strip():
+    if content.strip():
+        arguments = _parse_content_action(profile, content)
+        synthetic = ToolCall(
+            id="content-tool-call-0",
+            name="computer_use",
+            arguments=arguments,
+        )
+        return LLMResponse(
+            content=response.content,
+            tool_calls=[synthetic],
+            raw=response.raw,
+            usage=response.usage,
+        )
+
+    if response.tool_calls:
         return response
 
-    arguments = _parse_content_action(profile, content)
-    synthetic = ToolCall(
-        id="content-tool-call-0",
-        name="computer_use",
-        arguments=arguments,
-    )
-    return LLMResponse(
-        content=response.content,
-        tool_calls=[synthetic],
-        raw=response.raw,
-        usage=response.usage,
-    )
+    return response
 
 
 def _parse_content_action(profile_name: str, content: str) -> dict[str, Any]:
