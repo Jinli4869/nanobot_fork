@@ -323,6 +323,33 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
     }
 
 
+def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> None:
+    response = LLMResponse(
+        content=(
+            'Thought: Open Chrome\n'
+            'Action: "Open Chrome"\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"open","text":"chrome"}}</tool_call>'
+        ),
+        tool_calls=[
+            ToolCall(
+                id="provider-tool-call-0",
+                name="computer_use",
+                arguments={"action_type": "open_app", "text": "chrome"},
+            )
+        ],
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].id == "content-tool-call-0"
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "open_app",
+        "text": "chrome",
+    }
+
+
 @pytest.mark.asyncio
 async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "grounder.png"
