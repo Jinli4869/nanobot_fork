@@ -22,7 +22,7 @@ import typing
 VALID_ACTION_TYPES: frozenset[str] = frozenset({
     "tap", "long_press", "double_tap", "drag", "swipe", "scroll",
     "input_text", "hotkey", "screenshot", "wait",
-    "open_app", "close_app", "back", "home", "done",
+    "open_app", "close_app", "back", "home", "enter", "app_switch", "done",
     "request_intervention",
 })
 
@@ -33,6 +33,12 @@ _ACTION_ALIASES: dict[str, str] = {
     "press": "hotkey",
     "long_click": "long_press",
     "double_click": "double_tap",
+    "keyboard_enter": "enter",
+    "return": "enter",
+    "navigate_back": "back",
+    "navigate_home": "home",
+    "recents": "app_switch",
+    "recent_apps": "app_switch",
 }
 
 _RELATIVE_GRID_MAX: int = 999
@@ -178,6 +184,10 @@ def describe_action(action: Action) -> str:
         return "press back"
     if t == "home":
         return "press home"
+    if t == "enter":
+        return "press enter"
+    if t == "app_switch":
+        return "open app switcher"
     if t == "done":
         return f"task done – {action.status}" if action.status else "task done"
     return t

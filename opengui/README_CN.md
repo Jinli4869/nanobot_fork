@@ -224,7 +224,7 @@ adb:
 | macOS | `local` | 需要无障碍权限：**系统设置 → 隐私与安全性 → 辅助功能** → 添加你的终端应用 |
 | Linux | `local` | 建议安装 `xdotool` 和 `xclip`；CI 无头环境请加 `--background` |
 | Windows | `local` | 对不响应标准输入的应用（游戏、DirectX）使用 `--target-app-class` 提示 |
-| Android | `adb` | 安装 [ADBKeyboard](https://github.com/senzhk/ADBKeyboard)：`adb shell ime set com.android.adbkeyboard/.AdbIME` |
+| Android | `adb` | 安装 [ADBKeyboard](https://github.com/senzhk/ADBKeyboard)：`adb shell ime set com.android.adbkeyboard/.AdbIME`。如果 ADBKeyboard 广播输入不可用，OpenGUI 也会自动把内置 `yadb` 下发到设备后再走 `yadb` 输入链路。 |
 | iOS | `ios` | 需在设备上运行 WebDriverAgent；安装 `pip install facebook-wda` |
 | 鸿蒙 OS | `hdc` | 需将 HDC（华为设备连接器）加入 `$PATH`；设备上须启动 UITest 服务 |
 
@@ -584,6 +584,7 @@ opengui --backend dry-run "..."    # 测试
 > 2. USB 连接手机，在手机上确认授权弹窗
 > 3. 安装 ADBKeyboard（用于文字输入）：`adb install ADBKeyboard.apk`
 > 4. 激活输入法：`adb shell ime set com.android.adbkeyboard/.AdbIME`
+> 5. 如果 ADBKeyboard 广播输入不可用，OpenGUI 会自动把内置 `yadb` 推送到 `/data/local/tmp/yadb`。
 > 5. 验证连接：`adb devices` — 应显示你的设备序列号
 
 连接多台设备时，通过 `serial` 指定目标：

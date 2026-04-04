@@ -4,15 +4,16 @@ import copy
 import json
 import tomllib
 import asyncio
+import base64
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
 
-from opengui.action import ActionError, parse_action, resolve_coordinate
+from opengui.action import Action, ActionError, parse_action, resolve_coordinate
 from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
 from opengui.agent_profiles import normalize_profile_response
-from opengui.backends.adb import AdbBackend
+from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
@@ -136,6 +137,14 @@ def test_parse_action_splits_paired_coordinates_from_x_list() -> None:
     assert action.relative is True
 
 
+def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
+    enter = parse_action({"action_type": "keyboard_enter"})
+    recents = parse_action({"action_type": "recents"})
+
+    assert enter.action_type == "enter"
+    assert recents.action_type == "app_switch"
+
+
 def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
     prompt = build_system_prompt(
         platform="android",
@@ -192,6 +201,46 @@ def test_build_system_prompt_android_apps_excludes_unmapped() -> None:
 
     # With all packages unmapped, no "# Installed Apps" section should appear
     assert "# Installed Apps" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_ensure_yadb_pushes_packaged_asset_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = AdbBackend()
+    yadb_asset = tmp_path / "yadb"
+    yadb_asset.write_bytes(b"jar-data")
+
+    monkeypatch.setattr(backend, "_get_packaged_yadb_path", lambda: yadb_asset)
+    run_mock = AsyncMock(side_effect=[
+        AdbError("missing"),
+        "",
+        "",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    assert await backend._ensure_yadb_available(timeout=5.0) is True
+    assert run_mock.await_args_list[0].args == ("shell", "ls", "/data/local/tmp/yadb")
+    assert run_mock.await_args_list[1].args == ("push", str(yadb_asset), "/data/local/tmp/yadb")
+    assert run_mock.await_args_list[2].args == ("shell", "chmod", "755", "/data/local/tmp/yadb")
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_ensure_yadb_skips_push_when_device_already_has_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = AdbBackend()
+    yadb_asset = tmp_path / "yadb"
+    yadb_asset.write_bytes(b"jar-data")
+
+    monkeypatch.setattr(backend, "_get_packaged_yadb_path", lambda: yadb_asset)
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    assert await backend._ensure_yadb_available(timeout=5.0) is True
+    run_mock.assert_awaited_once_with("shell", "ls", "/data/local/tmp/yadb", timeout=5.0)
 
 
 @pytest.mark.asyncio
@@ -448,6 +497,184 @@ async def test_adb_backend_scrolls_horizontally_from_center(
     run_mock.assert_awaited_once_with(
         "shell", "input", "swipe", "200", "400", "80", "400", "300", timeout=5.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_prefers_b64_broadcast(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "com.android.adbkeyboard/.AdbIME",
+        "",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    text = "你好，OpenGUI"
+    action = parse_action({"action_type": "input_text", "text": text})
+    await backend.execute(action)
+
+    expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    assert run_mock.await_args_list[0].args == (
+        "shell", "settings", "get", "secure", "default_input_method",
+    )
+    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[1].args == (
+        "shell", "am", "broadcast",
+        "-a", "ADB_INPUT_B64", "--es", "msg", expected_b64,
+    )
+    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_auto_switches_to_adb_keyboard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "com.example.ime/.ExampleIme",
+        "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
+        "",
+        "",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    text = "你好，OpenGUI"
+    action = parse_action({"action_type": "input_text", "text": text})
+    await backend.execute(action)
+
+    expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    assert run_mock.await_args_list[0].args == (
+        "shell", "settings", "get", "secure", "default_input_method",
+    )
+    assert run_mock.await_args_list[1].args == (
+        "shell", "ime", "list", "-s",
+    )
+    assert run_mock.await_args_list[2].args == (
+        "shell", "ime", "set", "com.android.adbkeyboard/.AdbIME",
+    )
+    assert run_mock.await_args_list[3].args == (
+        "shell", "am", "broadcast",
+        "-a", "ADB_INPUT_B64", "--es", "msg", expected_b64,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_enables_adb_keyboard_before_switching(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "com.example.ime/.ExampleIme",
+        "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
+        "",
+        "",
+        "",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+    enable_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(backend, "_needs_ime_enable_before_set", enable_mock)
+
+    action = parse_action({"action_type": "input_text", "text": "你好"})
+    await backend.execute(action)
+
+    enable_mock.assert_awaited_once_with(timeout=5.0)
+    assert run_mock.await_args_list[2].args == (
+        "shell", "ime", "enable", "com.android.adbkeyboard/.AdbIME",
+    )
+    assert run_mock.await_args_list[3].args == (
+        "shell", "ime", "set", "com.android.adbkeyboard/.AdbIME",
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "com.example.ime/.ExampleIme",
+        "com.other.ime/.OtherIme",
+        "",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+
+    text = "你好，OpenGUI"
+    action = parse_action({"action_type": "input_text", "text": text})
+    await backend.execute(action)
+
+    ensure_yadb_mock.assert_awaited_once_with(5.0)
+
+    assert run_mock.await_args_list[0].args == (
+        "shell", "settings", "get", "secure", "default_input_method",
+    )
+    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[1].args == (
+        "shell", "ime", "list", "-s",
+    )
+    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[2].args == (
+        "shell", "app_process",
+        "-Djava.class.path=/data/local/tmp/yadb",
+        "/data/local/tmp",
+        "com.ysbing.yadb.Main",
+        "-keyboard",
+        text,
+    )
+    assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "com.example.ime/.ExampleIme",
+        "com.other.ime/.OtherIme",
+        "",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=False)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+
+    text = "hello world"
+    action = parse_action({"action_type": "input_text", "text": text})
+    await backend.execute(action)
+
+    ensure_yadb_mock.assert_awaited_once_with(5.0)
+    assert run_mock.await_args_list[2].args == (
+        "shell", "input", "text", "hello\\ world",
+    )
+    assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_enter_and_app_switch_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    await backend.execute(parse_action({"action_type": "hotkey", "key": ["ENTER"]}))
+    await backend.execute(Action(action_type="enter"))
+    await backend.execute(Action(action_type="app_switch"))
+
+    assert run_mock.await_args_list[0].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
+    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[1].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
+    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[2].args == (
+        "shell", "input", "keyevent", "KEYCODE_APP_SWITCH",
+    )
+    assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
 
 
 @pytest.mark.asyncio

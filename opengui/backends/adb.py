@@ -3,8 +3,11 @@ opengui.backends.adb
 ~~~~~~~~~~~~~~~~~~~~
 Android Debug Bridge backend for device and emulator automation.
 
-Unicode text input requires ADBKeyboard IME on the target device:
+Unicode text input prefers ADBKeyboard IME on the target device:
     adb shell ime set com.android.adbkeyboard/.AdbIME
+
+If ADBKeyboard is unavailable, OpenGUI falls back to a device-side `yadb`
+helper when it is installed at `/data/local/tmp/yadb`.
 
 All I/O is non-blocking via asyncio.create_subprocess_exec.
 """
@@ -12,6 +15,8 @@ All I/O is non-blocking via asyncio.create_subprocess_exec.
 from __future__ import annotations
 
 import asyncio
+import base64
+import importlib.resources
 import re
 from pathlib import Path
 
@@ -56,6 +61,9 @@ _RESUMED_ACTIVITY_RE = re.compile(
 )
 
 _DEVICE_SCREENSHOT_PATH = "/sdcard/__opengui_cap.png"
+_ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
+_YADB_PATH = "/data/local/tmp/yadb"
+_YADB_MAIN_CLASS = "com.ysbing.yadb.Main"
 
 
 class AdbError(Exception):
@@ -75,6 +83,10 @@ def _escape_shell_text(text: str) -> str:
 
 def _is_ascii_safe(text: str) -> bool:
     return all(ord(ch) < 128 for ch in text)
+
+
+def _to_b64_text(text: str) -> str:
+    return base64.b64encode(text.encode("utf-8")).decode("ascii")
 
 
 class AdbBackend:
@@ -274,6 +286,108 @@ class AdbBackend:
             pass
         return "unknown"
 
+    async def _get_default_input_method(self, timeout: float) -> str | None:
+        try:
+            output = await self._run(
+                "shell", "settings", "get", "secure", "default_input_method",
+                timeout=timeout,
+            )
+        except (AdbError, TimeoutError):
+            return None
+        output = output.strip()
+        return output or None
+
+    async def _list_input_methods(self, timeout: float) -> set[str]:
+        try:
+            output = await self._run("shell", "ime", "list", "-s", timeout=timeout)
+        except (AdbError, TimeoutError):
+            return set()
+        return {line.strip() for line in output.splitlines() if line.strip()}
+
+    async def _needs_ime_enable_before_set(self, timeout: float) -> bool:
+        del timeout
+        return False
+
+    def _get_packaged_yadb_path(self) -> Path:
+        return Path(importlib.resources.files("opengui").joinpath("assets/android/yadb"))
+
+    async def _ensure_yadb_available(self, timeout: float) -> bool:
+        try:
+            await self._run("shell", "ls", _YADB_PATH, timeout=timeout)
+            return True
+        except (AdbError, TimeoutError):
+            pass
+
+        local_yadb = self._get_packaged_yadb_path()
+        if not local_yadb.exists():
+            return False
+
+        try:
+            await self._run("push", str(local_yadb), _YADB_PATH, timeout=timeout)
+            await self._run("shell", "chmod", "755", _YADB_PATH, timeout=timeout)
+        except (AdbError, TimeoutError):
+            return False
+        return True
+
+    async def _ensure_adb_keyboard_ready(self, timeout: float) -> bool:
+        current_ime = await self._get_default_input_method(timeout)
+        if current_ime == _ADB_KEYBOARD_IME:
+            return True
+
+        available_imes = await self._list_input_methods(timeout)
+        if _ADB_KEYBOARD_IME not in available_imes:
+            return False
+
+        if await self._needs_ime_enable_before_set(timeout=timeout):
+            try:
+                await self._run("shell", "ime", "enable", _ADB_KEYBOARD_IME, timeout=timeout)
+            except (AdbError, TimeoutError):
+                return False
+
+        try:
+            await self._run("shell", "ime", "set", _ADB_KEYBOARD_IME, timeout=timeout)
+        except (AdbError, TimeoutError):
+            return False
+        return True
+
+    async def _input_text_via_adb_keyboard(self, text: str, timeout: float) -> bool:
+        if not await self._ensure_adb_keyboard_ready(timeout):
+            return False
+        for args in (
+            (
+                "shell", "am", "broadcast",
+                "-a", "ADB_INPUT_B64", "--es", "msg", _to_b64_text(text),
+            ),
+            (
+                "shell", "am", "broadcast",
+                "-a", "ADB_INPUT_TEXT", "--es", "msg", text,
+            ),
+        ):
+            try:
+                await self._run(*args, timeout=timeout)
+                return True
+            except (AdbError, TimeoutError):
+                continue
+        return False
+
+    async def _input_text_via_yadb(self, text: str, timeout: float) -> bool:
+        if not await self._ensure_yadb_available(timeout):
+            return False
+        try:
+            await self._run(
+                "shell",
+                "app_process",
+                f"-Djava.class.path={_YADB_PATH}",
+                "/data/local/tmp",
+                _YADB_MAIN_CLASS,
+                "-keyboard",
+                text,
+                timeout=timeout,
+            )
+            return True
+        except (AdbError, TimeoutError):
+            return False
+
     # ------------------------------------------------------------------
     # Execute
     # ------------------------------------------------------------------
@@ -312,14 +426,27 @@ class AdbBackend:
         elif t == "input_text":
             text = action.text or ""
             if text:
-                if _is_ascii_safe(text):
-                    await self._run("shell", "input", "text", _escape_shell_text(text), timeout=timeout)
-                else:
+                if await self._input_text_via_adb_keyboard(text, timeout):
+                    pass
+                elif await self._input_text_via_yadb(text, timeout):
+                    pass
+                elif _is_ascii_safe(text):
                     await self._run(
-                        "shell", "am", "broadcast",
-                        "-a", "ADB_INPUT_TEXT", "--es", "msg", text,
+                        "shell", "input", "text", _escape_shell_text(text),
                         timeout=timeout,
                     )
+                else:
+                    raise AdbError(
+                        "Unicode text input failed. Install and activate ADBKeyboard "
+                        "(`adb shell ime set com.android.adbkeyboard/.AdbIME`) or "
+                        f"push yadb to {_YADB_PATH}."
+                    )
+
+        elif t == "enter":
+            await self._run("shell", "input", "keyevent", "KEYCODE_ENTER", timeout=timeout)
+
+        elif t in ("app_switch", "recents"):
+            await self._run("shell", "input", "keyevent", "KEYCODE_APP_SWITCH", timeout=timeout)
 
         elif t == "hotkey":
             keys = action.key or []
