@@ -137,6 +137,49 @@ def test_parse_action_splits_paired_coordinates_from_x_list() -> None:
     assert action.relative is True
 
 
+def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> None:
+    action = parse_action({
+        "action": "tap",
+        "x": "[903, 130]",
+        "relative": "true",
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 903.0
+    assert action.y == 130.0
+    assert action.relative is True
+
+
+def test_parse_swipe_splits_all_coordinates_from_x_list() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "x": [120, 340, 760, 355],
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
+    assert action.relative is True
+
+
+def test_parse_swipe_splits_all_coordinates_from_stringified_x_list() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "x": "[120, 340, 760, 355]",
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
+    assert action.relative is True
+
+
 def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
     enter = parse_action({"action_type": "keyboard_enter"})
     recents = parse_action({"action_type": "recents"})
@@ -350,6 +393,56 @@ def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> 
     }
 
 
+def test_qwen3vl_profile_falls_back_to_provider_tool_calls_when_content_contract_is_missing() -> None:
+    response = LLMResponse(
+        content='Thought: Continue\nAction: Tap the next result',
+        tool_calls=[
+            ToolCall(
+                id="provider-tool-call-0",
+                name="computer_use",
+                arguments={"action_type": "tap", "x": 321, "y": 654, "relative": True},
+            )
+        ],
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].id == "provider-tool-call-0"
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 321,
+        "y": 654,
+        "relative": True,
+    }
+
+
+def test_qwen3vl_profile_normalizes_provider_mobile_use_tool_calls() -> None:
+    response = LLMResponse(
+        content="Action: Tap the next result",
+        tool_calls=[
+            ToolCall(
+                id="provider-tool-call-0",
+                name="mobile_use",
+                arguments={"action": "click", "coordinate": [903, 130]},
+            )
+        ],
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].id == "provider-tool-call-0"
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 903,
+        "y": 130,
+        "relative": True,
+    }
+
+
 @pytest.mark.asyncio
 async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "grounder.png"
@@ -447,6 +540,78 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
     assert result.success
     assert len(llm.calls) == 2
     assert "Action:" in llm.calls[0][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_agent_runs_with_qwen3vl_provider_computer_use_stringified_x_coordinates(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: Tap the search bar",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="computer_use",
+                    arguments={"action_type": "click", "x": "[410, 125]", "relative": True},
+                )
+            ],
+        ),
+        LLMResponse(
+            content="Action: Finish successfully",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-1",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen provider stringified coords"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+        agent_profile="qwen3vl",
+    )
+
+    result = await agent.run("Tap then finish", max_retries=1)
+
+    assert result.success is True
+    assert result.summary
+
+
+@pytest.mark.asyncio
+async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: Finish successfully",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="mobile_use",
+                    arguments={"action": "terminate", "status": "success"},
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen provider tool"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        agent_profile="qwen3vl",
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is True
+    assert result.summary
 
 
 @pytest.mark.asyncio
@@ -772,6 +937,162 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
     attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
     assert attempt_exception["error_type"] == "RuntimeError"
     assert attempt_exception["error_message"] == "provider exploded"
+
+
+@pytest.mark.asyncio
+async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path) -> None:
+    class _MalformedToolCallLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            self.calls += 1
+            if self.calls <= 3:
+                return LLMResponse(
+                    content="Action: Swipe up to reveal the size options.",
+                    tool_calls=[ToolCall(
+                        id=f"bad-call-{self.calls}",
+                        name="computer_use",
+                        arguments={"action_type": "swipe", "x": [500, 750], "relative": True},
+                    )],
+                )
+            return LLMResponse(
+                content="Action: done",
+                tool_calls=[ToolCall(
+                    id="good-call",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            )
+
+    recorder = _make_recorder(tmp_path, "retry malformed tool call")
+    agent = GuiAgent(
+        _MalformedToolCallLLM(),
+        DryRunBackend(),
+        trajectory_recorder=recorder,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+    )
+
+    result = await agent.run("retry malformed tool call", max_retries=2)
+
+    assert result.success
+    assert recorder.path is not None
+    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
+    attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
+    assert attempt_exception["error_type"] == "_StepExecutionError"
+    assert "Failed to parse action after retries" in attempt_exception["error_message"]
+    assert attempt_exception["model_response"]["raw_content"] == "Action: Swipe up to reveal the size options."
+    assert attempt_exception["model_response"]["tool_calls"][0]["name"] == "computer_use"
+    assert attempt_exception["model_response"]["tool_calls"][0]["arguments"] == {
+        "action_type": "swipe",
+        "x": [500, 750],
+        "relative": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_retry_prompt_includes_previous_attempt_summary_after_max_steps(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="wait briefly",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="finish task",
+            tool_calls=[ToolCall(
+                id="call-2",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "retry summary max steps"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Open Settings", max_retries=2)
+
+    assert result.success
+    second_attempt = llm.calls[1]
+    retry_text = "\n".join(
+        block["text"]
+        for block in second_attempt[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Previous attempt summaries:" in retry_text
+    assert "Attempt 1:" in retry_text
+    assert "Failure reason: max_steps_exceeded" in retry_text
+    assert "Step 1: wait briefly" in retry_text
+    assert "Continue from the current screen state" in retry_text
+
+
+@pytest.mark.asyncio
+async def test_retry_prompt_includes_previous_attempt_summary_after_exception(
+    tmp_path: Path,
+) -> None:
+    class _MalformedThenRecoverLLM:
+        def __init__(self) -> None:
+            self.calls: list[list[dict]] = []
+            self._call_count = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            del tools, tool_choice
+            self.calls.append(copy.deepcopy(messages))
+            self._call_count += 1
+            if self._call_count <= 3:
+                return LLMResponse(
+                    content="Action: Swipe up to reveal the size options.",
+                    tool_calls=[ToolCall(
+                        id=f"bad-call-{self._call_count}",
+                        name="computer_use",
+                        arguments={"action_type": "swipe", "x": [500, 750], "relative": True},
+                    )],
+                )
+            return LLMResponse(
+                content="finish task",
+                tool_calls=[ToolCall(
+                    id="good-call",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            )
+
+    llm = _MalformedThenRecoverLLM()
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "retry summary exception"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("retry malformed tool call", max_retries=2)
+
+    assert result.success
+    second_attempt = llm.calls[3]
+    retry_text = "\n".join(
+        block["text"]
+        for block in second_attempt[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Previous attempt summaries:" in retry_text
+    assert "Attempt 1:" in retry_text
+    assert "Failure reason: _StepExecutionError: Failed to parse action after retries" in retry_text
+    assert "No completed GUI actions were recorded before the failure." in retry_text
+    assert "Continue from the current screen state" in retry_text
 
 
 @pytest.mark.asyncio

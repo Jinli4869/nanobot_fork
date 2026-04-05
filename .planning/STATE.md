@@ -4,8 +4,8 @@ milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
 stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-03T13:38:54Z"
-last_activity: 2026-04-03
+last_updated: "2026-04-05T06:52:23.006Z"
+last_activity: 2026-04-05
 progress:
   total_phases: 4
   completed_phases: 4
@@ -23,7 +23,7 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
 **Current focus:** Phase 31 — shortcut-observability-and-regression-hardening
 Status: Ready for verification
-Last Activity: 2026-04-03
+Last Activity: 2026-04-05
 
 ## Current Position
 
@@ -218,6 +218,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
+| 260405-knn | 根据 /Users/jinli/.nanobot/workspace/gui_runs/2026-04-05_144819_197174 中出现 exception 的原因进行 debug 并修复 | 2026-04-05 | uncommitted | [260405-knn-users-jinli-nanobot-workspace-gui-runs-2](./quick/260405-knn-users-jinli-nanobot-workspace-gui-runs-2/) |
 | 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
 | 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
 | 260403-soi | 把 gui.agent_profile 配置项正式补上 | 2026-04-03 | a322466 | [260403-soi-gui-agent-profile](./quick/260403-soi-gui-agent-profile/) |
@@ -225,12 +226,13 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260404-tas | 参考 gelab-zero 的输入链路改进 Android 中文输入：ADBKeyboard 失败后回退到 yadb，并保留 ASCII `input text` 兜底 | 2026-04-04 | uncommitted | [260404-tas-gelab-zero-action-tools-py](./quick/260404-tas-gelab-zero-action-tools-py/) |
 | 260404-te3 | 自动探测并切换 ADBKeyboard IME，使已安装但未激活 ADBKeyboard 的设备也能自动走中文输入广播链路 | 2026-04-04 | uncommitted | [260404-te3-adbkeyboard-ime](./quick/260404-te3-adbkeyboard-ime/) |
 | 260404-tot | 让 OpenGUI 自带并自动下发 yadb，不再依赖另一个本地仓库中的 yadb 资产 | 2026-04-04 | uncommitted | [260404-tot-opengui-yadb-yadb](./quick/260404-tot-opengui-yadb-yadb/) |
+| 260405-ptg | Create a publishable skill for Android deep link probing that explores adb/dumpsys signals and consolidates findings for the main agent | 2026-04-05 | uncommitted | [260405-ptg-create-a-publishable-skill-for-android-d](./quick/260405-ptg-create-a-publishable-skill-for-android-d/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 
 ## Session Continuity
 
-Last activity: 2026-04-04 - Completed quick task 260404-tot: 让 OpenGUI 自带并自动下发 yadb
+Last activity: 2026-04-05 - Completed quick task 260405-ptg: Create a publishable skill for Android deep link probing that explores adb/dumpsys signals and consolidates findings for the main agent
 
 Last session: 2026-04-03T10:45:23.628Z
 Stopped at: Completed 31-02-PLAN.md
