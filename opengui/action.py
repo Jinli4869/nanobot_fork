@@ -13,6 +13,7 @@ Action dataclass, parsing, validation, and coordinate resolution.
 from __future__ import annotations
 
 import dataclasses
+import json
 import typing
 
 # ---------------------------------------------------------------------------
@@ -207,9 +208,19 @@ def _fmt_coord(action: Action) -> str:
 
 def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
     normalized = dict(payload)
+    _normalize_compact_path_coordinates(normalized)
     _normalize_coordinate_pair(normalized, "x", "y")
     _normalize_coordinate_pair(normalized, "x2", "y2")
     return normalized
+
+
+def _normalize_compact_path_coordinates(payload: dict[str, typing.Any]) -> None:
+    primary_items = _coerce_coordinate_sequence(payload.get("x"))
+    if primary_items is None or len(primary_items) != 4:
+        return
+    if any(payload.get(key) is not None for key in ("y", "x2", "y2")):
+        return
+    payload["x"], payload["y"], payload["x2"], payload["y2"] = primary_items
 
 
 def _normalize_coordinate_pair(
@@ -236,6 +247,15 @@ def _normalize_coordinate_pair(
 def _coerce_coordinate_sequence(value: typing.Any) -> tuple[typing.Any, ...] | None:
     if isinstance(value, (list, tuple)):
         return tuple(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return None
+            if isinstance(parsed, list):
+                return tuple(parsed)
     return None
 
 
