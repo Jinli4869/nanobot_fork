@@ -838,7 +838,7 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
 
     ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[2].args == (
-        "shell", "input", "text", "hello\\ world",
+        "shell", "input", "text", "hello%sworld",
     )
     assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
 

@@ -21,6 +21,7 @@ from nanobot.utils.gui_evaluation import evaluate_gui_trajectory
 from opengui.agent import GuiAgent
 from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 from opengui.skills.normalization import get_gui_skill_store_root
+from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescriptor
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 if TYPE_CHECKING:
@@ -660,10 +661,8 @@ class GuiSubagentTool(Tool):
     async def _promote_shortcut(self, trace_path: Path | None, is_success: bool, platform: str) -> str | None:
         if trace_path is None or not trace_path.exists():
             return None
-        if not is_success:
-            logger.info("Skipping shortcut promotion for unsuccessful task: %s", trace_path)
-            return None
 
+        from opengui.skills.extractor import SkillExtractor
         from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
         from opengui.skills.shortcut_store import ShortcutSkillStore
 
@@ -672,6 +671,24 @@ class GuiSubagentTool(Tool):
                 store_dir=get_gui_skill_store_root(self._workspace),
                 embedding_provider=self._embedding_adapter,
             )
+            if not is_success:
+                extractor = SkillExtractor(llm=self._llm_adapter)
+                skill = await extractor.extract_from_file(trace_path, is_success=False)
+                _write_extraction_usage(trace_path, extractor.total_usage)
+                if skill is None:
+                    logger.info("Skipping failed-trace shortcut promotion for %s: no candidate extracted", trace_path)
+                    return None
+
+                shortcut = _legacy_skill_to_shortcut(skill=skill, trace_path=trace_path)
+                decision, skill_id = await store.add_or_merge(shortcut)
+                logger.info(
+                    "Promoted failed-trace shortcut %s from %s via %s",
+                    skill_id or shortcut.skill_id,
+                    trace_path,
+                    decision,
+                )
+                return skill_id
+
             pipeline = ShortcutPromotionPipeline(platform=platform)
             return await pipeline.promote_from_trace(trace_path, is_success=is_success, store=store)
         except Exception:
@@ -776,3 +793,76 @@ def _write_extraction_usage(trace_path: Path, usage: dict[str, int]) -> None:
         usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
     except OSError as exc:
         logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)
+
+
+def _legacy_skill_to_shortcut(*, skill: Any, trace_path: Path) -> ShortcutSkill:
+    parameter_slots = tuple(
+        ParameterSlot(
+            name=str(name),
+            type="string",
+            description=f"Value for {name}",
+        )
+        for name in getattr(skill, "parameters", ())
+    )
+    preconditions = _dedupe_state_descriptors(
+        [StateDescriptor(kind="screen_state", value=str(value)) for value in getattr(skill, "preconditions", ()) if str(value).strip()]
+        + [
+            StateDescriptor(kind="screen_state", value=str(step.valid_state))
+            for step in getattr(skill, "steps", ())
+            if getattr(step, "valid_state", None) and str(step.valid_state).strip().lower() != "no need to verify"
+        ]
+    )
+    postconditions = _dedupe_state_descriptors(
+        [
+            StateDescriptor(kind="screen_state", value=str(step.expected_state))
+            for step in getattr(skill, "steps", ())
+            if getattr(step, "expected_state", None) and str(step.expected_state).strip()
+        ]
+    )
+    source_step_indices = tuple(_load_trace_step_indices(trace_path))
+    return ShortcutSkill(
+        skill_id=str(skill.skill_id),
+        name=str(skill.name),
+        description=str(skill.description),
+        app=str(skill.app),
+        platform=str(skill.platform),
+        steps=tuple(getattr(skill, "steps", ())),
+        parameter_slots=parameter_slots,
+        preconditions=preconditions,
+        postconditions=postconditions,
+        tags=tuple(getattr(skill, "tags", ())),
+        source_task=getattr(skill, "description", None),
+        source_trace_path=str(trace_path),
+        source_run_id=trace_path.parent.name or None,
+        source_step_indices=source_step_indices,
+        promotion_version=1,
+        shortcut_version=1,
+        created_at=float(getattr(skill, "created_at", datetime.now().timestamp())),
+    )
+
+
+def _dedupe_state_descriptors(states: list[StateDescriptor]) -> tuple[StateDescriptor, ...]:
+    deduped: dict[tuple[str, str, bool], StateDescriptor] = {}
+    for state in states:
+        key = (state.kind, state.value, state.negated)
+        deduped[key] = state
+    return tuple(deduped.values())
+
+
+def _load_trace_step_indices(trace_path: Path) -> list[int]:
+    step_indices: list[int] = []
+    try:
+        with open(trace_path, encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("type") != "step":
+                    continue
+                index = row.get("step_index")
+                if isinstance(index, int):
+                    step_indices.append(index)
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Could not load step indices from %s", trace_path, exc_info=True)
+    return step_indices
