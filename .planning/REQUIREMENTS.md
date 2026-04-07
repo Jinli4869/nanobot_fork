@@ -13,6 +13,9 @@ Requirements for turning the shipped shortcut architecture into a stable product
 - [x] **SXTR-02**: Each promoted shortcut records normalized app/platform identifiers, reusable parameter slots, structured state conditions, and provenance back to the source trace.
 - [x] **SXTR-03**: The promotion pipeline rejects brittle shortcuts using explicit gates for minimum usable steps, unsupported patterns, and low-quality evidence.
 - [x] **SXTR-04**: Duplicate or near-duplicate shortcut candidates are merged, versioned, or rejected instead of being stored as repeated library entries.
+- [x] **SXTR-05**: Long-horizon GUI traces promote only the concise reusable prefix of a task instead of persisting the full downstream task chain as one shortcut.
+- [x] **SXTR-06**: Promoted shortcuts are canonicalized to remove redundant waits, repeated unchanged-UI actions, and other replay-like path noise before storage.
+- [x] **SXTR-07**: Dynamic action arguments that can be grounded at runtime are emitted as placeholders/parameter slots rather than frozen recorded literals when that improves reuse stability.
 
 ### SUSE - Shortcut Use
 
@@ -27,6 +30,8 @@ Requirements for turning the shipped shortcut architecture into a stable product
 - [x] **SSTA-02**: Shortcut execution verifies post-step state after every action and surfaces structured failure reasons when drift or contract violations occur.
 - [x] **SSTA-03**: Shortcut runs emit structured telemetry for retrieval, applicability, grounding, settle, validation, fallback, and final outcome so unstable shortcuts can be diagnosed.
 - [x] **SSTA-04**: Regression coverage proves shortcut extraction and execution remain stable across representative mobile and desktop execution seams or their CI-safe equivalents.
+- [ ] **SSTA-05**: Shortcut-level applicability checks run once before execution, while runtime validation uses step-local state instead of rechecking the full shortcut contract on every step.
+- [ ] **SSTA-06**: Shortcut validation policy keeps token cost bounded through explicit local-check and skip rules while preserving drift detection and safe fallback behavior.
 
 ## Future Requirements (v1.7+)
 
@@ -64,18 +69,23 @@ Which phases cover which requirements. Updated during roadmap creation.
 | SXTR-02 | Phase 28 | Complete |
 | SXTR-03 | Phase 28 | Complete |
 | SXTR-04 | Phase 28 | Complete |
+| SXTR-05 | Phase 32 | Complete |
+| SXTR-06 | Phase 32 | Complete |
+| SXTR-07 | Phase 32 | Complete |
 | SUSE-01 | Phase 29 | Complete |
 | SUSE-02 | Phase 29 | Complete |
-| SUSE-03 | Phase 30 | Pending |
+| SUSE-03 | Phase 33 | Pending |
 | SUSE-04 | Phase 30 | Complete |
 | SSTA-01 | Phase 30 | Complete |
 | SSTA-02 | Phase 30 | Complete |
 | SSTA-03 | Phase 31 | Complete |
 | SSTA-04 | Phase 31 | Complete |
+| SSTA-05 | Phase 33 | Pending |
+| SSTA-06 | Phase 33 | Pending |
 
 **Coverage:**
-- v1.6 requirements: 12 total
-- Mapped to phases: 12
+- v1.6 requirements: 17 total
+- Mapped to phases: 17
 - Unmapped: 0 ✓
 
 ---

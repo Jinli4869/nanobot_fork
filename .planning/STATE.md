@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
-stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-07T12:24:00.000Z"
+stopped_at: Completed 32-03-PLAN.md
+last_updated: "2026-04-07T16:39:38.453Z"
 last_activity: 2026-04-07
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  total_phases: 6
+  completed_phases: 5
+  total_plans: 13
+  completed_plans: 13
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 31 — shortcut-observability-and-regression-hardening
-Status: Ready for verification
-Last Activity: 2026-04-05
+**Current focus:** Phase 33 — low-token-applicability-and-step-scoped-validation
+Status: Phase 32 complete; Phase 33 pending planning
+Last Activity: 2026-04-08
 
 ## Current Position
 
-Phase: 31 (shortcut-observability-and-regression-hardening) — EXECUTING
-Plan: 2 of 2
+Phase: 32 (prefix-only-shortcut-extraction-and-canonicalization) — COMPLETE
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -42,6 +42,8 @@ Plan: 2 of 2
 
 Phase 28 is complete and verified. Milestone tracking is now focused on Phase 30 execution and fallback hardening.
 | Phase 31 P02 | 8m | 1 tasks | 2 files |
+| Phase 32 P02 | 5m | 2 tasks | 2 files |
+| Phase 32 P03 | 4 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -173,6 +175,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 31 P01]: recorder injection in GuiAgent.run() placed immediately before execute() so it takes effect on each dispatch without creating a second recorder
 - [Phase 31]: Three-layer non-fixed step merge order: step.parameters (lowest) -> grounding.resolved_params -> caller params (highest). Grounding overrides stale coords; step.parameters provides static typed fields.
 - [Phase 31]: Do not mark promoted shortcut steps fixed=True as a workaround — the seam must remain a non-fixed path so live coordinate re-grounding works correctly.
+- [Phase 32]: ShortcutSkillProducer now infers placeholders from target templates and task-varying selector-like parameters instead of templating only input_text.text.
+- [Phase 32]: Stable labels such as Send, Back, and Compose remain literal to avoid placeholder explosion in stored shortcuts.
+- [Phase 32]: Canonicalized selector-like params remain asserted through the existing recipient placeholder slot when the promoted target already encodes recipient intent.
+- [Phase 32]: Phase 32 closeout stayed test-only; the only blocking fix in the full regression slice was a stale Phase 30 fixture missing agent_profile.
 
 ### Pending Todos
 
@@ -239,6 +245,6 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 Last activity: 2026-04-05 - Completed quick task 260405-ptg: Create a publishable skill for Android deep link probing that explores adb/dumpsys signals and consolidates findings for the main agent
 
-Last session: 2026-04-03T10:45:23.628Z
-Stopped at: Completed 31-02-PLAN.md
+Last session: 2026-04-07T16:39:38.442Z
+Stopped at: Completed 32-03-PLAN.md
 Resume file: None
