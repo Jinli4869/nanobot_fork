@@ -986,7 +986,7 @@ class GuiAgent:
                     )
 
             # Write trace entry
-            await self._write_trace(run_dir / "trace.jsonl", self._scrub_for_log({
+            await self._write_trace(run_dir / "trace.jsonl", self._scrub_for_artifact({
                 "event": "step",
                 "step_index": step_index,
                 "action": self._serialize_action(result.action),
@@ -994,7 +994,7 @@ class GuiAgent:
                 "prompt": result.prompt_snapshot,
                 "model_output": result.model_snapshot,
                 "execution": result.execution_snapshot,
-                "tool_result": self._scrub_text_for_action(result.tool_result, result.action),
+                "tool_result": self._scrub_text_for_artifact_action(result.tool_result, result.action),
                 "screenshot_path": (
                     result.next_observation.screenshot_path
                     if result.next_observation else None
@@ -1005,8 +1005,8 @@ class GuiAgent:
 
             # Record trajectory step
             self._trajectory_recorder.record_step(
-                action=self._scrub_for_log(self._serialize_action(result.action)),
-                model_output=self._scrub_text_for_action(result.action_summary, result.action) or "",
+                action=self._scrub_for_artifact(self._serialize_action(result.action)),
+                model_output=self._scrub_text_for_artifact_action(result.action_summary, result.action) or "",
                 screenshot_path=(
                     str(result.next_observation.screenshot_path)
                     if result.next_observation and result.next_observation.screenshot_path
@@ -1571,7 +1571,7 @@ class GuiAgent:
         return {
             "task": task,
             "step_index": step_index,
-            "messages": self._scrub_for_log(messages),
+            "messages": self._scrub_for_artifact(messages),
             "history": [
                 {
                     "step_index": turn.step_index,
@@ -1593,19 +1593,19 @@ class GuiAgent:
         action_text: str,
     ) -> dict[str, Any]:
         return {
-            "raw_content": self._scrub_text_for_action(response.content, action),
+            "raw_content": self._scrub_text_for_artifact_action(response.content, action),
             "tool_calls": [
                 {
                     "id": tool_call.id,
                     "name": tool_call.name,
-                    "arguments": self._scrub_for_log(tool_call.arguments),
+                    "arguments": self._scrub_for_artifact(tool_call.arguments),
                 }
                 for tool_call in (response.tool_calls or [])
             ],
-            "assistant_message": self._scrub_assistant_message_for_log(assistant_message, action),
-            "parsed_action": self._scrub_for_log(self._serialize_action(action)),
-            "action_text": self._scrub_text_for_action(action_text, action),
-            "action_summary": self._scrub_text_for_action(self._action_summary(action_text), action),
+            "assistant_message": self._scrub_assistant_message_for_artifact(assistant_message, action),
+            "parsed_action": self._scrub_for_artifact(self._serialize_action(action)),
+            "action_text": self._scrub_text_for_artifact_action(action_text, action),
+            "action_summary": self._scrub_text_for_artifact_action(self._action_summary(action_text), action),
         }
 
     def _snapshot_failed_model_response(
@@ -1615,18 +1615,18 @@ class GuiAgent:
         assistant_message: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         snapshot: dict[str, Any] = {
-            "raw_content": self._scrub_text_for_action(response.content, None),
+            "raw_content": self._scrub_text_for_artifact_action(response.content, None),
             "tool_calls": [
                 {
                     "id": tool_call.id,
                     "name": tool_call.name,
-                    "arguments": self._scrub_for_log(tool_call.arguments),
+                    "arguments": self._scrub_for_artifact(tool_call.arguments),
                 }
                 for tool_call in (response.tool_calls or [])
             ],
         }
         if assistant_message is not None:
-            snapshot["assistant_message"] = self._scrub_for_log(assistant_message)
+            snapshot["assistant_message"] = self._scrub_for_artifact(assistant_message)
         return snapshot
 
     @staticmethod
@@ -1679,35 +1679,51 @@ class GuiAgent:
 
     @staticmethod
     def _scrub_for_log(value: Any) -> Any:
+        return GuiAgent._scrub_value(value, redact_input_text=True)
+
+    @staticmethod
+    def _scrub_for_artifact(value: Any) -> Any:
+        return GuiAgent._scrub_value(value, redact_input_text=False)
+
+    @staticmethod
+    def _scrub_value(value: Any, *, redact_input_text: bool) -> Any:
         if isinstance(value, dict):
             scrubbed: dict[str, Any] = {}
             action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
             for key, item in value.items():
                 if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
                     scrubbed[key] = "<omitted:image-data-url>"
-                elif action_type == "input_text" and key == "text":
+                elif redact_input_text and action_type == "input_text" and key == "text":
                     scrubbed[key] = "<redacted:input_text>"
                 elif (action_type == "request_intervention" and key == "text") or key == "reason":
                     scrubbed[key] = "<redacted:intervention_reason>"
                 elif any(token in key.lower() for token in ("password", "secret", "token", "otp", "credential")):
                     scrubbed[key] = "<redacted:sensitive_field>"
                 else:
-                    scrubbed[key] = GuiAgent._scrub_for_log(item)
+                    scrubbed[key] = GuiAgent._scrub_value(item, redact_input_text=redact_input_text)
             return scrubbed
         if isinstance(value, list):
-            return [GuiAgent._scrub_for_log(item) for item in value]
+            return [GuiAgent._scrub_value(item, redact_input_text=redact_input_text) for item in value]
         if isinstance(value, str):
             return GuiAgent._scrub_sensitive_text(value)
         return value
 
     @staticmethod
     def _scrub_text_for_action(text: str | None, action: Action | None) -> str | None:
+        return GuiAgent._scrub_text(text, action, redact_input_text=True)
+
+    @staticmethod
+    def _scrub_text_for_artifact_action(text: str | None, action: Action | None) -> str | None:
+        return GuiAgent._scrub_text(text, action, redact_input_text=False)
+
+    @staticmethod
+    def _scrub_text(text: str | None, action: Action | None, *, redact_input_text: bool) -> str | None:
         if text is None:
             return None
         scrubbed = GuiAgent._scrub_sensitive_text(text)
         if action is None:
             return scrubbed
-        if action.action_type == "input_text" and action.text:
+        if redact_input_text and action.action_type == "input_text" and action.text:
             scrubbed = scrubbed.replace(action.text, "<redacted:input_text>")
         if action.action_type == "request_intervention" and action.text:
             scrubbed = scrubbed.replace(action.text, "<redacted:intervention_reason>")
@@ -1747,6 +1763,34 @@ class GuiAgent:
                 )
             except json.JSONDecodeError:
                 function_payload["arguments"] = cls._scrub_text_for_action(arguments, action)
+        return scrubbed
+
+    @classmethod
+    def _scrub_assistant_message_for_artifact(
+        cls,
+        assistant_message: dict[str, Any],
+        action: Action,
+    ) -> dict[str, Any]:
+        scrubbed = cls._scrub_for_artifact(assistant_message)
+        content = scrubbed.get("content")
+        if isinstance(content, str):
+            scrubbed["content"] = cls._scrub_text_for_artifact_action(content, action)
+        for tool_call in scrubbed.get("tool_calls", []):
+            if not isinstance(tool_call, dict):
+                continue
+            function_payload = tool_call.get("function")
+            if not isinstance(function_payload, dict):
+                continue
+            arguments = function_payload.get("arguments")
+            if not isinstance(arguments, str):
+                continue
+            try:
+                function_payload["arguments"] = json.dumps(
+                    cls._scrub_for_artifact(json.loads(arguments)),
+                    ensure_ascii=False,
+                )
+            except json.JSONDecodeError:
+                function_payload["arguments"] = cls._scrub_text_for_artifact_action(arguments, action)
         return scrubbed
 
     # ------------------------------------------------------------------
