@@ -389,6 +389,29 @@ def test_evaluate_gui_trajectory_counts_only_step_rows(
     assert len(captured["screenshots"]) == 2
 
 
+def test_load_screenshots_for_judge_supports_screenshot_path_field(tmp_path: Path) -> None:
+    from nanobot.utils.gui_evaluation import load_screenshots_for_judge
+
+    trace_path = tmp_path / "trace.jsonl"
+    screenshot_path = tmp_path / "screenshots" / "step_001.png"
+    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+    screenshot_path.write_bytes(b"png-bytes")
+    trace_path.write_text("", encoding="utf-8")
+
+    screenshots = load_screenshots_for_judge(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 1,
+                "screenshot_path": str(screenshot_path),
+            }
+        ],
+    )
+
+    assert screenshots == [b"png-bytes"]
+
+
 def test_eval_script_uses_step_only_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from eval.eval import run_eval
 

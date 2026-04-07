@@ -77,8 +77,19 @@ class AdbError(Exception):
 
 def _escape_shell_text(text: str) -> str:
     """Escape text for ``adb shell input text``."""
-    _SPECIAL = frozenset(r' \`$"!&|<>(){}[];#~*?^')
-    return "".join(("\\" + ch if ch in _SPECIAL else ch) for ch in text)
+    # Android's `input text` command treats `%s` as a space placeholder.
+    # We are not invoking a shell here, so `\ ` would be passed literally and
+    # can cause whitespace truncation on device-side parsing.
+    _SPECIAL = frozenset(r'\`$"!&|<>(){}[];#~*?^')
+    escaped: list[str] = []
+    for ch in text:
+        if ch == " ":
+            escaped.append("%s")
+        elif ch in _SPECIAL:
+            escaped.append("\\" + ch)
+        else:
+            escaped.append(ch)
+    return "".join(escaped)
 
 
 def _is_ascii_safe(text: str) -> bool:
