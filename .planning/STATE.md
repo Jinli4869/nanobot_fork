@@ -230,6 +230,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260407-ezs | 允许失败的 GUI 轨迹也参与技能提炼，使用失败 prompt 而不是直接跳过 | 2026-04-07 | uncommitted | [260407-ezs-gui-prompt](./quick/260407-ezs-gui-prompt/) |
 | 260407-glp | 让 evaluation 读取截图字段兼容当前 trace 的 screenshot_path 格式 | 2026-04-07 | uncommitted | [260407-glp-evaluation-trace-screenshot-path](./quick/260407-glp-evaluation-trace-screenshot-path/) |
 | 260407-k7k | 修复 OpenGUI ADB 文本输入在空格处被截断的问题 | 2026-04-07 | uncommitted | [260407-k7k-opengui-adb](./quick/260407-k7k-opengui-adb/) |
+| 260407-ku8 | 让 GUI trace 记录 input_text 的真实文本，不再写成 redacted 占位符 | 2026-04-07 | uncommitted | [260407-ku8-gui-trace-input-text-redacted](./quick/260407-ku8-gui-trace-input-text-redacted/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 

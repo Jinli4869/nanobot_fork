@@ -339,8 +339,7 @@ async def test_trace_and_trajectory_scrub_sensitive_intervention_fields(tmp_path
 
 
 @pytest.mark.asyncio
-@pytest.mark.input_text_is_redacted
-async def test_input_text_is_redacted_in_logged_action_payloads(tmp_path: Path) -> None:
+async def test_input_text_is_preserved_in_trace_artifacts(tmp_path: Path) -> None:
     typed_secret = "Sup3rS3cret OTP 123456"
     recorder = _make_recorder(tmp_path, "type secret")
     agent = GuiAgent(
@@ -377,7 +376,5 @@ async def test_input_text_is_redacted_in_logged_action_payloads(tmp_path: Path) 
     serialized_trace = json.dumps(trace_events)
     serialized_trajectory = json.dumps(trajectory_events)
 
-    assert "<redacted:input_text>" in serialized_trace
-    assert "<redacted:input_text>" in serialized_trajectory
-    assert typed_secret not in serialized_trace
-    assert typed_secret not in serialized_trajectory
+    assert typed_secret in serialized_trace
+    assert typed_secret in serialized_trajectory
