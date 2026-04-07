@@ -105,6 +105,20 @@ class _FakeGrounder:
         )
 
 
+class _CapturingGrounder:
+    def __init__(self, resolved_params: dict[str, Any]) -> None:
+        self.resolved_params = resolved_params
+        self.calls: list[str] = []
+
+    async def ground(self, target: str, context: object) -> GroundingResult:
+        self.calls.append(target)
+        return GroundingResult(
+            grounder_id="capturing",
+            confidence=1.0,
+            resolved_params=dict(self.resolved_params),
+        )
+
+
 class _NeverCalledGrounder:
     """Grounder that raises immediately — used to verify it is never called."""
 
@@ -590,6 +604,39 @@ async def test_extracted_step_parameters_feed_non_fixed_execution(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_non_fixed_step_renders_templates_before_grounding(tmp_path: Path) -> None:
+    step = SkillStep(
+        action_type="input_text",
+        target="Type {{message}} into the body",
+        parameters={"text": "{{message}}"},
+        fixed=False,
+    )
+    shortcut = ShortcutSkill(
+        skill_id="sc-render-params",
+        name="render params",
+        description="Verifies template rendering before grounding",
+        app="com.example.mail",
+        platform="android",
+        steps=(step,),
+    )
+
+    backend = _FakeBackend()
+    grounder = _CapturingGrounder({})
+    executor = ShortcutExecutor(
+        backend=backend,
+        grounder=grounder,
+        screenshot_dir=tmp_path / "render_params",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(shortcut, params={"message": "hello"})
+
+    assert isinstance(result, ShortcutExecutionSuccess)
+    assert grounder.calls == ["Type hello into the body"]
+    assert backend.executed_actions[0].text == "hello"
+
+
+@pytest.mark.asyncio
 async def test_android_extraction_execution_seam(tmp_path: Path) -> None:
     """Android JSONL trace promotes into a store and the promoted shortcut executes.
 
@@ -641,8 +688,8 @@ async def test_android_extraction_execution_seam(tmp_path: Path) -> None:
     assert isinstance(result, ShortcutExecutionSuccess), (
         f"Expected ShortcutExecutionSuccess but got {result!r}"
     )
-    assert len(backend.executed_actions) == 2, (
-        f"Expected 2 executed actions, got {len(backend.executed_actions)}"
+    assert len(backend.executed_actions) == 1, (
+        f"Expected 1 executed action, got {len(backend.executed_actions)}"
     )
 
     tap_action = backend.executed_actions[0]
@@ -654,12 +701,105 @@ async def test_android_extraction_execution_seam(tmp_path: Path) -> None:
         f"Tap y must come from the grounder (960) but got {tap_action.y}"
     )
 
-    text_action = backend.executed_actions[1]
-    assert text_action.action_type == "input_text"
-    assert text_action.text == "hello", (
-        f"input_text payload must carry 'hello' from promoted step.parameters, "
-        f"got text={text_action.text!r}"
+
+
+@pytest.mark.asyncio
+async def test_android_canonicalized_prefix_executes_with_grounded_placeholders(
+    tmp_path: Path,
+) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+    from opengui.skills.shortcut_store import ShortcutSkillStore
+
+    trace_path = tmp_path / "android_canonicalized_trace" / "trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            (
+                '{"type": "step", "step_index": 0, "phase": "agent",'
+                ' "action": {"action_type": "tap", "x": 10, "y": 20},'
+                ' "model_output": "Open compose",'
+                ' "valid_state": "Inbox visible", "expected_state": "Composer visible",'
+                ' "observation": {"app": "com.example.mail"}}'
+            ),
+            (
+                '{"type": "step", "step_index": 1, "phase": "agent",'
+                ' "action": {"action_type": "tap", "x": 10, "y": 20},'
+                ' "model_output": "Open compose",'
+                ' "valid_state": "Inbox visible", "expected_state": "Composer visible",'
+                ' "observation": {"app": "com.example.mail"}}'
+            ),
+            (
+                '{"type": "step", "step_index": 2, "phase": "agent",'
+                ' "action": {"action_type": "tap", "selector": "thread_alice", "x": 30, "y": 40},'
+                ' "model_output": "Focus recipient selector for {{recipient}}",'
+                ' "valid_state": "Composer visible", "expected_state": "Recipient field focused",'
+                ' "observation": {"app": "com.example.mail"}}'
+            ),
+            (
+                '{"type": "step", "step_index": 3, "phase": "agent",'
+                ' "action": {"action_type": "input_text", "text": "Project update"},'
+                ' "model_output": "Type {{message}} into the body",'
+                ' "valid_state": "Recipient field focused", "expected_state": "Draft text entered",'
+                ' "observation": {"app": "com.example.mail"}}'
+            ),
+            (
+                '{"type": "step", "step_index": 4, "phase": "agent",'
+                ' "action": {"action_type": "tap", "x": 50, "y": 60},'
+                ' "model_output": "Send message",'
+                ' "valid_state": "Draft text entered", "expected_state": "Message sent",'
+                ' "observation": {"app": "com.example.mail"}}'
+            ),
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
     )
+
+    store = ShortcutSkillStore(tmp_path / "android_canonicalized_store")
+    pipeline = ShortcutPromotionPipeline()
+    skill_id = await pipeline.promote_from_trace(
+        trace_path,
+        is_success=True,
+        store=store,
+    )
+
+    assert skill_id is not None
+    promoted = store.list_all(platform="android")
+    assert len(promoted) == 1
+
+    shortcut = promoted[0]
+    assert shortcut.source_step_indices == (1, 2)
+    assert tuple(slot.name for slot in shortcut.parameter_slots) == ("recipient",)
+
+    backend = _FakeBackend()
+    grounder = _FixtureGrounder(
+        {
+            "Open compose": {"x": 540, "y": 960},
+            "Focus recipient selector for recipient": {
+                "selector": "thread_live",
+                "x": 700,
+                "y": 1200,
+            },
+        }
+    )
+    executor = ShortcutExecutor(
+        backend=backend,
+        grounder=grounder,
+        screenshot_dir=tmp_path / "android_canonicalized_exec",
+        post_action_settle_seconds=0.0,
+    )
+
+    result = await executor.execute(shortcut, params={"recipient": "recipient"})
+
+    assert isinstance(result, ShortcutExecutionSuccess)
+    assert len(backend.executed_actions) == 2
+
+    tap_action = backend.executed_actions[1]
+    assert tap_action.action_type == "tap"
+    assert tap_action.x == 700
+    assert tap_action.y == 1200
+    assert shortcut.steps[1].parameters == {"selector": "{{recipient}}"}
 
 
 @pytest.mark.asyncio

@@ -643,6 +643,49 @@ async def test_promotion_pipeline_canonicalizes_duplicate_waits_and_unchanged_ui
 
 
 @pytest.mark.asyncio
+async def test_promotion_pipeline_stores_canonicalized_prefix_with_parameter_slots(
+    tmp_path: Path,
+) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "canonicalized-prefix-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Open compose", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "wait", "duration_ms": 1000}, "model_output": "wait", "valid_state": "Composer visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "wait", "duration_ms": 1000}, "model_output": "wait", "valid_state": "Composer visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 3, "phase": "agent", "action": {"action_type": "tap", "selector": "thread_alice"}, "model_output": "Focus recipient selector for {{recipient}}", "valid_state": "Composer visible", "expected_state": "Recipient field focused", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 4, "phase": "agent", "action": {"action_type": "input_text", "text": "Project update"}, "model_output": "Type {{message}} into the body", "valid_state": "Recipient field focused", "expected_state": "Draft text entered", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 5, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Send message", "valid_state": "Draft text entered", "expected_state": "Message sent", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
+    )
+
+    store = ShortcutSkillStore(tmp_path / "canonicalized-prefix-store")
+    skill_id = await ShortcutPromotionPipeline().promote_from_trace(
+        trace_path,
+        is_success=True,
+        store=store,
+    )
+
+    assert skill_id is not None
+    promoted = store.list_all(platform="android", app="com.example.mail")
+    assert len(promoted) == 1
+
+    shortcut = promoted[0]
+    assert shortcut.source_step_indices == (0, 2, 3)
+    assert [step.action_type for step in shortcut.steps] == ["tap", "wait", "tap"]
+    assert tuple(slot.name for slot in shortcut.parameter_slots) == ("recipient",)
+    assert shortcut.steps[-1].target == "Focus recipient selector for {{recipient}}"
+    assert shortcut.steps[-1].parameters == {"selector": "{{recipient}}"}
+    assert all("Send" not in step.target for step in shortcut.steps)
+
+
+@pytest.mark.asyncio
 async def test_promotion_pipeline_keeps_richer_state_evidence_when_collapsing_duplicates(
     tmp_path: Path,
 ) -> None:
