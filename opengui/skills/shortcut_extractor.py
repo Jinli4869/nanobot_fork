@@ -18,6 +18,13 @@ from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescripto
 
 _PARAM_RE = re.compile(r"\{\{(\w+)\}\}")
 _SKIP_STATE_VALUES = {"", "no need to verify"}
+_COORD_KEYS = frozenset({"x", "y", "x2", "y2"})
+_TEXTUAL_ACTIONS = frozenset({"input_text"})
+_POINTER_ACTIONS = frozenset({"tap", "click", "long_press", "double_tap"})
+_GENERALIZABLE_STRING_KEYS = frozenset(
+    {"text", "label", "value", "query", "selector", "resource_id", "accessibility_id"}
+)
+_STABLE_CONTROL_LITERALS = frozenset({"send", "back", "compose", "cancel", "ok"})
 
 
 @dataclass(frozen=True)
@@ -81,14 +88,20 @@ class ShortcutSkillProducer:
 
     def _to_skill_step(self, step: dict[str, Any]) -> SkillStep:
         action = step.get("action", {})
-        parameters = {
-            key: value
-            for key, value in action.items()
-            if key != "action_type"
-        }
+        action_type = str(action.get("action_type", ""))
+        target = self._generalize_target(
+            raw_target=str(step.get("model_output", "")),
+            action_type=action_type,
+            action=action,
+        )
+        parameters = self._generalize_parameters(
+            action_type=action_type,
+            target=target,
+            action=action,
+        )
         return SkillStep(
-            action_type=str(action.get("action_type", "")),
-            target=str(step.get("model_output", "")),
+            action_type=action_type,
+            target=target,
             parameters=parameters,
             expected_state=self._extract_state(step, "expected_state"),
             valid_state=self._extract_state(step, "valid_state"),
@@ -98,12 +111,12 @@ class ShortcutSkillProducer:
         seen: dict[str, ParameterSlot] = {}
         for step in steps:
             for name in _PARAM_RE.findall(step.target):
-                if name not in seen:
-                    seen[name] = ParameterSlot(
-                        name=name,
-                        type="string",
-                        description=f"Value for {name}",
-                    )
+                self._register_slot(seen, name)
+            for value in step.parameters.values():
+                if not isinstance(value, str):
+                    continue
+                for name in _PARAM_RE.findall(value):
+                    self._register_slot(seen, name)
         return tuple(seen.values())
 
     def _collect_conditions(
@@ -164,6 +177,149 @@ class ShortcutSkillProducer:
     def _slugify(self, value: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
         return slug or "step"
+
+    def _generalize_target(
+        self,
+        *,
+        raw_target: str,
+        action_type: str,
+        action: dict[str, Any],
+    ) -> str:
+        target = raw_target.strip()
+        if not target and action_type in _TEXTUAL_ACTIONS:
+            target = "Type {{text}}"
+        action_text = action.get("text")
+        if action_type in _TEXTUAL_ACTIONS and isinstance(action_text, str):
+            placeholder_name = self._infer_placeholder_name(action_type, "text", target, action_text)
+            if action_text and action_text in target and "{{" not in target:
+                return target.replace(action_text, f"{{{{{placeholder_name}}}}}")
+        return target
+
+    def _generalize_parameters(
+        self,
+        *,
+        action_type: str,
+        target: str,
+        action: dict[str, Any],
+    ) -> dict[str, Any]:
+        parameters: dict[str, Any] = {}
+        placeholder_names = _PARAM_RE.findall(target)
+        if action_type in _TEXTUAL_ACTIONS and not placeholder_names:
+            placeholder_names = [self._infer_placeholder_name(action_type, "text", target, action.get("text"))]
+
+        for key, value in action.items():
+            if key == "action_type":
+                continue
+            if (action_type in _POINTER_ACTIONS or action_type in _TEXTUAL_ACTIONS) and key in _COORD_KEYS:
+                continue
+            if self._should_generalize_parameter(
+                action_type=action_type,
+                key=key,
+                target=target,
+                value=value,
+                placeholder_names=placeholder_names,
+            ):
+                placeholder_name = self._infer_placeholder_name(action_type, key, target, value)
+                parameters[key] = f"{{{{{placeholder_name}}}}}"
+                continue
+            parameters[key] = value
+
+        if action_type in _TEXTUAL_ACTIONS and "text" not in parameters:
+            placeholder_name = placeholder_names[0]
+            parameters["text"] = f"{{{{{placeholder_name}}}}}"
+
+        return parameters
+
+    def _register_slot(self, seen: dict[str, ParameterSlot], name: str) -> None:
+        if name in seen:
+            return
+        seen[name] = ParameterSlot(
+            name=name,
+            type=self._infer_slot_type(name),
+            description=f"Value for {name}",
+        )
+
+    def _infer_slot_type(self, name: str) -> str:
+        lowered = name.lower()
+        if lowered in {"x", "y", "x2", "y2", "coord", "coordinate"}:
+            return "coordinate"
+        if any(token in lowered for token in ("text", "message", "query", "term", "keyword")):
+            return "text"
+        return "string"
+
+    def _should_generalize_parameter(
+        self,
+        *,
+        action_type: str,
+        key: str,
+        target: str,
+        value: Any,
+        placeholder_names: list[str],
+    ) -> bool:
+        if key not in _GENERALIZABLE_STRING_KEYS:
+            return False
+        if not isinstance(value, str) or not value.strip():
+            return False
+        if action_type in _TEXTUAL_ACTIONS and key == "text":
+            return True
+        if self._is_stable_control_literal(key, value):
+            return False
+        inferred_name = self._infer_placeholder_name(action_type, key, target, value)
+        if inferred_name in placeholder_names:
+            return True
+        if placeholder_names and key in {"selector", "resource_id", "accessibility_id", "value"}:
+            return True
+        return self._value_looks_variable(key=key, target=target, value=value)
+
+    def _infer_placeholder_name(
+        self,
+        action_type: str,
+        key: str,
+        target: str,
+        value: Any,
+    ) -> str:
+        lowered_target = target.lower()
+        lowered_value = str(value).lower()
+        combined = f"{lowered_target} {lowered_value}"
+        if "recipient" in combined or "thread" in lowered_value or "chat" in lowered_target:
+            return "recipient"
+        if "message" in combined or (action_type in _TEXTUAL_ACTIONS and key == "text"):
+            return "message"
+        if "search" in combined:
+            return "search_term"
+        if "query" in combined:
+            return "query"
+        if "selector" in combined or key in {"selector", "resource_id", "accessibility_id"}:
+            return "selector" if "selector" in combined else key
+        if key == "value":
+            return "value"
+        if key in {"x", "y"}:
+            return key
+        return "text"
+
+    def _is_stable_control_literal(self, key: str, value: str) -> bool:
+        if key not in {"label", "text", "value"}:
+            return False
+        normalized = value.strip().lower()
+        return normalized in _STABLE_CONTROL_LITERALS
+
+    def _value_looks_variable(self, *, key: str, target: str, value: str) -> bool:
+        lowered_value = value.strip().lower()
+        lowered_target = target.lower()
+        if key in {"resource_id", "accessibility_id"} and (
+            lowered_value.startswith(("thread_", "chat_", "recipient_", "conversation_"))
+            or any(token in lowered_target for token in ("recipient", "message", "search", "query"))
+        ):
+            return True
+        if key in {"selector", "query"} and any(
+            token in lowered_target for token in ("recipient", "message", "search", "query", "selector")
+        ):
+            return True
+        if key in {"text", "value"} and any(
+            token in lowered_target for token in ("message", "search", "query", "recipient", "value")
+        ):
+            return True
+        return False
 
 
 class _AlwaysPassStepCritic:
