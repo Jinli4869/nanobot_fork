@@ -333,7 +333,12 @@ async def test_nanobot_wires_shortcut_executor(tmp_path: Path) -> None:
             constructed["router"] = kwargs
 
     tool = GuiSubagentTool.__new__(GuiSubagentTool)
-    tool._gui_config = SimpleNamespace(enable_skill_execution=True, max_steps=3, skill_threshold=0.5)
+    tool._gui_config = SimpleNamespace(
+        enable_skill_execution=True,
+        max_steps=3,
+        skill_threshold=0.5,
+        agent_profile="default",
+    )
     tool._llm_adapter = object()
     tool._model = "test-model"
     tool._load_policy_context_and_memory_store = lambda: (None, None)
