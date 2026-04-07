@@ -4,8 +4,8 @@ milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
 stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-05T06:52:23.006Z"
-last_activity: 2026-04-05
+last_updated: "2026-04-07T12:24:00.000Z"
+last_activity: 2026-04-07
 progress:
   total_phases: 4
   completed_phases: 4
@@ -218,6 +218,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
+| 260407-s5f | 修复 Android `input_text` 多行输入只落第一行的问题：按行输入并在行间显式发送回车，补回归测试覆盖换行文本 | 2026-04-07 | uncommitted | [260407-s5f-trace-jsonl-input-text](./quick/260407-s5f-trace-jsonl-input-text/) |
 | 260405-knn | 根据 /Users/jinli/.nanobot/workspace/gui_runs/2026-04-05_144819_197174 中出现 exception 的原因进行 debug 并修复 | 2026-04-05 | uncommitted | [260405-knn-users-jinli-nanobot-workspace-gui-runs-2](./quick/260405-knn-users-jinli-nanobot-workspace-gui-runs-2/) |
 | 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
 | 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
