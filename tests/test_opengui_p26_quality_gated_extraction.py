@@ -261,6 +261,8 @@ async def test_shortcut_skill_producer_infers_parameter_slots_and_conditions() -
 
     assert skill.app == "com.example.app"
     assert tuple(slot.name for slot in skill.parameter_slots) == ("search_term", "search_box")
+    assert skill.steps[0].parameters == {}
+    assert skill.steps[1].parameters == {"text": "{{search_term}}"}
     assert skill.preconditions == (
         StateDescriptor(kind="screen_state", value="search field is visible"),
     )
@@ -287,6 +289,109 @@ async def test_shortcut_skill_producer_returns_empty_slots_without_placeholders(
     assert skill.parameter_slots == ()
     assert skill.steps[0].action_type == "tap"
     assert skill.steps[0].target == "Tap the settings button"
+    assert skill.steps[0].parameters == {}
+
+
+@pytest.mark.asyncio
+async def test_shortcut_skill_producer_infers_slots_from_parameter_templates() -> None:
+    producer = ShortcutSkillProducer()
+    steps = [
+        _make_step(
+            step_index=0,
+            action_type="input_text",
+            model_output="Type message into the body",
+            valid_state="composer visible",
+            expected_state="draft updated",
+        ),
+    ]
+
+    skill = producer.produce(steps, app="Mail", platform="android")
+
+    assert tuple(slot.name for slot in skill.parameter_slots) == ("message",)
+    assert skill.steps[0].parameters == {"text": "{{message}}"}
+    assert skill.steps[0].target == "Type message into the body"
+
+
+@pytest.mark.asyncio
+async def test_shortcut_skill_producer_generalizes_dynamic_fields_beyond_input_text() -> None:
+    producer = ShortcutSkillProducer()
+    steps = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {
+                "action_type": "tap",
+                "resource_id": "thread_alice",
+                "x": 540,
+                "y": 960,
+            },
+            "model_output": "Open chat for {{recipient}}",
+            "observation": {},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {
+                "action_type": "input_text",
+                "text": "hello alice",
+            },
+            "model_output": "Type {{message}}",
+            "observation": {},
+        },
+        {
+            "type": "step",
+            "step_index": 2,
+            "action": {
+                "action_type": "press",
+                "label": "Send",
+            },
+            "model_output": "Press Send",
+            "observation": {},
+        },
+    ]
+
+    skill = producer.produce(steps, app="Messages", platform="android")
+
+    assert tuple(slot.name for slot in skill.parameter_slots) == ("recipient", "message")
+    assert "x" not in skill.steps[0].parameters
+    assert "y" not in skill.steps[0].parameters
+    assert skill.steps[0].parameters["resource_id"] == "{{recipient}}"
+    assert skill.steps[1].parameters["text"] == "{{message}}"
+    assert skill.steps[2].parameters["label"] == "Send"
+
+
+@pytest.mark.asyncio
+async def test_shortcut_skill_producer_preserves_stable_literals_without_placeholder_explosion() -> None:
+    producer = ShortcutSkillProducer()
+    steps = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {
+                "action_type": "press",
+                "label": "Back",
+            },
+            "model_output": "Press Back",
+            "observation": {},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {
+                "action_type": "tap",
+                "label": "Compose",
+            },
+            "model_output": "Tap Compose button",
+            "observation": {},
+        },
+    ]
+
+    skill = producer.produce(steps, app="Messages", platform="android")
+
+    assert skill.parameter_slots == ()
+    assert skill.steps[0].parameters == {"label": "Back"}
+    assert skill.steps[1].parameters == {"label": "Compose"}
+    assert skill.steps[1].target == "Tap Compose button"
 
 
 @pytest.mark.asyncio
@@ -310,7 +415,6 @@ async def test_shortcut_extractor_module_compiles() -> None:
     "steps",
     [
         [],
-        [_make_step(step_index=0)],
     ],
 )
 async def test_pipeline_rejects_too_few_steps_without_running_critics(
@@ -338,6 +442,20 @@ async def test_pipeline_rejects_too_few_steps_without_running_critics(
     assert step_critic.calls == []
     assert trajectory_critic.calls == []
     assert producer.calls == []
+
+
+@pytest.mark.asyncio
+async def test_pipeline_accepts_single_step_when_critics_pass() -> None:
+    pipeline = ExtractionPipeline()
+    steps = [_make_step(step_index=0)]
+
+    result = await pipeline.run(
+        steps,
+        {"app": "com.example.app", "platform": "android", "success": True, "task": "Open settings"},
+    )
+
+    assert isinstance(result, ExtractionSuccess)
+    assert len(result.step_verdicts) == 1
 
 
 @pytest.mark.asyncio
