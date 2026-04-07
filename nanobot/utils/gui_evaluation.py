@@ -41,10 +41,12 @@ def load_screenshots_for_judge(
     screenshot_dir = traj_path.parent
 
     for row in traj_rows:
-        screenshot_file = row.get("screenshot_file")
-        if not screenshot_file:
+        screenshot_ref = row.get("screenshot_file") or row.get("screenshot_path")
+        if not screenshot_ref:
             continue
-        ss_path = screenshot_dir / str(screenshot_file)
+        ss_path = Path(str(screenshot_ref))
+        if not ss_path.is_absolute():
+            ss_path = screenshot_dir / str(screenshot_ref)
         if not ss_path.exists():
             continue
         try:

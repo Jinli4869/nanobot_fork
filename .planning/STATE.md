@@ -227,6 +227,9 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260404-te3 | 自动探测并切换 ADBKeyboard IME，使已安装但未激活 ADBKeyboard 的设备也能自动走中文输入广播链路 | 2026-04-04 | uncommitted | [260404-te3-adbkeyboard-ime](./quick/260404-te3-adbkeyboard-ime/) |
 | 260404-tot | 让 OpenGUI 自带并自动下发 yadb，不再依赖另一个本地仓库中的 yadb 资产 | 2026-04-04 | uncommitted | [260404-tot-opengui-yadb-yadb](./quick/260404-tot-opengui-yadb-yadb/) |
 | 260405-ptg | Create a publishable skill for Android deep link probing that explores adb/dumpsys signals and consolidates findings for the main agent | 2026-04-05 | uncommitted | [260405-ptg-create-a-publishable-skill-for-android-d](./quick/260405-ptg-create-a-publishable-skill-for-android-d/) |
+| 260407-ezs | 允许失败的 GUI 轨迹也参与技能提炼，使用失败 prompt 而不是直接跳过 | 2026-04-07 | uncommitted | [260407-ezs-gui-prompt](./quick/260407-ezs-gui-prompt/) |
+| 260407-glp | 让 evaluation 读取截图字段兼容当前 trace 的 screenshot_path 格式 | 2026-04-07 | uncommitted | [260407-glp-evaluation-trace-screenshot-path](./quick/260407-glp-evaluation-trace-screenshot-path/) |
+| 260407-k7k | 修复 OpenGUI ADB 文本输入在空格处被截断的问题 | 2026-04-07 | uncommitted | [260407-k7k-opengui-adb](./quick/260407-k7k-opengui-adb/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 

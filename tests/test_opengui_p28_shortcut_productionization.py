@@ -14,7 +14,7 @@ from nanobot.providers.base import LLMProvider as NanobotLLMProvider
 from nanobot.providers.base import LLMResponse as NanobotLLMResponse
 from nanobot.providers.base import ToolCallRequest
 from opengui.skills import ShortcutSkill, ShortcutSkillStore
-from opengui.skills.data import SkillStep
+from opengui.skills.data import Skill, SkillStep
 from opengui.skills.shortcut import ParameterSlot, StateDescriptor
 from opengui.skills.shortcut_extractor import (
     ExtractionRejected,
@@ -148,6 +148,89 @@ async def test_gui_postprocessing_uses_shortcut_promotion_not_legacy_extractor(
     assert result["success"] is True
     promote_mock.assert_awaited_once()
     legacy_extract_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_shortcut_promotion_uses_failure_extractor_and_persists(
+    tmp_workspace: Path,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    tool = _dry_run_tool(tmp_workspace)
+    trace_path = tmp_workspace / "gui_runs" / "failed-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Open settings", "platform": "dry-run"}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Tap settings icon", "expected_state": "Settings opens", "valid_state": "Desktop is visible", "observation": {"app": "settings"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Tap wrong icon", "expected_state": "Wrong app opens", "valid_state": "Desktop is visible", "observation": {"app": "settings"}}',
+            '{"type": "result", "success": false, "error": "clicked wrong icon"}',
+        ],
+    )
+
+    extract_calls: list[tuple[Path, bool]] = []
+
+    async def fake_extract(self, trajectory_path: Path, *, is_success: bool = True) -> Skill:
+        del self
+        extract_calls.append((trajectory_path, is_success))
+        return Skill(
+            skill_id="failed-settings-shortcut",
+            name="recover_open_settings",
+            description="Wrong icon was tapped; retry the Settings icon",
+            app="settings",
+            platform="dry-run",
+            parameters=("app_name",),
+            preconditions=("Desktop is visible",),
+            steps=(
+                SkillStep(
+                    action_type="tap",
+                    target="Settings icon",
+                    parameters={},
+                    expected_state="Settings icon is highlighted",
+                    valid_state="Desktop is visible",
+                ),
+                SkillStep(
+                    action_type="tap",
+                    target="Retry Settings icon instead of the wrong icon",
+                    parameters={"is_corrective": True},
+                    expected_state="Settings opens",
+                    valid_state="Wrong app is not open",
+                ),
+            ),
+        )
+
+    promote_mock = AsyncMock(return_value=None)
+    with (
+        patch(
+            "opengui.skills.extractor.SkillExtractor.extract_from_file",
+            new=fake_extract,
+        ),
+        patch(
+            "opengui.skills.shortcut_promotion.ShortcutPromotionPipeline.promote_from_trace",
+            new=promote_mock,
+        ),
+    ):
+        promoted_id = await tool._promote_shortcut(trace_path, is_success=False, platform="dry-run")
+
+    assert promoted_id == "failed-settings-shortcut"
+    assert extract_calls == [(trace_path, False)]
+    promote_mock.assert_not_awaited()
+
+    store = ShortcutSkillStore(tmp_workspace / "gui_skills")
+    persisted = store.list_all(platform="dry-run", app="settings")
+    assert len(persisted) == 1
+    assert persisted[0].skill_id == "failed-settings-shortcut"
+    assert persisted[0].source_trace_path == str(trace_path)
+    assert persisted[0].source_step_indices == (0, 1)
+    assert tuple(slot.name for slot in persisted[0].parameter_slots) == ("app_name",)
+    assert tuple(state.value for state in persisted[0].preconditions) == (
+        "Desktop is visible",
+        "Wrong app is not open",
+    )
+    assert tuple(state.value for state in persisted[0].postconditions) == (
+        "Settings icon is highlighted",
+        "Settings opens",
+    )
 
 
 @pytest.mark.asyncio
