@@ -182,14 +182,18 @@ class TestMessageToolSuppressLogic:
         ]
 
     @pytest.mark.asyncio
-    async def test_successful_gui_task_short_circuits_final_reply(self, tmp_path: Path) -> None:
+    async def test_successful_gui_task_is_followed_by_main_agent_reply(self, tmp_path: Path) -> None:
         loop = _make_loop(tmp_path)
         gui_call = ToolCallRequest(
             id="call1",
             name="gui_task",
             arguments={"task": "打开 B 站并播放第一个视频"},
         )
-        loop.provider.chat_with_retry = AsyncMock(return_value=LLMResponse(content="", tool_calls=[gui_call]))
+        calls = iter([
+            LLMResponse(content="", tool_calls=[gui_call]),
+            LLMResponse(content="任务已完成，目前停留在视频播放页。", tool_calls=[]),
+        ])
+        loop.provider.chat_with_retry = AsyncMock(side_effect=lambda *a, **kw: next(calls))
         loop.tools.get_definitions = MagicMock(return_value=[])
         gui_tool = _FakeGuiTaskTool(json.dumps({
             "success": True,
@@ -198,6 +202,17 @@ class TestMessageToolSuppressLogic:
             "trace_path": None,
             "steps_taken": 3,
             "error": None,
+            "post_run_state": {
+                "trace_read": True,
+                "latest_screenshot_path": "/tmp/gui/latest.png",
+                "last_action": {"action_type": "done", "status": "success"},
+                "last_action_summary": "视频已开始播放",
+                "last_foreground_app": "哔哩哔哩",
+                "platform": "android",
+                "screen_resolution": "1080x2400",
+                "current_state": "Task completed after 3 step(s). Latest visible app: 哔哩哔哩. Screen resolution: 1080x2400.",
+                "completion_assessment": "completed",
+            },
         }, ensure_ascii=False))
         loop.tools.register(gui_tool)
 
@@ -205,8 +220,8 @@ class TestMessageToolSuppressLogic:
         result = await loop._process_message(msg)
 
         assert result is not None
-        assert result.content == "任务已完成，视频已成功播放。"
-        loop.provider.chat_with_retry.assert_awaited_once()
+        assert result.content == "任务已完成，目前停留在视频播放页。"
+        assert loop.provider.chat_with_retry.await_count == 2
         assert gui_tool.calls == [{"task": "打开 B 站并播放第一个视频"}]
 
 

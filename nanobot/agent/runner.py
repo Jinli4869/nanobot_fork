@@ -104,7 +104,6 @@ class AgentRunSpec:
     goal_active_predicate: Callable[[], bool] | None = None
     goal_continue_message: GoalContinueMessage | None = None
     finalize_on_max_iterations: bool = True
-    tool_result_finalizer: Callable[[ToolCallRequest, Any], str | None] | None = None
 
 
 @dataclass(slots=True)
@@ -514,29 +513,6 @@ class AgentRunner:
                         "pending_tool_calls": [],
                     },
                 )
-                if spec.tool_result_finalizer is not None and len(response.tool_calls) == 1:
-                    immediate_final = spec.tool_result_finalizer(
-                        response.tool_calls[0],
-                        results[0],
-                    )
-                    if immediate_final is not None:
-                        final_content = immediate_final
-                        self._append_final_message(messages, final_content)
-                        context.final_content = final_content
-                        context.stop_reason = stop_reason
-                        await self._emit_checkpoint(
-                            spec,
-                            {
-                                "phase": "final_response",
-                                "iteration": iteration,
-                                "model": spec.model,
-                                "assistant_message": messages[-1],
-                                "completed_tool_results": [],
-                                "pending_tool_calls": [],
-                            },
-                        )
-                        await hook.after_iteration(context)
-                        break
                 empty_content_retries = 0
                 length_recovery_count = 0
                 # Checkpoint 1: drain injections after tools, before next LLM call

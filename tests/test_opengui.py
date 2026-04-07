@@ -719,6 +719,41 @@ async def test_adb_backend_input_text_prefers_b64_broadcast(
 
 
 @pytest.mark.asyncio
+async def test_adb_backend_input_text_multiline_sends_each_line_and_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    
+    async def fake_run(*args: object, timeout: float = 5.0) -> str:
+        if args == ("shell", "settings", "get", "secure", "default_input_method"):
+            return "com.android.adbkeyboard/.AdbIME"
+        return ""
+
+    run_mock = AsyncMock(side_effect=fake_run)
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    action = parse_action({"action_type": "input_text", "text": "第一行\n第二行"})
+    await backend.execute(action)
+
+    first_line_b64 = base64.b64encode("第一行".encode("utf-8")).decode("ascii")
+    second_line_b64 = base64.b64encode("第二行".encode("utf-8")).decode("ascii")
+    assert run_mock.await_args_list[0].args == (
+        "shell", "settings", "get", "secure", "default_input_method",
+    )
+    assert run_mock.await_args_list[1].args == (
+        "shell", "am", "broadcast",
+        "-a", "ADB_INPUT_B64", "--es", "msg", first_line_b64,
+    )
+    assert run_mock.await_args_list[2].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "am", "broadcast",
+        "-a", "ADB_INPUT_B64", "--es", "msg", second_line_b64,
+    )
+
+
+@pytest.mark.asyncio
 async def test_adb_backend_input_text_auto_switches_to_adb_keyboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

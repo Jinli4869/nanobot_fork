@@ -298,6 +298,12 @@ class GuiSubagentTool(Tool):
             summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
             error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
+        post_run_state = self._build_post_run_state(
+            trace_path=trace_path,
+            success=result.success,
+            summary=summary,
+            error=error,
+        )
         self._schedule_trajectory_postprocessing(trace_path, result.success, active_backend.platform, task)
 
         return json.dumps(
@@ -308,9 +314,52 @@ class GuiSubagentTool(Tool):
                 "trace_path": str(trace_path) if trace_path is not None else result.trace_path,
                 "steps_taken": result.steps_taken,
                 "error": error,
+                "post_run_state": post_run_state,
             },
             ensure_ascii=False,
         )
+
+    def _build_post_run_state(
+        self,
+        *,
+        trace_path: Path | None,
+        success: bool,
+        summary: str,
+        error: str | None,
+    ) -> dict[str, Any]:
+        step_event = self._load_latest_step_event(trace_path)
+        observation = self._extract_latest_observation(step_event)
+        last_action = step_event.get("action") if isinstance(step_event, dict) else None
+        last_action_summary = None
+        latest_screenshot_path = None
+        if isinstance(step_event, dict):
+            last_action_summary = self._string_or_none(step_event.get("model_output"))
+            latest_screenshot_path = self._string_or_none(step_event.get("screenshot_path"))
+        if latest_screenshot_path is None and observation:
+            latest_screenshot_path = self._string_or_none(observation.get("screenshot_path"))
+
+        foreground_app = self._string_or_none(observation.get("foreground_app")) if observation else None
+        platform = self._string_or_none(observation.get("platform")) if observation else None
+        resolution = self._format_resolution(observation)
+        current_state = self._describe_current_state(
+            success=success,
+            summary=summary,
+            error=error,
+            foreground_app=foreground_app,
+            resolution=resolution,
+        )
+
+        return {
+            "trace_read": trace_path is not None and trace_path.exists(),
+            "latest_screenshot_path": latest_screenshot_path,
+            "last_action": last_action,
+            "last_action_summary": last_action_summary,
+            "last_foreground_app": foreground_app,
+            "platform": platform,
+            "screen_resolution": resolution,
+            "current_state": current_state,
+            "completion_assessment": "completed" if success else "not_completed",
+        }
 
     def _schedule_trajectory_postprocessing(
         self,
@@ -406,6 +455,91 @@ class GuiSubagentTool(Tool):
                 "Background GUI postprocessing task failed",
                 exc_info=(type(exc), exc, exc.__traceback__),
             )
+
+    @staticmethod
+    def _load_latest_step_event(trace_path: Path | None) -> dict[str, Any]:
+        if trace_path is None or not trace_path.exists():
+            return {}
+
+        latest_step: dict[str, Any] = {}
+        try:
+            with open(trace_path, encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "step":
+                        latest_step = event
+        except OSError:
+            logger.warning("Could not read GUI trace for post-run state: %s", trace_path, exc_info=True)
+        return latest_step
+
+    @staticmethod
+    def _extract_latest_observation(step_event: dict[str, Any]) -> dict[str, Any]:
+        execution = step_event.get("execution") if isinstance(step_event, dict) else None
+        if isinstance(execution, dict):
+            next_observation = execution.get("next_observation")
+            if isinstance(next_observation, dict):
+                return next_observation
+
+        observation = step_event.get("observation") if isinstance(step_event, dict) else None
+        if isinstance(observation, dict):
+            return observation
+
+        prompt = step_event.get("prompt") if isinstance(step_event, dict) else None
+        if isinstance(prompt, dict):
+            current_observation = prompt.get("current_observation")
+            if isinstance(current_observation, dict):
+                return current_observation
+
+        return {}
+
+    @staticmethod
+    def _format_resolution(observation: dict[str, Any]) -> str | None:
+        width = observation.get("screen_width")
+        height = observation.get("screen_height")
+        if isinstance(width, int) and isinstance(height, int):
+            return f"{width}x{height}"
+        return None
+
+    @staticmethod
+    def _string_or_none(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        return str(value)
+
+    @staticmethod
+    def _describe_current_state(
+        *,
+        success: bool,
+        summary: str,
+        error: str | None,
+        foreground_app: str | None,
+        resolution: str | None,
+    ) -> str:
+        if success:
+            parts = [summary.strip() or "GUI task completed successfully."]
+            if foreground_app:
+                parts.append(f"Latest visible app: {foreground_app}.")
+            if resolution:
+                parts.append(f"Screen resolution: {resolution}.")
+            return " ".join(parts)
+
+        parts = [summary.strip() or "GUI task did not complete successfully."]
+        if error:
+            parts.append(f"Error: {error}.")
+        if foreground_app:
+            parts.append(f"Latest visible app: {foreground_app}.")
+        if resolution:
+            parts.append(f"Screen resolution: {resolution}.")
+        return " ".join(parts)
 
     def _select_backend(self, backend: str | None) -> Any:
         if backend is None or backend == self._gui_config.backend:

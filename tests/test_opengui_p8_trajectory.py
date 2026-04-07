@@ -220,6 +220,27 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
 
 
 @pytest.mark.asyncio
+async def test_gui_tool_returns_post_run_state_from_latest_trace_step(
+    tmp_workspace: Path,
+) -> None:
+    tool = _dry_run_tool(tmp_workspace)
+
+    raw = await tool.execute(task="test task")
+    await tool._wait_for_pending_postprocessing()
+
+    result = json.loads(raw)
+    post_run_state = result["post_run_state"]
+
+    assert post_run_state["trace_read"] is True
+    assert post_run_state["completion_assessment"] == "completed"
+    assert post_run_state["latest_screenshot_path"] is not None
+    assert post_run_state["last_action"]["action_type"] == "done"
+    assert post_run_state["screen_resolution"] == "1080x1920"
+    assert post_run_state["last_foreground_app"] == "DryRun"
+    assert "Latest visible app: DryRun." in post_run_state["current_state"]
+
+
+@pytest.mark.asyncio
 async def test_gui_tool_returns_before_background_postprocessing_finishes_with_promotion(
     tmp_workspace: Path,
 ) -> None:

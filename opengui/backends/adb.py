@@ -399,6 +399,23 @@ class AdbBackend:
         except (AdbError, TimeoutError):
             return False
 
+    async def _input_single_text(self, text: str, timeout: float) -> None:
+        if await self._input_text_via_adb_keyboard(text, timeout):
+            return
+        if await self._input_text_via_yadb(text, timeout):
+            return
+        if _is_ascii_safe(text):
+            await self._run(
+                "shell", "input", "text", _escape_shell_text(text),
+                timeout=timeout,
+            )
+            return
+        raise AdbError(
+            "Unicode text input failed. Install and activate ADBKeyboard "
+            "(`adb shell ime set com.android.adbkeyboard/.AdbIME`) or "
+            f"push yadb to {_YADB_PATH}."
+        )
+
     # ------------------------------------------------------------------
     # Execute
     # ------------------------------------------------------------------
@@ -437,21 +454,16 @@ class AdbBackend:
         elif t == "input_text":
             text = action.text or ""
             if text:
-                if await self._input_text_via_adb_keyboard(text, timeout):
-                    pass
-                elif await self._input_text_via_yadb(text, timeout):
-                    pass
-                elif _is_ascii_safe(text):
-                    await self._run(
-                        "shell", "input", "text", _escape_shell_text(text),
-                        timeout=timeout,
-                    )
-                else:
-                    raise AdbError(
-                        "Unicode text input failed. Install and activate ADBKeyboard "
-                        "(`adb shell ime set com.android.adbkeyboard/.AdbIME`) or "
-                        f"push yadb to {_YADB_PATH}."
-                    )
+                normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+                lines = normalized_text.split("\n")
+                for index, line in enumerate(lines):
+                    if line:
+                        await self._input_single_text(line, timeout)
+                    if index < len(lines) - 1:
+                        await self._run(
+                            "shell", "input", "keyevent", "KEYCODE_ENTER",
+                            timeout=timeout,
+                        )
 
         elif t == "enter":
             await self._run("shell", "input", "keyevent", "KEYCODE_ENTER", timeout=timeout)

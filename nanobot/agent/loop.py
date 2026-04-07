@@ -1063,10 +1063,6 @@ class AgentLoop:
                     session_metadata=session_metadata,
                     message_metadata=metadata,
                 ),
-                tool_result_finalizer=lambda call, result: self._maybe_finalize_successful_gui_task(
-                    call.name,
-                    result,
-                ),
             ))
         finally:
             reset_workspace_scope(workspace_token)
@@ -1089,29 +1085,6 @@ class AgentLoop:
         elif result.stop_reason == "error":
             logger.error("LLM returned error: {}", (result.final_content or "")[:200])
         return result.final_content, result.tools_used, result.messages, result.stop_reason, result.had_injections
-
-    @staticmethod
-    def _maybe_finalize_successful_gui_task(tool_name: str, result: Any) -> str | None:
-        if tool_name != "gui_task" or not isinstance(result, str):
-            return None
-
-        try:
-            payload = json.loads(result)
-        except json.JSONDecodeError:
-            return None
-
-        if not isinstance(payload, dict) or not payload.get("success"):
-            return None
-
-        candidate = payload.get("model_summary") or payload.get("summary") or "GUI task completed successfully."
-        if not isinstance(candidate, str):
-            candidate = str(candidate)
-        candidate = candidate.strip()
-        if not candidate:
-            return "GUI task completed successfully."
-        if candidate[-1] not in ".!?。！？":
-            candidate += "。"
-        return candidate
 
     async def _needs_planning(self, task: str) -> bool:
         """One LLM call to assess whether a task warrants multi-step decomposition.
