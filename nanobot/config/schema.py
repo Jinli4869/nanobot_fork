@@ -195,6 +195,7 @@ class GuiConfig(Base):
     display_num: int | None = None
     display_width: int = 1280
     display_height: int = 720
+    enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
