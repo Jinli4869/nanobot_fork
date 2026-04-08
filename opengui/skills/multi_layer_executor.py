@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import tempfile
 import typing
 from collections.abc import Callable
@@ -61,6 +62,7 @@ from opengui.skills.shortcut import ShortcutSkill, StateDescriptor
 from opengui.skills.task_skill import BranchNode, ShortcutRefNode, TaskNode, TaskSkill
 
 logger = logging.getLogger(__name__)
+_PARAM_RE = re.compile(r"\{\{(\w+)\}\}")
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +372,12 @@ class ShortcutExecutor:
             action = parse_action(payload)
             return action, None
 
+        rendered_target = _render_template(step.target, params)
+        rendered_parameters = {
+            key: _render_template(str(value), params) if isinstance(value, str) else value
+            for key, value in step.parameters.items()
+        }
+
         # Non-fixed step: route through GrounderProtocol
         context = GroundingContext(
             screenshot_path=screenshot_path,
@@ -377,7 +385,7 @@ class ShortcutExecutor:
             parameter_slots=shortcut.parameter_slots,
             task_hint=shortcut.description,
         )
-        grounding = await self.grounder.ground(step.target, context)
+        grounding = await self.grounder.ground(rendered_target, context)
 
         # Merge in three layers (lowest to highest priority):
         # 1. step.parameters: static action fields preserved by ShortcutExtractor
@@ -386,7 +394,7 @@ class ShortcutExecutor:
         #    any stale recorded coordinates or dynamic parameters.
         # 3. params (caller overrides): literal bindings supplied by the execute()
         #    caller always win.
-        merged: dict[str, Any] = {"action_type": step.action_type, **step.parameters}
+        merged: dict[str, Any] = {"action_type": step.action_type, **rendered_parameters}
         for key, value in grounding.resolved_params.items():
             merged[key] = value
         for key, value in params.items():
@@ -394,6 +402,14 @@ class ShortcutExecutor:
 
         action = parse_action(merged)
         return action, grounding
+
+
+def _render_template(value: str, params: dict[str, str]) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return params.get(name, match.group(0))
+
+    return _PARAM_RE.sub(_replace, value)
 
 
 # ---------------------------------------------------------------------------

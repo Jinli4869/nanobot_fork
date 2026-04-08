@@ -355,7 +355,7 @@ class ExtractionPipeline:
         steps: list[dict[str, Any]],
         metadata: dict[str, Any],
     ) -> ExtractionSuccess | ExtractionRejected:
-        if len(steps) < 2:
+        if not steps:
             return ExtractionRejected(
                 reason="too_few_steps",
                 failed_step_verdict=None,
