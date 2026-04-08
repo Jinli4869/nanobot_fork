@@ -17,7 +17,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import importlib.resources
+import os
 import re
+import tempfile
+import uuid
 from pathlib import Path
 
 from opengui.action import Action, describe_action, resolve_coordinate
@@ -322,6 +325,30 @@ class AdbBackend:
     def _get_packaged_yadb_path(self) -> Path:
         return Path(importlib.resources.files("opengui").joinpath("assets/android/yadb"))
 
+    def _write_local_temp_text(self, text: str) -> Path:
+        fd, path = tempfile.mkstemp(prefix="opengui-yadb-", suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+        return Path(path)
+
+    def _make_yadb_device_text_path(self) -> str:
+        return f"/data/local/tmp/opengui-yadb-{uuid.uuid4().hex}.txt"
+
+    def _write_local_temp_yadb_script(self) -> Path:
+        fd, path = tempfile.mkstemp(prefix="opengui-yadb-", suffix=".sh")
+        script = (
+            "#!/system/bin/sh\n"
+            'text="$(cat "$1")"\n'
+            f'app_process -Djava.class.path={_YADB_PATH} '
+            f'/data/local/tmp {_YADB_MAIN_CLASS} -keyboard "$text"\n'
+        )
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(script)
+        return Path(path)
+
+    def _make_yadb_device_script_path(self) -> str:
+        return f"/data/local/tmp/opengui-yadb-{uuid.uuid4().hex}.sh"
+
     async def _ensure_yadb_available(self, timeout: float) -> bool:
         try:
             await self._run("shell", "ls", _YADB_PATH, timeout=timeout)
@@ -384,25 +411,46 @@ class AdbBackend:
     async def _input_text_via_yadb(self, text: str, timeout: float) -> bool:
         if not await self._ensure_yadb_available(timeout):
             return False
+        local_text_path = self._write_local_temp_text(text)
+        device_text_path = self._make_yadb_device_text_path()
+        local_script_path = self._write_local_temp_yadb_script()
+        device_script_path = self._make_yadb_device_script_path()
         try:
+            await self._run("push", str(local_text_path), device_text_path, timeout=timeout)
+            await self._run("push", str(local_script_path), device_script_path, timeout=timeout)
+            await self._run("shell", "chmod", "755", device_script_path, timeout=timeout)
             await self._run(
                 "shell",
-                "app_process",
-                f"-Djava.class.path={_YADB_PATH}",
-                "/data/local/tmp",
-                _YADB_MAIN_CLASS,
-                "-keyboard",
-                text,
+                "sh",
+                device_script_path,
+                device_text_path,
                 timeout=timeout,
             )
             return True
         except (AdbError, TimeoutError):
             return False
+        finally:
+            try:
+                local_text_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                local_script_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            try:
+                await self._run("shell", "rm", "-f", device_text_path, timeout=timeout)
+            except (AdbError, TimeoutError):
+                pass
+            try:
+                await self._run("shell", "rm", "-f", device_script_path, timeout=timeout)
+            except (AdbError, TimeoutError):
+                pass
 
     async def _input_single_text(self, text: str, timeout: float) -> None:
-        if await self._input_text_via_adb_keyboard(text, timeout):
-            return
         if await self._input_text_via_yadb(text, timeout):
+            return
+        if await self._input_text_via_adb_keyboard(text, timeout):
             return
         if _is_ascii_safe(text):
             await self._run(

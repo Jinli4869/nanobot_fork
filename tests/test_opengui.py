@@ -692,30 +692,42 @@ async def test_adb_backend_scrolls_horizontally_from_center(
 
 
 @pytest.mark.asyncio
-async def test_adb_backend_input_text_prefers_b64_broadcast(
+async def test_adb_backend_input_text_prefers_yadb(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.android.adbkeyboard/.AdbIME",
-        "",
-    ])
+    run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt"))
+    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt")
+    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh"))
+    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh")
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
     await backend.execute(action)
 
-    expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[0].args == (
-        "shell", "settings", "get", "secure", "default_input_method",
+        "push", "/tmp/opengui-yadb-input.txt", "/data/local/tmp/opengui-yadb-input.txt",
     )
-    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[1].args == (
-        "shell", "am", "broadcast",
-        "-a", "ADB_INPUT_B64", "--es", "msg", expected_b64,
+        "push", "/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.sh",
     )
-    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[2].args == (
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input.sh",
+    )
+    assert run_mock.await_args_list[3].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[5].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.sh",
+    )
 
 
 @pytest.mark.asyncio
@@ -723,38 +735,81 @@ async def test_adb_backend_input_text_multiline_sends_each_line_and_enter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    
+
     async def fake_run(*args: object, timeout: float = 5.0) -> str:
-        if args == ("shell", "settings", "get", "secure", "default_input_method"):
-            return "com.android.adbkeyboard/.AdbIME"
         return ""
 
     run_mock = AsyncMock(side_effect=fake_run)
     monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+    local_paths = iter([
+        Path("/tmp/opengui-yadb-input-1.txt"),
+        Path("/tmp/opengui-yadb-input-2.txt"),
+    ])
+    device_paths = iter([
+        "/data/local/tmp/opengui-yadb-input-1.txt",
+        "/data/local/tmp/opengui-yadb-input-2.txt",
+    ])
+    script_local_paths = iter([
+        Path("/tmp/opengui-yadb-input-1.sh"),
+        Path("/tmp/opengui-yadb-input-2.sh"),
+    ])
+    script_device_paths = iter([
+        "/data/local/tmp/opengui-yadb-input-1.sh",
+        "/data/local/tmp/opengui-yadb-input-2.sh",
+    ])
+    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: next(local_paths))
+    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: next(device_paths))
+    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: next(script_local_paths))
+    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: next(script_device_paths))
 
     action = parse_action({"action_type": "input_text", "text": "第一行\n第二行"})
     await backend.execute(action)
 
-    first_line_b64 = base64.b64encode("第一行".encode("utf-8")).decode("ascii")
-    second_line_b64 = base64.b64encode("第二行".encode("utf-8")).decode("ascii")
     assert run_mock.await_args_list[0].args == (
-        "shell", "settings", "get", "secure", "default_input_method",
+        "push", "/tmp/opengui-yadb-input-1.txt", "/data/local/tmp/opengui-yadb-input-1.txt",
     )
     assert run_mock.await_args_list[1].args == (
-        "shell", "am", "broadcast",
-        "-a", "ADB_INPUT_B64", "--es", "msg", first_line_b64,
+        "push", "/tmp/opengui-yadb-input-1.sh", "/data/local/tmp/opengui-yadb-input-1.sh",
     )
     assert run_mock.await_args_list[2].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input-1.sh",
+    )
+    assert run_mock.await_args_list[3].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input-1.sh", "/data/local/tmp/opengui-yadb-input-1.txt",
     )
     assert run_mock.await_args_list[4].args == (
-        "shell", "am", "broadcast",
-        "-a", "ADB_INPUT_B64", "--es", "msg", second_line_b64,
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-1.txt",
+    )
+    assert run_mock.await_args_list[5].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-1.sh",
+    )
+    assert run_mock.await_args_list[6].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
+    assert run_mock.await_args_list[7].args == (
+        "push", "/tmp/opengui-yadb-input-2.txt", "/data/local/tmp/opengui-yadb-input-2.txt",
+    )
+    assert run_mock.await_args_list[8].args == (
+        "push", "/tmp/opengui-yadb-input-2.sh", "/data/local/tmp/opengui-yadb-input-2.sh",
+    )
+    assert run_mock.await_args_list[9].args == (
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input-2.sh",
+    )
+    assert run_mock.await_args_list[10].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input-2.sh", "/data/local/tmp/opengui-yadb-input-2.txt",
+    )
+    assert run_mock.await_args_list[11].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-2.txt",
+    )
+    assert run_mock.await_args_list[12].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-2.sh",
     )
 
 
 @pytest.mark.asyncio
-async def test_adb_backend_input_text_auto_switches_to_adb_keyboard(
+async def test_adb_backend_input_text_falls_back_to_adb_keyboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
@@ -765,12 +820,15 @@ async def test_adb_backend_input_text_auto_switches_to_adb_keyboard(
         "",
     ])
     monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=False)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
     await backend.execute(action)
 
     expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[0].args == (
         "shell", "settings", "get", "secure", "default_input_method",
     )
@@ -819,14 +877,14 @@ async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.example.ime/.ExampleIme",
-        "com.other.ime/.OtherIme",
-        "",
-    ])
+    run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt"))
+    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt")
+    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh"))
+    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh")
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
@@ -835,22 +893,23 @@ async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
     ensure_yadb_mock.assert_awaited_once_with(5.0)
 
     assert run_mock.await_args_list[0].args == (
-        "shell", "settings", "get", "secure", "default_input_method",
+        "push", "/tmp/opengui-yadb-input.txt", "/data/local/tmp/opengui-yadb-input.txt",
     )
-    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[1].args == (
-        "shell", "ime", "list", "-s",
+        "push", "/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.sh",
     )
-    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[2].args == (
-        "shell", "app_process",
-        "-Djava.class.path=/data/local/tmp/yadb",
-        "/data/local/tmp",
-        "com.ysbing.yadb.Main",
-        "-keyboard",
-        text,
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input.sh",
     )
-    assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[3].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[5].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.sh",
+    )
 
 
 @pytest.mark.asyncio
