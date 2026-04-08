@@ -106,33 +106,33 @@ def test_trajectory_recorder_set_phase(tmp_path: Path) -> None:
 
 
 def test_trajectory_recorder_step_details_are_persisted(tmp_path: Path) -> None:
-    """record_step() should persist prompt, model response, and execution details."""
+    """record_step() should persist lightweight observation fields."""
     rec = TrajectoryRecorder(output_dir=tmp_path, task="search video", platform="android")
     path = rec.start()
 
     rec.record_step(
         action={"action_type": "input_text", "text": "we are the world"},
         model_output="输入搜索词",
-        prompt={
-            "task": "search video",
-            "step_index": 2,
-            "messages": [{"role": "system", "content": "prompt body"}],
-        },
-        model_response={
-            "raw_content": "Action: type text",
-            "tool_calls": [{"name": "computer_use", "arguments": {"action_type": "input_text"}}],
-        },
-        execution={"tool_result": "type text", "done": False},
+        screenshot_path="/screenshots/step_001.png",
+        foreground_app="com.example.app",
+        screen_width=1080,
+        screen_height=1920,
+        platform="android",
     )
     rec.finish(success=True)
 
     events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     step_event = next(event for event in events if event["type"] == "step")
 
-    assert step_event["prompt"]["task"] == "search video"
-    assert step_event["prompt"]["messages"][0]["role"] == "system"
-    assert step_event["model_response"]["tool_calls"][0]["arguments"]["action_type"] == "input_text"
-    assert step_event["execution"]["tool_result"] == "type text"
+    assert step_event["observation"]["foreground_app"] == "com.example.app"
+    assert step_event["observation"]["app"] == "com.example.app"
+    assert step_event["observation"]["screen_width"] == 1080
+    assert step_event["observation"]["screen_height"] == 1920
+    assert step_event["observation"]["platform"] == "android"
+    assert step_event["observation"]["screenshot_path"] == "/screenshots/step_001.png"
+    assert "prompt" not in step_event
+    assert "model_response" not in step_event
+    assert "execution" not in step_event
 
 
 def test_trajectory_recorder_not_started_raises(tmp_path: Path) -> None:

@@ -123,13 +123,11 @@ class TrajectoryRecorder:
         action: dict[str, Any],
         model_output: str = "",
         screenshot_path: str | None = None,
-        observation: dict[str, Any] | None = None,
-        prompt: dict[str, Any] | None = None,
-        model_response: dict[str, Any] | None = None,
-        execution: dict[str, Any] | None = None,
+        foreground_app: str | None = None,
+        screen_width: int | None = None,
+        screen_height: int | None = None,
+        platform: str | None = None,
         phase: ExecutionPhase | None = None,
-        skill_id: str | None = None,
-        skill_step_index: int | None = None,
     ) -> None:
         """Record one agent step.
 
@@ -138,26 +136,37 @@ class TrajectoryRecorder:
         action:
             Action dict (action_type, x, y, text, etc.).
         model_output:
-            Raw model assistant text for this step.
+            Concise model action summary for this step.
         screenshot_path:
             Path to the screenshot taken before this step.
-        observation:
-            Observation metadata dict.
-        prompt:
-            Serialized prompt snapshot, including message window and history context.
-        model_response:
-            Serialized LLM output for this step.
-        execution:
-            Serialized backend execution result and follow-up observation.
+        foreground_app:
+            App identifier visible in the foreground after the step.
+        screen_width:
+            Screen width in pixels after the step.
+        screen_height:
+            Screen height in pixels after the step.
+        platform:
+            Platform identifier (android, macos, etc.).
         phase:
             Override current phase for this step.
-        skill_id:
-            If executing a skill, the skill's ID.
-        skill_step_index:
-            If executing a skill, the step index within the skill.
         """
         if self._closed:
             raise RuntimeError("Recorder already closed")
+
+        obs: dict[str, Any] | None = None
+        if foreground_app or screen_width is not None:
+            obs = {}
+            if foreground_app:
+                obs["app"] = foreground_app
+                obs["foreground_app"] = foreground_app
+            if screen_width is not None:
+                obs["screen_width"] = screen_width
+            if screen_height is not None:
+                obs["screen_height"] = screen_height
+            if platform:
+                obs["platform"] = platform
+            if screenshot_path:
+                obs["screenshot_path"] = screenshot_path
 
         event: dict[str, Any] = {
             "type": "step",
@@ -167,18 +176,8 @@ class TrajectoryRecorder:
             "action": action,
             "model_output": model_output,
             "screenshot_path": screenshot_path,
-            "observation": observation,
+            "observation": obs,
         }
-        if prompt is not None:
-            event["prompt"] = prompt
-        if model_response is not None:
-            event["model_response"] = model_response
-        if execution is not None:
-            event["execution"] = execution
-        if skill_id is not None:
-            event["skill_id"] = skill_id
-        if skill_step_index is not None:
-            event["skill_step_index"] = skill_step_index
 
         self._write_event(event)
         self._step_count += 1
