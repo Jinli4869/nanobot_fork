@@ -45,6 +45,27 @@ class TestGuiConfigSkillExecutionField:
         assert config.enable_skill_execution is True
 
 
+class TestGuiConfigSkillExtractionField:
+    """GuiConfig.enable_skill_extraction must default to False and accept True."""
+
+    def test_defaults_to_false(self) -> None:
+        config = GuiConfig()
+        assert config.enable_skill_extraction is False
+
+    def test_accepts_true(self) -> None:
+        config = GuiConfig(enable_skill_extraction=True)
+        assert config.enable_skill_extraction is True
+
+    def test_accepts_false_explicitly(self) -> None:
+        config = GuiConfig(enable_skill_extraction=False)
+        assert config.enable_skill_extraction is False
+
+    def test_accepts_camel_case_key(self) -> None:
+        """GuiConfig uses camelCase aliases; enableSkillExtraction must be accepted."""
+        config = GuiConfig.model_validate({"enableSkillExtraction": True})
+        assert config.enable_skill_extraction is True
+
+
 # ---------------------------------------------------------------------------
 # GuiSubagentTool wiring tests
 # ---------------------------------------------------------------------------

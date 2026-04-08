@@ -61,6 +61,12 @@ def test_guiconfig_camel_case_aliases() -> None:
     assert cfg.display_num == 42
 
 
+def test_guiconfig_skill_extraction_defaults_to_false() -> None:
+    """GuiConfig() keeps skill extraction off unless explicitly enabled."""
+    cfg = GuiConfig()
+    assert cfg.enable_skill_extraction is False
+
+
 # ---------------------------------------------------------------------------
 # GuiSubagentTool.execute() wrapping tests
 # ---------------------------------------------------------------------------
@@ -1063,3 +1069,18 @@ async def test_gui_tool_promotion_failure_is_non_fatal(tmp_path: Path) -> None:
     assert payload["summary"] == "completed test"
     assert payload["steps_taken"] == 1
     assert payload["trace_path"] is not None
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_skips_shortcut_promotion_when_skill_extraction_disabled(tmp_path: Path) -> None:
+    tool = _make_gui_tool(background=False, enable_skill_extraction=False)
+    tool._workspace = tmp_path
+
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text('{"type":"metadata"}\n', encoding="utf-8")
+
+    with patch("opengui.skills.shortcut_promotion.ShortcutPromotionPipeline.promote_from_trace", new=AsyncMock()) as promote_mock:
+        result = await tool._promote_shortcut(trace_path, is_success=True, platform="linux")
+
+    assert result is None
+    promote_mock.assert_not_called()

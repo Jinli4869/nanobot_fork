@@ -793,6 +793,10 @@ class GuiSubagentTool(Tool):
                 continue
 
     async def _promote_shortcut(self, trace_path: Path | None, is_success: bool, platform: str) -> str | None:
+        if not self._gui_config.enable_skill_extraction:
+            logger.info("Skipping shortcut promotion because gui.enable_skill_extraction is disabled")
+            return None
+
         if trace_path is None or not trace_path.exists():
             return None
 
