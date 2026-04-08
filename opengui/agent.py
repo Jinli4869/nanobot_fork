@@ -990,11 +990,7 @@ class GuiAgent:
                 "event": "step",
                 "step_index": step_index,
                 "action": self._serialize_action(result.action),
-                "action_debug": result.action_debug,
-                "prompt": result.prompt_snapshot,
-                "model_output": result.model_snapshot,
-                "execution": result.execution_snapshot,
-                "tool_result": self._scrub_text_for_artifact_action(result.tool_result, result.action),
+                "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
                 "screenshot_path": (
                     result.next_observation.screenshot_path
                     if result.next_observation else None
@@ -1012,9 +1008,22 @@ class GuiAgent:
                     if result.next_observation and result.next_observation.screenshot_path
                     else None
                 ),
-                prompt=result.prompt_snapshot,
-                model_response=result.model_snapshot,
-                execution=result.execution_snapshot,
+                foreground_app=(
+                    result.next_observation.foreground_app
+                    if result.next_observation else None
+                ),
+                screen_width=(
+                    result.next_observation.screen_width
+                    if result.next_observation else None
+                ),
+                screen_height=(
+                    result.next_observation.screen_height
+                    if result.next_observation else None
+                ),
+                platform=(
+                    result.next_observation.platform
+                    if result.next_observation else None
+                ),
             )
 
             if intervention_cancelled:
