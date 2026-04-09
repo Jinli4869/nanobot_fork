@@ -20,6 +20,7 @@ import importlib.resources
 import os
 import re
 import tempfile
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -116,6 +117,49 @@ def _is_ascii_safe(text: str) -> bool:
 
 def _to_b64_text(text: str) -> str:
     return base64.b64encode(text.encode("utf-8")).decode("ascii")
+
+
+def _is_emojiish_char(ch: str) -> bool:
+    codepoint = ord(ch)
+    if ch in ("\u200d", "\ufe0e", "\ufe0f", "\u20e3"):
+        return True
+    if 0x1F1E6 <= codepoint <= 0x1F1FF:  # Regional indicators
+        return True
+    if 0x1F3FB <= codepoint <= 0x1F3FF:  # Skin tone modifiers
+        return True
+    if 0x2600 <= codepoint <= 0x27BF:  # Misc symbols / dingbats often used as emoji
+        return True
+    if 0x1F000 <= codepoint <= 0x1FAFF:  # Main emoji-heavy planes
+        return True
+    return unicodedata.category(ch) == "So"
+
+
+def _iter_text_input_segments(text: str) -> list[str]:
+    """Split text into stable input chunks, isolating emoji-ish sequences.
+
+    Some Android IME injection paths may truncate text that follows an emoji
+    when the whole string is sent in one batch. By sending normal-text runs and
+    emoji clusters separately, later text still lands even if the IME treats
+    emoji boundaries specially.
+    """
+    if not text:
+        return []
+
+    segments: list[str] = []
+    current = text[0]
+    current_is_emoji = _is_emojiish_char(text[0])
+
+    for ch in text[1:]:
+        ch_is_emoji = _is_emojiish_char(ch)
+        if ch_is_emoji == current_is_emoji:
+            current += ch
+            continue
+        segments.append(current)
+        current = ch
+        current_is_emoji = ch_is_emoji
+
+    segments.append(current)
+    return segments
 
 
 class AdbBackend:
@@ -542,8 +586,8 @@ class AdbBackend:
                 normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
                 lines = normalized_text.split("\n")
                 for index, line in enumerate(lines):
-                    if line:
-                        await self._input_single_text(line, timeout)
+                    for segment in _iter_text_input_segments(line):
+                        await self._input_single_text(segment, timeout)
                     if index < len(lines) - 1:
                         await self._run(
                             "shell", "input", "keyevent", "KEYCODE_ENTER",
