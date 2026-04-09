@@ -62,6 +62,21 @@ _RESUMED_ACTIVITY_RE = re.compile(
     r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+)/",
     re.IGNORECASE,
 )
+_TOP_RESUMED_ACTIVITY_RE = re.compile(
+    r"topResumedActivity.*?"
+    r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+)/",
+    re.IGNORECASE,
+)
+_CURRENT_FOCUS_RE = re.compile(
+    r"mCurrentFocus.*?"
+    r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+)/",
+    re.IGNORECASE,
+)
+_FOCUSED_APP_RE = re.compile(
+    r"mFocusedApp.*?"
+    r"([a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+)/",
+    re.IGNORECASE,
+)
 
 _DEVICE_SCREENSHOT_PATH = "/sdcard/__opengui_cap.png"
 _ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
@@ -293,11 +308,33 @@ class AdbBackend:
                 "shell", "dumpsys", "activity", "activities",
                 timeout=max(timeout, 10.0),
             )
-            match = _RESUMED_ACTIVITY_RE.search(output)
-            if match:
-                return match.group(1)
+            package = self._extract_foreground_app(output)
+            if package != "unknown":
+                return package
         except (AdbError, TimeoutError):
             pass
+
+        for window_args in (("shell", "dumpsys", "window", "windows"), ("shell", "dumpsys", "window")):
+            try:
+                output = await self._run(*window_args, timeout=max(timeout, 10.0))
+                package = self._extract_foreground_app(output)
+                if package != "unknown":
+                    return package
+            except (AdbError, TimeoutError):
+                continue
+        return "unknown"
+
+    @staticmethod
+    def _extract_foreground_app(output: str) -> str:
+        for pattern in (
+            _RESUMED_ACTIVITY_RE,
+            _TOP_RESUMED_ACTIVITY_RE,
+            _CURRENT_FOCUS_RE,
+            _FOCUSED_APP_RE,
+        ):
+            match = pattern.search(output)
+            if match:
+                return match.group(1)
         return "unknown"
 
     async def _get_default_input_method(self, timeout: float) -> str | None:

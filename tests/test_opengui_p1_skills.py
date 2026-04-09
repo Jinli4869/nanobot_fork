@@ -60,6 +60,7 @@ class _ScriptedLLM:
 
     def __init__(self, responses: list[str]) -> None:
         self._responses = [LLMResponse(content=r) for r in responses]
+        self.messages: list[list[dict[str, Any]]] = []
 
     async def chat(
         self,
@@ -67,6 +68,7 @@ class _ScriptedLLM:
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
     ) -> LLMResponse:
+        self.messages.append(messages)
         if not self._responses:
             raise AssertionError("_ScriptedLLM has no remaining scripted responses.")
         return self._responses.pop(0)
@@ -739,3 +741,56 @@ async def test_skill_extractor_handles_invalid_json() -> None:
     )
 
     assert result is None
+
+
+async def test_skill_extractor_prompt_prefers_observed_foreground_app() -> None:
+    llm = _ScriptedLLM([
+        json.dumps({
+            "name": "open_settings",
+            "description": "Navigate to Android settings",
+            "app": "设置",
+            "platform": "android",
+            "parameters": [],
+            "preconditions": [],
+            "steps": [
+                {
+                    "action_type": "open_app",
+                    "target": "Settings",
+                    "parameters": {},
+                    "expected_state": "Settings app is open",
+                    "valid_state": "No need to verify",
+                },
+                {
+                    "action_type": "tap",
+                    "target": "Network & internet",
+                    "parameters": {},
+                    "expected_state": "Network settings visible",
+                    "valid_state": "Settings app is open",
+                },
+            ],
+        })
+    ])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    skill = await extractor.extract_from_steps(
+        [
+            {
+                "type": "step",
+                "action": {"action_type": "open_app", "text": "设置"},
+                "observation": {"foreground_app": "com.android.settings"},
+            },
+            {
+                "type": "step",
+                "action": {"action_type": "tap"},
+                "observation": {"foreground_app": "com.android.settings"},
+            },
+        ],
+        is_success=True,
+    )
+
+    assert skill is not None
+    prompt = llm.messages[0][0]["content"]
+    assert isinstance(prompt, str)
+    assert "observation.foreground_app" in prompt
+    assert "strongest app identity signal" in prompt
+    assert "com.android.settings" in prompt
