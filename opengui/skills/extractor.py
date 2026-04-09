@@ -43,6 +43,23 @@ You are a GUI automation expert. Given the following trajectory of a \
 # Trajectory
 {trajectory}
 
+# Core principle: NAVIGATIONAL PREFIX
+Extract the **shortest, most generic** action sequence — a "navigational \
+prefix" that reaches the target screen and fills in core inputs, then STOPS.
+
+- The skill is a REUSABLE PREFIX, not a complete task. An autonomous agent \
+will take over after the skill finishes and handle any remaining steps \
+(saving, adjusting options, confirming dialogs) based on the specific task.
+- STOP after the last core input action (e.g. after typing text into a field). \
+Do NOT include:
+  - Confirmation/save buttons (Done, Save, OK, Submit) — the agent decides \
+when and whether to confirm.
+  - Fine-grained widget manipulation (date/time pickers, spinners, sliders, \
+dropdown selections) — these vary by task and device.
+  - Post-input navigation or cleanup steps.
+- Prefer ONE parameterized step over multiple mechanical sub-steps.
+- When in doubt, **leave it out**. Fewer steps = more reusable.
+
 # Instructions
 1. Identify the high-level goal and break it into atomic steps.
 2. For each step, provide:
@@ -95,6 +112,22 @@ You are a GUI automation expert. Given the following trajectory of a \
 
 # Trajectory
 {trajectory}
+
+# Core principle: NAVIGATIONAL PREFIX
+Even for failed trajectories, extract only the **shortest, most generic** \
+reliable prefix — the minimal navigation + input steps that succeeded.
+
+- The skill is a REUSABLE PREFIX. An autonomous agent will take over after \
+the skill finishes to handle remaining steps and avoid the original failure.
+- Keep only essential navigation and core input steps from the reliable prefix. \
+Do NOT include:
+  - Confirmation/save buttons (Done, Save, OK, Submit).
+  - Fine-grained widget manipulation (date/time pickers, spinners, sliders).
+  - Post-input navigation or cleanup steps.
+- Prefer ONE parameterized step over multiple mechanical sub-steps.
+- The corrective action should describe WHAT went wrong, not replay the \
+failed mechanical steps.
+- When in doubt, **leave it out**. Fewer steps = more reusable.
 
 # Failure handling rules
 - Keep ONLY the reliable actions that executed successfully before the failure.

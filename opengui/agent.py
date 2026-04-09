@@ -721,6 +721,7 @@ class GuiAgent:
 
         # 4. If skill matched, attempt skill execution first.
         skill_context: str | None = None
+        skill_result: Any | None = None
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
                 ExecutionPhase.SKILL,
@@ -848,8 +849,13 @@ class GuiAgent:
         # 6. Finish trajectory
         self._trajectory_recorder.finish(success=result.success, error=result.error)
 
-        # 7. Post-run skill maintenance
-        await self._skill_maintenance(skill_match, result.success)
+        # 7. Post-run skill maintenance — use skill execution outcome,
+        #    not overall task result, so prefix skills aren't penalised
+        #    for agent failures after their steps complete.
+        skill_exec_success = (
+            skill_result is not None and skill_result.state.value == "succeeded"
+        ) if skill_result is not None else result.success
+        await self._skill_maintenance(skill_match, skill_exec_success)
 
         return result
 
