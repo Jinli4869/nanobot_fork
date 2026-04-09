@@ -299,6 +299,7 @@ class _AgentSubgoalRunner:
         state_validator: Any,
         model: str,
         artifacts_root: "Path",
+        trajectory_recorder: TrajectoryRecorder | None = None,
         agent_profile: str | None = None,
     ) -> None:
         self._llm = llm
@@ -306,6 +307,7 @@ class _AgentSubgoalRunner:
         self._state_validator = state_validator
         self._model = model
         self._artifacts_root = Path(artifacts_root)
+        self._trajectory_recorder = trajectory_recorder
         self._step_counter = 0
         self._agent_profile = canonicalize_agent_profile(agent_profile)
 
@@ -321,6 +323,13 @@ class _AgentSubgoalRunner:
 
         summaries: list[str] = []
         current_screenshot: Path | bytes = screenshot
+
+        if self._trajectory_recorder is not None:
+            self._trajectory_recorder.record_event(
+                "subgoal_start",
+                goal=goal,
+                max_steps=max_steps,
+            )
 
         for i in range(max_steps):
             # Build a minimal prompt for the subgoal
@@ -359,6 +368,25 @@ class _AgentSubgoalRunner:
                 )
             except Exception as exc:
                 logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=None,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=str(exc),
+                )
+                if self._trajectory_recorder is not None:
+                    self._trajectory_recorder.record_event(
+                        "subgoal_result",
+                        goal=goal,
+                        success=False,
+                        steps_taken=i,
+                        action_summaries=summaries,
+                        error=str(exc),
+                    )
                 return SubgoalResult(success=False, steps_taken=i, action_summaries=summaries, error=str(exc))
 
             try:
@@ -366,11 +394,31 @@ class _AgentSubgoalRunner:
             except Exception as exc:
                 logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=f"profile parse error: {exc}",
+                )
                 continue
 
             if not response.tool_calls or response.tool_calls[0].name != "computer_use":
                 logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
                 summaries.append(f"Sub-step {i+1}: no valid action returned")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error="no valid action returned",
+                )
                 continue
 
             tc = response.tool_calls[0]
@@ -379,11 +427,31 @@ class _AgentSubgoalRunner:
             except ActionError as exc:
                 logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=f"action parse error: {exc}",
+                )
                 continue
 
             # Skip terminal actions inside a subgoal
             if action.action_type in ("done", "request_intervention"):
                 summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=action,
+                    action_summary="terminal action skipped in subgoal",
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error="terminal action skipped in subgoal",
+                )
                 continue
 
             try:
@@ -391,6 +459,16 @@ class _AgentSubgoalRunner:
             except Exception as exc:
                 logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=action,
+                    action_summary=f"{action.action_type}",
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=f"execution error: {exc}",
+                )
                 continue
 
             # Observe new screen
@@ -398,9 +476,11 @@ class _AgentSubgoalRunner:
             subgoal_dir = self._artifacts_root / "subgoal_screenshots"
             subgoal_dir.mkdir(parents=True, exist_ok=True)
             next_path = subgoal_dir / f"subgoal_{int(time.time() * 1000)}_{self._step_counter}.png"
+            screenshot_path: str | None = None
             try:
                 obs = await self._backend.observe(next_path)
                 current_screenshot = Path(obs.screenshot_path) if obs.screenshot_path else current_screenshot
+                screenshot_path = obs.screenshot_path
             except Exception as exc:
                 logger.warning("Subgoal observe failed at sub-step %d: %s", i, exc)
 
@@ -412,20 +492,48 @@ class _AgentSubgoalRunner:
             summaries.append(f"Sub-step {i+1}: {action_desc}")
 
             # Check if the goal state has been reached
+            reached = False
             if not _should_skip_validation(goal) and self._state_validator is not None:
                 try:
                     reached = await self._state_validator.validate(goal, screenshot=current_screenshot)
                 except Exception:
                     reached = False
-                if reached:
-                    logger.info("Subgoal reached after %d sub-steps", i + 1)
-                    return SubgoalResult(
+            self._record_subgoal_step(
+                goal=goal,
+                substep_index=i + 1,
+                model_output=response.content,
+                action=action,
+                action_summary=action_desc,
+                screenshot_path=screenshot_path,
+                goal_reached=reached,
+                error=None,
+            )
+            if reached:
+                logger.info("Subgoal reached after %d sub-steps", i + 1)
+                if self._trajectory_recorder is not None:
+                    self._trajectory_recorder.record_event(
+                        "subgoal_result",
+                        goal=goal,
                         success=True,
                         steps_taken=i + 1,
                         action_summaries=summaries,
-                        final_screenshot=current_screenshot,
+                        error=None,
                     )
-
+                return SubgoalResult(
+                    success=True,
+                    steps_taken=i + 1,
+                    action_summaries=summaries,
+                    final_screenshot=current_screenshot,
+                )
+        if self._trajectory_recorder is not None:
+            self._trajectory_recorder.record_event(
+                "subgoal_result",
+                goal=goal,
+                success=False,
+                steps_taken=max_steps,
+                action_summaries=summaries,
+                error=f"Subgoal not reached after {max_steps} sub-steps",
+            )
         return SubgoalResult(
             success=False,
             steps_taken=max_steps,
@@ -441,6 +549,41 @@ class _AgentSubgoalRunner:
             f"Respond using the configured `{self._agent_profile}` profile format. "
             f"{' '.join(contract['format'])}"
         )
+
+    def _record_subgoal_step(
+        self,
+        *,
+        goal: str,
+        substep_index: int,
+        model_output: str | None,
+        action: Action | None,
+        action_summary: str | None,
+        screenshot_path: str | None,
+        goal_reached: bool,
+        error: str | None,
+    ) -> None:
+        if self._trajectory_recorder is None:
+            return
+        self._trajectory_recorder.record_event(
+            "subgoal_step",
+            goal=goal,
+            substep_index=substep_index,
+            model_output=model_output,
+            action=self._serialize_action(action) if action is not None else None,
+            action_summary=action_summary,
+            screenshot_path=screenshot_path,
+            goal_reached=goal_reached,
+            error=error,
+        )
+
+    @staticmethod
+    def _serialize_action(action: Action) -> dict[str, Any]:
+        payload = dataclasses.asdict(action)
+        return {
+            key: value
+            for key, value in payload.items()
+            if value is not None and not (key == "relative" and value is False)
+        }
 
 
 class _AgentScreenshotProvider:

@@ -251,6 +251,42 @@ class TestSkillExecutorWiringEnabled:
         # Verify the state_validator is backed by the tool's LLM adapter
         assert skill_executor.state_validator._llm is tool._llm_adapter
 
+    def test_skill_executor_and_subgoal_runner_share_live_recorder(self) -> None:
+        from opengui.skills.executor import SkillExecutor
+
+        gui_config = _make_gui_config(enable_skill_execution=True)
+        tool = _make_tool(gui_config)
+
+        captured_kwargs: dict = {}
+        recorder = MagicMock(path=None)
+
+        async def _run() -> None:
+            with (
+                patch("nanobot.agent.tools.gui.GuiAgent.__init__", return_value=None) as mock_init,
+                patch("nanobot.agent.tools.gui.TrajectoryRecorder", return_value=recorder),
+            ):
+                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                    mock_run.return_value = MagicMock(
+                        success=True,
+                        summary="ok",
+                        model_summary="",
+                        trace_path=None,
+                        steps_taken=0,
+                        error=None,
+                    )
+                    mock_init.side_effect = lambda *a, **kw: captured_kwargs.update(kw)
+                    try:
+                        await tool._run_task(tool._backend, "open settings")
+                    except Exception:
+                        pass
+
+        asyncio.run(_run())
+
+        skill_executor = captured_kwargs.get("skill_executor")
+        assert isinstance(skill_executor, SkillExecutor)
+        assert skill_executor.trajectory_recorder is recorder
+        assert getattr(skill_executor.subgoal_runner, "_trajectory_recorder", None) is recorder
+
 
 class TestGuiAgentProfileWiring:
     """Configured gui.agent_profile must flow through to the GUI agent chain."""

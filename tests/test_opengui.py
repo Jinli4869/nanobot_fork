@@ -506,6 +506,81 @@ async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
+    screenshot = tmp_path / "subgoal-record.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([
+        LLMResponse(
+            content=(
+                'Thought: Move toward the target\n'
+                'Action: "Tap settings"\n'
+                '<tool_call>{"name":"computer_use","arguments":{"action_type":"tap","x":400,"y":300,"relative":true}}</tool_call>'
+            ),
+            tool_calls=[
+                ToolCall(
+                    id="subgoal-tool-0",
+                    name="computer_use",
+                    arguments={"action_type": "tap", "x": 400, "y": 300, "relative": True},
+                )
+            ],
+        )
+    ])
+    backend = _SkillTestBackend()
+    validator = _RecordingValidator([True])
+    recorder = _make_recorder(tmp_path, "subgoal trace")
+    recorder.start()
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=backend,
+        state_validator=validator,
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts",
+        trajectory_recorder=recorder,
+    )
+
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+    trace_path = recorder.finish(success=True)
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result.success is True
+    names = [event["type"] for event in events]
+    assert "subgoal_start" in names
+    assert "subgoal_step" in names
+    assert "subgoal_result" in names
+    subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
+    assert subgoal_step["model_output"]
+    assert subgoal_step["goal_reached"] is True
+    assert subgoal_step["action"]["action_type"] == "tap"
+
+
+@pytest.mark.asyncio
+async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> None:
+    screenshot = tmp_path / "subgoal-failure.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([LLMResponse(content="No valid tool call", tool_calls=None)])
+    recorder = _make_recorder(tmp_path, "subgoal trace failure")
+    recorder.start()
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=_SkillTestBackend(),
+        state_validator=_RecordingValidator([False]),
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts-failure",
+        trajectory_recorder=recorder,
+    )
+
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+    trace_path = recorder.finish(success=True)
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result.success is False
+    subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
+    assert subgoal_step["error"] == "no valid action returned"
+    subgoal_result = next(event for event in events if event["type"] == "subgoal_result")
+    assert subgoal_result["success"] is False
+
+
+@pytest.mark.asyncio
 async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> None:
     llm = _RecordingLLM([
         LLMResponse(

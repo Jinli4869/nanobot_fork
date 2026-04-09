@@ -100,6 +100,7 @@ class ShortcutSkillStore:
     _ordered_ids: list[str] = field(default_factory=list, init=False, repr=False)
     _documents: list[str] = field(default_factory=list, init=False, repr=False)
     _index_dirty: bool = field(default=True, init=False, repr=False)
+    _loaded_mtime_ns: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.store_dir = Path(self.store_dir)
@@ -180,6 +181,8 @@ class ShortcutSkillStore:
     def load_all(self) -> None:
         self._skills.clear()
         if not self.store_dir.exists():
+            self._loaded_mtime_ns = 0
+            self._index_dirty = True
             return
         for skill_file in sorted(
             platform_dir / "shortcut_skills.json"
@@ -209,7 +212,15 @@ class ShortcutSkillStore:
             for skill_data in data.get("skills", []):
                 skill = self._normalize_skill(ShortcutSkill.from_dict(skill_data))
                 self._skills[skill.skill_id] = skill
+        self._loaded_mtime_ns = self._snapshot_mtime_ns()
         self._index_dirty = True
+
+    def refresh_if_stale(self) -> bool:
+        current_mtime_ns = self._snapshot_mtime_ns()
+        if current_mtime_ns == self._loaded_mtime_ns:
+            return False
+        self.load_all()
+        return True
 
     @staticmethod
     def _normalize_skill(skill: ShortcutSkill) -> ShortcutSkill:
@@ -371,6 +382,7 @@ class ShortcutSkillStore:
         skills = [skill for skill in self._skills.values() if skill.platform == platform]
         if not skills:
             target.unlink(missing_ok=True)
+            self._loaded_mtime_ns = self._snapshot_mtime_ns()
             return
         payload = {
             "version": 1,
@@ -387,9 +399,26 @@ class ShortcutSkillStore:
             json.dump(payload, tmp, ensure_ascii=False, indent=2)
             tmp.close()
             Path(tmp.name).replace(target)
+            self._loaded_mtime_ns = self._snapshot_mtime_ns()
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise
+
+    def _snapshot_mtime_ns(self) -> int:
+        if not self.store_dir.exists():
+            return 0
+        max_mtime_ns = 0
+        for platform_dir in self.store_dir.iterdir():
+            if not platform_dir.is_dir():
+                continue
+            skill_file = platform_dir / "shortcut_skills.json"
+            if not skill_file.is_file():
+                continue
+            try:
+                max_mtime_ns = max(max_mtime_ns, skill_file.stat().st_mtime_ns)
+            except FileNotFoundError:
+                continue
+        return max_mtime_ns
 
     async def search(self, query: str, *, top_k: int = 5) -> list[tuple[ShortcutSkill, float]]:
         if not self._skills or top_k <= 0:
@@ -460,6 +489,7 @@ class TaskSkillStore:
     _ordered_ids: list[str] = field(default_factory=list, init=False, repr=False)
     _documents: list[str] = field(default_factory=list, init=False, repr=False)
     _index_dirty: bool = field(default=True, init=False, repr=False)
+    _loaded_mtime_ns: int = field(default=0, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.store_dir = Path(self.store_dir)
@@ -484,6 +514,8 @@ class TaskSkillStore:
     def load_all(self) -> None:
         self._skills.clear()
         if not self.store_dir.exists():
+            self._loaded_mtime_ns = 0
+            self._index_dirty = True
             return
         for skill_file in sorted(
             platform_dir / "task_skills.json"
@@ -513,7 +545,15 @@ class TaskSkillStore:
             for skill_data in data.get("skills", []):
                 skill = TaskSkill.from_dict(skill_data)
                 self._skills[skill.skill_id] = skill
+        self._loaded_mtime_ns = self._snapshot_mtime_ns()
         self._index_dirty = True
+
+    def refresh_if_stale(self) -> bool:
+        current_mtime_ns = self._snapshot_mtime_ns()
+        if current_mtime_ns == self._loaded_mtime_ns:
+            return False
+        self.load_all()
+        return True
 
     def _save_platform(self, platform: str) -> None:
         dir_path = self.store_dir / platform
@@ -522,6 +562,7 @@ class TaskSkillStore:
         skills = [skill for skill in self._skills.values() if skill.platform == platform]
         if not skills:
             target.unlink(missing_ok=True)
+            self._loaded_mtime_ns = self._snapshot_mtime_ns()
             return
         payload = {
             "version": 1,
@@ -538,9 +579,26 @@ class TaskSkillStore:
             json.dump(payload, tmp, ensure_ascii=False, indent=2)
             tmp.close()
             Path(tmp.name).replace(target)
+            self._loaded_mtime_ns = self._snapshot_mtime_ns()
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise
+
+    def _snapshot_mtime_ns(self) -> int:
+        if not self.store_dir.exists():
+            return 0
+        max_mtime_ns = 0
+        for platform_dir in self.store_dir.iterdir():
+            if not platform_dir.is_dir():
+                continue
+            skill_file = platform_dir / "task_skills.json"
+            if not skill_file.is_file():
+                continue
+            try:
+                max_mtime_ns = max(max_mtime_ns, skill_file.stat().st_mtime_ns)
+            except FileNotFoundError:
+                continue
+        return max_mtime_ns
 
     async def search(self, query: str, *, top_k: int = 5) -> list[tuple[TaskSkill, float]]:
         if not self._skills or top_k <= 0:
@@ -602,6 +660,11 @@ class UnifiedSkillSearch:
     ) -> None:
         self.shortcut_store = shortcut_store
         self.task_store = task_store
+
+    def refresh_if_stale(self) -> bool:
+        shortcut_refreshed = self.shortcut_store.refresh_if_stale()
+        task_refreshed = self.task_store.refresh_if_stale()
+        return shortcut_refreshed or task_refreshed
 
     async def search(
         self,
