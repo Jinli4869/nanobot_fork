@@ -576,14 +576,7 @@ class GuiAgent:
                 matched_skill, final_score = skill_match
             memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
 
-        # 3b. Retrieve shortcut candidates (multi-candidate, filtered by platform + app)
-        shortcut_candidates = await self._retrieve_shortcut_candidates(
-            task, platform=self.backend.platform, app_hint=app_hint,
-        )
-
-        # 4. If skill matched (legacy path), attempt skill execution first.
-        # Shortcut candidates from step 3b are evaluated inside the retry loop
-        # at attempt 0 using a live screenshot so applicability is screen-aware.
+        # 4. If skill matched, attempt skill execution first.
         skill_context: str | None = None
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
@@ -618,109 +611,11 @@ class GuiAgent:
         result: AgentResult | None = None
         retry_summaries: list[str] = []
 
-        # Tracks whether the first attempt used a shortcut so retries can clear
-        # matched_skill and skill_context to avoid stale shortcut context.
-        _shortcut_attempted: bool = False
-
         try:
             for attempt in range(max_retries):
                 self._active_retry_summaries = tuple(retry_summaries)
                 run_dir = self._make_run_dir(task, attempt)
                 last_trace_path = str(run_dir)
-
-                # Attempt 0: evaluate shortcut applicability using a live screenshot.
-                # When applicability returns "run", the selected shortcut takes priority
-                # over any legacy _search_skill match and its execution result supplies
-                # skill_context for this attempt.
-                if attempt == 0 and shortcut_candidates:
-                    pre_obs = await self.backend.observe(
-                        run_dir / "screenshots" / "pre_shortcut_check.png",
-                        timeout=self.step_timeout,
-                    )
-                    pre_screenshot = (
-                        Path(pre_obs.screenshot_path) if pre_obs.screenshot_path else None
-                    )
-                    applicability_decision = await self._evaluate_shortcut_applicability(
-                        shortcut_candidates,
-                        screenshot_path=pre_screenshot,
-                        task=task,
-                    )
-                    if applicability_decision.outcome == "run":
-                        # Find the candidate matching the approved shortcut_id
-                        approved = next(
-                            (
-                                r for r in shortcut_candidates
-                                if r.skill.skill_id == applicability_decision.shortcut_id
-                            ),
-                            None,
-                        )
-                        if approved is not None:
-                            matched_skill = approved.skill
-                            final_score = applicability_decision.score
-                            memory_context = await self._inject_skill_memory_context(
-                                matched_skill, memory_context
-                            )
-                            if self._shortcut_executor is not None:
-                                score_text = f"{final_score:.2f}" if final_score is not None else "n/a"
-                                self._trajectory_recorder.set_phase(
-                                    ExecutionPhase.SKILL,
-                                    reason=(
-                                        f"Executing approved shortcut '{matched_skill.name}' "
-                                        f"via ShortcutExecutor (score={score_text})"
-                                    ),
-                                )
-                                try:
-                                    self._shortcut_executor.trajectory_recorder = self._trajectory_recorder
-                                    shortcut_result = await self._shortcut_executor.execute(matched_skill)
-                                    if shortcut_result.is_violation:
-                                        self._trajectory_recorder.record_event(
-                                            "shortcut_execution", outcome="violation",
-                                            skill_id=shortcut_result.skill_id,
-                                            step_index=shortcut_result.step_index,
-                                            boundary=shortcut_result.boundary,
-                                            failed_condition=shortcut_result.failed_condition.value,
-                                        )
-                                        matched_skill = None
-                                        skill_context = None
-                                        self._trajectory_recorder.set_phase(
-                                            ExecutionPhase.AGENT,
-                                            reason=(
-                                                "Shortcut contract violation, falling back "
-                                                "to free exploration"
-                                            ),
-                                        )
-                                    else:
-                                        skill_context = _summarize_shortcut_success(shortcut_result)
-                                        self._trajectory_recorder.record_event(
-                                            "shortcut_execution", outcome="success",
-                                            skill_id=shortcut_result.skill_id,
-                                            steps_taken=len(shortcut_result.step_results),
-                                        )
-                                        self._trajectory_recorder.set_phase(
-                                            ExecutionPhase.AGENT,
-                                            reason="Shortcut complete, agent confirms",
-                                        )
-                                except Exception as exc:
-                                    self._trajectory_recorder.record_event(
-                                        "shortcut_execution", outcome="exception",
-                                        error_type=type(exc).__name__,
-                                        error_message=str(exc),
-                                    )
-                                    matched_skill = None
-                                    skill_context = None
-                                    self._trajectory_recorder.set_phase(
-                                        ExecutionPhase.AGENT,
-                                        reason=(
-                                            "Shortcut execution raised exception, falling back",
-                                        ),
-                                    )
-                            _shortcut_attempted = True
-
-                # On retries after a failed shortcut attempt, clear shortcut context so
-                # subsequent retries use free exploration instead of a stale shortcut.
-                if attempt > 0 and _shortcut_attempted:
-                    matched_skill = None
-                    skill_context = None
 
                 await self._log_attempt_event(
                     run_dir,
