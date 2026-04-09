@@ -65,14 +65,37 @@ def _action_signature(skill: Skill) -> tuple[str, ...]:
 
 
 def _action_similarity(sig_a: tuple[str, ...], sig_b: tuple[str, ...]) -> float:
-    """Prefix-matching similarity between two action signatures."""
+    """Prefix-aware similarity between two action signatures.
+
+    When the shorter sequence is a perfect prefix of the longer one, the
+    score reflects that all overlapping actions match, with only a mild
+    penalty for the extra tail in the longer sequence.  This prevents
+    short navigational-prefix skills from being scored as dissimilar to
+    their longer counterparts.
+
+    Formula:
+        score = prefix_matches / min_len            (overlap quality, 0-1)
+              * (1 - 0.3 * tail_len / max_len)      (length penalty, 0.7-1)
+    """
     if not sig_a and not sig_b:
         return 1.0
+    min_len = min(len(sig_a), len(sig_b))
     max_len = max(len(sig_a), len(sig_b))
     if max_len == 0:
         return 1.0
-    matches = sum(1 for a, b in zip(sig_a, sig_b) if a == b)
-    return matches / max_len
+    # Count contiguous prefix matches (stricter than zip-anywhere).
+    prefix_matches = 0
+    for a, b in zip(sig_a, sig_b):
+        if a == b:
+            prefix_matches += 1
+        else:
+            break
+    if min_len == 0:
+        return 0.0
+    overlap_quality = prefix_matches / min_len
+    tail_len = max_len - min_len
+    length_penalty = 1.0 - 0.3 * (tail_len / max_len)
+    return overlap_quality * length_penalty
 
 
 # ---------------------------------------------------------------------------
@@ -381,13 +404,17 @@ class SkillLibrary:
 
     @staticmethod
     def _merge_skills(old: Skill, new: Skill) -> Skill:
-        """Deterministic merge: aggregate stats, prefer longer step sequence."""
+        """Deterministic merge: aggregate stats, prefer shorter step sequence.
+
+        Shorter skills are more generic navigational prefixes — the agent
+        handles remaining steps dynamically based on the specific task.
+        """
         old_sig = _action_signature(old)
         new_sig = _action_signature(new)
 
-        # Steps: prefer longer (better coverage) if sequences are similar
+        # Steps: prefer shorter (more generic prefix) if sequences are similar
         if _action_similarity(old_sig, new_sig) >= 0.8:
-            steps = new.steps if len(new.steps) >= len(old.steps) else old.steps
+            steps = new.steps if len(new.steps) <= len(old.steps) else old.steps
         else:
             steps = new.steps or old.steps
 
