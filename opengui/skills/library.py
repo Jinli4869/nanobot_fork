@@ -155,6 +155,7 @@ class SkillLibrary:
     _documents: list[str] = field(default_factory=list, repr=False)
     _ordered_ids: list[str] = field(default_factory=list, repr=False)
     _index_dirty: bool = field(default=True, repr=False)
+    _loaded_mtime_ns: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         self.store_dir = Path(self.store_dir)
@@ -477,6 +478,8 @@ class SkillLibrary:
     def load_all(self) -> None:
         self._skills.clear()
         if not self.store_dir.exists():
+            self._loaded_mtime_ns = 0
+            self._index_dirty = True
             return
         for skills_file in self._iter_skill_files():
             try:
@@ -491,11 +494,22 @@ class SkillLibrary:
             for skill_data in data.get("skills", []):
                 skill = self._normalize_skill(Skill.from_dict(skill_data))
                 self._skills[skill.skill_id] = skill
+        self._loaded_mtime_ns = self._snapshot_mtime_ns()
         self._index_dirty = True
+
+    def refresh_if_stale(self) -> bool:
+        current_mtime_ns = self._snapshot_mtime_ns()
+        if current_mtime_ns == self._loaded_mtime_ns:
+            return False
+        self.load_all()
+        return True
 
     def _iter_skill_files(self) -> list[Path]:
         files: list[Path] = []
         flat_platforms: set[str] = set()
+
+        if not self.store_dir.exists():
+            return files
 
         for platform_dir in sorted(path for path in self.store_dir.iterdir() if path.is_dir()):
             flat_file = platform_dir / "skills.json"
@@ -512,6 +526,15 @@ class SkillLibrary:
             files.append(skills_file)
 
         return files
+
+    def _snapshot_mtime_ns(self) -> int:
+        max_mtime_ns = 0
+        for skills_file in self._iter_skill_files():
+            try:
+                max_mtime_ns = max(max_mtime_ns, skills_file.stat().st_mtime_ns)
+            except FileNotFoundError:
+                continue
+        return max_mtime_ns
 
     def _upsert(self, skill: Skill, *, replace_id: str | None = None) -> None:
         skill = self._normalize_skill(skill)
@@ -547,6 +570,7 @@ class SkillLibrary:
             tmp.close()
             Path(tmp.name).replace(target)
             self._cleanup_legacy_platform_files(platform)
+            self._loaded_mtime_ns = self._snapshot_mtime_ns()
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise

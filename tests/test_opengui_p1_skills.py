@@ -88,6 +88,14 @@ class _FakeValidator:
         return self._returns.pop(0)
 
 
+class _CapturingRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, object]]] = []
+
+    def record_event(self, event: str, **payload: object) -> None:
+        self.events.append((event, payload))
+
+
 # ---------------------------------------------------------------------------
 # Skill factory helper
 # ---------------------------------------------------------------------------
@@ -181,6 +189,46 @@ def test_skill_library_persists_to_disk(tmp_path: Path) -> None:
     assert reloaded is not None
     assert reloaded.name == "Swipe Up"
     assert reloaded.skill_id == "s-persist"
+
+
+def test_skill_library_refresh_if_stale_sees_added_skill(tmp_path: Path) -> None:
+    store_path = tmp_path / "skills_refresh_add"
+    lib_a = SkillLibrary(store_dir=store_path)
+    lib_b = SkillLibrary(store_dir=store_path)
+
+    lib_b.add(_make_skill("s-new", "Open Calendar", "Launch the calendar app"))
+
+    assert lib_a.get("s-new") is None
+    assert lib_a.refresh_if_stale() is True
+    refreshed = lib_a.get("s-new")
+    assert refreshed is not None
+    assert refreshed.skill_id == "s-new"
+
+
+def test_skill_library_refresh_if_stale_returns_false_when_unchanged(tmp_path: Path) -> None:
+    lib = SkillLibrary(store_dir=tmp_path / "skills_refresh_clean")
+
+    assert lib.refresh_if_stale() is False
+
+
+def test_skill_library_refresh_if_stale_sees_removed_skill(tmp_path: Path) -> None:
+    store_path = tmp_path / "skills_refresh_remove"
+    lib_a = SkillLibrary(store_dir=store_path)
+    lib_b = SkillLibrary(store_dir=store_path)
+
+    lib_b.add(_make_skill("s-gone", "Volume Down", "Lower the device volume"))
+    assert lib_a.refresh_if_stale() is True
+    assert lib_a.get("s-gone") is not None
+
+    assert lib_b.remove("s-gone") is True
+    assert lib_a.refresh_if_stale() is True
+    assert lib_a.get("s-gone") is None
+
+
+def test_skill_library_refresh_if_stale_handles_missing_store_dir(tmp_path: Path) -> None:
+    lib = SkillLibrary(store_dir=tmp_path / "skills_missing_dir")
+
+    assert lib.refresh_if_stale() is False
 
 
 def test_skill_library_list_all_returns_all_skills(tmp_path: Path) -> None:
@@ -505,6 +553,75 @@ async def test_executor_multi_step_all_pass(tmp_path: Path) -> None:
     assert result.state == ExecutionState.SUCCEEDED
     assert len(result.step_results) == 3
     assert all(sr.valid_state_check is True for sr in result.step_results)
+
+
+async def test_executor_records_skill_events(tmp_path: Path) -> None:
+    step = SkillStep(
+        action_type="tap",
+        target="Settings button",
+        valid_state="Settings button is visible on the home screen",
+    )
+    skill = Skill(
+        skill_id="exec-telemetry",
+        name="Tap Settings",
+        description="Tap the settings button",
+        app="com.android.settings",
+        platform="android",
+        steps=(step,),
+    )
+    recorder = _CapturingRecorder()
+    executor = SkillExecutor(
+        backend=DryRunBackend(),
+        state_validator=_FakeValidator(returns=[True]),
+        trajectory_recorder=recorder,
+        stop_on_failure=True,
+    )
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    event_names = [event for event, _ in recorder.events]
+    assert event_names == [
+        "skill_execution_start",
+        "skill_step",
+        "skill_execution_result",
+    ]
+    assert recorder.events[1][1]["skill_id"] == "exec-telemetry"
+    assert recorder.events[1][1]["action_summary"] == "tap on Settings button"
+    assert recorder.events[2][1]["state"] == "succeeded"
+
+
+async def test_executor_records_skill_failure_events(tmp_path: Path) -> None:
+    step = SkillStep(
+        action_type="tap",
+        target="Submit button",
+        valid_state="Form is fully filled in",
+    )
+    skill = Skill(
+        skill_id="exec-fail-telemetry",
+        name="Submit Form",
+        description="Submit the form",
+        app="com.example.forms",
+        platform="android",
+        steps=(step,),
+    )
+    recorder = _CapturingRecorder()
+    executor = SkillExecutor(
+        backend=DryRunBackend(),
+        state_validator=_FakeValidator(returns=[False]),
+        trajectory_recorder=recorder,
+        stop_on_failure=True,
+    )
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert recorder.events[1][0] == "skill_step"
+    assert recorder.events[1][1]["valid_state_check"] is False
+    assert "valid_state not reached" in str(recorder.events[1][1]["error"])
+    assert recorder.events[2][0] == "skill_execution_result"
+    assert recorder.events[2][1]["state"] == "failed"
+    assert "valid_state not reached" in str(recorder.events[2][1]["error"])
 
 
 # ---------------------------------------------------------------------------
