@@ -125,7 +125,7 @@ class PostRunProcessor:
     ) -> None:
         summary, _, _ = await asyncio.gather(
             self._summarize_trajectory(trace_path),
-            self._promote_shortcut(trace_path, is_success, platform),
+            self._extract_skill(trace_path, is_success, platform),
             self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
         )
         if summary:
@@ -151,52 +151,43 @@ class PostRunProcessor:
     # Skill extraction / shortcut promotion
     # ------------------------------------------------------------------
 
-    async def _promote_shortcut(
+    async def _extract_skill(
         self, trace_path: Path, is_success: bool, platform: str,
     ) -> str | None:
         if not self._enable_skill_extraction:
-            logger.info("Skipping shortcut promotion: skill extraction disabled")
+            logger.info("Skipping skill extraction: disabled")
             return None
         if not trace_path.exists():
             return None
 
         from opengui.skills.extractor import SkillExtractor
-        from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
-        from opengui.skills.shortcut_store import ShortcutSkillStore
+        from opengui.skills.library import SkillLibrary
 
         try:
-            store = ShortcutSkillStore(
+            extractor = SkillExtractor(llm=self._llm)
+            skill = await extractor.extract_from_file(trace_path, is_success=is_success)
+            self._write_extraction_usage(trace_path, extractor.total_usage)
+            if skill is None:
+                logger.info(
+                    "No skill candidate extracted from %s",
+                    trace_path,
+                )
+                return None
+
+            library = SkillLibrary(
                 store_dir=self._skill_store_root,
                 embedding_provider=self._embedding_provider,
             )
-
-            if not is_success:
-                extractor = SkillExtractor(llm=self._llm)
-                skill = await extractor.extract_from_file(trace_path, is_success=False)
-                self._write_extraction_usage(trace_path, extractor.total_usage)
-                if skill is None:
-                    logger.info(
-                        "Skipping failed-trace shortcut promotion for %s: no candidate extracted",
-                        trace_path,
-                    )
-                    return None
-
-                shortcut = self._legacy_skill_to_shortcut(skill=skill, trace_path=trace_path)
-                decision, skill_id = await store.add_or_merge(shortcut)
-                logger.info(
-                    "Promoted failed-trace shortcut %s from %s via %s",
-                    skill_id or shortcut.skill_id,
-                    trace_path,
-                    decision,
-                )
-                return skill_id
-
-            pipeline = ShortcutPromotionPipeline(platform=platform)
-            return await pipeline.promote_from_trace(
-                trace_path, is_success=is_success, store=store,
+            decision, skill_id = await library.add_or_merge(skill)
+            logger.info(
+                "Extracted skill %s from %s via %s",
+                skill_id or skill.skill_id,
+                trace_path,
+                decision,
             )
+            return skill_id or skill.skill_id
         except Exception:
-            logger.warning("Shortcut promotion failed for %s", trace_path, exc_info=True)
+            logger.warning("Skill extraction failed for %s", trace_path, exc_info=True)
             return None
 
     # ------------------------------------------------------------------

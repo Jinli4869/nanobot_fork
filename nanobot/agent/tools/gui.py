@@ -218,7 +218,6 @@ class GuiSubagentTool(Tool):
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
         skill_library = self._get_skill_library(active_backend.platform)
-        unified_skill_search = self._get_unified_skill_search(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
             output_dir=run_dir,
@@ -227,24 +226,15 @@ class GuiSubagentTool(Tool):
         )
 
         skill_executor = None
-        shortcut_executor = None
-        shortcut_applicability_router = None
         if self._gui_config.enable_skill_execution:
             from opengui.agent import (
                 _AgentActionGrounder,
                 _AgentScreenshotProvider,
                 _AgentSubgoalRunner,
             )
-            from opengui.grounding.llm import LLMGrounder
             from opengui.skills.executor import LLMStateValidator, SkillExecutor
-            from opengui.skills.multi_layer_executor import (
-                LLMConditionEvaluator,
-                ShortcutExecutor,
-            )
-            from opengui.skills.shortcut_router import ShortcutApplicabilityRouter
 
             state_validator = LLMStateValidator(self._llm_adapter)
-            condition_evaluator = LLMConditionEvaluator(state_validator)
             skill_executor = SkillExecutor(
                 backend=active_backend,
                 state_validator=state_validator,
@@ -268,17 +258,6 @@ class GuiSubagentTool(Tool):
                 stop_on_failure=False,
                 max_recovery_steps=3,
             )
-            shortcut_screenshot_dir = run_dir / "shortcut_screenshots"
-            shortcut_screenshot_dir.mkdir(parents=True, exist_ok=True)
-            shortcut_executor = ShortcutExecutor(
-                backend=active_backend,
-                grounder=LLMGrounder(llm=self._llm_adapter),
-                condition_evaluator=condition_evaluator,
-                screenshot_dir=shortcut_screenshot_dir,
-            )
-            shortcut_applicability_router = ShortcutApplicabilityRouter(
-                condition_evaluator=condition_evaluator,
-            )
 
         agent = GuiAgent(
             llm=self._llm_adapter,
@@ -291,11 +270,8 @@ class GuiSubagentTool(Tool):
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
             skill_executor=skill_executor,
-            shortcut_executor=shortcut_executor,
             intervention_handler=self._build_intervention_handler(active_backend, task),
-            unified_skill_search=unified_skill_search,
             memory_store=memory_store,
-            shortcut_applicability_router=shortcut_applicability_router,
             agent_profile=self._gui_config.agent_profile,
         )
 
