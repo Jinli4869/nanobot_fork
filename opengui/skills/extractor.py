@@ -57,7 +57,10 @@ You are a GUI automation expert. Given the following trajectory of a \
    - Remove duplicate or redundant steps that interact with the same UI state.
    - Fix target descriptions and coordinates to match visible UI elements.
    - Write accurate ``valid_state`` descriptions based on what is actually on screen.
-6. Return ONLY a JSON object (no markdown fences):
+6. If trajectory steps include ``observation.foreground_app`` or ``observation.app``,
+   treat that observed foreground app as the strongest app identity signal.
+   Prefer the observed package/app over guessed display names when filling ``app``.
+7. Return ONLY a JSON object (no markdown fences):
 
 {{
   "name": "short_snake_case_name",
@@ -109,6 +112,9 @@ Same as success extraction, but:
 5. If screenshots are provided, use them to:
    - Identify the exact point of failure from visual evidence.
    - Write an accurate corrective action based on what the screen showed.
+6. If trajectory steps include ``observation.foreground_app`` or ``observation.app``,
+   treat that observed foreground app as the strongest app identity signal.
+   Prefer the observed package/app over guessed display names when filling ``app``.
 
 Return ONLY a JSON object (no markdown fences):
 

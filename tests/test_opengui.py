@@ -309,6 +309,52 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
     )
 
 
+@pytest.mark.asyncio
+async def test_adb_backend_foreground_app_uses_activity_dump_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="""
+      mResumedActivity: ActivityRecord{123 u0 com.coloros.calendar/.MainActivity t12}
+    """)
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    assert await backend._query_foreground_app(timeout=5.0) == "com.coloros.calendar"
+    run_mock.assert_awaited_once_with(
+        "shell",
+        "dumpsys",
+        "activity",
+        "activities",
+        timeout=10.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_foreground_app_falls_back_to_window_dump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "header without resumed activity",
+        "mCurrentFocus=Window{42 u0 com.android.settings/com.android.settings.Settings}",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    assert await backend._query_foreground_app(timeout=5.0) == "com.android.settings"
+    assert run_mock.await_args_list[0].args == ("shell", "dumpsys", "activity", "activities")
+    assert run_mock.await_args_list[1].args == ("shell", "dumpsys", "window", "windows")
+
+
+def test_adb_backend_extract_foreground_app_supports_multiple_android_signals() -> None:
+    assert AdbBackend._extract_foreground_app(
+        "topResumedActivity=ActivityRecord{7 u0 com.heytap.browser/.Main t11}"
+    ) == "com.heytap.browser"
+    assert AdbBackend._extract_foreground_app(
+        "mFocusedApp=AppWindowToken{ token=Token{ ActivityRecord{7 u0 com.android.settings/.Settings t11}}}"
+    ) == "com.android.settings"
+    assert AdbBackend._extract_foreground_app("no foreground info here") == "unknown"
+
+
 def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> None:
     qwen_agent = GuiAgent(
         _ScriptedLLM([]),
