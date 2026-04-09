@@ -30,4 +30,4 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
 | `long-goal` | Sustained objectives: `long_task`, `complete_goal`, idempotent goals, modular project work, early research |
-| `android-deeplink-prober` | Probe Android app deep links with adb and dumpsys |
+| `claw-gui` | Android device control: ADB commands, deeplink probing, GUI automation |
