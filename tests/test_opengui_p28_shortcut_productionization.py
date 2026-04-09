@@ -127,7 +127,7 @@ def _write_jsonl(trace_path: Path, lines: list[str]) -> None:
 async def test_gui_postprocessing_uses_shortcut_promotion_not_legacy_extractor(
     tmp_workspace: Path,
 ) -> None:
-    tool = _dry_run_tool(tmp_workspace)
+    tool = _dry_run_tool(tmp_workspace, gui_overrides={"enableSkillExtraction": True})
     promote_mock = AsyncMock(return_value="shortcut-promoted")
     legacy_extract_mock = AsyncMock(return_value=None)
 
@@ -156,7 +156,7 @@ async def test_failed_shortcut_promotion_uses_failure_extractor_and_persists(
 ) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
 
-    tool = _dry_run_tool(tmp_workspace)
+    tool = _dry_run_tool(tmp_workspace, gui_overrides={"enableSkillExtraction": True})
     trace_path = tmp_workspace / "gui_runs" / "failed-trace.jsonl"
     _write_jsonl(
         trace_path,
@@ -210,7 +210,7 @@ async def test_failed_shortcut_promotion_uses_failure_extractor_and_persists(
             new=promote_mock,
         ),
     ):
-        promoted_id = await tool._promote_shortcut(trace_path, is_success=False, platform="dry-run")
+        promoted_id = await tool._postprocessor._promote_shortcut(trace_path, is_success=False, platform="dry-run")
 
     assert promoted_id == "failed-settings-shortcut"
     assert extract_calls == [(trace_path, False)]
