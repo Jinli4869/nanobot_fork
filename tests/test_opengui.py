@@ -980,6 +980,7 @@ async def test_adb_backend_input_text_enables_adb_keyboard_before_switching(
     monkeypatch.setattr(backend, "_run", run_mock)
     enable_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_needs_ime_enable_before_set", enable_mock)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", AsyncMock(return_value=False))
 
     action = parse_action({"action_type": "input_text", "text": "你好"})
     await backend.execute(action)
@@ -1056,6 +1057,40 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
         "shell", "input", "text", "hello%sworld",
     )
     assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+
+
+def test_adb_backend_text_segmentation_splits_emoji_boundaries() -> None:
+    from opengui.backends.adb import _iter_text_input_segments
+
+    assert _iter_text_input_segments("杭州✅明天☁️有雨") == [
+        "杭州",
+        "✅",
+        "明天",
+        "☁️",
+        "有雨",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_sends_text_after_emoji_as_later_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    segments: list[str] = []
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    async def fake_input_single_text(text: str, timeout: float) -> None:
+        assert timeout == 5.0
+        segments.append(text)
+
+    monkeypatch.setattr(backend, "_input_single_text", fake_input_single_text)
+
+    action = parse_action({"action_type": "input_text", "text": "已发送给苏✅请查收"})
+    await backend.execute(action)
+
+    assert segments == ["已发送给苏", "✅", "请查收"]
+    run_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
