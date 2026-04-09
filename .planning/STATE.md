@@ -240,7 +240,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260407-ku8 | 让 GUI trace 记录 input_text 的真实文本，不再写成 redacted 占位符 | 2026-04-07 | uncommitted | [260407-ku8-gui-trace-input-text-redacted](./quick/260407-ku8-gui-trace-input-text-redacted/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
-| 260409-lpz | 关闭shortcut功能只保留skill提取和execution | 2026-04-09 | pending | [260409-lpz-shortcut-skill-execution](./quick/260409-lpz-shortcut-skill-execution/) |
+| 260409-lpz | 关闭shortcut功能只保留skill提取和execution | 2026-04-09 | 97f2db6 | [260409-lpz-shortcut-skill-execution](./quick/260409-lpz-shortcut-skill-execution/) |
 
 ## Session Continuity
 
