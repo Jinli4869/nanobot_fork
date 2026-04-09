@@ -217,6 +217,7 @@ class GuiSubagentTool(Tool):
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
+        self._refresh_cached_skill_stores()
         skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
@@ -249,12 +250,14 @@ class GuiSubagentTool(Tool):
                     state_validator=state_validator,
                     model=self._model,
                     artifacts_root=run_dir,
+                    trajectory_recorder=recorder,
                     agent_profile=self._gui_config.agent_profile,
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
                     backend=active_backend,
                     artifacts_root=run_dir,
                 ),
+                trajectory_recorder=recorder,
                 stop_on_failure=False,
                 max_recovery_steps=3,
             )
@@ -675,6 +678,12 @@ class GuiSubagentTool(Tool):
             )
         return self._skill_libraries[cache_key]
 
+    def _refresh_cached_skill_stores(self) -> None:
+        for cached in getattr(self, "_skill_libraries", {}).values():
+            refresh_if_stale = getattr(cached, "refresh_if_stale", None)
+            if callable(refresh_if_stale):
+                refresh_if_stale()
+
     def _make_run_dir(self) -> Path:
         runs_root = self._workspace / self._gui_config.artifacts_dir
         while True:
@@ -761,5 +770,3 @@ class _GuiToolInterventionHandler:
     @staticmethod
     def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return GuiAgent._scrub_for_log(payload)
-
-

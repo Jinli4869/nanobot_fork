@@ -348,6 +348,7 @@ async def test_nanobot_wires_shortcut_executor(tmp_path: Path) -> None:
     tool._build_intervention_handler = lambda active_backend, task: None
     tool._resolve_trace_path = lambda recorder_path, agent_trace_path: Path(agent_trace_path)
     tool._schedule_trajectory_postprocessing = lambda *args, **kwargs: None
+    tool._postprocessor = SimpleNamespace(schedule=lambda *args, **kwargs: None)
 
     active_backend = SimpleNamespace(platform="android")
 
@@ -365,6 +366,59 @@ async def test_nanobot_wires_shortcut_executor(tmp_path: Path) -> None:
     assert captured_gui_agent_kwargs["shortcut_executor"] is not None
     assert captured_gui_agent_kwargs["shortcut_applicability_router"] is not None
     assert constructed["shortcut_executor"]["condition_evaluator"] is constructed["router"]["condition_evaluator"]
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_refreshes_cached_skill_stores_before_run(tmp_path: Path) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    refreshed: list[str] = []
+
+    class _RefreshableCache:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def refresh_if_stale(self) -> bool:
+            refreshed.append(self.name)
+            return False
+
+    class _FakeGuiAgent:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+        async def run(self, task: str) -> AgentResult:
+            return AgentResult(success=True, summary=task, trace_path=str(tmp_path / "agent-trace"))
+
+    tool = GuiSubagentTool.__new__(GuiSubagentTool)
+    tool._gui_config = SimpleNamespace(
+        enable_skill_execution=False,
+        max_steps=3,
+        skill_threshold=0.5,
+        agent_profile="default",
+    )
+    tool._llm_adapter = object()
+    tool._model = "test-model"
+    tool._load_policy_context_and_memory_store = lambda: (None, None)
+    tool._get_skill_library = lambda platform: None
+    tool._make_run_dir = lambda: tmp_path / "run-refresh"
+    tool._build_intervention_handler = lambda active_backend, task: None
+    tool._resolve_trace_path = lambda recorder_path, agent_trace_path: Path(agent_trace_path)
+    tool._build_post_run_state = lambda **kwargs: {}
+    tool._postprocessor = SimpleNamespace(schedule=lambda *args, **kwargs: None)
+    tool._skill_libraries = {
+        "android": _RefreshableCache("android"),
+        "unified_android": _RefreshableCache("unified_android"),
+        "other": object(),
+    }
+
+    active_backend = SimpleNamespace(platform="android")
+
+    with patch("nanobot.agent.tools.gui.GuiAgent", _FakeGuiAgent):
+        payload = await GuiSubagentTool._run_task(tool, active_backend, "open app")
+
+    parsed = json.loads(payload)
+    assert parsed["success"] is True
+    assert refreshed == ["android", "unified_android"]
 
 
 @pytest.mark.asyncio

@@ -159,6 +159,90 @@ async def test_task_store_round_trip(tmp_path: Path) -> None:
     assert reloaded.get(skill.skill_id) == skill
 
 
+def test_shortcut_store_refresh_if_stale_sees_added_skill(tmp_path: Path) -> None:
+    store_a = ShortcutSkillStore(tmp_path)
+    store_b = ShortcutSkillStore(tmp_path)
+
+    store_b.add(
+        _make_shortcut_skill(
+            skill_id="shortcut-refresh-add",
+            name="Compose Draft",
+            description="Open the compose flow",
+        )
+    )
+
+    assert store_a.get("shortcut-refresh-add") is None
+    assert store_a.refresh_if_stale() is True
+    assert store_a.get("shortcut-refresh-add") is not None
+
+
+def test_shortcut_store_refresh_if_stale_returns_false_when_unchanged(tmp_path: Path) -> None:
+    store = ShortcutSkillStore(tmp_path)
+
+    assert store.refresh_if_stale() is False
+
+
+def test_shortcut_store_refresh_if_stale_sees_removed_skill(tmp_path: Path) -> None:
+    store_a = ShortcutSkillStore(tmp_path)
+    store_b = ShortcutSkillStore(tmp_path)
+
+    store_b.add(
+        _make_shortcut_skill(
+            skill_id="shortcut-refresh-remove",
+            name="Archive Thread",
+            description="Archive the current conversation",
+        )
+    )
+    assert store_a.refresh_if_stale() is True
+    assert store_a.get("shortcut-refresh-remove") is not None
+
+    assert store_b.remove("shortcut-refresh-remove") is True
+    assert store_a.refresh_if_stale() is True
+    assert store_a.get("shortcut-refresh-remove") is None
+
+
+def test_task_store_refresh_if_stale_sees_added_skill(tmp_path: Path) -> None:
+    store_a = TaskSkillStore(tmp_path)
+    store_b = TaskSkillStore(tmp_path)
+
+    store_b.add(
+        _make_task_skill(
+            skill_id="task-refresh-add",
+            name="Send Status",
+            description="Draft and send a status update",
+        )
+    )
+
+    assert store_a.get("task-refresh-add") is None
+    assert store_a.refresh_if_stale() is True
+    assert store_a.get("task-refresh-add") is not None
+
+
+def test_task_store_refresh_if_stale_returns_false_when_unchanged(tmp_path: Path) -> None:
+    store = TaskSkillStore(tmp_path)
+
+    assert store.refresh_if_stale() is False
+
+
+def test_task_store_refresh_if_stale_sees_removed_skill(tmp_path: Path) -> None:
+    store_a = TaskSkillStore(tmp_path)
+    store_b = TaskSkillStore(tmp_path)
+
+    store_b.add(
+        _make_task_skill(
+            skill_id="task-refresh-remove",
+            name="Review Inbox",
+            description="Open the inbox and review unread mail",
+        )
+    )
+    assert store_a.refresh_if_stale() is True
+    assert store_a.get("task-refresh-remove") is not None
+
+    assert store_b.remove("task-refresh-remove") is True
+    assert store_a.refresh_if_stale() is True
+    assert store_a.get("task-refresh-remove") is None
+
+
 def test_version_field(tmp_path: Path) -> None:
     shortcut_store = ShortcutSkillStore(tmp_path)
     shortcut_store.add(
@@ -340,6 +424,26 @@ async def test_unified_search_layer_weight(tmp_path: Path) -> None:
     weighted_shortcut = next(result for result in weighted if result.layer == "shortcut")
     assert weighted_shortcut.score > unweighted_shortcut.score
     assert weighted_shortcut.raw_score == unweighted_shortcut.raw_score
+
+
+def test_unified_search_refresh_if_stale_reports_changes(tmp_path: Path) -> None:
+    shortcut_store = ShortcutSkillStore(tmp_path)
+    task_store = TaskSkillStore(tmp_path)
+    other_shortcut_store = ShortcutSkillStore(tmp_path)
+
+    unified = UnifiedSkillSearch(shortcut_store, task_store)
+    assert unified.refresh_if_stale() is False
+
+    other_shortcut_store.add(
+        _make_shortcut_skill(
+            skill_id="shortcut-unified-refresh",
+            name="Open Calendar",
+            description="Switch to the calendar view",
+        )
+    )
+
+    assert unified.refresh_if_stale() is True
+    assert shortcut_store.get("shortcut-unified-refresh") is not None
 
 
 @pytest.mark.asyncio
