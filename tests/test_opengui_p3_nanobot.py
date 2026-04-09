@@ -504,7 +504,7 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
         )
 
     monkeypatch.setattr("opengui.skills.extractor.SkillExtractor.extract_from_file", fake_extract)
-    monkeypatch.setattr("nanobot.agent.tools.gui.GuiSubagentTool._summarize_trajectory", AsyncMock(return_value=""))
+    monkeypatch.setattr("opengui.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
 
     provider = _MockNanobotProvider(
         [

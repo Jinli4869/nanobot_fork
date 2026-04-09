@@ -692,6 +692,11 @@ class AgentLoop:
 
     async def close_mcp(self) -> None:
         """Drain pending background archives, then close MCP connections."""
+        # Drain GUI post-processing (skill extraction, evaluation, summarization)
+        # before tearing down, so background work is not silently cancelled.
+        gui_tool = self.tools.get("gui_task")
+        if gui_tool is not None:
+            await gui_tool._wait_for_pending_postprocessing()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
