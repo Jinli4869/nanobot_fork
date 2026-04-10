@@ -199,23 +199,62 @@ class SkillLibrary:
         conflict = self._find_best_conflict(skill)
         if conflict is None:
             self._upsert(skill)
+            logger.info(
+                "Skill dedup decision=ADD  new=%s [%s] app=%s  (no conflict found)",
+                skill.name, skill.skill_id[:8], skill.app,
+            )
             return "ADD", skill.skill_id
+
+        # Log conflict details with similarity scores for diagnostics.
+        name_sim = _name_token_similarity(conflict.name, skill.name)
+        action_sim = _action_similarity(
+            _action_signature(conflict), _action_signature(skill),
+        )
+        logger.info(
+            "Skill conflict found: new=%s [%s] vs existing=%s [%s]  "
+            "name_sim=%.3f action_sim=%.3f",
+            skill.name, skill.skill_id[:8],
+            conflict.name, conflict.skill_id[:8],
+            name_sim, action_sim,
+        )
 
         decision = await self._decide_merge(conflict, skill)
 
         if decision == "MERGE":
             merged = self._merge_skills(conflict, skill)
             self._upsert(merged, replace_id=conflict.skill_id)
+            logger.info(
+                "Skill dedup decision=MERGE  merged=%s [%s]  "
+                "(kept existing id, aggregated stats)",
+                merged.name, merged.skill_id[:8],
+            )
             return "MERGE", merged.skill_id
         elif decision == "KEEP_NEW":
             self._remove_internal(conflict.skill_id)
             self._upsert(skill)
+            logger.info(
+                "Skill dedup decision=KEEP_NEW  new=%s [%s]  "
+                "replaced=%s [%s]",
+                skill.name, skill.skill_id[:8],
+                conflict.name, conflict.skill_id[:8],
+            )
             return "KEEP_NEW", skill.skill_id
         elif decision == "KEEP_OLD":
+            logger.info(
+                "Skill dedup decision=KEEP_OLD  kept=%s [%s]  "
+                "discarded=%s [%s]",
+                conflict.name, conflict.skill_id[:8],
+                skill.name, skill.skill_id[:8],
+            )
             return "KEEP_OLD", conflict.skill_id
         else:
             # ADD — genuinely different
             self._upsert(skill)
+            logger.info(
+                "Skill dedup decision=ADD  new=%s [%s] app=%s  "
+                "(conflict found but decision=ADD)",
+                skill.name, skill.skill_id[:8], skill.app,
+            )
             return "ADD", skill.skill_id
 
     def add(self, skill: Skill) -> None:
@@ -482,13 +521,11 @@ class SkillLibrary:
         else:
             emb_scores = None
 
-        # Normalize + blend
-        bm25_norm = _min_max_norm(bm25_scores, mask)
+        # Blend raw scores (no min-max normalization)
         if emb_scores is not None:
-            emb_norm = _min_max_norm(emb_scores, mask)
-            hybrid = (1.0 - self.alpha) * bm25_norm + self.alpha * emb_norm
+            hybrid = (1.0 - self.alpha) * bm25_scores + self.alpha * emb_scores
         else:
-            hybrid = bm25_norm
+            hybrid = bm25_scores.copy()
 
         ranked = np.argsort(-hybrid)
         results: list[tuple[Skill, float]] = []
@@ -644,14 +681,3 @@ class SkillLibrary:
             parts.extend(skill.preconditions)
         return " ".join(parts)
 
-
-def _min_max_norm(scores: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    valid = scores[mask]
-    if len(valid) == 0:
-        return np.zeros_like(scores)
-    lo, hi = valid.min(), valid.max()
-    if hi - lo < 1e-9:
-        out = np.zeros_like(scores)
-        out[mask] = 0.5
-        return out
-    return np.where(mask, (scores - lo) / (hi - lo), 0.0)
