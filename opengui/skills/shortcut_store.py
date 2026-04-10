@@ -68,17 +68,6 @@ def _lazy_faiss() -> _FaissIndex:
     return _FaissIndex()
 
 
-def _min_max_norm(scores: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    valid = scores[mask]
-    if len(valid) == 0:
-        return np.zeros_like(scores)
-    lo, hi = valid.min(), valid.max()
-    if hi - lo < 1e-9:
-        out = np.zeros_like(scores)
-        out[mask] = 0.5
-        return out
-    return np.where(mask, (scores - lo) / (hi - lo), 0.0)
-
 
 @dataclass(frozen=True)
 class SkillSearchResult:
@@ -437,11 +426,9 @@ class ShortcutSkillStore:
             for score, idx in zip(faiss_raw, faiss_idx):
                 if idx >= 0:
                     emb_scores[idx] = score
-            hybrid = (1.0 - self.alpha) * _min_max_norm(bm25_scores, mask) + self.alpha * _min_max_norm(
-                emb_scores, mask
-            )
+            hybrid = (1.0 - self.alpha) * bm25_scores + self.alpha * emb_scores
         else:
-            hybrid = _min_max_norm(bm25_scores, mask)
+            hybrid = bm25_scores.copy()
 
         ranked = np.argsort(-hybrid)
         results: list[tuple[ShortcutSkill, float]] = []
@@ -617,11 +604,9 @@ class TaskSkillStore:
             for score, idx in zip(faiss_raw, faiss_idx):
                 if idx >= 0:
                     emb_scores[idx] = score
-            hybrid = (1.0 - self.alpha) * _min_max_norm(bm25_scores, mask) + self.alpha * _min_max_norm(
-                emb_scores, mask
-            )
+            hybrid = (1.0 - self.alpha) * bm25_scores + self.alpha * emb_scores
         else:
-            hybrid = _min_max_norm(bm25_scores, mask)
+            hybrid = bm25_scores.copy()
 
         ranked = np.argsort(-hybrid)
         results: list[tuple[TaskSkill, float]] = []

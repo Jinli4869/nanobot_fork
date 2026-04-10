@@ -2008,7 +2008,9 @@ class GuiAgent:
             return None
         from opengui.skills.data import compute_confidence
 
-        search_results = await self._skill_library.search(task, top_k=1)
+        search_results = await self._skill_library.search(
+            task, platform=self.backend.platform, top_k=1,
+        )
         if not search_results:
             return None
         skill, relevance = search_results[0]
@@ -2244,4 +2246,3 @@ class GuiAgent:
             self._skill_library.remove(skill.skill_id)
         else:
             self._skill_library.update(skill.skill_id, updated)
-            await self._skill_library.add_or_merge(updated)
