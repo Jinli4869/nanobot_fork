@@ -66,6 +66,7 @@ class GuiSubagentTool(Tool):
         self._skill_library = self._get_skill_library(self._backend.platform)
         self._postprocessor = PostRunProcessor(
             llm=self._llm_adapter,
+            merge_llm=self._llm_adapter,
             embedding_provider=self._embedding_adapter,
             skill_store_root=get_gui_skill_store_root(self._workspace),
             enable_skill_extraction=gui_config.enable_skill_extraction,

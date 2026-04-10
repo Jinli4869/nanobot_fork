@@ -66,12 +66,14 @@ class PostRunProcessor:
         self,
         *,
         llm: Any,
+        merge_llm: Any | None = None,
         embedding_provider: Any | None = None,
         skill_store_root: Path | None = None,
         enable_skill_extraction: bool = False,
         evaluation: EvaluationConfig = field(default_factory=EvaluationConfig),
     ) -> None:
         self._llm = llm
+        self._merge_llm = merge_llm
         self._embedding_provider = embedding_provider
         self._skill_store_root = skill_store_root
         self._enable_skill_extraction = enable_skill_extraction
@@ -172,22 +174,50 @@ class PostRunProcessor:
                     "No skill candidate extracted from %s",
                     trace_path,
                 )
+                self._write_extraction_result(trace_path, {
+                    "status": "no_candidate",
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "platform": platform,
+                })
                 return None
 
             library = SkillLibrary(
                 store_dir=self._skill_store_root,
                 embedding_provider=self._embedding_provider,
+                merge_llm=self._merge_llm,
             )
             decision, skill_id = await library.add_or_merge(skill)
+            final_id = skill_id or skill.skill_id
             logger.info(
                 "Extracted skill %s from %s via %s",
-                skill_id or skill.skill_id,
+                final_id,
                 trace_path,
                 decision,
             )
-            return skill_id or skill.skill_id
+            self._write_extraction_result(trace_path, {
+                "status": "processed",
+                "decision": decision,
+                "trace": str(trace_path),
+                "is_success": is_success,
+                "platform": platform,
+                "extracted_skill": {
+                    "skill_id": skill.skill_id,
+                    "name": skill.name,
+                    "app": skill.app,
+                    "step_count": len(skill.steps),
+                },
+                "result_skill_id": final_id,
+            })
+            return final_id
         except Exception:
             logger.warning("Skill extraction failed for %s", trace_path, exc_info=True)
+            self._write_extraction_result(trace_path, {
+                "status": "error",
+                "trace": str(trace_path),
+                "is_success": is_success,
+                "platform": platform,
+            })
             return None
 
     # ------------------------------------------------------------------
@@ -268,6 +298,33 @@ class PostRunProcessor:
             usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
         except OSError as exc:
             logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)
+
+    @staticmethod
+    def _write_extraction_result(
+        trace_path: Path, result: dict[str, Any],
+    ) -> None:
+        """Persist skill extraction outcome next to the trace file.
+
+        Writes ``extraction_result.json`` containing the decision
+        (ADD / MERGE / KEEP_OLD / KEEP_NEW), extracted skill metadata,
+        or a ``no_candidate`` / ``error`` status so that every extraction
+        attempt leaves an auditable record.
+        """
+        import json
+        import time as _time
+
+        result.setdefault("timestamp", _time.time())
+        result_path = trace_path.parent / "extraction_result.json"
+        try:
+            result_path.write_text(
+                json.dumps(result, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning(
+                "Could not write extraction result to %s: %s",
+                result_path, exc,
+            )
 
     @staticmethod
     def _legacy_skill_to_shortcut(*, skill: Any, trace_path: Path) -> Any:
