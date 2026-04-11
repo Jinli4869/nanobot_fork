@@ -509,6 +509,12 @@ class SkillLibrary:
         bm25_scores = np.array(self._bm25.score(query), dtype=np.float32)
         bm25_scores[~mask] = -1e9
 
+        # Normalize BM25 to [0, 1] so it blends properly with cosine similarity
+        valid_bm25 = bm25_scores[mask]
+        bm25_max = float(valid_bm25.max()) if valid_bm25.size > 0 else 0.0
+        if bm25_max > 0:
+            bm25_scores = np.where(mask, bm25_scores / bm25_max, bm25_scores)
+
         # Embedding (optional)
         if self.embedding_provider is not None:
             query_emb = await self.embedding_provider.embed([query])
@@ -521,7 +527,7 @@ class SkillLibrary:
         else:
             emb_scores = None
 
-        # Blend raw scores (no min-max normalization)
+        # Blend normalized scores
         if emb_scores is not None:
             hybrid = (1.0 - self.alpha) * bm25_scores + self.alpha * emb_scores
         else:

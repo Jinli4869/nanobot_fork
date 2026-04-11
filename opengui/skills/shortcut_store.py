@@ -419,6 +419,11 @@ class ShortcutSkillStore:
         mask = np.ones(len(self._ordered_ids), dtype=bool)
         bm25_scores = np.array(self._bm25.score(query), dtype=np.float32)
 
+        # Normalize BM25 to [0, 1] so it blends properly with cosine similarity
+        bm25_max = float(bm25_scores.max())
+        if bm25_max > 0:
+            bm25_scores /= bm25_max
+
         if self.embedding_provider is not None:
             query_emb = await self.embedding_provider.embed([query])
             faiss_raw, faiss_idx = self._faiss.search(query_emb[0], len(self._ordered_ids))
@@ -596,6 +601,11 @@ class TaskSkillStore:
 
         mask = np.ones(len(self._ordered_ids), dtype=bool)
         bm25_scores = np.array(self._bm25.score(query), dtype=np.float32)
+
+        # Normalize BM25 to [0, 1] so it blends properly with cosine similarity
+        bm25_max = float(bm25_scores.max())
+        if bm25_max > 0:
+            bm25_scores /= bm25_max
 
         if self.embedding_provider is not None:
             query_emb = await self.embedding_provider.embed([query])
