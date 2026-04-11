@@ -219,7 +219,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Output exactly one short `Action:` line in assistant text.",
                 "- Put structured arguments only in the native tool call, not in assistant text.",
                 "- Execute one action per step.",
-                "- If the task is complete, call `computer_use` with `action_type=\"done\"` and the appropriate status.",
+                "- If the task is complete, call `computer_use` with `action_type=\"done\"`, the appropriate status, and a `text` field containing a brief completion summary. The summary should include: (1) what was accomplished or why it failed; (2) the current screen state (which app/page is showing); (3) if the task involved retrieving information, include the key findings (e.g. prices, messages, search results). Keep the summary concise but informative — the caller depends on it to understand what happened.",
                 "- If the task reaches a sensitive, blocked, or unsafe state, call `computer_use` with `action_type=\"request_intervention\"` and a short reason instead of continuing or using `done`.",
             ),
         }

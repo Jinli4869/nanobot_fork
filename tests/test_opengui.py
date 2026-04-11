@@ -1254,6 +1254,8 @@ async def test_retry_prompt_includes_previous_attempt_summary_after_max_steps(
                 arguments={"action_type": "wait", "duration_ms": 1},
             )],
         ),
+        # Termination summary call (text-only, no tool call) after max_steps hit
+        LLMResponse(content="Waited briefly but ran out of steps. Currently on home screen."),
         LLMResponse(
             content="finish task",
             tool_calls=[ToolCall(
@@ -1275,7 +1277,8 @@ async def test_retry_prompt_includes_previous_attempt_summary_after_max_steps(
     result = await agent.run("Open Settings", max_retries=2)
 
     assert result.success
-    second_attempt = llm.calls[1]
+    # calls[0]=attempt1 step, calls[1]=termination summary, calls[2]=attempt2 step
+    second_attempt = llm.calls[2]
     retry_text = "\n".join(
         block["text"]
         for block in second_attempt[1]["content"]
