@@ -1071,9 +1071,15 @@ class GuiAgent:
             )
 
             if intervention_cancelled:
+                termination_summary = await self._generate_termination_summary(
+                    task=task,
+                    termination_reason=f"Task was interrupted by policy: {cancellation_note}",
+                    history=history,
+                    run_dir=run_dir,
+                )
                 return AgentResult(
                     success=False,
-                    summary=f"Task cancelled during intervention after {steps_taken} step(s).",
+                    summary=termination_summary or f"Task cancelled during intervention after {steps_taken} step(s).",
                     model_summary=result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
@@ -1092,8 +1098,12 @@ class GuiAgent:
                 success = result.action.status == "success"
                 return AgentResult(
                     success=success,
-                    summary=f"Task {'completed' if success else 'failed'} "
-                            f"after {steps_taken} step(s).",
+                    summary=(
+                        result.action.text
+                        if result.action.text
+                        else f"Task {'completed' if success else 'failed'} "
+                             f"after {steps_taken} step(s)."
+                    ),
                     model_summary=result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
@@ -1131,9 +1141,15 @@ class GuiAgent:
             if result.next_observation is not None:
                 obs = result.next_observation
 
+        termination_summary = await self._generate_termination_summary(
+            task=task,
+            termination_reason=f"Reached maximum step limit ({self.max_steps})",
+            history=history,
+            run_dir=run_dir,
+        )
         return AgentResult(
             success=False,
-            summary=f"Reached max steps ({self.max_steps}) without completion.",
+            summary=termination_summary or f"Reached max steps ({self.max_steps}) without completion.",
             model_summary=None,
             trace_path=str(run_dir),
             steps_taken=steps_taken,
@@ -1506,6 +1522,58 @@ class GuiAgent:
             f"Attempt {index}:\n{summary}"
             for index, summary in enumerate(attempt_summaries, start=1)
         )
+
+    async def _generate_termination_summary(
+        self,
+        *,
+        task: str,
+        termination_reason: str,
+        history: list[HistoryTurn],
+        run_dir: Path,
+    ) -> str | None:
+        """Ask the LLM for a brief summary when the task terminates abnormally.
+
+        Takes a fresh screenshot of the current screen state and sends it along
+        with the action history to the LLM for a concise summary.
+
+        Returns ``None`` on any failure so callers can fall back to a template.
+        """
+        steps_text = "\n".join(
+            f"  {i}. {turn.action_summary}" for i, turn in enumerate(history, 1)
+        ) or "  (no steps completed)"
+
+        prompt_text = (
+            "You were executing a GUI automation task but it was terminated before completion.\n\n"
+            f"Task: {task}\n"
+            f"Termination reason: {termination_reason}\n"
+            f"Steps executed:\n{steps_text}\n\n"
+            "The attached screenshot shows the current screen state.\n"
+            "Based on the steps completed and the screenshot, provide a brief summary:\n"
+            "1. What progress was made and the current screen state (which app/page is showing)\n"
+            "2. Why it stopped\n"
+            "3. Any information that was retrieved or visible on screen\n"
+            "Keep it concise (2-4 sentences). Do not suggest next steps."
+        )
+        try:
+            # Take a fresh screenshot for the summary
+            screenshot_path = run_dir / "screenshots" / "termination_summary.png"
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            observation = await self.backend.observe(
+                screenshot_path, timeout=self.step_timeout,
+            )
+            content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+            if observation.screenshot_path and Path(observation.screenshot_path).exists():
+                content.append(self._image_block(Path(observation.screenshot_path)))
+
+            response = await self.llm.chat(
+                messages=[{"role": "user", "content": content}],
+                tools=None,
+            )
+            text = response.content.strip()
+            return text if text else None
+        except Exception as exc:
+            logger.warning("Failed to generate termination summary: %s", exc)
+            return None
 
     @staticmethod
     def _build_attempt_summary(
