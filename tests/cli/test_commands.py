@@ -1075,6 +1075,22 @@ def test_make_provider_honors_gui_model_and_provider_override():
     assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
 
 
+def test_make_provider_fails_cleanly_when_no_provider_can_be_resolved():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "auto",
+                    "model": "gpt-4.1",
+                }
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="No provider could be resolved"):
+        make_provider(config)
+
+
 def test_make_provider_treats_dynamic_custom_provider_as_direct():
     config = Config.model_validate(
         {
