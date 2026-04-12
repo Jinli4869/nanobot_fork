@@ -34,9 +34,16 @@ export const state = new State({
   currentPlatform: null,
   currentScenario: null,
   currentStep: 0,
+  displayedStep: 0,
+  pendingActionStep: null,
+  playbackPhase: 'idle',
   isPlaying: false,
-  playbackSpeed: 2000, // ms per step
+  playbackSpeed: 4000, // ms per step
   manifest: null,
   trajectory: null,
   agentLog: null,
+  animationQueue: [],
+  animationIndex: -1,
+  visibleLogCount: 0,
+  maxRenderedStep: -1,
 });

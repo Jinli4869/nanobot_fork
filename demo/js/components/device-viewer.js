@@ -5,6 +5,7 @@ let overlayEl = null;
 let containerEl = null;
 let frameEl = null;
 let badgeEl = null;
+let currentScreenshotSrc = null;
 
 export function initDeviceViewer() {
   const panel = document.querySelector('#device-viewer .panel-body');
@@ -31,8 +32,22 @@ export function initDeviceViewer() {
   panel.appendChild(frameEl);
 
   state.on('trajectory', updateDeviceType);
+  state.on('trajectory', (traj) => {
+    if (!traj) {
+      currentScreenshotSrc = null;
+      imgEl.removeAttribute('src');
+      imgEl.style.opacity = '0';
+      overlayEl.innerHTML = '';
+      badgeEl.textContent = '';
+      return;
+    }
+    renderStep(state.get('currentStep'));
+  });
   state.on('currentStep', renderStep);
-  state.on('trajectory', () => renderStep(state.get('currentStep')));
+  state.on('displayedStep', renderStep);
+  state.on('pendingActionStep', renderStep);
+  state.on('playbackPhase', renderStep);
+  state.on('isPlaying', renderStep);
 }
 
 function updateDeviceType() {
@@ -49,30 +64,44 @@ function updateDeviceType() {
 
 function renderStep(stepIdx) {
   const traj = state.get('trajectory');
-  if (!traj || !traj.steps[stepIdx]) return;
+  if (!traj || !traj.steps.length) return;
 
-  const step = traj.steps[stepIdx];
-  badgeEl.textContent = `Step ${stepIdx}/${traj.steps.length - 1}`;
+  const displayedStepIdx = Math.max(0, Math.min(
+    state.get('displayedStep') ?? stepIdx ?? 0,
+    traj.steps.length - 1,
+  ));
+  const displayedStep = traj.steps[displayedStepIdx];
+  const previewStepIdx = state.get('pendingActionStep');
+  const isPreview = state.get('playbackPhase') === 'action-preview' && previewStepIdx != null;
+  const previewStep = isPreview ? traj.steps[previewStepIdx] : null;
+
+  badgeEl.textContent = isPreview
+    ? `Preview Step ${previewStepIdx}/${traj.steps.length - 1}`
+    : `Step ${displayedStepIdx}/${traj.steps.length - 1}`;
 
   // Update screenshot with crossfade
-  if (step.screenshot) {
+  if (displayedStep?.screenshot && displayedStep.screenshot !== currentScreenshotSrc) {
     const newImg = new Image();
-    newImg.src = step.screenshot;
+    newImg.src = displayedStep.screenshot;
     newImg.onload = () => {
       imgEl.src = newImg.src;
+      currentScreenshotSrc = newImg.src;
       imgEl.style.opacity = '1';
       imgEl.classList.remove('screenshot-enter');
       void imgEl.offsetWidth; // force reflow
       imgEl.classList.add('screenshot-enter');
     };
-  } else {
+  } else if (!displayedStep?.screenshot) {
     imgEl.style.opacity = '0.3';
+    currentScreenshotSrc = null;
   }
 
   // Render action overlay
   overlayEl.innerHTML = '';
-  if (step.action) {
-    renderActionOverlay(step.action, traj.metadata);
+  const shouldShowCommittedAction = !state.get('isPlaying') && state.get('currentStep') === displayedStepIdx;
+  const actionStep = previewStep || (shouldShowCommittedAction ? displayedStep : null);
+  if (actionStep?.action) {
+    renderActionOverlay(actionStep.action, traj.metadata);
   }
 }
 

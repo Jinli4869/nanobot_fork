@@ -4,7 +4,7 @@
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: rgba(88, 166, 255, 0.4);
+  background: rgba(9, 105, 218, 0.45);
   transform: translate(-50%, -50%) scale(0);
   animation: ripple 700ms ease-out forwards;
   pointer-events: none;
@@ -35,17 +35,17 @@
 
 /* ── Swipe Arrow ── */
 .swipe-line {
-  stroke: rgba(88, 166, 255, 0.7);
+  stroke: rgba(9, 105, 218, 0.7);
   stroke-width: 3;
   stroke-linecap: round;
   stroke-dasharray: 200;
   stroke-dashoffset: 200;
   animation: swipeDash 600ms ease-out forwards;
-  filter: drop-shadow(0 0 4px rgba(88, 166, 255, 0.4));
+  filter: drop-shadow(0 0 4px rgba(9, 105, 218, 0.3));
 }
 
 .swipe-dot-start, .swipe-dot-end {
-  fill: rgba(88, 166, 255, 0.8);
+  fill: rgba(9, 105, 218, 0.8);
 }
 
 .swipe-dot-start {
@@ -60,7 +60,7 @@
 }
 
 .swipe-arrow {
-  fill: rgba(88, 166, 255, 0.8);
+  fill: rgba(9, 105, 218, 0.8);
   opacity: 0;
   animation: fadeIn 200ms ease 400ms forwards;
 }
@@ -150,6 +150,15 @@
 @keyframes fadeInUp {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.slide-in {
+  animation: slideInUp 350ms ease forwards;
 }
 
 @keyframes blink {

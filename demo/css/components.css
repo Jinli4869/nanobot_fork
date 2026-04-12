@@ -51,6 +51,7 @@
 
 .scenario-card .meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   font-size: 11px;
   color: var(--text-secondary);
@@ -106,6 +107,11 @@
   border-left: 3px solid var(--accent-purple);
 }
 
+.log-entry.outbound.telegram {
+  background: linear-gradient(180deg, rgba(0, 136, 204, 0.09), rgba(0, 136, 204, 0.05));
+  border-left-color: #169ad6;
+}
+
 .log-entry .label {
   font-size: 10px;
   font-weight: 600;
@@ -119,41 +125,164 @@
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* Telegram channel entries */
+.log-entry.telegram {
+  background: rgba(0, 136, 204, 0.08);
+  border-left: 3px solid #0088cc;
+}
+
+/* Tool-specific border colors */
+.log-entry.tool_call[data-tool="web_search"],
+.log-entry.tool_result[data-tool="web_search"] {
+  border-left-color: var(--accent-orange);
+}
+
+.log-entry.tool_call[data-tool="send_message"],
+.log-entry.tool_result[data-tool="send_message"] {
+  border-left-color: var(--accent-purple);
+}
+
+.log-entry .label .channel-icon {
+  margin-right: 4px;
+}
+
+.log-entry-content {
+  overflow-wrap: anywhere;
+}
+
+.log-entry-content.content-inbound,
+.log-entry-content.content-outbound,
+.log-entry-content.content-tool-call {
+  white-space: pre-wrap;
+}
+
+.log-entry-content.content-outbound {
+  display: flex;
+}
+
+.telegram-message-bubble {
+  width: min(100%, 320px);
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  box-shadow: 0 8px 20px rgba(31, 35, 40, 0.06);
+}
+
+.telegram-message-bubble.incoming {
+  margin-right: auto;
+  border-radius: 16px 16px 16px 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 249, 252, 0.98));
+  border-color: rgba(0, 136, 204, 0.12);
+  color: #163846;
+}
+
+.telegram-reply-bubble {
+  margin-left: auto;
+  width: min(100%, 320px);
+  padding: 10px 12px;
+  border-radius: 16px 16px 6px 16px;
+  background: linear-gradient(180deg, rgba(233, 248, 255, 0.98), rgba(216, 241, 252, 0.98));
+  border: 1px solid rgba(22, 154, 214, 0.2);
+  box-shadow: 0 8px 20px rgba(22, 154, 214, 0.1);
+  color: #0f3446;
+}
+
+.telegram-message-text {
+  line-height: 1.55;
+}
+
+.telegram-reply-paragraph {
+  line-height: 1.55;
+}
+
+.telegram-reply-paragraph + .telegram-reply-paragraph {
+  margin-top: 6px;
+}
+
+.telegram-reply-spacer {
+  height: 10px;
+}
+
+.telegram-reply-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.telegram-reply-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.telegram-reply-bullet {
+  color: #169ad6;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.telegram-reply-item-text {
+  line-height: 1.5;
+}
+
+/* Model output step states */
+.model-output-step.active-step {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
+.model-output-step.past-step {
+  opacity: 0.6;
+}
+
 /* ── Device Viewer ── */
 #device-viewer .panel-body {
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: var(--bg-primary);
+  background: var(--bg-tertiary);
   position: relative;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .device-frame {
   position: relative;
   max-width: 100%;
   max-height: 100%;
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
 }
 
-.device-frame.phone { max-width: 340px; }
-.device-frame.tablet { max-width: 520px; }
-.device-frame.desktop { max-width: 100%; }
+.device-frame.phone { max-width: 280px; max-height: 100%; }
+.device-frame.tablet { max-width: 520px; max-height: 100%; }
+.device-frame.desktop { max-width: 100%; max-height: 100%; }
 
 .screenshot-container {
   position: relative;
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
   display: flex;
+  align-items: center;
+  justify-content: center;
   border-radius: var(--radius);
   overflow: hidden;
   box-shadow: var(--shadow-lg);
-  background: #000;
+  background: #f0f0f0;
 }
 
 .screenshot-container img {
-  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
   height: auto;
   display: block;
   object-fit: contain;
@@ -176,8 +305,8 @@
   top: 8px;
   right: 8px;
   padding: 4px 10px;
-  background: var(--bg-overlay);
-  color: var(--text-primary);
+  background: rgba(31, 35, 40, 0.7);
+  color: #fff;
   border-radius: 12px;
   font-size: 11px;
   font-weight: 600;
@@ -197,8 +326,20 @@
 }
 
 /* ── Model Output ── */
+#model-output {
+  min-height: 0;
+}
+
+#model-output .panel-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .model-output-step {
   margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .model-output-step .step-label {
@@ -228,6 +369,7 @@
 
 .action-badge {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
@@ -358,3 +500,11 @@
 }
 
 .empty-state .icon { font-size: 32px; opacity: 0.5; }
+
+@media (max-width: 1024px) {
+  .scenario-card {
+    min-width: 0;
+    width: 100%;
+    padding: 12px 14px;
+  }
+}
