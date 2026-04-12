@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from click.exceptions import Exit
 from typer.testing import CliRunner
 
 from nanobot.bus.events import OutboundMessage
@@ -390,6 +391,22 @@ def test_make_provider_honors_gui_model_and_provider_override():
     assert kwargs["provider_name"] == "openrouter"
     assert kwargs["api_key"] == "or-key"
     assert kwargs["api_base"] == "https://openrouter.ai/api/v1"
+
+
+def test_make_provider_fails_cleanly_when_no_provider_can_be_resolved():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "auto",
+                    "model": "gpt-4.1",
+                }
+            }
+        }
+    )
+
+    with pytest.raises(Exit):
+        _make_provider(config)
 
 
 def test_gateway_keeps_gateway_port_default_when_tui_config_exists(monkeypatch):

@@ -145,7 +145,7 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
 
     assert tool.name == "gui_task"
     assert tool.parameters["required"] == ["task"]
-    assert tool.parameters["properties"]["backend"]["enum"] == ["adb", "local", "dry-run"]
+    assert tool.parameters["properties"]["backend"]["enum"] == ["adb", "ios", "hdc", "local", "dry-run"]
     definitions = registry.get_definitions()
     assert any(defn["function"]["name"] == tool.name for defn in definitions)
     assert tool.description
@@ -311,6 +311,7 @@ def test_gui_config_defaults() -> None:
 
     assert config.backend == "adb"
     assert config.adb.serial is None
+    assert config.ios.wda_url == "http://localhost:8100"
     assert config.artifacts_dir == "gui_runs"
     assert config.max_steps == 15
     assert config.skill_threshold == pytest.approx(0.6)
@@ -321,6 +322,7 @@ def test_gui_config_validation() -> None:
     from nanobot.config.schema import GuiConfig
 
     assert GuiConfig(backend="dry-run").backend == "dry-run"
+    assert GuiConfig(backend="ios").backend == "ios"
     assert GuiConfig(agent_profile="qwen3vl").agent_profile == "qwen3vl"
     assert GuiConfig.model_validate({"agentProfile": "gelab"}).agent_profile == "gelab"
     with pytest.raises(ValidationError):
@@ -338,15 +340,15 @@ def test_config_gui_none_by_default() -> None:
 def test_gui_config_nested_aliases() -> None:
     config = Config(
         gui={
-            "backend": "adb",
-            "adb": {"serial": "emulator-5554"},
+            "backend": "ios",
+            "ios": {"wdaUrl": "http://127.0.0.1:18100"},
             "artifactsDir": "custom_runs",
         }
     )
 
     assert config.gui is not None
-    assert config.gui.backend == "adb"
-    assert config.gui.adb.serial == "emulator-5554"
+    assert config.gui.backend == "ios"
+    assert config.gui.ios.wda_url == "http://127.0.0.1:18100"
     assert config.gui.artifacts_dir == "custom_runs"
 
 

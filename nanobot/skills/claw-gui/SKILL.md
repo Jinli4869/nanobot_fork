@@ -1,6 +1,6 @@
 ---
 name: claw-gui
-description: "Android mobile device control: use ADB commands, deeplink probing, and GUI automation. Prefer programmatic approaches; use visual GUI only when necessary."
+description: "Android mobile device control: use ADB commands, voice assistant shortcuts, deeplink probing, and GUI automation. Prefer programmatic approaches; use visual GUI only when necessary."
 metadata: {"nanobot":{"emoji":"📱","os":["darwin","linux"],"requires":{"bins":["adb"]}}}
 ---
 
@@ -13,22 +13,26 @@ Use this skill when a task involves controlling an Android device: toggling syst
 Always prefer the lightest approach that can complete the task. Try each priority level before escalating:
 
 1. **ADB shell commands** — instant, no UI needed. Toggle WiFi, adjust brightness, open settings panels, etc. See the [ADB command catalog](references/adb-commands.md) for the full list.
-2. **Deeplink probing** — reach a specific app screen via intent URIs. Use when you need to navigate inside an app. See [deeplink method](references/deeplink-method.md) and the [probe script](#deeplink-probing).
-3. **`gui_task` tool** — if the claw provides a native `gui_task` tool, use it for visual automation. Pass a natural-language task description.
-4. **`opengui` CLI** — when no native GUI tool is available, invoke the CLI directly from shell. See [opengui CLI fallback](#opengui-cli-fallback).
+2. **Voice assistant shortcut** — delegate natural-language tasks (set alarm, make call, send message) to the phone's built-in voice assistant via ADB. Cheap, avoids GUI agent entirely. See [voice assistant reference](references/voice-assistant.md).
+3. **Deeplink probing** — reach a specific app screen via intent URIs. Use when you need to navigate inside an app. See [deeplink method](references/deeplink-method.md) and the [probe script](#deeplink-probing).
+4. **`gui_task` tool** — if the claw provides a native `gui_task` tool, use it for visual automation. Pass a natural-language task description.
+5. **`opengui` CLI** — when no native GUI tool is available, invoke the CLI directly from shell. See [opengui CLI fallback](#opengui-cli-fallback).
 
 ## Decision flow
 
 - Can the task be done with a single `adb shell` command (toggle, launch settings, input keyevent)?
   **Yes** → use ADB command (Priority 1).
 
+- Is the task a natural-language request the phone's voice assistant can handle (set alarm, make call, send message, check weather, set timer, create reminder, play music, navigate)?
+  **Yes** → check if a supported voice assistant is installed, then use voice assistant shortcut (Priority 2). See [voice assistant reference](references/voice-assistant.md) for supported vendors and detection.
+
 - Does the task require navigating to a specific screen inside an app?
-  **Yes** → try deeplink probing first (Priority 2). If the app has no viable deep links, escalate.
+  **Yes** → try deeplink probing first (Priority 3). If the app has no viable deep links, escalate.
 
 - Does the task require reading screen content, identifying visual elements, or multi-step UI interaction?
-  **Yes** → use `gui_task` if available (Priority 3), otherwise `opengui` CLI (Priority 4).
+  **Yes** → use `gui_task` if available (Priority 4), otherwise `opengui` CLI (Priority 5).
 
-- For compound tasks, decompose into sub-steps and apply the decision flow to each step independently. For example: "Turn off WiFi and open Chrome to example.com" → sub-step 1 (adb WiFi off) + sub-step 2 (deeplink or GUI for Chrome navigation).
+- For compound tasks, decompose into sub-steps and apply the decision flow to each step independently. For example: "Turn off WiFi and set an alarm for 7 AM" → sub-step 1 (adb WiFi off) + sub-step 2 (voice assistant for alarm).
 
 ## ADB quick commands
 
@@ -55,6 +59,36 @@ Most common operations — execute via `adb shell`:
 | Global search | `am start -a android.search.action.GLOBAL_SEARCH` |
 
 For the full catalog including settings panels, night display, auto-rotate, battery saver, global search, and OEM notes, read [references/adb-commands.md](references/adb-commands.md).
+
+## Voice assistant shortcut
+
+Delegate natural-language tasks to the phone's built-in voice assistant. This avoids the expensive GUI agent for tasks the assistant handles natively (alarms, timers, reminders, phone calls, SMS, weather, music playback, smart home control, calendar events, navigation).
+
+### Quick detection
+
+```bash
+# Check which voice assistant is available
+adb shell pm list packages | grep -E 'speechassist|voiceassist|xiaoai|bixby|xiaoyi|jovi'
+```
+
+### Example (OPPO Xiaobu)
+
+```bash
+MSG="设置明天早上7点的闹钟"
+
+adb shell am start -W -a android.intent.action.PROCESS_TEXT \
+  -n com.heytap.speechassist/.sharereceive.AIChatShareReceiveActivity \
+  --es android.intent.extra.PROCESS_TEXT "$MSG" && \
+sleep 0.8 && \
+B=$(adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; \
+    adb shell cat /sdcard/ui.xml | tr -d '\r' | \
+    grep 'resource-id="com.heytap.speechassist:id/btn_send"' | \
+    sed -n 's/.*bounds="\[\([0-9]*\),\([0-9]*\)\]\[\([0-9]*\),\([0-9]*\)\]".*/\1 \2 \3 \4/p') && \
+read X1 Y1 X2 Y2 <<< "$B" && \
+adb shell input tap $(((X1+X2)/2)) $(((Y1+Y2)/2))
+```
+
+For other vendors (Xiaomi Xiao Ai, Samsung Bixby, etc.), reusable helper templates, and troubleshooting, read [references/voice-assistant.md](references/voice-assistant.md).
 
 ## Deeplink probing
 
