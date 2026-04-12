@@ -1,6 +1,14 @@
 import { state } from '../state.js';
+import {
+  DEFAULT_ACTION_PREVIEW_DELAY,
+  deriveJumpState,
+  getStepPhaseDurations,
+} from '../playback-helpers.js';
 
 let playTimer = null;
+const SPEEDS = [2000, 3000, 4000, 6000];
+const SPEED_LABELS = ['2s', '3s', '4s', '6s'];
+let speedIndex = 2;
 
 export function initTimeline() {
   const container = document.getElementById('timeline');
@@ -33,7 +41,7 @@ export function initTimeline() {
 
   const speedBtn = document.createElement('button');
   speedBtn.className = 'speed-btn';
-  speedBtn.textContent = '2s';
+  speedBtn.textContent = SPEED_LABELS[speedIndex];
   speedBtn.title = 'Playback speed';
   speedBtn.onclick = cycleSpeed;
 
@@ -54,7 +62,7 @@ export function initTimeline() {
       if (step.action?.action_type === 'done') dot.classList.add('done');
       dot.onclick = () => {
         state.set('isPlaying', false);
-        state.set('currentStep', i);
+        jumpToStep(i);
       };
       dotsContainer.appendChild(dot);
     });
@@ -77,7 +85,7 @@ export function initTimeline() {
 
   state.on('isPlaying', (playing) => {
     playBtn.innerHTML = playing ? '\u23F8' : '\u25B6';
-    if (playing) startPlayback();
+    if (playing) startQueuePlayback();
     else stopPlayback();
   });
 
@@ -90,48 +98,127 @@ export function initTimeline() {
   });
 }
 
+/**
+ * Jump to a specific trajectory step via manual navigation.
+ * Also ensures all log entries up to this step are visible,
+ * and maxRenderedStep covers this step.
+ */
+function jumpToStep(stepIdx) {
+  const queue = state.get('animationQueue');
+  const jumpState = deriveJumpState(queue, stepIdx);
+  state.set('visibleLogCount', jumpState.visibleLogCount);
+  state.set('maxRenderedStep', jumpState.maxRenderedStep);
+  state.set('animationIndex', jumpState.animationIndex);
+  state.set('pendingActionStep', null);
+  state.set('playbackPhase', 'idle');
+  state.set('displayedStep', stepIdx);
+  state.set('currentStep', stepIdx);
+}
+
 function goStep(delta) {
   const traj = state.get('trajectory');
   if (!traj) return;
+  state.set('isPlaying', false);
   const current = state.get('currentStep');
   const next = Math.max(0, Math.min(traj.steps.length - 1, current + delta));
-  state.set('currentStep', next);
+  jumpToStep(next);
 }
 
 function togglePlay() {
   state.set('isPlaying', !state.get('isPlaying'));
 }
 
-function startPlayback() {
+/**
+ * Process the animation queue sequentially.
+ * Each event fires after its delay, then schedules the next.
+ */
+function startQueuePlayback() {
   stopPlayback();
-  playTimer = setInterval(() => {
-    const traj = state.get('trajectory');
-    if (!traj) { state.set('isPlaying', false); return; }
-    const current = state.get('currentStep');
-    if (current >= traj.steps.length - 1) {
+
+  const queue = state.get('animationQueue');
+  if (!queue || queue.length === 0) {
+    state.set('isPlaying', false);
+    return;
+  }
+
+  let idx = state.get('animationIndex') + 1;
+
+  // If queue was fully played, restart from the beginning
+  if (idx >= queue.length) {
+    idx = 0;
+    state.set('animationIndex', -1);
+    state.set('visibleLogCount', 0);
+    state.set('maxRenderedStep', -1);
+    state.set('currentStep', 0);
+    state.set('displayedStep', 0);
+    state.set('pendingActionStep', null);
+    state.set('playbackPhase', 'idle');
+  }
+
+  function processNext() {
+    if (!state.get('isPlaying')) return;
+    if (idx >= queue.length) {
       state.set('isPlaying', false);
       return;
     }
-    state.set('currentStep', current + 1);
-  }, state.get('playbackSpeed'));
+
+    const evt = queue[idx];
+    if (evt.type === 'log') {
+      state.set('visibleLogCount', evt.idx + 1);
+      state.set('animationIndex', idx);
+      idx++;
+      playTimer = setTimeout(processNext, evt.delay || 800);
+      return;
+    }
+
+    playStepEvent(evt.idx, idx, processNext);
+    idx++;
+  }
+
+  function playStepEvent(stepIdx, queueIndex, continuePlayback) {
+    const traj = state.get('trajectory');
+    const step = traj?.steps?.[stepIdx];
+    const { previewDelay, postCommitDelay } = getStepPhaseDurations(
+      state.get('playbackSpeed'),
+      DEFAULT_ACTION_PREVIEW_DELAY,
+    );
+
+    const commitStep = () => {
+      state.set('pendingActionStep', null);
+      state.set('playbackPhase', 'frame-commit');
+      state.set('displayedStep', stepIdx);
+      state.set('currentStep', stepIdx);
+      state.set('maxRenderedStep', Math.max(state.get('maxRenderedStep'), stepIdx));
+    };
+
+    state.set('animationIndex', queueIndex);
+
+    if (!step?.action || stepIdx === 0) {
+      commitStep();
+      playTimer = setTimeout(continuePlayback, state.get('playbackSpeed'));
+      return;
+    }
+
+    state.set('pendingActionStep', stepIdx);
+    state.set('playbackPhase', 'action-preview');
+
+    playTimer = setTimeout(() => {
+      if (!state.get('isPlaying')) return;
+      commitStep();
+      playTimer = setTimeout(continuePlayback, postCommitDelay);
+    }, previewDelay);
+  }
+
+  processNext();
 }
 
 function stopPlayback() {
-  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  if (playTimer) { clearTimeout(playTimer); playTimer = null; }
 }
-
-const SPEEDS = [1000, 2000, 3000, 5000];
-const SPEED_LABELS = ['1s', '2s', '3s', '5s'];
-let speedIndex = 1;
 
 function cycleSpeed() {
   speedIndex = (speedIndex + 1) % SPEEDS.length;
   state.set('playbackSpeed', SPEEDS[speedIndex]);
   const btn = document.querySelector('.speed-btn');
   if (btn) btn.textContent = SPEED_LABELS[speedIndex];
-  // Restart playback if playing
-  if (state.get('isPlaying')) {
-    stopPlayback();
-    startPlayback();
-  }
 }
