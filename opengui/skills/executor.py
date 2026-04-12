@@ -313,6 +313,8 @@ def _build_template_action(step: SkillStep, params: dict[str, str]) -> Action:
         kwargs["text"] = grounded["text"]
     elif step.action_type == "input_text":
         kwargs["text"] = target
+    elif step.action_type == "open_app":
+        kwargs["text"] = target
     return Action(**kwargs)
 
 

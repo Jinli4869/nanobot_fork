@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nanobot + opengui Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <h1><span>nanobot</span> + <span>opengui</span> Demo</h1>
+      <div style="font-size:12px;color:var(--text-secondary)">Vision-based GUI Automation</div>
+    </header>
+
+    <!-- Platform Tabs -->
+    <nav id="platform-tabs"></nav>
+
+    <!-- Scenario Picker -->
+    <div id="scenario-picker"></div>
+
+    <!-- Main 3-column layout -->
+    <main id="main-content">
+      <!-- Left: Agent Log -->
+      <section id="agent-log" class="panel side-panel">
+        <div class="panel-header">Agent Log</div>
+        <div class="panel-body">
+          <div class="empty-state">
+            <div class="icon">\u{1F4CB}</div>
+            Select a scenario
+          </div>
+        </div>
+      </section>
+
+      <!-- Center: Device Viewer -->
+      <section id="device-viewer" class="panel">
+        <div class="panel-header">Device Screen</div>
+        <div class="panel-body"></div>
+      </section>
+
+      <!-- Right: Model Output -->
+      <section id="model-output" class="panel side-panel">
+        <div class="panel-header">Model Output</div>
+        <div class="panel-body">
+          <div class="empty-state">
+            <div class="icon">\u{1F916}</div>
+            Model reasoning
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Timeline -->
+    <footer id="timeline"></footer>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

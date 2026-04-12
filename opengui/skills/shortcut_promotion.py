@@ -22,6 +22,7 @@ _SUPPORTED_ACTION_TYPES = frozenset({
     "swipe",
     "press",
     "wait",
+    "open_app",
 })
 _COMMIT_HINTS = (
     "send",
@@ -74,6 +75,9 @@ class ShortcutPromotionPipeline:
         if not steps:
             return None
         steps = self._canonicalize_steps(steps)
+        if not steps:
+            return None
+        steps = self._collapse_app_opening_prefix(steps)
         if not steps:
             return None
         steps = self._truncate_to_reusable_prefix(steps)
@@ -222,6 +226,43 @@ class ShortcutPromotionPipeline:
                 continue
             canonicalized.append(step)
         return canonicalized
+
+    _OPENING_ACTIONS = frozenset({"tap", "click", "scroll", "swipe", "wait"})
+
+    def _collapse_app_opening_prefix(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace app-launching preamble steps with a single ``open_app`` step."""
+        if not steps:
+            return steps
+        if self._action_type(steps[0]) == "open_app":
+            return steps
+
+        target_app = self._derive_app_hint(steps)
+        if not target_app or target_app == "unknown":
+            return steps
+
+        prefix_end: int | None = None
+        for i, step in enumerate(steps[:5]):
+            if self._action_type(step) not in self._OPENING_ACTIONS:
+                break
+            obs = step.get("observation", {})
+            if isinstance(obs, dict):
+                fg = obs.get("foreground_app") or obs.get("app") or ""
+                if self._normalize_text(fg) == self._normalize_text(target_app):
+                    prefix_end = i
+                    break
+
+        if prefix_end is None:
+            return steps
+
+        last_prefix_step = steps[prefix_end]
+        synthetic: dict[str, Any] = {
+            **last_prefix_step,
+            "action": {"action_type": "open_app", "text": target_app},
+            "model_output": f"open_app({target_app})",
+            "valid_state": "No need to verify",
+            "expected_state": f"{target_app} is open and in the foreground",
+        }
+        return [synthetic] + steps[prefix_end + 1:]
 
     def _find_reusable_boundary(self, steps: list[dict[str, Any]]) -> int | None:
         for index, step in enumerate(steps):
