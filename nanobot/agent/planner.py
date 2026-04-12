@@ -321,12 +321,18 @@ class TaskPlanner:
                 if skills:
                     lines.extend(["", "Available capabilities:"])
                     for skill_info in skills:
-                        content = self._skills_loader.load_skill(skill_info["name"])
-                        if content:
-                            # Use first non-empty lines as a lightweight summary.
-                            summary_lines = [ln for ln in content.splitlines() if ln.strip()][:3]
-                            summary = " ".join(summary_lines)
-                            lines.append(f"- {skill_info['name']}: {summary}")
+                        # Prefer the parsed frontmatter description over raw content lines.
+                        meta = self._skills_loader.get_skill_metadata(skill_info["name"])
+                        if meta and meta.get("description"):
+                            summary = meta["description"]
+                        else:
+                            content = self._skills_loader.load_skill(skill_info["name"])
+                            if content:
+                                summary_lines = [ln for ln in content.splitlines() if ln.strip()][:3]
+                                summary = " ".join(summary_lines)
+                            else:
+                                summary = skill_info["name"]
+                        lines.append(f"- {skill_info['name']}: {summary}")
             except Exception as exc:  # pragma: no cover — graceful degradation
                 logger.warning("Failed to load skills for planner prompt: %s", exc)
 
