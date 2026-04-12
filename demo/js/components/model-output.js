@@ -1,99 +1,108 @@
 import { state } from '../state.js';
 
+let body = null;
+let renderedSteps = new Set();
 let typewriterTimer = null;
 
 export function initModelOutput() {
-  const body = document.querySelector('#model-output .panel-body');
+  body = document.querySelector('#model-output .panel-body');
 
-  function render(stepIdx) {
-    const traj = state.get('trajectory');
-    if (!traj) {
-      body.innerHTML = '<div class="empty-state"><div class="icon">\u{1F916}</div>Model reasoning</div>';
+  // Clear when a new trajectory loads
+  state.on('trajectory', () => {
+    clearAll();
+  });
+
+  // When maxRenderedStep advances, append new steps
+  state.on('maxRenderedStep', (maxStep) => {
+    if (maxStep < 0) {
+      clearAll();
       return;
     }
 
-    const step = traj.steps[stepIdx];
-    if (!step) return;
+    const traj = state.get('trajectory');
+    if (!traj) return;
 
-    body.innerHTML = '';
+    // Remove empty state if present
+    const empty = body.querySelector('.empty-state');
+    if (empty) empty.remove();
 
-    const block = document.createElement('div');
-    block.className = 'model-output-step';
-
-    // Step label
-    const label = document.createElement('div');
-    label.className = 'step-label';
-    label.textContent = stepIdx === 0 ? 'Initial State' : `Step ${stepIdx}`;
-    block.appendChild(label);
-
-    // Model output text with typewriter effect
-    const textEl = document.createElement('div');
-    textEl.className = 'model-output-text';
-    block.appendChild(textEl);
-
-    const text = step.model_output || step.action_summary || (stepIdx === 0 ? 'Taking initial screenshot...' : '');
-    typewriterEffect(textEl, text);
-
-    // Action badge
-    if (step.action) {
-      const badge = document.createElement('div');
-      badge.className = 'action-badge';
-
-      const typeName = document.createElement('span');
-      typeName.className = 'action-type';
-      typeName.textContent = step.action.action_type;
-      badge.appendChild(typeName);
-
-      const details = formatActionDetails(step.action);
-      if (details) {
-        const detailSpan = document.createElement('span');
-        detailSpan.textContent = details;
-        badge.appendChild(detailSpan);
+    // Render all steps up to maxStep that haven't been rendered
+    for (let i = 0; i <= maxStep; i++) {
+      if (!renderedSteps.has(i) && traj.steps[i]) {
+        appendStep(traj.steps[i], i, traj);
+        renderedSteps.add(i);
       }
-
-      block.appendChild(badge);
     }
+  });
 
-    // Observation info
-    const obs = document.createElement('div');
-    obs.className = 'observation-info';
-    const meta = traj.metadata;
-    const lines = [];
-    lines.push(`Platform: ${meta.platform}`);
-    lines.push(`Screen: ${meta.screen_width} x ${meta.screen_height}`);
-    if (step.action?.relative) lines.push('Coordinates: relative [0-999]');
-    obs.innerHTML = lines.join('<br>');
-    block.appendChild(obs);
+  // Highlight the current step visually
+  state.on('currentStep', (stepIdx) => {
+    body.querySelectorAll('.model-output-step').forEach(el => {
+      const idx = parseInt(el.dataset.stepIndex, 10);
+      el.classList.toggle('active-step', idx === stepIdx);
+      el.classList.toggle('past-step', idx < stepIdx);
+    });
 
-    body.appendChild(block);
-  }
-
-  state.on('currentStep', render);
-  state.on('trajectory', () => render(state.get('currentStep')));
+    // Auto-scroll to the active step
+    const activeEl = body.querySelector('.model-output-step.active-step');
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+  });
 }
 
-function typewriterEffect(el, text) {
-  if (typewriterTimer) clearInterval(typewriterTimer);
+function clearAll() {
+  if (typewriterTimer) {
+    clearInterval(typewriterTimer);
+    typewriterTimer = null;
+  }
+  renderedSteps.clear();
+  body.innerHTML = '<div class="empty-state"><div class="icon">\u{1F916}</div>Model reasoning</div>';
+  body.scrollTop = 0;
+}
 
-  if (!text) { el.textContent = ''; return; }
+function appendStep(step, stepIdx) {
+  const block = document.createElement('div');
+  block.className = 'model-output-step slide-in';
+  block.dataset.stepIndex = stepIdx;
 
-  let idx = 0;
-  el.innerHTML = '';
-  const cursor = document.createElement('span');
-  cursor.className = 'cursor';
+  // Step label
+  const label = document.createElement('div');
+  label.className = 'step-label';
+  label.textContent = stepIdx === 0 ? 'Initial State' : `Step ${stepIdx}`;
+  block.appendChild(label);
 
-  typewriterTimer = setInterval(() => {
-    if (idx < text.length) {
-      el.textContent = text.slice(0, idx + 1);
-      el.appendChild(cursor);
-      idx++;
-    } else {
-      clearInterval(typewriterTimer);
-      typewriterTimer = null;
-      // Remove cursor after a moment
-      setTimeout(() => cursor.remove(), 1500);
+  // Model output text
+  const textEl = document.createElement('div');
+  textEl.className = 'model-output-text';
+  const text = step.model_output || step.action_summary || (stepIdx === 0 ? 'Taking initial screenshot...' : '');
+  textEl.textContent = text;
+  block.appendChild(textEl);
+
+  // Action badge
+  if (step.action) {
+    const badge = document.createElement('div');
+    badge.className = 'action-badge';
+
+    const typeName = document.createElement('span');
+    typeName.className = 'action-type';
+    typeName.textContent = step.action.action_type;
+    badge.appendChild(typeName);
+
+    const details = formatActionDetails(step.action);
+    if (details) {
+      const detailSpan = document.createElement('span');
+      detailSpan.textContent = details;
+      badge.appendChild(detailSpan);
     }
-  }, 20);
+
+    block.appendChild(badge);
+  }
+
+  body.appendChild(block);
+
+  // Auto-scroll to bottom
+  body.scrollTop = body.scrollHeight;
 }
 
 function formatActionDetails(action) {

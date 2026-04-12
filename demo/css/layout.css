@@ -10,7 +10,7 @@ html, body {
 
 #app {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto auto auto 1fr auto;
   height: 100vh;
   width: 100vw;
 }
@@ -42,14 +42,75 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 
-/* Scenario picker */
+/* Scenario picker — collapsible overlay */
 #scenario-picker {
+  position: relative;
+  height: 0;
+  z-index: 100;
+}
+
+#scenario-picker .scenario-hotspot {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 160px;
+  height: 18px;
+  transform: translateX(-50%);
+  z-index: 100;
+}
+
+#scenario-picker .scenario-trigger {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+  z-index: 101;
+}
+
+#scenario-picker .scenario-trigger:hover {
+  color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+#scenario-picker .scenario-dropdown {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   display: flex;
   gap: 12px;
   padding: 12px 24px;
   background: var(--bg-primary);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+
+#scenario-picker.peek .scenario-dropdown,
+#scenario-picker.open .scenario-dropdown {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+#scenario-picker.open .scenario-trigger {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Main content area */
@@ -61,12 +122,17 @@ html, body {
   min-height: 0;
 }
 
+#main-content > .panel {
+  min-height: 0;
+}
+
 /* Panels */
 .panel {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--border);
+  min-height: 0;
 }
 
 .panel:last-child { border-right: none; }
@@ -87,6 +153,7 @@ html, body {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+  min-height: 0;
 }
 
 /* Timeline */
@@ -112,6 +179,54 @@ html, body {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;
   }
+
+  #scenario-picker .scenario-hotspot {
+    width: min(180px, calc(100vw - 48px));
+    height: 20px;
+  }
+
+  #scenario-picker .scenario-trigger {
+    top: 6px;
+    padding: 5px 16px;
+    min-width: min(220px, calc(100vw - 48px));
+    max-width: calc(100vw - 32px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border-radius: 999px;
+    border-top: 1px solid var(--border);
+    background: var(--bg-overlay);
+    backdrop-filter: blur(12px);
+    box-shadow: var(--shadow-lg);
+  }
+
+  #scenario-picker.peek .scenario-trigger,
+  #scenario-picker.open .scenario-trigger {
+    color: var(--accent);
+    transform: translateX(-50%) scale(1.03);
+  }
+
+  #scenario-picker .scenario-dropdown {
+    top: 44px;
+    left: 12px;
+    right: 12px;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 14px 18px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 18px 48px rgba(31, 35, 40, 0.18);
+    max-height: min(45vh, 360px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    transform: translateY(-10px) scale(0.96);
+    transform-origin: top center;
+  }
+
+  #scenario-picker.peek .scenario-dropdown,
+  #scenario-picker.open .scenario-dropdown {
+    transform: translateY(0) scale(1);
+  }
+
   .panel.side-panel { display: none; }
   .panel.side-panel.active { display: flex; }
 }
