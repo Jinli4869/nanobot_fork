@@ -580,7 +580,7 @@ class GuiSubagentTool(Tool):
         if backend_name == "ios":
             from opengui.backends.ios_wda import WdaBackend
 
-            return WdaBackend()
+            return WdaBackend(wda_url=self._gui_config.ios.wda_url)
 
         if backend_name == "hdc":
             from opengui.backends.hdc import HdcBackend
