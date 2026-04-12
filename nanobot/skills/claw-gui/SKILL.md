@@ -76,9 +76,10 @@ adb shell pm list packages | grep -E 'speechassist|voiceassist|xiaoai|bixby|xiao
 ```bash
 MSG="设置明天早上7点的闹钟"
 
+# Use "'$MSG'" (inner single quotes) to preserve spaces through adb shell
 adb shell am start -W -a android.intent.action.PROCESS_TEXT \
   -n com.heytap.speechassist/.sharereceive.AIChatShareReceiveActivity \
-  --es android.intent.extra.PROCESS_TEXT "$MSG" && \
+  --es android.intent.extra.PROCESS_TEXT "'$MSG'" && \
 sleep 0.8 && \
 B=$(adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; \
     adb shell cat /sdcard/ui.xml | tr -d '\r' | \

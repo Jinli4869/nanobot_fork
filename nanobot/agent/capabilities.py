@@ -74,8 +74,8 @@ class CapabilityCatalogBuilder:
             "tool.exec_shell",
             "tool",
             "shell",
-            "Run short local shell commands on this host",
-            ("system toggles", "local automation", "file inspection"),
+            "Run short local shell commands on this host (including ADB commands for Android device control and voice assistant shortcuts)",
+            ("system toggles", "local automation", "file inspection", "voice assistant tasks via ADB (set alarm, make call, send message, set timer, check weather, play music, create reminder)"),
             ("visual workflows", "unsafe destructive commands"),
         ),
         (

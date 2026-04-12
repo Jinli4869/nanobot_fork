@@ -117,9 +117,12 @@ tap_by_text() {
 ```bash
 MSG="设置明天早上7点的闹钟"
 
+# IMPORTANT: Use inner single quotes "'$MSG'" to preserve spaces in the
+# text when passed through adb shell. Without them, Android's shell splits
+# on whitespace and only the first word reaches the assistant.
 adb shell am start -W -a android.intent.action.PROCESS_TEXT \
   -n com.heytap.speechassist/.sharereceive.AIChatShareReceiveActivity \
-  --es android.intent.extra.PROCESS_TEXT "$MSG" && \
+  --es android.intent.extra.PROCESS_TEXT "'$MSG'" && \
 sleep 0.8 && \
 B=$(adb shell uiautomator dump /sdcard/ui.xml >/dev/null 2>&1; \
     adb shell cat /sdcard/ui.xml | tr -d '\r' | \
@@ -131,6 +134,7 @@ adb shell input tap $(((X1+X2)/2)) $(((Y1+Y2)/2))
 
 ### Notes
 
+- **Quoting is critical**: `--es ... "'$MSG'"` — outer double quotes let the local shell expand `$MSG`, inner single quotes survive to the Android shell and prevent whitespace splitting. Without this, text after the first space is silently dropped.
 - The `PROCESS_TEXT` action opens a chat-style interface where Xiaobu processes the text as a voice command.
 - Text is passed via intent extra — no need to use `input text` separately.
 - Only the send button tap requires uiautomator.
@@ -241,6 +245,7 @@ Copy this template and fill in the fields:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
+| Text after first space is silently dropped | `adb shell` splits unquoted arguments on whitespace | Wrap the value with inner single quotes: `--es ... "'$MSG'"` (outer double quotes expand the variable, inner single quotes survive to the Android shell) |
 | `uiautomator dump` returns empty XML | Screen not ready | Increase sleep time before dump |
 | Resource-id not found in XML | UI version changed | Try text-based fallback (`grep 'text="发送"'`); re-dump and search for the actual id |
 | `Activity not found` or `unable to resolve Intent` | Assistant not installed or activity class renamed | Re-check with `dumpsys package` |
