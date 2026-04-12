@@ -1,0 +1,65 @@
+{
+  "platforms": [
+    {
+      "id": "android",
+      "label": "Android",
+      "deviceType": "phone",
+      "scenarios": [
+        {
+          "id": "open-settings",
+          "title": "Open Settings",
+          "description": "Find and open the Settings app on an Android device",
+          "stepCount": 3,
+          "success": true,
+          "duration_s": 11.21
+        },
+        {
+          "id": "open-chrome",
+          "title": "Open Chrome",
+          "description": "Locate and launch Chrome browser on Android",
+          "stepCount": 3,
+          "success": true,
+          "duration_s": 17.24
+        },
+        {
+          "id": "open-vpn-clash",
+          "title": "Open VPN in Clash Meta",
+          "description": "Open the Clash Meta app and start VPN connection",
+          "stepCount": 7,
+          "success": true,
+          "duration_s": 55.36
+        }
+      ]
+    },
+    {
+      "id": "ios",
+      "label": "iOS",
+      "deviceType": "tablet",
+      "scenarios": [
+        {
+          "id": "check-ios-version",
+          "title": "Check iOS Version",
+          "description": "Open Settings and navigate to check the iOS version",
+          "stepCount": 6,
+          "success": true,
+          "duration_s": 72.31
+        }
+      ]
+    },
+    {
+      "id": "macos",
+      "label": "macOS",
+      "deviceType": "desktop",
+      "scenarios": [
+        {
+          "id": "open-system-settings",
+          "title": "Open System Settings",
+          "description": "Open macOS System Settings via Spotlight or Apple menu",
+          "stepCount": 8,
+          "success": true,
+          "duration_s": 55.79
+        }
+      ]
+    }
+  ]
+}
