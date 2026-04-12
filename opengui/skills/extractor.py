@@ -60,6 +60,19 @@ dropdown selections) — these vary by task and device.
 - Prefer ONE parameterized step over multiple mechanical sub-steps.
 - When in doubt, **leave it out**. Fewer steps = more reusable.
 
+# App-opening collapse rule
+If the trajectory begins with steps that navigate to and open an app \
+(e.g. scrolling the home screen, tapping an app icon, waiting for launch), \
+collapse ALL of those steps into a single step:
+  {{"action_type": "open_app", "target": "Launch <app>", \
+"parameters": {{"text": "<app_package_or_name>"}}, \
+"valid_state": "No need to verify", \
+"expected_state": "<app> is open and in the foreground"}}
+Use the app name from ``observation.foreground_app`` or ``observation.app`` \
+in the trajectory data — do NOT guess a display name. \
+If the trajectory already starts with the target app open (no launch steps), \
+omit the open_app step entirely.
+
 # Instructions
 1. Identify the high-level goal and break it into atomic steps.
 2. For each step, provide:
@@ -128,6 +141,19 @@ Do NOT include:
 - The corrective action should describe WHAT went wrong, not replay the \
 failed mechanical steps.
 - When in doubt, **leave it out**. Fewer steps = more reusable.
+
+# App-opening collapse rule
+If the trajectory begins with steps that navigate to and open an app \
+(e.g. scrolling the home screen, tapping an app icon, waiting for launch), \
+collapse ALL of those steps into a single step:
+  {{"action_type": "open_app", "target": "Launch <app>", \
+"parameters": {{"text": "<app_package_or_name>"}}, \
+"valid_state": "No need to verify", \
+"expected_state": "<app> is open and in the foreground"}}
+Use the app name from ``observation.foreground_app`` or ``observation.app`` \
+in the trajectory data — do NOT guess a display name. \
+If the trajectory already starts with the target app open (no launch steps), \
+omit the open_app step entirely.
 
 # Failure handling rules
 - Keep ONLY the reliable actions that executed successfully before the failure.
