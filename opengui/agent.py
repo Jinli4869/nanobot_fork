@@ -2060,6 +2060,14 @@ class GuiAgent:
         if self._unified_skill_search is not None:
             search_results = await self._unified_skill_search.search(task, top_k=1)
             if not search_results:
+                self._trajectory_recorder.record_event(
+                    "skill_search",
+                    task=task,
+                    source="unified",
+                    matched=False,
+                    reason="no_results",
+                    threshold=self._skill_threshold,
+                )
                 return None
             result = search_results[0]
             if result.score >= self._skill_threshold:
@@ -2069,10 +2077,38 @@ class GuiAgent:
                     result.layer,
                     result.score,
                 )
+                self._trajectory_recorder.record_event(
+                    "skill_search",
+                    task=task,
+                    source="unified",
+                    matched=True,
+                    skill_id=result.skill.skill_id,
+                    skill_name=result.skill.name,
+                    score=round(result.score, 4),
+                    threshold=self._skill_threshold,
+                )
                 return result
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="unified",
+                matched=False,
+                reason="below_threshold",
+                skill_name=result.skill.name,
+                score=round(result.score, 4),
+                threshold=self._skill_threshold,
+            )
             return None
 
         if self._skill_library is None:
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="none",
+                matched=False,
+                reason="no_library",
+                threshold=self._skill_threshold,
+            )
             return None
         from opengui.skills.data import compute_confidence
 
@@ -2080,12 +2116,44 @@ class GuiAgent:
             task, platform=self.backend.platform, top_k=1,
         )
         if not search_results:
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="legacy",
+                matched=False,
+                reason="no_results",
+                threshold=self._skill_threshold,
+            )
             return None
         skill, relevance = search_results[0]
         confidence = compute_confidence(skill)
         final_score = relevance * confidence
         if final_score >= self._skill_threshold:
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="legacy",
+                matched=True,
+                skill_id=skill.skill_id,
+                skill_name=skill.name,
+                score=round(final_score, 4),
+                confidence=round(confidence, 4),
+                relevance=round(relevance, 4),
+                threshold=self._skill_threshold,
+            )
             return (skill, final_score)
+        self._trajectory_recorder.record_event(
+            "skill_search",
+            task=task,
+            source="legacy",
+            matched=False,
+            reason="below_threshold",
+            skill_name=skill.name,
+            score=round(final_score, 4),
+            confidence=round(confidence, 4),
+            relevance=round(relevance, 4),
+            threshold=self._skill_threshold,
+        )
         return None
 
     async def _retrieve_shortcut_candidates(
