@@ -259,7 +259,7 @@ class GuiSubagentTool(Tool):
                     artifacts_root=run_dir,
                 ),
                 trajectory_recorder=recorder,
-                stop_on_failure=False,
+                stop_on_failure=True,
                 max_recovery_steps=3,
             )
 
