@@ -33,6 +33,35 @@ html, body {
 
 #header h1 span { color: var(--accent); }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-subtitle {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.header-btn {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.header-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
 /* Platform tabs */
 #platform-tabs {
   display: flex;
@@ -167,6 +196,82 @@ html, body {
   flex-shrink: 0;
 }
 
+/* Fullscreen recording mode */
+#app.recording-mode {
+  grid-template-rows: auto auto auto 1fr auto;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef3f8 100%);
+}
+
+#app.recording-mode #header {
+  padding: 10px 18px;
+}
+
+#app.recording-mode #platform-tabs {
+  padding: 0 18px;
+}
+
+#app.recording-mode #scenario-picker .scenario-dropdown {
+  padding-left: 18px;
+  padding-right: 18px;
+}
+
+#app.recording-mode #main-content {
+  grid-template-columns: minmax(220px, 0.9fr) minmax(0, 2.2fr) minmax(240px, 1fr);
+}
+
+#app.recording-mode .panel-header {
+  padding: 10px 14px;
+}
+
+#app.recording-mode .panel-body {
+  padding: 10px;
+}
+
+#app.recording-mode #timeline {
+  padding: 10px 18px;
+}
+
+#app.recording-mode #device-viewer .panel-body {
+  padding: 20px;
+}
+
+#app.recording-mode .device-frame {
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#app.recording-mode .device-frame.phone {
+  width: min(100%, clamp(360px, 68vh, 640px));
+  max-width: none;
+  max-height: 100%;
+}
+
+#app.recording-mode .device-frame.tablet {
+  width: min(100%, clamp(560px, 88vh, 980px));
+  max-width: none;
+  max-height: 100%;
+}
+
+#app.recording-mode .device-frame.desktop {
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#app.recording-mode .screenshot-container {
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#app.recording-mode .screenshot-container img {
+  width: 100%;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -175,6 +280,10 @@ html, body {
 
 /* Responsive */
 @media (max-width: 1024px) {
+  .header-subtitle {
+    display: none;
+  }
+
   #main-content {
     grid-template-columns: 1fr;
     grid-template-rows: 1fr;

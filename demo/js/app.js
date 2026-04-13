@@ -8,6 +8,49 @@ import { initModelOutput } from './components/model-output.js';
 import { initTimeline } from './components/timeline.js';
 import { buildAnimationQueue } from './playback-helpers.js';
 
+function initFullscreenMode() {
+  const app = document.getElementById('app');
+  const toggle = document.getElementById('fullscreen-toggle');
+
+  if (!app || !toggle) return;
+
+  async function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+      return;
+    }
+    await app.requestFullscreen();
+  }
+
+  function syncFullscreenUi() {
+    const active = document.fullscreenElement === app;
+    app.classList.toggle('recording-mode', active);
+    toggle.textContent = active ? 'Exit Fullscreen' : 'Fullscreen';
+    toggle.setAttribute(
+      'title',
+      active ? 'Exit fullscreen recording mode (F)' : 'Toggle fullscreen recording mode (F)',
+    );
+  }
+
+  toggle.addEventListener('click', () => {
+    toggleFullscreen().catch((error) => {
+      console.error('Failed to toggle fullscreen mode:', error);
+    });
+  });
+
+  document.addEventListener('fullscreenchange', syncFullscreenUi);
+  document.addEventListener('keydown', (event) => {
+    if (event.key.toLowerCase() !== 'f') return;
+    if (event.target.tagName === 'INPUT' || event.target.tagName === 'TEXTAREA') return;
+    event.preventDefault();
+    toggleFullscreen().catch((error) => {
+      console.error('Failed to toggle fullscreen mode:', error);
+    });
+  });
+
+  syncFullscreenUi();
+}
+
 function resetPlaybackState() {
   state.set('isPlaying', false);
   state.set('currentStep', 0);
@@ -21,6 +64,7 @@ function resetPlaybackState() {
 
 async function init() {
   // Init all components
+  initFullscreenMode();
   initPlatformTabs();
   initScenarioPicker();
   initDeviceViewer();

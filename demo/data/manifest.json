@@ -1,6 +1,29 @@
 {
   "platforms": [
     {
+      "id": "android",
+      "label": "Android",
+      "deviceType": "phone",
+      "scenarios": [
+        {
+          "id": "find-shoe-size-order",
+          "title": "Find Previous Shoe Size in Taobao",
+          "description": "Open Taobao order history on Android, find the previously searched sports shoe order, and report the shoe size.",
+          "stepCount": 10,
+          "success": true,
+          "duration_s": 97.47
+        },
+        {
+          "id": "post-gui-agent-papers-xiaohongshu",
+          "title": "Post GUI Agent Papers to Xiaohongshu",
+          "description": "Research recent GUI Agent papers, draft a Xiaohongshu post, and publish it from the Android app after one retry.",
+          "stepCount": 19,
+          "success": true,
+          "duration_s": 306.21
+        }
+      ]
+    },
+    {
       "id": "ios",
       "label": "iPad",
       "deviceType": "tablet",
@@ -20,6 +43,21 @@
           "stepCount": 5,
           "success": true,
           "duration_s": 58.62
+        }
+      ]
+    },
+    {
+      "id": "macos",
+      "label": "macOS",
+      "deviceType": "desktop",
+      "scenarios": [
+        {
+          "id": "open-ergonomic-chair-jd",
+          "title": "Open Recommended Ergonomic Chair on JD",
+          "description": "Research ergonomic chair recommendations under 2000 RMB, summarize the ranking, and open the top product detail page on Mac Safari.",
+          "stepCount": 11,
+          "success": true,
+          "duration_s": 103.84
         }
       ]
     }
