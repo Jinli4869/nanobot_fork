@@ -1,5 +1,6 @@
 """Trace and log inspection schemas for the TUI backend."""
 
+from typing import Any
 from typing import Literal
 
 from pydantic import BaseModel
@@ -50,3 +51,29 @@ class LogInspectionResponse(BaseModel):
     run_id: str
     status: Literal["ok", "empty", "not_found"]
     lines: list[TraceLogLine]
+
+
+class TracePlaybackStep(BaseModel):
+    """Detailed per-step playback record for internal operations debugging."""
+
+    step_index: int
+    timestamp: str | None = None
+    action: dict[str, Any] | None = None
+    action_summary: str | None = None
+    done: bool | None = None
+    screenshot_path: str | None = None
+    screenshot_url: str | None = None
+    prompt: dict[str, Any] | None = None
+    model_output: dict[str, Any] | None = None
+    execution: dict[str, Any] | None = None
+    stability: dict[str, Any] | None = None
+
+
+class TracePlaybackResponse(BaseModel):
+    """Detailed playback payload keyed by run id."""
+
+    run_id: str
+    status: Literal["ok", "empty", "not_found"]
+    task: str | None = None
+    total_steps: int = 0
+    steps: list[TracePlaybackStep]

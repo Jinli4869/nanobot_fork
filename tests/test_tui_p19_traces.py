@@ -200,3 +200,65 @@ def test_trace_and_log_endpoints_return_typed_not_found_or_empty_states(tmp_path
         "status": "not_found",
         "lines": [],
     }
+
+
+def test_trace_playback_endpoint_returns_detailed_step_payload(tmp_path: Path) -> None:
+    _require_imports()
+
+    trace_path, _ = _make_artifacts(tmp_path, "run-playback-001")
+    screenshots_dir = trace_path.parent / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = screenshots_dir / "step_001.png"
+    screenshot_file.write_bytes(b"png-bytes")
+
+    trace_path.write_text(
+        "\n".join(
+            [
+                '{"event":"metadata","timestamp_iso":"2026-03-21T12:00:00Z","task":"Create calendar event"}',
+                '{"event":"step","timestamp_iso":"2026-03-21T12:00:10Z","step_index":1,"action":{"action_type":"tap","x":320,"y":480},"action_summary":"tap add button","screenshot_path":"'
+                + str(screenshot_file)
+                + '","prompt":{"task":"Create calendar event"},"model_output":{"raw_content":"Action: tap add button"},"execution":{"tool_result":"ok"},"stability":{"thinking_mode":"fast"}}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    client = _make_app(tmp_path, "run-playback-001")
+    response = client.get("/runtime/runs/run-playback-001/trace-playback")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"] == "run-playback-001"
+    assert payload["status"] == "ok"
+    assert payload["task"] == "Create calendar event"
+    assert payload["total_steps"] == 1
+    step = payload["steps"][0]
+    assert step["step_index"] == 1
+    assert step["action"]["action_type"] == "tap"
+    assert step["action_summary"] == "tap add button"
+    assert step["prompt"]["task"] == "Create calendar event"
+    assert step["model_output"]["raw_content"] == "Action: tap add button"
+    assert step["execution"]["tool_result"] == "ok"
+    assert step["stability"]["thinking_mode"] == "fast"
+    assert step["screenshot_url"] == "/runtime/runs/run-playback-001/screenshots/step_001.png"
+
+
+def test_run_screenshot_endpoint_serves_only_run_screenshot_files(tmp_path: Path) -> None:
+    _require_imports()
+
+    trace_path, _ = _make_artifacts(tmp_path, "run-playback-002")
+    screenshots_dir = trace_path.parent / "screenshots"
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+    screenshot_file = screenshots_dir / "step_002.png"
+    screenshot_file.write_bytes(b"png-two")
+    trace_path.write_text("", encoding="utf-8")
+
+    client = _make_app(tmp_path, "run-playback-002")
+    ok = client.get("/runtime/runs/run-playback-002/screenshots/step_002.png")
+    missing = client.get("/runtime/runs/run-playback-002/screenshots/step_404.png")
+    traversal = client.get("/runtime/runs/run-playback-002/screenshots/%2E%2E%2Ftrace.jsonl")
+
+    assert ok.status_code == 200
+    assert ok.content == b"png-two"
+    assert missing.status_code == 404
+    assert traversal.status_code == 404

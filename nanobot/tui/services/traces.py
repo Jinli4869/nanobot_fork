@@ -13,6 +13,8 @@ from nanobot.tui.schemas import (
     TraceEventSummary,
     TraceInspectionResponse,
     TraceLogLine,
+    TracePlaybackResponse,
+    TracePlaybackStep,
 )
 from nanobot.tui.services.operations_registry import OperationsRegistry
 
@@ -73,6 +75,53 @@ class TraceInspectionService:
             status="ok" if lines else "empty",
             lines=lines,
         )
+
+    def inspect_playback(self, run_id: str) -> TracePlaybackResponse:
+        run_dir = self._resolve_run_dir(run_id)
+        if run_dir is None:
+            return TracePlaybackResponse(
+                run_id=run_id,
+                status="not_found",
+                task=None,
+                total_steps=0,
+                steps=[],
+            )
+
+        trace_path = self._resolve_trace_path(run_dir)
+        if trace_path is None:
+            return TracePlaybackResponse(
+                run_id=run_id,
+                status="empty",
+                task=None,
+                total_steps=0,
+                steps=[],
+            )
+
+        task, steps = self._load_playback_steps(run_id, run_dir, trace_path)
+        return TracePlaybackResponse(
+            run_id=run_id,
+            status="ok" if steps else "empty",
+            task=task,
+            total_steps=len(steps),
+            steps=steps,
+        )
+
+    def resolve_screenshot_path(self, run_id: str, filename: str) -> Path | None:
+        run_dir = self._resolve_run_dir(run_id)
+        if run_dir is None:
+            return None
+        safe_name = Path(filename).name
+        if safe_name != filename:
+            return None
+        candidate = (run_dir / "screenshots" / safe_name).resolve()
+        screenshots_dir = (run_dir / "screenshots").resolve()
+        try:
+            candidate.relative_to(screenshots_dir)
+        except ValueError:
+            return None
+        if not candidate.is_file():
+            return None
+        return candidate
 
     def _resolve_run_dir(self, run_id: str) -> Path | None:
         registry_entry = self._registry.get_run(run_id)
@@ -166,6 +215,61 @@ class TraceInspectionService:
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return []
         return lines
+
+    def _load_playback_steps(
+        self,
+        run_id: str,
+        run_dir: Path,
+        trace_path: Path,
+    ) -> tuple[str | None, list[TracePlaybackStep]]:
+        task: str | None = None
+        steps: list[TracePlaybackStep] = []
+        try:
+            with open(trace_path, encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    raw_event = json.loads(line)
+                    if not isinstance(raw_event, dict):
+                        continue
+
+                    event_type = self._event_type(raw_event)
+                    if event_type == "metadata" and isinstance(raw_event.get("task"), str):
+                        task = raw_event.get("task")
+                        continue
+                    if event_type != "step":
+                        continue
+
+                    step_index = self._optional_int(raw_event.get("step_index"))
+                    if step_index is None:
+                        continue
+
+                    screenshot_path = self._optional_str(raw_event.get("screenshot_path"))
+                    screenshot_url: str | None = None
+                    if screenshot_path:
+                        screenshot_name = Path(screenshot_path).name
+                        if (run_dir / "screenshots" / screenshot_name).is_file():
+                            screenshot_url = f"/runtime/runs/{run_id}/screenshots/{screenshot_name}"
+
+                    steps.append(
+                        TracePlaybackStep(
+                            step_index=step_index,
+                            timestamp=self._timestamp(raw_event),
+                            action=self._optional_dict(raw_event.get("action")),
+                            action_summary=self._optional_str(raw_event.get("action_summary")),
+                            done=self._optional_bool(raw_event.get("done")),
+                            screenshot_path=screenshot_path,
+                            screenshot_url=screenshot_url,
+                            prompt=self._optional_dict(raw_event.get("prompt")),
+                            model_output=self._optional_dict(raw_event.get("model_output")),
+                            execution=self._optional_dict(raw_event.get("execution")),
+                            stability=self._optional_dict(raw_event.get("stability")),
+                        )
+                    )
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return (task, [])
+        return (task, steps)
 
     def _filter_trace_event(self, raw_event: dict[str, Any]) -> TraceEventSummary | None:
         event_type = self._event_type(raw_event)
@@ -307,3 +411,7 @@ class TraceInspectionService:
     @staticmethod
     def _optional_str(value: Any) -> str | None:
         return value if isinstance(value, str) and value else None
+
+    @staticmethod
+    def _optional_dict(value: Any) -> dict[str, Any] | None:
+        return value if isinstance(value, dict) else None

@@ -49,6 +49,28 @@ export type RuntimeInspectionResponse = {
   recent_failures: RuntimeRunSummary[];
 };
 
+export type TracePlaybackStep = {
+  step_index: number;
+  timestamp?: string | null;
+  action?: Record<string, unknown> | null;
+  action_summary?: string | null;
+  done?: boolean | null;
+  screenshot_path?: string | null;
+  screenshot_url?: string | null;
+  prompt?: Record<string, unknown> | null;
+  model_output?: Record<string, unknown> | null;
+  execution?: Record<string, unknown> | null;
+  stability?: Record<string, unknown> | null;
+};
+
+export type TracePlaybackResponse = {
+  run_id: string;
+  status: "ok" | "empty" | "not_found";
+  task?: string | null;
+  total_steps: number;
+  steps: TracePlaybackStep[];
+};
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
 }
@@ -86,6 +108,10 @@ export function getChatSession(sessionId: string, env?: ApiEnv) {
 
 export function getRuntimeInspection(env?: ApiEnv) {
   return fetchJson<RuntimeInspectionResponse>("/runtime", undefined, env);
+}
+
+export function getTracePlayback(runId: string, env?: ApiEnv) {
+  return fetchJson<TracePlaybackResponse>(`/runtime/runs/${encodeURIComponent(runId)}/trace-playback`, undefined, env);
 }
 
 export type ChatCreateSessionResponse = { session: ChatSessionSummary; messages: ChatMessage[] };

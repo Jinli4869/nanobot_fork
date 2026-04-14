@@ -30,6 +30,8 @@ from nanobot.tui.schemas.traces import (
     TraceEventSummary,
     TraceInspectionResponse,
     TraceLogLine,
+    TracePlaybackResponse,
+    TracePlaybackStep,
 )
 
 __all__ = [
@@ -57,4 +59,6 @@ __all__ = [
     "TraceEventSummary",
     "TraceInspectionResponse",
     "TraceLogLine",
+    "TracePlaybackResponse",
+    "TracePlaybackStep",
 ]
