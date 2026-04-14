@@ -79,6 +79,7 @@ class HistoryTurn:
     """One completed step kept in the prompt history window."""
 
     step_index: int
+    action: Action | None
     observation: Observation
     assistant_message: dict[str, Any]
     tool_result_message: dict[str, Any]
@@ -111,6 +112,15 @@ class _StepExecutionError(RuntimeError):
         super().__init__(message)
         self.model_snapshot = model_snapshot
         self.attempt_summary = attempt_summary
+
+
+@dataclass(frozen=True)
+class StagnationSignal:
+    """Signal that the recent action history may be stuck in a loop."""
+
+    detected: bool = False
+    reason: str | None = None
+    repeat_count: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -631,6 +641,8 @@ class GuiAgent:
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.25
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
+    _STAGNATION_REPEAT_THRESHOLD = 3
+    _STAGNATION_WAIT_THRESHOLD = 2
 
     def __init__(
         self,
@@ -896,6 +908,11 @@ class GuiAgent:
         steps_taken = 0
         for step in range(self.max_steps):
             step_index = step + 1
+            stagnation_signal = self._detect_stagnation(history)
+            thinking_mode = self._select_thinking_mode(
+                step_index=step_index,
+                stagnation_signal=stagnation_signal,
+            )
             messages = self._build_messages(
                 task=task,
                 current_observation=obs,
@@ -903,6 +920,8 @@ class GuiAgent:
                 app_hint=app_hint,
                 memory_context=memory_context,
                 skill_context=skill_context,
+                thinking_mode=thinking_mode,
+                stagnation_signal=stagnation_signal,
             )
             prompt_snapshot = self._snapshot_step_prompt(
                 task=task,
@@ -1035,6 +1054,15 @@ class GuiAgent:
                 "step_index": step_index,
                 "action": self._serialize_action(result.action),
                 "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
+                "prompt": result.prompt_snapshot,
+                "model_output": result.model_snapshot,
+                "execution": result.execution_snapshot,
+                "stability": {
+                    "thinking_mode": thinking_mode,
+                    "stagnation_detected": stagnation_signal.detected,
+                    "stagnation_reason": stagnation_signal.reason,
+                    "repeat_count": stagnation_signal.repeat_count,
+                },
                 "screenshot_path": (
                     result.next_observation.screenshot_path
                     if result.next_observation else None
@@ -1068,6 +1096,15 @@ class GuiAgent:
                     result.next_observation.platform
                     if result.next_observation else None
                 ),
+                prompt=result.prompt_snapshot,
+                model_response=result.model_snapshot,
+                execution=result.execution_snapshot,
+                stability={
+                    "thinking_mode": thinking_mode,
+                    "stagnation_detected": stagnation_signal.detected,
+                    "stagnation_reason": stagnation_signal.reason,
+                    "repeat_count": stagnation_signal.repeat_count,
+                },
             )
 
             if intervention_cancelled:
@@ -1121,6 +1158,7 @@ class GuiAgent:
             history.append(
                 HistoryTurn(
                     step_index=step_index,
+                    action=result.action,
                     observation=obs,
                     assistant_message=self._scrub_assistant_message_for_log(
                         result.assistant_message,
@@ -1382,6 +1420,96 @@ class GuiAgent:
             return 0.0
         return self._POST_ACTION_SETTLE_SECONDS
 
+    @staticmethod
+    def _action_signature(action: Action | None) -> tuple[Any, ...] | None:
+        if action is None:
+            return None
+        return (
+            action.action_type,
+            action.x,
+            action.y,
+            action.x2,
+            action.y2,
+            action.text,
+            tuple(action.key or ()),
+            action.pixels,
+            action.duration_ms,
+            action.relative,
+            action.status,
+        )
+
+    @staticmethod
+    def _is_opposite_scroll(previous: Action | None, current: Action | None) -> bool:
+        if previous is None or current is None:
+            return False
+        if previous.action_type != current.action_type:
+            return False
+        if previous.action_type not in {"scroll"}:
+            return False
+        opposite = {
+            ("up", "down"),
+            ("down", "up"),
+            ("left", "right"),
+            ("right", "left"),
+        }
+        prev_direction = (previous.text or "").strip().lower()
+        curr_direction = (current.text or "").strip().lower()
+        return (prev_direction, curr_direction) in opposite
+
+    def _detect_stagnation(self, history: list[HistoryTurn]) -> StagnationSignal:
+        if len(history) < 2:
+            return StagnationSignal()
+
+        recent_actions = [turn.action for turn in history if turn.action is not None]
+        if len(recent_actions) < 2:
+            return StagnationSignal()
+
+        repeat_threshold = min(self._STAGNATION_REPEAT_THRESHOLD, len(recent_actions))
+        repeated = recent_actions[-repeat_threshold:]
+        signatures = [self._action_signature(action) for action in repeated]
+        if len(signatures) >= self._STAGNATION_REPEAT_THRESHOLD and len(set(signatures)) == 1:
+            return StagnationSignal(
+                detected=True,
+                reason="same_action_repeated",
+                repeat_count=len(signatures),
+            )
+
+        wait_streak = 0
+        for action in reversed(recent_actions):
+            if action.action_type == "wait":
+                wait_streak += 1
+            else:
+                break
+        if wait_streak >= self._STAGNATION_WAIT_THRESHOLD:
+            return StagnationSignal(
+                detected=True,
+                reason="consecutive_waits",
+                repeat_count=wait_streak,
+            )
+
+        if self._is_opposite_scroll(recent_actions[-2], recent_actions[-1]):
+            return StagnationSignal(
+                detected=True,
+                reason="opposite_scroll_bounce",
+                repeat_count=2,
+            )
+
+        return StagnationSignal()
+
+    def _select_thinking_mode(
+        self,
+        *,
+        step_index: int,
+        stagnation_signal: StagnationSignal,
+    ) -> str:
+        if stagnation_signal.detected:
+            return "careful"
+        if self._active_retry_summaries:
+            return "careful"
+        if step_index >= max(3, int(self.max_steps * 0.7)):
+            return "careful"
+        return "fast"
+
     # ------------------------------------------------------------------
     # Message helpers
     # ------------------------------------------------------------------
@@ -1395,6 +1523,8 @@ class GuiAgent:
         app_hint: str | None,
         memory_context: str | None = None,
         skill_context: str | None = None,
+        thinking_mode: str = "fast",
+        stagnation_signal: StagnationSignal | None = None,
     ) -> list[dict[str, Any]]:
         """Build a Mobile-Agent-style prompt window with summaries and recent screenshots."""
         messages: list[dict[str, Any]] = [{
@@ -1416,6 +1546,8 @@ class GuiAgent:
             history=history,
             app_hint=app_hint,
             skill_context=skill_context,
+            thinking_mode=thinking_mode,
+            stagnation_signal=stagnation_signal,
         )
         recent_history = history[-self.history_image_window:]
 
@@ -1458,6 +1590,8 @@ class GuiAgent:
         history: list[HistoryTurn],
         app_hint: str | None,
         skill_context: str | None = None,
+        thinking_mode: str = "fast",
+        stagnation_signal: StagnationSignal | None = None,
     ) -> str:
         """Build the text prompt that frames the current step."""
         summarized_history = history[: -self.history_image_window] if len(history) > self.history_image_window else []
@@ -1472,10 +1606,24 @@ class GuiAgent:
 
         lines.append(f"Instruction: {task}")
         lines.append(f"Platform: {self.backend.platform}")
+        if thinking_mode == "careful":
+            lines.append("Reasoning mode: CAREFUL. Avoid repeating actions; verify state transitions before committing.")
+        else:
+            lines.append("Reasoning mode: FAST. Prefer the shortest reliable path with minimal exploratory actions.")
 
         app_name = app_hint or current_observation.foreground_app
         if app_name:
             lines.append(f"Foreground app hint: {app_name}")
+
+        if stagnation_signal is not None and stagnation_signal.detected:
+            lines.append(
+                f"Stability warning: recent actions look repetitive "
+                f"({stagnation_signal.reason or 'unknown_reason'}, repeat_count={stagnation_signal.repeat_count})."
+            )
+            lines.append(
+                "Use a different strategy now (dismiss popup/back/home/open_app/re-target controls) "
+                "instead of repeating the same action."
+            )
 
         retry_summaries = self._format_retry_attempt_summaries(self._active_retry_summaries)
         if retry_summaries:

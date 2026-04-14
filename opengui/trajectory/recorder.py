@@ -128,6 +128,10 @@ class TrajectoryRecorder:
         screen_height: int | None = None,
         platform: str | None = None,
         phase: ExecutionPhase | None = None,
+        prompt: dict[str, Any] | None = None,
+        model_response: dict[str, Any] | None = None,
+        execution: dict[str, Any] | None = None,
+        stability: dict[str, Any] | None = None,
     ) -> None:
         """Record one agent step.
 
@@ -178,6 +182,14 @@ class TrajectoryRecorder:
             "screenshot_path": screenshot_path,
             "observation": obs,
         }
+        if prompt is not None:
+            event["prompt"] = prompt
+        if model_response is not None:
+            event["model_response"] = model_response
+        if execution is not None:
+            event["execution"] = execution
+        if stability is not None:
+            event["stability"] = stability
 
         self._write_event(event)
         self._step_count += 1
