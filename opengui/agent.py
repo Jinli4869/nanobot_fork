@@ -39,11 +39,6 @@ from opengui.interfaces import (
     LLMResponse,
     ProgressCallback,
 )
-from opengui.skills.shortcut_router import (
-    ApplicabilityDecision,
-    ShortcutApplicabilityRouter,
-    filter_candidates_by_context,
-)
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
@@ -156,17 +151,6 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
         },
     },
 }
-
-
-def _summarize_shortcut_success(result: Any) -> str:
-    """Build a concise shortcut execution summary for subsequent agent steps."""
-    lines = [f"Shortcut '{result.skill_id}' executed {len(result.step_results)} step(s):"]
-    for step_result in result.step_results:
-        action_desc = getattr(step_result.action, "action_type", "unknown")
-        lines.append(
-            f"Step {step_result.step_index}: {action_desc} -> {step_result.backend_result}"
-        )
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -647,15 +631,12 @@ class GuiAgent:
         memory_retriever: Any = None,
         skill_library: Any = None,
         skill_executor: Any = None,
-        shortcut_executor: Any = None,
         memory_top_k: int = 5,
         skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
-        unified_skill_search: Any = None,
         memory_store: Any = None,
-        shortcut_applicability_router: ShortcutApplicabilityRouter | None = None,
         agent_profile: str | None = None,
     ) -> None:
         self.llm = llm
@@ -673,14 +654,11 @@ class GuiAgent:
         self._policy_context = policy_context
         self._skill_library = skill_library
         self._skill_executor = skill_executor
-        self._shortcut_executor = shortcut_executor
         self._memory_top_k = memory_top_k
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
         self._intervention_handler = intervention_handler
-        self._unified_skill_search = unified_skill_search
         self._memory_store = memory_store
-        self._shortcut_applicability_router = shortcut_applicability_router
         self._active_retry_summaries: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------
@@ -2066,50 +2044,7 @@ class GuiAgent:
         )
 
     async def _search_skill(self, task: str) -> Any | None:
-        """Search skill libraries and return the top match when above threshold."""
-        if self._unified_skill_search is not None:
-            search_results = await self._unified_skill_search.search(task, top_k=1)
-            if not search_results:
-                self._trajectory_recorder.record_event(
-                    "skill_search",
-                    task=task,
-                    source="unified",
-                    matched=False,
-                    reason="no_results",
-                    threshold=self._skill_threshold,
-                )
-                return None
-            result = search_results[0]
-            if result.score >= self._skill_threshold:
-                logger.info(
-                    "Skill match: %s (layer=%s, score=%.2f)",
-                    result.skill.name,
-                    result.layer,
-                    result.score,
-                )
-                self._trajectory_recorder.record_event(
-                    "skill_search",
-                    task=task,
-                    source="unified",
-                    matched=True,
-                    skill_id=result.skill.skill_id,
-                    skill_name=result.skill.name,
-                    score=round(result.score, 4),
-                    threshold=self._skill_threshold,
-                )
-                return result
-            self._trajectory_recorder.record_event(
-                "skill_search",
-                task=task,
-                source="unified",
-                matched=False,
-                reason="below_threshold",
-                skill_name=result.skill.name,
-                score=round(result.score, 4),
-                threshold=self._skill_threshold,
-            )
-            return None
-
+        """Search the skill library and return the top match when above threshold."""
         if self._skill_library is None:
             self._trajectory_recorder.record_event(
                 "skill_search",
@@ -2137,7 +2072,7 @@ class GuiAgent:
             return None
         skill, relevance = search_results[0]
         confidence = compute_confidence(skill)
-        final_score = relevance * confidence
+        final_score = relevance
         if final_score >= self._skill_threshold:
             self._trajectory_recorder.record_event(
                 "skill_search",
@@ -2166,198 +2101,13 @@ class GuiAgent:
         )
         return None
 
-    async def _retrieve_shortcut_candidates(
-        self,
-        task: str,
-        *,
-        platform: str,
-        app_hint: str | None = None,
-    ) -> list:
-        """Retrieve shortcut candidates filtered by platform and optional app context.
-
-        Calls ``UnifiedSkillSearch.search(task, top_k=5)``, keeps only results
-        at or above ``skill_threshold``, then applies platform + app filtering via
-        ``filter_candidates_by_context``.  Emits a ``shortcut_retrieval`` trajectory
-        event regardless of whether any candidates are found.
-
-        Returns an empty list when ``unified_skill_search`` is not configured.
-        The returned list is stored in ``run()`` for use by Plan 02's applicability
-        gate; the existing score-only ``_search_skill`` path is left unchanged.
-        """
-        if self._unified_skill_search is None:
-            return []
-
-        search_results = await self._unified_skill_search.search(task, top_k=5)
-        candidates = [r for r in search_results if r.score >= self._skill_threshold]
-        filtered = filter_candidates_by_context(
-            candidates, platform=platform, app_hint=app_hint,
-        )
-
-        self._trajectory_recorder.record_event(
-            "shortcut_retrieval",
-            task=task,
-            platform=platform,
-            app_hint=app_hint,
-            candidate_count=len(filtered),
-            candidates=[
-                {
-                    "skill_id": r.skill.skill_id,
-                    "name": r.skill.name,
-                    "score": round(r.score, 4),
-                }
-                for r in filtered
-            ],
-        )
-
-        if filtered:
-            logger.info(
-                "Shortcut retrieval: %d candidate(s) for task=%r platform=%s",
-                len(filtered),
-                task,
-                platform,
-            )
-
-        return filtered
-
-    async def _evaluate_shortcut_applicability(
-        self,
-        candidates: list,
-        *,
-        screenshot_path: Path | None,
-        task: str,
-    ) -> ApplicabilityDecision:
-        """Evaluate shortcut candidates against the live screen and return a decision.
-
-        Iterates candidates in score order and returns the first one whose
-        preconditions are satisfied.  When the candidate list is empty, or when
-        no router / screenshot is available, returns a structured decision with
-        a descriptive ``reason`` and emits a ``shortcut_applicability`` trajectory
-        event on every code path for full traceability.
-
-        Parameters
-        ----------
-        candidates:
-            Ordered list of :class:`~opengui.skills.shortcut_store.SkillSearchResult`
-            instances (highest-score first).
-        screenshot_path:
-            Path to the most recent screenshot for condition evaluation.
-        task:
-            The active task string, included in log output.
-        """
-        if not candidates:
-            decision = ApplicabilityDecision(outcome="fallback", reason="no_candidates")
-            self._trajectory_recorder.record_event(
-                "shortcut_applicability",
-                outcome=decision.outcome,
-                shortcut_id=None,
-                reason=decision.reason,
-            )
-            return decision
-
-        if self._shortcut_applicability_router is None or screenshot_path is None:
-            # No router or no screenshot — select first candidate by score as best-effort
-            best = candidates[0]
-            decision = ApplicabilityDecision(
-                outcome="run",
-                shortcut_id=best.skill.skill_id,
-                reason="no_applicability_router",
-                score=best.score,
-            )
-            self._trajectory_recorder.record_event(
-                "shortcut_applicability",
-                outcome=decision.outcome,
-                shortcut_id=decision.shortcut_id,
-                reason=decision.reason,
-                score=decision.score,
-            )
-            logger.info(
-                "Shortcut applicability (no router): selecting %r for task=%r",
-                decision.shortcut_id,
-                task,
-            )
-            return decision
-
-        # Evaluate candidates in score order; return first that passes all preconditions
-        last_decision: ApplicabilityDecision | None = None
-        for result in candidates:
-            candidate_decision = await self._shortcut_applicability_router.evaluate(
-                result.skill, Path(screenshot_path),
-            )
-            if candidate_decision.outcome == "run":
-                decision = ApplicabilityDecision(
-                    outcome="run",
-                    shortcut_id=result.skill.skill_id,
-                    reason=candidate_decision.reason,
-                    score=result.score,
-                )
-                self._trajectory_recorder.record_event(
-                    "shortcut_applicability",
-                    outcome=decision.outcome,
-                    shortcut_id=decision.shortcut_id,
-                    reason=decision.reason,
-                    score=decision.score,
-                )
-                logger.info(
-                    "Shortcut applicability: approved %r (score=%.2f) for task=%r",
-                    decision.shortcut_id,
-                    decision.score or 0.0,
-                    task,
-                )
-                return decision
-            last_decision = candidate_decision
-
-        # All candidates failed applicability — emit a single fallback event
-        assert last_decision is not None  # candidates was non-empty
-        fallback = ApplicabilityDecision(
-            outcome="fallback",
-            shortcut_id=None,
-            reason=f"all_candidates_failed:{last_decision.reason}",
-            failed_condition=last_decision.failed_condition,
-        )
-        self._trajectory_recorder.record_event(
-            "shortcut_applicability",
-            outcome=fallback.outcome,
-            shortcut_id=None,
-            reason=fallback.reason,
-            failed_condition=(
-                {
-                    "kind": fallback.failed_condition.kind,
-                    "value": fallback.failed_condition.value,
-                }
-                if fallback.failed_condition else None
-            ),
-        )
-        logger.info(
-            "Shortcut applicability: all %d candidate(s) failed for task=%r",
-            len(candidates),
-            task,
-        )
-        return fallback
-
     async def _inject_skill_memory_context(
         self,
         skill: Any,
         existing_context: str | None,
     ) -> str | None:
-        """Inject app memory context referenced by a TaskSkill.memory_context_id."""
-        from opengui.skills.task_skill import TaskSkill as _TaskSkill
-
-        if not isinstance(skill, _TaskSkill) or skill.memory_context_id is None:
-            return existing_context
-        if self._memory_store is None:
-            return existing_context
-
-        entry = self._memory_store.get(skill.memory_context_id)
-        if entry is None:
-            logger.warning(
-                "Skill %s references missing memory context %s",
-                skill.skill_id,
-                skill.memory_context_id,
-            )
-            return existing_context
-
-        injected = f"[Skill memory context]\n{entry.content}"
-        return f"{injected}\n\n{existing_context}" if existing_context else injected
+        """No-op: legacy Skill objects do not carry a memory_context_id."""
+        return existing_context
 
     async def _skill_maintenance(
         self, skill_match: Any | None, success: bool

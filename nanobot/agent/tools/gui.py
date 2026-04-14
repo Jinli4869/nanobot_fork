@@ -654,31 +654,6 @@ class GuiSubagentTool(Tool):
             )
         return self._skill_libraries[platform]
 
-    def _get_unified_skill_search(self, platform: str) -> Any:
-        """Build UnifiedSkillSearch from both ShortcutSkillStore and TaskSkillStore."""
-        cache_key = f"unified_{platform}"
-        if cache_key not in self._skill_libraries:
-            from opengui.skills.shortcut_store import (
-                ShortcutSkillStore,
-                TaskSkillStore,
-                UnifiedSkillSearch,
-            )
-
-            store_dir = get_gui_skill_store_root(self._workspace)
-            shortcut_store = ShortcutSkillStore(
-                store_dir=store_dir,
-                embedding_provider=self._embedding_adapter,
-            )
-            task_store = TaskSkillStore(
-                store_dir=store_dir,
-                embedding_provider=self._embedding_adapter,
-            )
-            self._skill_libraries[cache_key] = UnifiedSkillSearch(
-                shortcut_store=shortcut_store,
-                task_store=task_store,
-            )
-        return self._skill_libraries[cache_key]
-
     def _refresh_cached_skill_stores(self) -> None:
         for cached in getattr(self, "_skill_libraries", {}).values():
             refresh_if_stale = getattr(cached, "refresh_if_stale", None)
