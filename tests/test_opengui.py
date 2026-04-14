@@ -790,6 +790,57 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
     assert image_blocks[0]["image_url"]["url"] == "<omitted:image-data-url>"
 
 
+@pytest.mark.parametrize(
+    ("error", "summary", "expected"),
+    [
+        ("intervention_cancelled: missing_intervention_handler", None, "intervention_cancelled"),
+        ("step_timeout", "Step 3 timed out.", "step_timeout"),
+        ("max_steps_exceeded", "Reached max steps (10) without completion.", "max_steps_exceeded"),
+        ("Preflight failed: adb unavailable", None, "preflight_failure"),
+        ("Failed to parse action after retries", None, "model_parse_failure"),
+        ("Action failed: device offline", None, "backend_action_failure"),
+        ("UnknownError", "unexpected", "unknown_failure"),
+    ],
+)
+def test_agent_classifies_failure_labels(
+    error: str,
+    summary: str | None,
+    expected: str,
+) -> None:
+    assert GuiAgent._classify_failure_label(error=error, summary=summary) == expected
+
+
+@pytest.mark.asyncio
+async def test_agent_attempt_result_trace_includes_failure_label(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: wait briefly",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "max steps failure"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Keep waiting", max_retries=1)
+
+    assert result.success is False
+    assert result.trace_path is not None
+    trace_path = Path(result.trace_path) / "trace.jsonl"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    attempt_result = next(event for event in events if event["event"] == "attempt_result")
+    assert attempt_result["failure_label"] == "max_steps_exceeded"
+
+
 @pytest.mark.asyncio
 async def test_adb_backend_scrolls_horizontally_from_center(
     monkeypatch: pytest.MonkeyPatch,

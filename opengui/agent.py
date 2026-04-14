@@ -643,6 +643,7 @@ class GuiAgent:
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
     _STAGNATION_REPEAT_THRESHOLD = 3
     _STAGNATION_WAIT_THRESHOLD = 2
+    _FAILURE_LABEL_UNKNOWN = "unknown_failure"
 
     def __init__(
         self,
@@ -786,6 +787,10 @@ class GuiAgent:
                         memory_context=memory_context,
                         skill_context=skill_context,
                     )
+                    failure_label = self._classify_failure_label(
+                        error=result.error,
+                        summary=result.summary,
+                    )
                     await self._log_attempt_event(
                         run_dir,
                         "attempt_result",
@@ -796,6 +801,7 @@ class GuiAgent:
                         error=result.error,
                         steps_taken=result.steps_taken,
                         trace_path=result.trace_path,
+                        failure_label=failure_label,
                     )
                     if result.success:
                         break
@@ -819,12 +825,20 @@ class GuiAgent:
                             attempt=attempt,
                             next_attempt=attempt + 1,
                             reason=result.error or result.summary,
+                            failure_label=self._classify_failure_label(
+                                error=result.error,
+                                summary=result.summary,
+                            ),
                         )
                 except Exception as exc:
                     last_error = f"{type(exc).__name__}: {exc}"
                     model_snapshot = getattr(exc, "model_snapshot", None)
+                    failure_label = self._classify_failure_label(
+                        error=last_error,
+                        summary="Attempt ended with an exception before completion.",
+                    )
                     attempt_summary = getattr(exc, "attempt_summary", None) or self._build_attempt_summary(
-                        failure_reason=last_error,
+                        failure_reason=f"{failure_label}: {last_error}",
                         result_summary="Attempt ended with an exception before completion.",
                         action_summaries=(),
                     )
@@ -836,6 +850,7 @@ class GuiAgent:
                         error_type=type(exc).__name__,
                         error_message=str(exc),
                         model_response=model_snapshot,
+                        failure_label=failure_label,
                     )
                     if attempt < max_retries - 1:
                         await self._log_attempt_event(
@@ -844,6 +859,7 @@ class GuiAgent:
                             attempt=attempt,
                             next_attempt=attempt + 1,
                             reason=last_error,
+                            failure_label=failure_label,
                         )
         finally:
             self._active_retry_summaries = ()
@@ -1509,6 +1525,36 @@ class GuiAgent:
         if step_index >= max(3, int(self.max_steps * 0.7)):
             return "careful"
         return "fast"
+
+    @classmethod
+    def _classify_failure_label(
+        cls,
+        *,
+        error: str | None,
+        summary: str | None = None,
+    ) -> str | None:
+        if not error:
+            return None
+        haystack = " ".join(part for part in (error, summary) if part).lower()
+        if "intervention_cancelled" in haystack:
+            return "intervention_cancelled"
+        if "step_timeout" in haystack or "timed out" in haystack:
+            return "step_timeout"
+        if "max_steps_exceeded" in haystack or "max steps" in haystack:
+            return "max_steps_exceeded"
+        if "preflight failed" in haystack:
+            return "preflight_failure"
+        if "no computer_use tool call" in haystack or "unexpected tool" in haystack:
+            return "invalid_tool_call"
+        if "failed to parse action" in haystack or "failed to parse profile response" in haystack:
+            return "model_parse_failure"
+        if "observation failed" in haystack:
+            return "observation_failure"
+        if "action failed" in haystack:
+            return "backend_action_failure"
+        if "exception" in haystack:
+            return "attempt_exception"
+        return cls._FAILURE_LABEL_UNKNOWN
 
     # ------------------------------------------------------------------
     # Message helpers
