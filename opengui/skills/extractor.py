@@ -116,6 +116,15 @@ omit the open_app step entirely.
 - For input_text: "text input field is visible and focused"
 - For scroll/swipe: "content area is scrollable and visible"
 - Be specific about which UI element should be visible.
+
+## Quality checks
+- The ``description`` field MUST accurately reflect what the steps actually do. \
+Do NOT describe steps that are not present (e.g., do not say "from the hot feed" \
+if no step navigates to a hot/trending tab).
+- Do NOT include error-recovery language (correction, fix, retry, loop) in the \
+description for successful trajectories.
+- If the trajectory shows the agent undoing a previous action (e.g., pressing Back), \
+exclude both the undone action AND the Back action from the skill.
 """
 
 _FAILURE_PROMPT = """\
@@ -318,7 +327,10 @@ class SkillExtractor:
         response = await self._llm.chat(messages)
 
         self._accumulate_usage(response.usage)
-        return self._parse_response(response.content)
+        skill = self._parse_response(response.content)
+        if skill is not None and not _passes_quality_check(skill, is_success):
+            return None
+        return skill
 
     def _build_messages(
         self,
@@ -418,6 +430,46 @@ class SkillExtractor:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+_CORRECTIVE_KEYWORDS = frozenset({
+    "correction", "corrective", "fix", "fixed", "loop", "retry",
+    "repetitive", "broke", "wrong", "undo",
+})
+
+
+def _passes_quality_check(skill: "Skill", is_success: bool) -> bool:
+    """Return ``False`` when the extracted skill is likely low-quality.
+
+    Filters:
+    1. Successful trajectories should not produce skills whose description
+       contains error-recovery language — that signals the LLM misread the
+       trajectory.
+    2. Skills with zero non-open_app steps are too trivial to keep.
+    """
+    desc_lower = skill.description.lower()
+
+    # Filter 1: corrective language in a success-extracted skill
+    if is_success:
+        for kw in _CORRECTIVE_KEYWORDS:
+            if kw in desc_lower:
+                logger.info(
+                    "Quality filter: rejecting skill %r — corrective keyword %r "
+                    "in description of a successful trajectory",
+                    skill.name, kw,
+                )
+                return False
+
+    # Filter 2: trivial skill (only open_app / wait steps)
+    substantive = [s for s in skill.steps if s.action_type not in ("open_app", "wait")]
+    if not substantive:
+        logger.info(
+            "Quality filter: rejecting skill %r — no substantive steps",
+            skill.name,
+        )
+        return False
+
+    return True
+
 
 def _encode_image_b64(path: str) -> str | None:
     """Return base64-encoded PNG of *path* scaled to 1/4 width and height, or ``None`` on error."""

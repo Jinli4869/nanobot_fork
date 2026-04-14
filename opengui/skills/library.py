@@ -543,6 +543,75 @@ class SkillLibrary:
                 break
         return results
 
+    # -- Redundancy cleanup ---------------------------------------------------
+
+    def cleanup_app_skills(
+        self, platform: str, app: str, *, min_count: int = 3
+    ) -> list[str]:
+        """Remove redundant skills for a given *platform*/*app* pair.
+
+        Triggered after ``add_or_merge`` when the per-app skill count reaches
+        *min_count*.  Returns the list of removed skill IDs.
+
+        Cleanup rules (applied in order):
+        1. Remove zero-success skills whose steps are a prefix of a
+           higher-confidence sibling (superseded).
+        2. Remove skills with ``failure_streak >= 3`` and zero successes
+           (persistently failing, not worth waiting for 5 attempts).
+        """
+        from opengui.skills.data import compute_confidence
+
+        normalized_app = self._normalize_filter_app(platform, app) or app
+        candidates = [
+            s for s in self._skills.values()
+            if s.platform == platform and s.app == normalized_app
+        ]
+        if len(candidates) < min_count:
+            return []
+
+        removed: list[str] = []
+
+        # Rule 1: superseded prefix skills with zero success
+        for skill in list(candidates):
+            if skill.success_count > 0:
+                continue
+            sig = _action_signature(skill)
+            for other in candidates:
+                if other.skill_id == skill.skill_id:
+                    continue
+                other_sig = _action_signature(other)
+                # Check if skill is a strict prefix of other
+                if (
+                    len(sig) < len(other_sig)
+                    and other_sig[: len(sig)] == sig
+                    and compute_confidence(other) > compute_confidence(skill)
+                ):
+                    self._remove_internal(skill.skill_id)
+                    removed.append(skill.skill_id)
+                    candidates = [c for c in candidates if c.skill_id != skill.skill_id]
+                    logger.info(
+                        "Cleanup: removed superseded skill %s [%s] "
+                        "(prefix of %s [%s])",
+                        skill.name, skill.skill_id[:8],
+                        other.name, other.skill_id[:8],
+                    )
+                    break
+
+        # Rule 2: persistently failing skills (failure_streak >= 3, zero success)
+        for skill in list(candidates):
+            if skill.skill_id in removed:
+                continue
+            if skill.failure_streak >= 3 and skill.success_count == 0:
+                self._remove_internal(skill.skill_id)
+                removed.append(skill.skill_id)
+                logger.info(
+                    "Cleanup: removed persistently failing skill %s [%s] "
+                    "(failure_streak=%d, success=0)",
+                    skill.name, skill.skill_id[:8], skill.failure_streak,
+                )
+
+        return removed
+
     # -- Persistence ---------------------------------------------------------
 
     def load_all(self) -> None:
