@@ -35,7 +35,7 @@
 
 - Checkpoint ID: CP-S1-20260414-D
 - Date: 2026-04-14
-- Commit: `<pending>`
+- Commit: `51e23bc`
 - Scope: Added normalized failure labels (`failure_label`) to attempt-level trace events and regression tests.
 - Validation: `PYTHONPATH=. pytest -q tests/test_opengui.py::test_agent_classifies_failure_labels tests/test_opengui.py::test_agent_attempt_result_trace_includes_failure_label tests/test_opengui.py::test_agent_trace_records_prompt_and_model_details tests/test_opengui_p1_trajectory.py`
-- Rollback: `git revert <pending_commit>`
+- Rollback: `git revert 51e23bc`
