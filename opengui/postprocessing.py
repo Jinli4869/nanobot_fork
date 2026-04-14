@@ -195,6 +195,15 @@ class PostRunProcessor:
                 trace_path,
                 decision,
             )
+
+            # Cleanup redundant same-app skills after successful insertion
+            if decision in ("ADD", "MERGE", "KEEP_NEW"):
+                removed = library.cleanup_app_skills(skill.platform, skill.app)
+                if removed:
+                    logger.info(
+                        "Post-extraction cleanup removed %d skill(s): %s",
+                        len(removed), removed,
+                    )
             self._write_extraction_result(trace_path, {
                 "status": "processed",
                 "decision": decision,

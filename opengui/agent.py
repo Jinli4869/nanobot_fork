@@ -649,7 +649,7 @@ class GuiAgent:
         skill_executor: Any = None,
         shortcut_executor: Any = None,
         memory_top_k: int = 5,
-        skill_threshold: float = 0.6,
+        skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
@@ -855,6 +855,16 @@ class GuiAgent:
         skill_exec_success = (
             skill_result is not None and skill_result.state.value == "succeeded"
         ) if skill_result is not None else result.success
+
+        # 7b. Agent compensation detection — if the skill "succeeded" but the
+        #     agent needed significantly more steps than the skill itself had,
+        #     the skill didn't actually advance the task.  Demote to failure.
+        if skill_exec_success and skill_result is not None and result is not None:
+            skill_step_count = len(getattr(skill_result, "step_results", ()) or ())
+            agent_steps = getattr(result, "steps_taken", 0)
+            if agent_steps > skill_step_count + 1:
+                skill_exec_success = False
+
         await self._skill_maintenance(skill_match, skill_exec_success)
 
         return result
@@ -2378,7 +2388,7 @@ class GuiAgent:
 
         new_conf = compute_confidence(updated)
         total_attempts = updated.success_count + updated.failure_count
-        if total_attempts >= 5 and new_conf < 0.3:
+        if total_attempts >= 5 and new_conf < 0.25:
             self._skill_library.remove(skill.skill_id)
         else:
             self._skill_library.update(skill.skill_id, updated)
