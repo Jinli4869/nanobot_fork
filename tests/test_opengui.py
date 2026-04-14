@@ -11,7 +11,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from opengui.action import Action, ActionError, parse_action, resolve_coordinate
-from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
+from opengui.agent import (
+    GuiAgent,
+    StagnationSignal,
+    _AgentActionGrounder,
+    _AgentSubgoalRunner,
+)
 from opengui.agent_profiles import normalize_profile_response
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
@@ -839,6 +844,91 @@ async def test_agent_attempt_result_trace_includes_failure_label(tmp_path: Path)
     events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
     attempt_result = next(event for event in events if event["event"] == "attempt_result")
     assert attempt_result["failure_label"] == "max_steps_exceeded"
+
+
+def test_agent_thinking_mode_state_machine_is_deterministic(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "thinking mode"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=10,
+        include_date_context=False,
+    )
+
+    first = agent._select_thinking_mode(
+        step_index=1,
+        stagnation_signal=StagnationSignal(),
+        previous_mode="fast",
+        careful_mode_until_step=0,
+    )
+    assert first.mode == "fast"
+    assert first.reason == "default_fast"
+    assert first.switched is False
+
+    second = agent._select_thinking_mode(
+        step_index=2,
+        stagnation_signal=StagnationSignal(detected=True, reason="consecutive_waits", repeat_count=2),
+        previous_mode=first.mode,
+        careful_mode_until_step=first.next_careful_mode_until_step,
+    )
+    assert second.mode == "careful"
+    assert second.reason.startswith("stagnation:")
+    assert second.switched is True
+    assert second.next_careful_mode_until_step >= 3
+
+    third = agent._select_thinking_mode(
+        step_index=3,
+        stagnation_signal=StagnationSignal(),
+        previous_mode=second.mode,
+        careful_mode_until_step=second.next_careful_mode_until_step,
+    )
+    assert third.mode == "careful"
+    assert third.reason == "careful_cooldown"
+
+
+@pytest.mark.asyncio
+async def test_agent_trace_records_thinking_mode_transition_event(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: wait",
+            tool_calls=[ToolCall(id="call-1", name="computer_use", arguments={"action_type": "wait", "duration_ms": 1})],
+        ),
+        LLMResponse(
+            content="Action: wait",
+            tool_calls=[ToolCall(id="call-2", name="computer_use", arguments={"action_type": "wait", "duration_ms": 1})],
+        ),
+        LLMResponse(
+            content="Action: wait",
+            tool_calls=[ToolCall(id="call-3", name="computer_use", arguments={"action_type": "wait", "duration_ms": 1})],
+        ),
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[ToolCall(id="call-4", name="computer_use", arguments={"action_type": "done", "status": "success"})],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "thinking transition"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=6,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Wait and finish", max_retries=1)
+
+    assert result.success is True
+    assert result.trace_path is not None
+    events = [
+        json.loads(line)
+        for line in (Path(result.trace_path) / "trace.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    transitions = [event for event in events if event.get("event") == "thinking_mode_transition"]
+    assert transitions, "Expected at least one thinking_mode_transition event."
+    assert transitions[0]["from_mode"] == "fast"
+    assert transitions[0]["to_mode"] == "careful"
+    assert transitions[0]["mode_reason"].startswith("stagnation:")
 
 
 @pytest.mark.asyncio

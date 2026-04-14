@@ -123,6 +123,16 @@ class StagnationSignal:
     repeat_count: int = 0
 
 
+@dataclass(frozen=True)
+class ThinkingModeDecision:
+    """State-machine decision for fast execution vs careful reasoning mode."""
+
+    mode: str
+    reason: str
+    switched: bool
+    next_careful_mode_until_step: int
+
+
 # ---------------------------------------------------------------------------
 # Tool schema
 # ---------------------------------------------------------------------------
@@ -643,6 +653,7 @@ class GuiAgent:
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
     _STAGNATION_REPEAT_THRESHOLD = 3
     _STAGNATION_WAIT_THRESHOLD = 2
+    _CAREFUL_MODE_MIN_STEPS = 2
     _FAILURE_LABEL_UNKNOWN = "unknown_failure"
 
     def __init__(
@@ -919,16 +930,37 @@ class GuiAgent:
         )
 
         history: list[HistoryTurn] = []
+        current_thinking_mode = "fast"
+        careful_mode_until_step = 0
 
         # 4. Step loop
         steps_taken = 0
         for step in range(self.max_steps):
             step_index = step + 1
             stagnation_signal = self._detect_stagnation(history)
-            thinking_mode = self._select_thinking_mode(
+            thinking_mode_decision = self._select_thinking_mode(
                 step_index=step_index,
                 stagnation_signal=stagnation_signal,
+                previous_mode=current_thinking_mode,
+                careful_mode_until_step=careful_mode_until_step,
             )
+            thinking_mode = thinking_mode_decision.mode
+            careful_mode_until_step = max(
+                careful_mode_until_step,
+                thinking_mode_decision.next_careful_mode_until_step,
+            )
+            if thinking_mode_decision.switched:
+                await self._log_attempt_event(
+                    run_dir,
+                    "thinking_mode_transition",
+                    step_index=step_index,
+                    from_mode=current_thinking_mode,
+                    to_mode=thinking_mode,
+                    mode_reason=thinking_mode_decision.reason,
+                    stagnation_detected=stagnation_signal.detected,
+                    stagnation_reason=stagnation_signal.reason,
+                )
+            current_thinking_mode = thinking_mode
             messages = self._build_messages(
                 task=task,
                 current_observation=obs,
@@ -1075,6 +1107,8 @@ class GuiAgent:
                 "execution": result.execution_snapshot,
                 "stability": {
                     "thinking_mode": thinking_mode,
+                    "thinking_mode_reason": thinking_mode_decision.reason,
+                    "thinking_mode_switched": thinking_mode_decision.switched,
                     "stagnation_detected": stagnation_signal.detected,
                     "stagnation_reason": stagnation_signal.reason,
                     "repeat_count": stagnation_signal.repeat_count,
@@ -1117,6 +1151,8 @@ class GuiAgent:
                 execution=result.execution_snapshot,
                 stability={
                     "thinking_mode": thinking_mode,
+                    "thinking_mode_reason": thinking_mode_decision.reason,
+                    "thinking_mode_switched": thinking_mode_decision.switched,
                     "stagnation_detected": stagnation_signal.detected,
                     "stagnation_reason": stagnation_signal.reason,
                     "repeat_count": stagnation_signal.repeat_count,
@@ -1517,14 +1553,39 @@ class GuiAgent:
         *,
         step_index: int,
         stagnation_signal: StagnationSignal,
-    ) -> str:
+        previous_mode: str,
+        careful_mode_until_step: int,
+    ) -> ThinkingModeDecision:
+        next_careful_mode_until_step = careful_mode_until_step
+        late_stage_threshold = max(3, int(self.max_steps * 0.7))
+        mode = "fast"
+        reason = "default_fast"
+
         if stagnation_signal.detected:
-            return "careful"
-        if self._active_retry_summaries:
-            return "careful"
-        if step_index >= max(3, int(self.max_steps * 0.7)):
-            return "careful"
-        return "fast"
+            mode = "careful"
+            reason = f"stagnation:{stagnation_signal.reason or 'unknown'}"
+        elif self._active_retry_summaries:
+            mode = "careful"
+            reason = "retry_history_present"
+        elif step_index >= late_stage_threshold:
+            mode = "careful"
+            reason = "late_stage_guard"
+        elif step_index <= careful_mode_until_step:
+            mode = "careful"
+            reason = "careful_cooldown"
+
+        if mode == "careful":
+            next_careful_mode_until_step = max(
+                next_careful_mode_until_step,
+                step_index + self._CAREFUL_MODE_MIN_STEPS - 1,
+            )
+
+        return ThinkingModeDecision(
+            mode=mode,
+            reason=reason,
+            switched=mode != previous_mode,
+            next_careful_mode_until_step=next_careful_mode_until_step,
+        )
 
     @classmethod
     def _classify_failure_label(
