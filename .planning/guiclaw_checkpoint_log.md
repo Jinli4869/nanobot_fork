@@ -39,3 +39,10 @@
 - Scope: Added normalized failure labels (`failure_label`) to attempt-level trace events and regression tests.
 - Validation: `PYTHONPATH=. pytest -q tests/test_opengui.py::test_agent_classifies_failure_labels tests/test_opengui.py::test_agent_attempt_result_trace_includes_failure_label tests/test_opengui.py::test_agent_trace_records_prompt_and_model_details tests/test_opengui_p1_trajectory.py`
 - Rollback: `git revert 51e23bc`
+
+- Checkpoint ID: CP-S2-20260414-E
+- Date: 2026-04-14
+- Commit: `33f4cb4`
+- Scope: Added fast/careful thinking-mode state machine with cooldown and `thinking_mode_transition` trace events.
+- Validation: `PYTHONPATH=. pytest -q tests/test_opengui.py::test_agent_thinking_mode_state_machine_is_deterministic tests/test_opengui.py::test_agent_trace_records_thinking_mode_transition_event tests/test_opengui.py::test_agent_attempt_result_trace_includes_failure_label tests/test_opengui_p1_trajectory.py`
+- Rollback: `git revert 33f4cb4`
