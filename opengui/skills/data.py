@@ -136,17 +136,23 @@ class Skill:
 
 
 def compute_confidence(skill: Skill) -> float:
-    """Compute skill confidence from cumulative success/failure counts.
+    """Compute skill confidence using Laplace (add-one) smoothing.
 
-    Returns the fraction of successful runs.  New skills with no run history
-    default to ``1.0`` (optimistic prior — assume capable until proven
-    otherwise).
+    Uses ``(success + 1) / (success + failure + 2)`` to avoid the
+    death-spiral where a single failure drives confidence to zero and
+    permanently locks out an otherwise correct skill.
+
+    Reference values:
+    - No history (0/0) → 0.50  (neutral prior)
+    - 1 failure  (0/1) → 0.33  (penalised but recoverable)
+    - 1 success  (1/1) → 0.67
+    - 2 failures (0/2) → 0.25
+    - 5 failures (0/5) → 0.14
 
     Args:
         skill: The skill whose confidence to compute.
 
     Returns:
-        A float in ``[0.0, 1.0]``.  ``1.0`` for skills with no run history.
+        A float in ``(0.0, 1.0)``.
     """
-    total = skill.success_count + skill.failure_count
-    return skill.success_count / total if total > 0 else 1.0
+    return (skill.success_count + 1) / (skill.success_count + skill.failure_count + 2)
