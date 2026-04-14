@@ -203,6 +203,7 @@ class SkillLibrary:
                 "Skill dedup decision=ADD  new=%s [%s] app=%s  (no conflict found)",
                 skill.name, skill.skill_id[:8], skill.app,
             )
+            self._cleanup_superseded_prefixes(skill.platform, skill.app)
             return "ADD", skill.skill_id
 
         # Log conflict details with similarity scores for diagnostics.
@@ -228,6 +229,7 @@ class SkillLibrary:
                 "(kept existing id, aggregated stats)",
                 merged.name, merged.skill_id[:8],
             )
+            self._cleanup_superseded_prefixes(skill.platform, skill.app)
             return "MERGE", merged.skill_id
         elif decision == "KEEP_NEW":
             self._remove_internal(conflict.skill_id)
@@ -238,6 +240,7 @@ class SkillLibrary:
                 skill.name, skill.skill_id[:8],
                 conflict.name, conflict.skill_id[:8],
             )
+            self._cleanup_superseded_prefixes(skill.platform, skill.app)
             return "KEEP_NEW", skill.skill_id
         elif decision == "KEEP_OLD":
             logger.info(
@@ -255,6 +258,7 @@ class SkillLibrary:
                 "(conflict found but decision=ADD)",
                 skill.name, skill.skill_id[:8], skill.app,
             )
+            self._cleanup_superseded_prefixes(skill.platform, skill.app)
             return "ADD", skill.skill_id
 
     def add(self, skill: Skill) -> None:
@@ -545,6 +549,43 @@ class SkillLibrary:
 
     # -- Redundancy cleanup ---------------------------------------------------
 
+    def _cleanup_superseded_prefixes(self, platform: str, app: str) -> None:
+        """Remove zero-success skills whose step sequence is a strict prefix of a
+        higher-confidence sibling in the same (platform, app) bucket.
+
+        Called automatically at the end of every ADD / MERGE / KEEP_NEW branch
+        in :meth:`add_or_merge` so callers don't need to orchestrate cleanup.
+        """
+        from opengui.skills.data import compute_confidence
+
+        normalized_app = self._normalize_filter_app(platform, app) or app
+        candidates = [
+            s for s in self._skills.values()
+            if s.platform == platform and s.app == normalized_app
+        ]
+        for skill in list(candidates):
+            if skill.success_count > 0:
+                continue
+            sig = _action_signature(skill)
+            for other in candidates:
+                if other.skill_id == skill.skill_id:
+                    continue
+                other_sig = _action_signature(other)
+                if (
+                    len(sig) < len(other_sig)
+                    and other_sig[: len(sig)] == sig
+                    and compute_confidence(other) > compute_confidence(skill)
+                ):
+                    self._remove_internal(skill.skill_id)
+                    candidates = [c for c in candidates if c.skill_id != skill.skill_id]
+                    logger.info(
+                        "Cleanup: removed superseded prefix skill %s [%s] "
+                        "(prefix of %s [%s])",
+                        skill.name, skill.skill_id[:8],
+                        other.name, other.skill_id[:8],
+                    )
+                    break
+
     def cleanup_app_skills(
         self, platform: str, app: str, *, min_count: int = 3
     ) -> list[str]:
@@ -754,5 +795,13 @@ class SkillLibrary:
         parts.extend(skill.tags)
         if skill.preconditions:
             parts.extend(skill.preconditions)
-        return " ".join(parts)
+        for step in skill.steps:
+            # Strip {{param}} placeholders, keep semantic words
+            target_clean = re.sub(r"\{\{[^}]+\}\}", "", step.target).strip()
+            if target_clean:
+                parts.append(target_clean)
+            parts.append(step.action_type)
+            if step.valid_state and step.valid_state.lower() != "no need to verify":
+                parts.append(step.valid_state)
+        return " ".join(p for p in parts if p)
 
