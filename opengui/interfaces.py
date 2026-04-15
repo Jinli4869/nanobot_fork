@@ -72,6 +72,8 @@ class LLMProvider(typing.Protocol):
         messages: list[dict[str, typing.Any]],
         tools: list[dict[str, typing.Any]] | None = None,
         tool_choice: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse: ...
 
 

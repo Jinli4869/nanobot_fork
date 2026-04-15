@@ -24,13 +24,18 @@ class NanobotLLMAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> OpenGuiLLMResponse:
-        nano_resp = await self._provider.chat_with_retry(
+        kwargs: dict[str, Any] = dict(
             messages=messages,
             tools=tools,
-            model=self._model,
+            model=model or self._model,
             tool_choice=tool_choice,
         )
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
+        nano_resp = await self._provider.chat_with_retry(**kwargs)
         tool_calls = [
             ToolCall(id=call.id, name=call.name, arguments=call.arguments)
             for call in (nano_resp.tool_calls or [])
