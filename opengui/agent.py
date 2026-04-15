@@ -115,6 +115,59 @@ class _StepExecutionError(RuntimeError):
 # Tool schema
 # ---------------------------------------------------------------------------
 
+def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
+    """Build a minimal computer_use tool schema restricted to *action_type*.
+
+    Sending the full 13-action schema on every grounder call adds ~200-300
+    unnecessary input tokens.  Since the target action type is already known
+    at call time, we strip the schema down to only the properties that are
+    relevant for that action, cutting prompt size by ~60-70 %.
+    """
+    _coord = {
+        "x": {"type": "number", "description": "Primary X coordinate."},
+        "y": {"type": "number", "description": "Primary Y coordinate."},
+        "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
+    }
+    _coord2 = {
+        "x2": {"type": "number", "description": "End X for swipe/drag."},
+        "y2": {"type": "number", "description": "End Y for swipe/drag."},
+    }
+    _text = {"text": {"type": "string", "description": "Text input or app identifier."}}
+    _dur = {"duration_ms": {"type": "integer", "description": "Duration in ms."}}
+
+    prop_sets: dict[str, dict] = {
+        "tap":               {**_coord},
+        "double_tap":        {**_coord},
+        "long_press":        {**_coord, **_dur},
+        "swipe":             {**_coord, **_coord2},
+        "drag":              {**_coord, **_coord2, **_dur},
+        "input_text":        {**_text, **_coord},
+        "hotkey":            {"key": {"type": "array", "items": {"type": "string"}, "description": "Keys for hotkey."}},
+        "scroll":            {**_coord, "text": {"type": "string", "description": "Direction."}, "pixels": {"type": "integer", "description": "Scroll distance."}},
+        "wait":              {},
+        "open_app":          {**_text},
+        "close_app":         {**_text},
+        "back":              {},
+        "home":              {},
+        "done":              {"status": {"type": "string", "enum": ["success", "failure"]}},
+        "request_intervention": {**_text},
+    }
+    props = prop_sets.get(action_type, {})
+    props = {"action_type": {"type": "string", "enum": [action_type]}, **props}
+    return {
+        "type": "function",
+        "function": {
+            "name": "computer_use",
+            "description": f"Perform a {action_type} GUI action on the device screen.",
+            "parameters": {
+                "type": "object",
+                "properties": props,
+                "required": ["action_type"],
+            },
+        },
+    }
+
+
 _COMPUTER_USE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -196,7 +249,7 @@ class _AgentActionGrounder:
             extra_ctx = f"\nContext: {step.parameters}"
 
         prompt = (
-            f"Look at the screenshot carefully. Perform the following action:\n"
+            f"Locate the target UI element on screen and execute the action.\n"
             f"  action_type: {step.action_type}\n"
             f"  target: {target}{extra_ctx}\n\n"
             f"{self._profile_response_instruction(target_action=step.action_type)}"
@@ -220,8 +273,10 @@ class _AgentActionGrounder:
                 native_tools_enabled = profile_uses_native_tools(self._agent_profile)
                 response = await self._llm.chat(
                     messages=messages,
-                    tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                    tools=[_minimal_tool_schema(step.action_type)] if native_tools_enabled else None,
                     tool_choice="required" if native_tools_enabled else None,
+                    model=self._model or None,
+                    max_tokens=256,
                 )
             except Exception as exc:
                 raise RuntimeError(f"ActionGrounder LLM call failed: {exc}") from exc
@@ -365,6 +420,7 @@ class _AgentSubgoalRunner:
                     messages=messages,
                     tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
                     tool_choice="required" if native_tools_enabled else None,
+                    model=self._model or None,
                 )
             except Exception as exc:
                 logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
@@ -457,8 +513,44 @@ class _AgentSubgoalRunner:
                 )
                 continue
 
-            # Skip terminal actions inside a subgoal
-            if action.action_type in ("done", "request_intervention"):
+            # Handle terminal actions inside a subgoal
+            if action.action_type == "done":
+                substep_dur = time.monotonic() - substep_start
+                goal_reached = getattr(action, "status", None) == "success"
+                summary = "goal reached by model judgment" if goal_reached else "model declared goal unreachable"
+                summaries.append(f"Sub-step {i+1}: {summary}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=action,
+                    action_summary=summary,
+                    screenshot_path=None,
+                    goal_reached=goal_reached,
+                    error=None if goal_reached else "model declared goal unreachable",
+                    duration_s=substep_dur,
+                    token_usage=None,
+                )
+                if goal_reached:
+                    if self._trajectory_recorder is not None:
+                        self._trajectory_recorder.record_event(
+                            "subgoal_result",
+                            goal=goal,
+                            success=True,
+                            steps_taken=i + 1,
+                            action_summaries=summaries,
+                            error=None,
+                        )
+                    return SubgoalResult(
+                        success=True,
+                        steps_taken=i + 1,
+                        action_summaries=summaries,
+                        final_screenshot=current_screenshot,
+                        token_usage=dict(subgoal_usage),
+                    )
+                break  # model says goal unreachable — let caller fall back
+
+            if action.action_type == "request_intervention":
                 summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
                 substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
