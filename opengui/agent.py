@@ -1478,7 +1478,12 @@ class GuiAgent:
         memory_context: str | None = None,
         skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build a Mobile-Agent-style prompt window with summaries and recent screenshots."""
+        """Build the prompt for the current step.
+
+        History is represented as text-only action summaries in the instruction
+        prompt. Only the current screenshot is attached — no history screenshots
+        or raw tool-call parameters are replayed into the context.
+        """
         messages: list[dict[str, Any]] = [{
             "role": "system",
             "content": build_system_prompt(
@@ -1499,36 +1504,15 @@ class GuiAgent:
             app_hint=app_hint,
             skill_context=skill_context,
         )
-        recent_history = history[-self.history_image_window:]
-
-        if recent_history:
-            for idx, turn in enumerate(recent_history):
-                messages.append(
-                    self._history_user_message(
-                        turn.observation,
-                        prompt_text if idx == 0 else None,
-                    )
-                )
-                messages.append(turn.assistant_message)
-                messages.append(turn.tool_result_message)
-            messages.append(
-                self._current_user_message(
-                    current_observation,
-                    task=task,
-                    step_index=len(history),
-                    app_hint=app_hint,
-                )
+        messages.append(
+            self._current_user_message(
+                current_observation,
+                task=task,
+                step_index=len(history),
+                app_hint=app_hint,
+                prompt_text=prompt_text,
             )
-        else:
-            messages.append(
-                self._current_user_message(
-                    current_observation,
-                    task=task,
-                    step_index=0,
-                    app_hint=app_hint,
-                    prompt_text=prompt_text,
-                )
-            )
+        )
 
         return messages
 
@@ -1542,8 +1526,7 @@ class GuiAgent:
         skill_context: str | None = None,
     ) -> str:
         """Build the text prompt that frames the current step."""
-        summarized_history = history[: -self.history_image_window] if len(history) > self.history_image_window else []
-        previous_actions = self._format_previous_actions(summarized_history)
+        previous_actions = self._format_previous_actions(history)
         lines = [
             "Please generate the next move according to the UI screenshot, instruction and previous actions.",
             "",
