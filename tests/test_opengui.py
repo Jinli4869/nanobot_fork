@@ -41,7 +41,7 @@ class _RecordingLLM(_ScriptedLLM):
         super().__init__(responses)
         self.calls: list[list[dict]] = []
 
-    async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+    async def chat(self, messages, tools=None, tool_choice=None, model=None, max_tokens=None) -> LLMResponse:
         self.calls.append(copy.deepcopy(messages))
         return await super().chat(messages, tools=tools, tool_choice=tool_choice)
 
@@ -627,6 +627,135 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_path: Path) -> None:
+    """default profile + gemini model → relative_999: tap(900, 941) must get relative=True."""
+    screenshot = tmp_path / "subgoal.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="tap the target",
+            tool_calls=[ToolCall(
+                id="tc-0",
+                name="computer_use",
+                arguments={"action_type": "tap", "x": 900, "y": 941},
+            )],
+        )
+    ])
+    backend = _SkillTestBackend()
+    validator = _RecordingValidator([True])
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=backend,
+        state_validator=validator,
+        model="gemini-2.0-flash",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    result = await runner.run_subgoal("Tap the target button", screenshot, max_steps=1)
+
+    assert result.success is True
+    assert backend.executed_actions
+    action = backend.executed_actions[0]
+    assert action.action_type == "tap"
+    assert action.relative is True
+
+
+@pytest.mark.asyncio
+async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> None:
+    """execute() and observe() must receive the step_timeout passed at construction."""
+    screenshot = tmp_path / "subgoal.png"
+    screenshot.write_bytes(b"png")
+
+    execute_timeouts: list[float] = []
+    observe_timeouts: list[float] = []
+
+    class _TimeoutCapturingBackend(_SkillTestBackend):
+        async def execute(self, action, timeout: float = 5.0) -> str:
+            execute_timeouts.append(timeout)
+            return await super().execute(action, timeout=timeout)
+
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            observe_timeouts.append(timeout)
+            return await super().observe(screenshot_path, timeout=timeout)
+
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="tap",
+            tool_calls=[ToolCall(
+                id="tc-0",
+                name="computer_use",
+                arguments={"action_type": "tap", "x": 10, "y": 20},
+            )],
+        )
+    ])
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=_TimeoutCapturingBackend(),
+        state_validator=_RecordingValidator([True]),
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts",
+        step_timeout=42.0,
+    )
+
+    await runner.run_subgoal("Confirm timeout propagation", screenshot, max_steps=1)
+
+    assert execute_timeouts == [42.0]
+    assert observe_timeouts == [42.0]
+
+
+@pytest.mark.asyncio
+async def test_subgoal_runner_settle_behavior(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tap gets a 0.5s settle before observe; wait action does not."""
+    screenshot = tmp_path / "subgoal.png"
+    screenshot.write_bytes(b"png")
+    sleep_calls: list[float] = []
+    original_sleep = asyncio.sleep
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+        await original_sleep(0)
+
+    monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
+
+    # First LLM call returns tap; second returns wait
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="tap",
+            tool_calls=[ToolCall(
+                id="tc-0",
+                name="computer_use",
+                arguments={"action_type": "tap", "x": 10, "y": 20},
+            )],
+        ),
+        LLMResponse(
+            content="wait",
+            tool_calls=[ToolCall(
+                id="tc-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 500},
+            )],
+        ),
+    ])
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=_SkillTestBackend(),
+        # validator returns False on tap step, True on wait step
+        state_validator=_RecordingValidator([False, True]),
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts",
+    )
+
+    result = await runner.run_subgoal("Settle behavior check", screenshot, max_steps=2)
+
+    assert result.success is True
+    # tap must produce exactly one settle sleep of 0.5s
+    assert sleep_calls == [0.5]
+
+
+@pytest.mark.asyncio
 async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> None:
     llm = _RecordingLLM([
         LLMResponse(
@@ -1131,6 +1260,46 @@ async def test_adb_backend_enter_and_app_switch_mapping(
 
 
 @pytest.mark.asyncio
+async def test_adb_backend_hotkey_uses_keycombination_for_multiple_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    await backend.execute(
+        parse_action({"action_type": "hotkey", "key": ["power", "volume_down"]})
+    )
+
+    assert run_mock.await_count == 1
+    assert run_mock.await_args_list[0].args == (
+        "shell", "input", "keycombination", "KEYCODE_POWER", "KEYCODE_VOLUME_DOWN",
+    )
+    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_hotkey_multi_key_unsupported_raises_clear_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(
+        side_effect=AdbError(
+            "adb failed (exit 1): adb shell input keycombination KEYCODE_POWER KEYCODE_VOLUME_DOWN\n"
+            "stderr: Error: Unknown command: keycombination"
+        )
+    )
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    with pytest.raises(AdbError, match="does not support simultaneous multi-key hotkeys"):
+        await backend.execute(
+            parse_action({"action_type": "hotkey", "key": ["power", "volume_down"]})
+        )
+
+    assert run_mock.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:
     agent = GuiAgent(
         _ScriptedLLM([
@@ -1483,7 +1652,7 @@ async def test_agent_waits_for_ui_to_settle_before_observing(
     assert events[:4] == [
         "observe:step_000.png",
         "execute:tap",
-        "sleep:0.25",
+        "sleep:0.5",
         "observe:step_001.png",
     ]
 
