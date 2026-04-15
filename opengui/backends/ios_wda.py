@@ -235,6 +235,8 @@ class WdaBackend:
             text = action.text or ""
             if text:
                 await self._wda_call(session.send_keys, text)
+            if action.auto_enter:
+                await self._wda_call(session.send_keys, "\n")
 
         elif t == "hotkey":
             keys = action.key or []
