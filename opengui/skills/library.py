@@ -184,13 +184,28 @@ class SkillLibrary:
         Score = 0.65 * embedding_sim + 0.25 * action_sim + 0.10 * name_token_sim.
         When no embedding provider is configured, falls back to a stricter
         action + name gate.
+    search_mode:
+        Retrieval strategy for :meth:`search`. One of:
+
+        - ``"hybrid"`` (default): weighted blend of BM25 + embedding scores.
+          Backward-compatible with the original behaviour.
+        - ``"rrf"``: Reciprocal Rank Fusion — combines BM25 and embedding
+          *rankings* without score normalization artifacts. More robust when
+          score distributions differ across queries.
+        - ``"hybrid_comprehensive"``: two-phase retrieval. Phase 1 selects
+          ``top_k * 2`` candidates via hybrid scoring; Phase 2 re-ranks using
+          a comprehensive similarity combining name-token Jaccard similarity and
+          description embedding cosine.
+
+        Falls back to ``"hybrid"`` for unrecognized values.
     """
 
     store_dir: Path
     embedding_provider: EmbeddingProvider | None = None
     merge_llm: LLMProvider | None = None
-    alpha: float = 0.6
+    alpha: float = 0.7
     merge_conflict_threshold: float = 0.45
+    search_mode: str = "rrf"  # "hybrid" | "rrf" | "hybrid_comprehensive"
 
     _skills: dict[str, Skill] = field(default_factory=dict, repr=False)
     _embeddings: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
@@ -201,8 +216,19 @@ class SkillLibrary:
     _index_dirty: bool = field(default=True, repr=False)
     _loaded_mtime_ns: int = field(default=0, repr=False)
 
+    _VALID_SEARCH_MODES: typing.ClassVar[frozenset[str]] = frozenset(
+        {"hybrid", "rrf", "hybrid_comprehensive"}
+    )
+
     def __post_init__(self) -> None:
         self.store_dir = Path(self.store_dir)
+        if self.search_mode not in self._VALID_SEARCH_MODES:
+            logger.warning(
+                "Unknown search_mode %r; falling back to 'hybrid'. "
+                "Valid options: %s",
+                self.search_mode,
+                sorted(self._VALID_SEARCH_MODES),
+            )
         self.load_all()
 
     # -- CRUD ----------------------------------------------------------------
@@ -524,6 +550,191 @@ class SkillLibrary:
 
     # -- Search --------------------------------------------------------------
 
+    async def _search_rrf(
+        self,
+        query: str,
+        *,
+        mask: np.ndarray,
+        bm25_scores: np.ndarray,
+        query_emb: np.ndarray | None,
+        top_k: int,
+        rrf_k: int = 60,
+        min_emb_similarity: float = 0.3,
+    ) -> list[tuple[Skill, float]]:
+        """Reciprocal Rank Fusion retrieval.
+
+        Combines BM25 and embedding *rankings* (not scores) via the RRF formula::
+
+            RRF(item) = 1 / (rrf_k + rank_bm25) + 1 / (rrf_k + rank_emb)
+
+        where ranks are 1-based. This avoids normalization artifacts that arise
+        when blending raw BM25 and cosine scores with different distributions.
+
+        Falls back to BM25-only RRF when ``query_emb`` is None.
+
+        After ranking, the normalized RRF score [0, 1] is scaled by the raw
+        embedding cosine similarity so that the final score reflects actual
+        semantic relevance — preventing the top-ranked item from always
+        receiving score=1.0 regardless of how relevant it actually is.
+        When ``query_emb`` is None, results with BM25-only scores are returned
+        unchanged (no embedding gate is applied).
+
+        Parameters
+        ----------
+        min_emb_similarity:
+            Hard floor on embedding cosine similarity.  Results whose
+            embedding cosine falls below this value are excluded from the
+            output even if they rank first by RRF.  Only applied when an
+            embedding provider is available.
+        """
+        n = len(self._ordered_ids)
+
+        # BM25 ranking: masked-out items sorted to the bottom, then assigned inf rank.
+        bm25_valid = np.where(mask, bm25_scores, -1e9)
+        bm25_ordering = np.argsort(-bm25_valid)  # descending
+        bm25_rank = np.empty(n, dtype=np.float64)
+        for rank, idx in enumerate(bm25_ordering):
+            bm25_rank[idx] = rank
+        bm25_rank[~mask] = np.inf
+
+        emb_scores: np.ndarray | None = None
+        if query_emb is not None:
+            faiss_raw, faiss_idx = self._faiss.search(query_emb, n)
+            emb_scores = np.full(n, -1e9, dtype=np.float32)
+            for s, i in zip(faiss_raw, faiss_idx):
+                if i >= 0:
+                    emb_scores[i] = s
+            emb_scores[~mask] = -1e9
+
+            emb_ordering = np.argsort(-emb_scores.astype(np.float64))
+            emb_rank = np.empty(n, dtype=np.float64)
+            for rank, idx in enumerate(emb_ordering):
+                emb_rank[idx] = rank
+            emb_rank[~mask] = np.inf
+
+            # RRF score using 1-based ranks (0-based rank + 1).
+            rrf_scores = (
+                1.0 / (rrf_k + bm25_rank + 1.0)
+                + 1.0 / (rrf_k + emb_rank + 1.0)
+            )
+        else:
+            rrf_scores = 1.0 / (rrf_k + bm25_rank + 1.0)
+
+        rrf_scores[~mask] = 0.0
+
+        # Normalize RRF ranks to [0, 1].
+        rrf_max = float(rrf_scores.max())
+        if rrf_max > 0:
+            rrf_scores = rrf_scores / rrf_max
+
+        # Scale normalized RRF score by the raw embedding cosine similarity so
+        # that the final score reflects actual semantic relevance.  Without this,
+        # the top-ranked item always receives 1.0 regardless of relevance, making
+        # the caller's threshold check meaningless.
+        if emb_scores is not None:
+            emb_clipped = np.clip(emb_scores, 0.0, 1.0)
+            rrf_scores = rrf_scores * emb_clipped
+
+        ranked = np.argsort(-rrf_scores)
+        results: list[tuple[Skill, float]] = []
+        for idx in ranked:
+            if not mask[idx] or rrf_scores[idx] <= 0:
+                break
+            # Hard gate: exclude results whose raw embedding cosine is too low.
+            if emb_scores is not None and float(emb_scores[idx]) < min_emb_similarity:
+                continue
+            results.append((self._skills[self._ordered_ids[idx]], float(rrf_scores[idx])))
+            if len(results) >= top_k:
+                break
+        return results
+
+    async def _search_hybrid_comprehensive(
+        self,
+        query: str,
+        *,
+        mask: np.ndarray,
+        bm25_scores: np.ndarray,
+        query_emb: np.ndarray | None,
+        top_k: int,
+    ) -> list[tuple[Skill, float]]:
+        """Two-phase retrieval: hybrid candidate selection + comprehensive re-ranking.
+
+        **Phase 1** — retrieve ``top_k * 2`` candidates using standard hybrid
+        BM25 + embedding scoring (same as the ``"hybrid"`` mode).
+
+        **Phase 2** — re-rank each candidate with a comprehensive score that
+        combines name-token Jaccard similarity (query vs. skill name) and
+        description embedding cosine::
+
+            comp_score  = 0.30 * name_sim + 0.70 * desc_sim
+            final_score = 0.60 * hybrid_score + 0.40 * comp_score
+
+        Note: action-sequence similarity is intentionally excluded from
+        retrieval.  It applies to skill-vs-skill deduplication (both sides have
+        action sequences) but not to query-vs-skill retrieval where the query
+        has no action sequence.
+        """
+        n = len(self._ordered_ids)
+        candidate_k = min(top_k * 2, n)
+
+        # --- Phase 1: hybrid scoring ---
+        bm25_copy = bm25_scores.copy()
+        bm25_max = float(bm25_copy[mask].max()) if mask.any() else 0.0
+        if bm25_max > 0:
+            bm25_norm = np.where(mask, bm25_copy / bm25_max, bm25_copy)
+        else:
+            bm25_norm = bm25_copy
+
+        emb_scores: np.ndarray | None = None
+        if query_emb is not None:
+            faiss_raw, faiss_idx = self._faiss.search(query_emb, n)
+            emb_scores = np.full(n, -1e9, dtype=np.float32)
+            for s, i in zip(faiss_raw, faiss_idx):
+                if i >= 0:
+                    emb_scores[i] = s
+            emb_scores[~mask] = -1e9
+            hybrid = (1.0 - self.alpha) * bm25_norm + self.alpha * emb_scores
+        else:
+            hybrid = bm25_norm.copy()
+
+        # Select top candidates by hybrid score.
+        ranked_all = np.argsort(-hybrid)
+        candidate_indices: list[int] = []
+        for idx in ranked_all:
+            if not mask[idx] or hybrid[idx] <= 0:
+                break
+            candidate_indices.append(int(idx))
+            if len(candidate_indices) >= candidate_k:
+                break
+
+        if not candidate_indices:
+            return []
+
+        # --- Phase 2: comprehensive re-ranking ---
+        scored: list[tuple[Skill, float]] = []
+        for idx in candidate_indices:
+            sid = self._ordered_ids[idx]
+            skill = self._skills[sid]
+            hybrid_score = float(hybrid[idx])
+
+            # name_sim: Jaccard between query tokens and skill name tokens.
+            name_sim = _name_token_similarity(query, skill.name)
+
+            # desc_sim: embedding cosine; prefer the already-computed FAISS score.
+            if emb_scores is not None and emb_scores[idx] > -1e8:
+                desc_sim = float(emb_scores[idx])
+            elif sid in self._embeddings and query_emb is not None:
+                desc_sim = _cosine_similarity(query_emb, self._embeddings[sid])
+            else:
+                desc_sim = 0.0
+
+            comp_score = 0.30 * name_sim + 0.70 * desc_sim
+            final_score = 0.60 * hybrid_score + 0.40 * comp_score
+            scored.append((skill, final_score))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return [(skill, score) for skill, score in scored[:top_k] if score > 0]
+
     async def search(
         self,
         query: str,
@@ -532,7 +743,18 @@ class SkillLibrary:
         app: str | None = None,
         top_k: int = 5,
     ) -> list[tuple[Skill, float]]:
-        """Hybrid BM25 + FAISS search. Falls back to pure BM25 if no embeddings."""
+        """Search the skill library using the configured ``search_mode``.
+
+        Supports three modes (controlled by :attr:`search_mode`):
+
+        - ``"hybrid"`` (default): weighted BM25 + embedding blend.
+        - ``"rrf"``: Reciprocal Rank Fusion of BM25 and embedding rankings.
+        - ``"hybrid_comprehensive"``: two-phase hybrid filter + name/embedding
+          re-ranking.
+
+        Falls back to pure BM25 when no embedding provider is configured.
+        Unrecognized ``search_mode`` values fall back to ``"hybrid"``.
+        """
         if not self._skills:
             return []
 
@@ -546,30 +768,47 @@ class SkillLibrary:
         if not any(mask):
             return []
 
-        # BM25
+        # Shared: raw BM25 scores with masked-out items suppressed.
         bm25_scores = np.array(self._bm25.score(query), dtype=np.float32)
         bm25_scores[~mask] = -1e9
 
-        # Normalize BM25 to [0, 1] so it blends properly with cosine similarity
+        # Shared: query embedding — computed once, reused by all modes.
+        query_emb: np.ndarray | None = None
+        if self.embedding_provider is not None:
+            query_emb = (await self.embedding_provider.embed([query]))[0]
+
+        if self.search_mode == "rrf":
+            return await self._search_rrf(
+                query,
+                mask=mask,
+                bm25_scores=bm25_scores,
+                query_emb=query_emb,
+                top_k=top_k,
+            )
+
+        if self.search_mode == "hybrid_comprehensive":
+            return await self._search_hybrid_comprehensive(
+                query,
+                mask=mask,
+                bm25_scores=bm25_scores,
+                query_emb=query_emb,
+                top_k=top_k,
+            )
+
+        # Default "hybrid" mode — backward-compatible weighted blend.
+        # Normalize BM25 to [0, 1] before blending with cosine similarity.
         valid_bm25 = bm25_scores[mask]
         bm25_max = float(valid_bm25.max()) if valid_bm25.size > 0 else 0.0
         if bm25_max > 0:
             bm25_scores = np.where(mask, bm25_scores / bm25_max, bm25_scores)
 
-        # Embedding (optional)
-        if self.embedding_provider is not None:
-            query_emb = await self.embedding_provider.embed([query])
-            faiss_raw, faiss_idx = self._faiss.search(query_emb[0], len(self._ordered_ids))
+        if query_emb is not None:
+            faiss_raw, faiss_idx = self._faiss.search(query_emb, len(self._ordered_ids))
             emb_scores = np.full(len(self._ordered_ids), -1e9, dtype=np.float32)
             for s, i in zip(faiss_raw, faiss_idx):
                 if i >= 0:
                     emb_scores[i] = s
             emb_scores[~mask] = -1e9
-        else:
-            emb_scores = None
-
-        # Blend normalized scores
-        if emb_scores is not None:
             hybrid = (1.0 - self.alpha) * bm25_scores + self.alpha * emb_scores
         else:
             hybrid = bm25_scores.copy()
@@ -855,7 +1094,7 @@ class SkillLibrary:
             target.unlink(missing_ok=True)
             return
 
-        tmp_path = dir_path / (target.name + ".tmp")
+        tmp_path = dir_path / "embeddings.tmp.npy"
         try:
             np.save(str(tmp_path), emb_dict)
             tmp_path.replace(target)
