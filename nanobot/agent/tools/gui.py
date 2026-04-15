@@ -265,6 +265,7 @@ class GuiSubagentTool(Tool):
                     artifacts_root=run_dir,
                     trajectory_recorder=recorder,
                     agent_profile=self._gui_config.agent_profile,
+                    step_timeout=30.0,
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
                     backend=active_backend,

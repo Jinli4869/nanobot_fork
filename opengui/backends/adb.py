@@ -84,6 +84,11 @@ _ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 _YADB_PATH = "/data/local/tmp/yadb"
 _YADB_MAIN_CLASS = "com.ysbing.yadb.Main"
 
+_KEYCOMBINATION_UNSUPPORTED_MARKERS = (
+    "unknown command: keycombination",
+    "invalid arguments for command: keycombination",
+)
+
 
 class AdbError(Exception):
     """Raised when an adb command fails."""
@@ -607,13 +612,29 @@ class AdbBackend:
 
         elif t == "hotkey":
             keys = action.key or []
+            keycodes: list[str] = []
             for k in keys:
                 keycode = _KEYCODE_MAP.get(k.lower().strip())
                 if keycode is None:
                     raise ValueError(
                         f"Unknown key {k!r}. Supported: {sorted(_KEYCODE_MAP.keys())}"
                     )
-                await self._run("shell", "input", "keyevent", keycode, timeout=timeout)
+                keycodes.append(keycode)
+
+            if len(keycodes) >= 2:
+                try:
+                    await self._run("shell", "input", "keycombination", *keycodes, timeout=timeout)
+                except AdbError as exc:
+                    details = f"{exc}\n{exc.stderr}" if exc.stderr else str(exc)
+                    lowered = details.lower()
+                    if any(marker in lowered for marker in _KEYCOMBINATION_UNSUPPORTED_MARKERS):
+                        raise AdbError(
+                            "Device does not support simultaneous multi-key hotkeys via "
+                            "`adb shell input keycombination`."
+                        ) from exc
+                    raise
+            else:
+                await self._run("shell", "input", "keyevent", keycodes[0], timeout=timeout)
 
         elif t == "scroll":
             await self._do_scroll(action, timeout=timeout)
