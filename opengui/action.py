@@ -237,8 +237,10 @@ def _normalize_coordinate_pair(
     if primary_items is not None:
         if len(primary_items) == 1:
             payload[primary_key] = primary_items[0]
-        elif len(primary_items) == 2 and secondary in (None, [], ()):
-            payload[primary_key], payload[secondary_key] = primary_items
+        elif len(primary_items) == 2:
+            payload[primary_key] = primary_items[0]
+            if secondary in (None, [], ()):
+                payload[secondary_key] = primary_items[1]
 
     if secondary_items is not None and len(secondary_items) == 1:
         payload[secondary_key] = secondary_items[0]
