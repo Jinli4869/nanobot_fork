@@ -38,6 +38,9 @@ if typing.TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_POST_ACTION_SETTLE_SECONDS: float = 0.50
+_NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
+
 
 # ---------------------------------------------------------------------------
 # Execution state
@@ -521,10 +524,12 @@ class SkillExecutor:
                 )
                 _merge_usage(total_token_usage, grounding_usage)
                 result_text = await self.backend.execute(action, timeout=timeout)
-                # Allow the app to fully launch before the next step's
+                # Allow the UI to settle before the next step's
                 # screenshot / validate / grounding cycle.
                 if action.action_type == "open_app":
                     await asyncio.sleep(2.0)
+                elif action.action_type not in _NO_SETTLE_ACTIONS:
+                    await asyncio.sleep(_POST_ACTION_SETTLE_SECONDS)
                 step_dur = time.monotonic() - step_start
                 step_token_usage = dict(validate_usage)
                 _merge_usage(step_token_usage, grounding_usage)
