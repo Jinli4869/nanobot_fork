@@ -128,6 +128,8 @@ class TrajectoryRecorder:
         screen_height: int | None = None,
         platform: str | None = None,
         phase: ExecutionPhase | None = None,
+        token_usage: dict[str, int] | None = None,
+        duration_s: float | None = None,
     ) -> None:
         """Record one agent step.
 
@@ -149,6 +151,11 @@ class TrajectoryRecorder:
             Platform identifier (android, macos, etc.).
         phase:
             Override current phase for this step.
+        token_usage:
+            Token counts for this step broken down by type
+            (e.g. ``{"prompt_tokens": 1234, "completion_tokens": 56}``).
+        duration_s:
+            Wall-clock duration of this step in seconds.
         """
         if self._closed:
             raise RuntimeError("Recorder already closed")
@@ -178,24 +185,37 @@ class TrajectoryRecorder:
             "screenshot_path": screenshot_path,
             "observation": obs,
         }
+        if token_usage:
+            event["token_usage"] = token_usage
+        if duration_s is not None:
+            event["duration_s"] = round(duration_s, 3)
 
         self._write_event(event)
         self._step_count += 1
 
-    def finish(self, *, success: bool, error: str | None = None) -> Path:
+    def finish(
+        self,
+        *,
+        success: bool,
+        error: str | None = None,
+        token_usage: dict[str, int] | None = None,
+    ) -> Path:
         """Finalize recording. Returns the trajectory file path."""
         if self._closed:
             raise RuntimeError("Recorder already closed")
 
         duration = time.time() - self._start_time
-        self._write_event({
+        event: dict[str, Any] = {
             "type": "result",
             "success": success,
             "total_steps": self._step_count,
             "duration_s": round(duration, 2),
             "final_phase": self._current_phase.value,
             "error": error,
-        })
+        }
+        if token_usage:
+            event["token_usage"] = token_usage
+        self._write_event(event)
         self._closed = True
         return self._path  # type: ignore[return-value]
 

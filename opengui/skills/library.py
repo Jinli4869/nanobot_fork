@@ -6,9 +6,10 @@ and LLM-based or heuristic skill deduplication/merge.
 
 Inspired by KnowAct's four-bucket model, simplified for opengui's scope:
 - Single primary bucket per (platform, app)
-- Multi-factor conflict detection (name + action sequence similarity)
+- Embedding-dominant conflict detection (embedding + action sequence + name token)
 - LLM or heuristic merge decision
-- Retrieval-gated merge to prevent false positives
+- Description embeddings persisted to ``{platform}/embeddings.npy`` alongside
+  ``skills.json``; ``skills.json`` groups skills by app for readability
 """
 
 from __future__ import annotations
@@ -98,6 +99,14 @@ def _action_similarity(sig_a: tuple[str, ...], sig_b: tuple[str, ...]) -> float:
     return overlap_quality * length_penalty
 
 
+def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Cosine similarity between two vectors; returns 0 for zero-norm inputs."""
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom < 1e-12:
+        return 0.0
+    return float(np.dot(a, b) / denom)
+
+
 # ---------------------------------------------------------------------------
 # Re-use BM25 / FAISS building blocks from memory.retrieval
 # ---------------------------------------------------------------------------
@@ -146,33 +155,45 @@ class SkillLibrary:
 
     Supports:
     - BM25 + optional FAISS hybrid retrieval
-    - Multi-factor skill deduplication on add
+    - Embedding-dominant conflict detection on add
     - LLM-based or heuristic merge decisions
+    - Description embeddings persisted to ``{platform}/embeddings.npy``
+
+    Storage layout::
+
+        {store_dir}/
+          android/
+            skills.json      # app-grouped: {"apps": {"com.x": [skill, ...]}}
+            embeddings.npy   # numpy dict: {skill_id: np.ndarray}
+          ios/
+            skills.json
+            embeddings.npy
 
     Parameters
     ----------
     store_dir:
         Root directory for skill JSON files.
     embedding_provider:
-        Optional embedding API for hybrid search.
+        Optional embedding API for hybrid search and conflict detection.
     merge_llm:
         Optional LLM for merge decisions. Falls back to heuristic if None.
     alpha:
         Blending weight (``1.0`` = pure embedding, ``0.0`` = pure BM25).
-    merge_name_threshold:
-        Minimum name token similarity to trigger merge consideration.
-    merge_action_threshold:
-        Minimum action sequence similarity to trigger merge consideration.
+    merge_conflict_threshold:
+        Combined-score threshold to trigger merge consideration.
+        Score = 0.65 * embedding_sim + 0.25 * action_sim + 0.10 * name_token_sim.
+        When no embedding provider is configured, falls back to a stricter
+        action + name gate.
     """
 
     store_dir: Path
     embedding_provider: EmbeddingProvider | None = None
     merge_llm: LLMProvider | None = None
     alpha: float = 0.6
-    merge_name_threshold: float = 0.50
-    merge_action_threshold: float = 0.60
+    merge_conflict_threshold: float = 0.45
 
     _skills: dict[str, Skill] = field(default_factory=dict, repr=False)
+    _embeddings: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
     _bm25: _BM25Index = field(default_factory=_lazy_bm25, repr=False)
     _faiss: _FaissIndex = field(default_factory=_lazy_faiss, repr=False)
     _documents: list[str] = field(default_factory=list, repr=False)
@@ -196,9 +217,20 @@ class SkillLibrary:
         Decisions: ``"ADD"`` | ``"MERGE"`` | ``"KEEP_OLD"`` | ``"KEEP_NEW"``.
         """
         skill = self._normalize_skill(skill)
-        conflict = self._find_best_conflict(skill)
+
+        # Compute embedding for the incoming skill description up front so it
+        # can be used both in conflict detection and persisted on upsert.
+        incoming_emb: np.ndarray | None = None
+        if self.embedding_provider is not None:
+            try:
+                vecs = await self.embedding_provider.embed([skill.description])
+                incoming_emb = vecs[0]
+            except Exception as exc:
+                logger.warning("Failed to embed incoming skill %r: %s", skill.name, exc)
+
+        conflict = self._find_best_conflict(skill, incoming_emb)
         if conflict is None:
-            self._upsert(skill)
+            self._upsert(skill, embedding=incoming_emb)
             logger.info(
                 "Skill dedup decision=ADD  new=%s [%s] app=%s  (no conflict found)",
                 skill.name, skill.skill_id[:8], skill.app,
@@ -211,19 +243,23 @@ class SkillLibrary:
         action_sim = _action_similarity(
             _action_signature(conflict), _action_signature(skill),
         )
+        emb_sim: float | None = None
+        if incoming_emb is not None and conflict.skill_id in self._embeddings:
+            emb_sim = _cosine_similarity(incoming_emb, self._embeddings[conflict.skill_id])
         logger.info(
             "Skill conflict found: new=%s [%s] vs existing=%s [%s]  "
-            "name_sim=%.3f action_sim=%.3f",
+            "name_sim=%.3f action_sim=%.3f emb_sim=%s",
             skill.name, skill.skill_id[:8],
             conflict.name, conflict.skill_id[:8],
             name_sim, action_sim,
+            f"{emb_sim:.3f}" if emb_sim is not None else "n/a",
         )
 
         decision = await self._decide_merge(conflict, skill)
 
         if decision == "MERGE":
             merged = self._merge_skills(conflict, skill)
-            self._upsert(merged, replace_id=conflict.skill_id)
+            self._upsert(merged, replace_id=conflict.skill_id, embedding=incoming_emb)
             logger.info(
                 "Skill dedup decision=MERGE  merged=%s [%s]  "
                 "(kept existing id, aggregated stats)",
@@ -233,7 +269,7 @@ class SkillLibrary:
             return "MERGE", merged.skill_id
         elif decision == "KEEP_NEW":
             self._remove_internal(conflict.skill_id)
-            self._upsert(skill)
+            self._upsert(skill, embedding=incoming_emb)
             logger.info(
                 "Skill dedup decision=KEEP_NEW  new=%s [%s]  "
                 "replaced=%s [%s]",
@@ -252,7 +288,7 @@ class SkillLibrary:
             return "KEEP_OLD", conflict.skill_id
         else:
             # ADD — genuinely different
-            self._upsert(skill)
+            self._upsert(skill, embedding=incoming_emb)
             logger.info(
                 "Skill dedup decision=ADD  new=%s [%s] app=%s  "
                 "(conflict found but decision=ADD)",
@@ -286,11 +322,10 @@ class SkillLibrary:
         if skill_id not in self._skills:
             return False
         updated_skill = self._normalize_skill(updated_skill)
-        # Remove-then-upsert ensures the search index is rebuilt with any
-        # changed fields (e.g. updated description or tags in addition to
-        # stat counters).
+        # Preserve existing embedding — stat-only updates don't change description.
+        existing_emb = self._embeddings.get(skill_id)
         self._remove_internal(skill_id)
-        self._upsert(updated_skill)
+        self._upsert(updated_skill, embedding=existing_emb)
         return True
 
     def remove(self, skill_id: str) -> bool:
@@ -331,10 +366,22 @@ class SkillLibrary:
 
     # -- Conflict detection --------------------------------------------------
 
-    def _find_best_conflict(self, incoming: Skill) -> Skill | None:
-        """Multi-factor scoring to find the best matching existing skill."""
+    def _find_best_conflict(
+        self,
+        incoming: Skill,
+        incoming_emb: np.ndarray | None = None,
+    ) -> Skill | None:
+        """Embedding-dominant multi-factor scoring to find the best matching skill.
+
+        Scoring weights:
+        - Embedding cosine similarity: 0.65  (dominant — semantic intent)
+        - Action sequence similarity:  0.25  (structural)
+        - Name token (Jaccard) similarity: 0.10  (weak signal, easily gamed)
+
+        When no embedding provider is available, falls back to a pure
+        action-sequence + name-token gate (no embedding term).
+        """
         incoming = self._normalize_skill(incoming)
-        in_name = _normalize_name(incoming.name)
         in_sig = _action_signature(incoming)
         best: Skill | None = None
         best_score = 0.0
@@ -346,23 +393,19 @@ class SkillLibrary:
                 continue
 
             score = 0.0
-            ex_name = _normalize_name(existing.name)
 
-            # Factor 1: Exact normalized name match
-            if ex_name == in_name:
-                score += 1.0
+            # Factor 1 — embedding cosine similarity (dominant)
+            if incoming_emb is not None and existing.skill_id in self._embeddings:
+                ex_emb = self._embeddings[existing.skill_id]
+                score += 0.65 * _cosine_similarity(incoming_emb, ex_emb)
 
-            # Factor 2: Skill ID match (same origin)
-            if existing.skill_id == incoming.skill_id:
-                score += 0.6
-
-            # Factor 3: Action sequence similarity
+            # Factor 2 — action sequence similarity
             action_sim = _action_similarity(_action_signature(existing), in_sig)
-            score += 0.9 * action_sim
+            score += 0.25 * action_sim
 
-            # Factor 4: Name token similarity
+            # Factor 3 — name token (Jaccard) similarity, low weight
             name_sim = _name_token_similarity(existing.name, incoming.name)
-            score += 0.6 * name_sim
+            score += 0.10 * name_sim
 
             if score > best_score:
                 best = existing
@@ -371,22 +414,19 @@ class SkillLibrary:
         if best is None:
             return None
 
-        # Apply conflict gate thresholds
-        best_name = _normalize_name(best.name)
-        if best.skill_id == incoming.skill_id:
-            return best
-        if best_name == in_name:
-            return best
+        # Gate: combined score must exceed threshold when embeddings are available.
+        if incoming_emb is not None and best.skill_id in self._embeddings:
+            if best_score >= self.merge_conflict_threshold:
+                return best
+            return None
 
-        name_sim = _name_token_similarity(best.name, incoming.name)
+        # Fallback gate (no embedding): require both action and name similarity.
         action_sim = _action_similarity(_action_signature(best), in_sig)
-
-        if name_sim >= self.merge_name_threshold and action_sim >= self.merge_action_threshold:
+        name_sim = _name_token_similarity(best.name, incoming.name)
+        if action_sim >= 0.60 and name_sim >= 0.50:
             return best
-        # Very high action similarity compensates for lower name similarity
-        if name_sim >= 0.35 and action_sim >= 0.90:
+        if action_sim >= 0.90 and name_sim >= 0.35:
             return best
-
         return None
 
     # -- Merge decision ------------------------------------------------------
@@ -425,9 +465,6 @@ class SkillLibrary:
     @staticmethod
     def _heuristic_merge_decision(old: Skill, new: Skill) -> str:
         """Rule-based merge without LLM."""
-        if old.skill_id == new.skill_id:
-            return "KEEP_NEW"
-
         old_name = _normalize_name(old.name)
         new_name = _normalize_name(new.name)
         name_sim = _name_token_similarity(old.name, new.name)
@@ -657,6 +694,7 @@ class SkillLibrary:
 
     def load_all(self) -> None:
         self._skills.clear()
+        self._embeddings.clear()
         if not self.store_dir.exists():
             self._loaded_mtime_ns = 0
             self._index_dirty = True
@@ -671,9 +709,34 @@ class SkillLibrary:
             if not isinstance(data, dict):
                 logger.warning("Skipping malformed skill store %s: expected JSON object", skills_file)
                 continue
-            for skill_data in data.get("skills", []):
-                skill = self._normalize_skill(Skill.from_dict(skill_data))
-                self._skills[skill.skill_id] = skill
+
+            # Support both new app-grouped format and legacy flat list.
+            apps_section = data.get("apps")
+            if isinstance(apps_section, dict):
+                # New format: {"apps": {"app_name": [skill_dict, ...]}}
+                for skill_list in apps_section.values():
+                    if not isinstance(skill_list, list):
+                        continue
+                    for skill_data in skill_list:
+                        skill = self._normalize_skill(Skill.from_dict(skill_data))
+                        self._skills[skill.skill_id] = skill
+            else:
+                # Legacy format: {"skills": [skill_dict, ...]}
+                for skill_data in data.get("skills", []):
+                    skill = self._normalize_skill(Skill.from_dict(skill_data))
+                    self._skills[skill.skill_id] = skill
+
+            # Load companion embeddings.npy if present.
+            emb_path = skills_file.parent / "embeddings.npy"
+            if emb_path.is_file():
+                try:
+                    raw = np.load(str(emb_path), allow_pickle=True).item()
+                    if isinstance(raw, dict):
+                        for sid, vec in raw.items():
+                            self._embeddings[sid] = np.asarray(vec, dtype=np.float32)
+                except Exception as exc:
+                    logger.warning("Failed to load embeddings from %s: %s", emb_path, exc)
+
         self._loaded_mtime_ns = self._snapshot_mtime_ns()
         self._index_dirty = True
 
@@ -716,11 +779,21 @@ class SkillLibrary:
                 continue
         return max_mtime_ns
 
-    def _upsert(self, skill: Skill, *, replace_id: str | None = None) -> None:
+    def _upsert(
+        self,
+        skill: Skill,
+        *,
+        replace_id: str | None = None,
+        embedding: np.ndarray | None = None,
+    ) -> None:
         skill = self._normalize_skill(skill)
         if replace_id and replace_id in self._skills:
             del self._skills[replace_id]
+            if replace_id != skill.skill_id:
+                self._embeddings.pop(replace_id, None)
         self._skills[skill.skill_id] = skill
+        if embedding is not None:
+            self._embeddings[skill.skill_id] = embedding
         self._index_dirty = True
         self._save_platform(skill.platform)
 
@@ -728,6 +801,7 @@ class SkillLibrary:
         skill = self._skills.pop(skill_id, None)
         if skill is None:
             return False
+        self._embeddings.pop(skill_id, None)
         self._index_dirty = True
         self._save_platform(skill.platform)
         return True
@@ -739,9 +813,16 @@ class SkillLibrary:
         skills = [s for s in self._skills.values() if s.platform == platform]
         if not skills:
             target.unlink(missing_ok=True)
+            (dir_path / "embeddings.npy").unlink(missing_ok=True)
             self._cleanup_legacy_platform_files(platform)
             return
-        payload = {"skills": [s.to_dict() for s in skills]}
+
+        # Group skills by app for readability.
+        apps: dict[str, list[dict]] = {}
+        for s in skills:
+            apps.setdefault(s.app, []).append(s.to_dict())
+        payload = {"apps": apps}
+
         tmp = tempfile.NamedTemporaryFile(
             mode="w", dir=dir_path, suffix=".tmp", delete=False, encoding="utf-8",
         )
@@ -754,6 +835,37 @@ class SkillLibrary:
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise
+
+        self._save_embeddings(platform)
+
+    def _save_embeddings(self, platform: str) -> None:
+        """Atomically persist the embedding cache for *platform* to a .npy file."""
+        dir_path = self.store_dir / platform
+        dir_path.mkdir(parents=True, exist_ok=True)
+        target = dir_path / "embeddings.npy"
+
+        # Collect embeddings for skills belonging to this platform only.
+        platform_ids = {s.skill_id for s in self._skills.values() if s.platform == platform}
+        emb_dict = {
+            sid: emb
+            for sid, emb in self._embeddings.items()
+            if sid in platform_ids
+        }
+        if not emb_dict:
+            target.unlink(missing_ok=True)
+            return
+
+        tmp_path = dir_path / (target.name + ".tmp")
+        try:
+            np.save(str(tmp_path), emb_dict)
+            tmp_path.replace(target)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
+
+    def _embeddings_path(self, platform: str) -> Path:
+        """Return the path to the embeddings file for *platform*."""
+        return self.store_dir / platform / "embeddings.npy"
 
     def _cleanup_legacy_platform_files(self, platform: str) -> None:
         platform_dir = self.store_dir / platform
@@ -772,9 +884,36 @@ class SkillLibrary:
         self._ordered_ids = list(self._skills.keys())
         self._documents = [self._skill_text(self._skills[sid]) for sid in self._ordered_ids]
         self._bm25.build(self._documents)
+
         if self.embedding_provider is not None and self._documents:
-            embeddings = await self.embedding_provider.embed(self._documents)
-            self._faiss.build(embeddings)
+            # Only embed skills that don't already have a cached embedding.
+            missing_indices = [
+                i for i, sid in enumerate(self._ordered_ids)
+                if sid not in self._embeddings
+            ]
+            if missing_indices:
+                missing_texts = [self._documents[i] for i in missing_indices]
+                try:
+                    new_vecs = await self.embedding_provider.embed(missing_texts)
+                    for idx, vec in zip(missing_indices, new_vecs):
+                        sid = self._ordered_ids[idx]
+                        self._embeddings[sid] = vec
+                        # Persist new embeddings by platform.
+                        platform = self._skills[sid].platform
+                        self._save_embeddings(platform)
+                except Exception as exc:
+                    logger.warning("Failed to embed %d skills during index rebuild: %s",
+                                   len(missing_indices), exc)
+
+            # Build FAISS from the full (now-populated) embedding cache.
+            vecs = [
+                self._embeddings[sid]
+                for sid in self._ordered_ids
+                if sid in self._embeddings
+            ]
+            if vecs:
+                self._faiss.build(np.stack(vecs).astype(np.float32))
+
         self._index_dirty = False
 
     def _filter_mask(self, *, platform: str | None, app: str | None) -> np.ndarray:
@@ -804,4 +943,3 @@ class SkillLibrary:
             if step.valid_state and step.valid_state.lower() != "no need to verify":
                 parts.append(step.valid_state)
         return " ".join(p for p in parts if p)
-

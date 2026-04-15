@@ -17,6 +17,7 @@ Execution pipeline per step:
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 import re
@@ -62,6 +63,7 @@ class SubgoalResult:
     action_summaries: list[str]
     final_screenshot: Path | bytes | None = None
     error: str | None = None
+    token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +85,10 @@ class StepResult:
     recovery_result: SubgoalResult | None = None
     action_summary: str = ""
     error: str | None = None
+    token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+    duration_s: float = 0.0
+    validate_duration_s: float = 0.0
+    grounding_duration_s: float = 0.0
 
 
 @dataclass
@@ -95,6 +101,7 @@ class SkillExecutionResult:
     # Narrative summary of all steps; injected into the agent loop as context.
     execution_summary: str = ""
     error: str | None = None
+    token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +189,13 @@ class LLMStateValidator:
 
     def __init__(self, llm: LLMProvider) -> None:
         self._llm = llm
+        self._usage_accum: dict[str, int] = {}
+
+    def drain_usage(self) -> dict[str, int]:
+        """Return accumulated token usage since last drain and reset the counter."""
+        usage = dict(self._usage_accum)
+        self._usage_accum.clear()
+        return usage
 
     async def validate(
         self,
@@ -215,6 +229,8 @@ class LLMStateValidator:
             logger.error("State validation LLM call failed: %s", exc)
             return True  # Fail-open on LLM error
 
+        for k, v in (response.usage or {}).items():
+            self._usage_accum[k] = self._usage_accum.get(k, 0) + v
         return self._parse_response(response.content)
 
     @staticmethod
@@ -290,6 +306,8 @@ def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
         kwargs["pixels"] = int(values["pixels"])
     if "duration_ms" in values:
         kwargs["duration_ms"] = int(values["duration_ms"])
+    if "relative" in values:
+        kwargs["relative"] = bool(values["relative"])
     return Action(**kwargs)
 
 
@@ -397,6 +415,7 @@ class SkillExecutor:
         step_results: list[StepResult] = []
         overall_state = ExecutionState.RUNNING
         error_msg: str | None = None
+        total_token_usage: dict[str, int] = {}
 
         if self.trajectory_recorder is not None:
             self.trajectory_recorder.record_event(
@@ -408,6 +427,11 @@ class SkillExecutor:
 
         for i, step in enumerate(skill.steps):
             is_optional = bool(step.parameters.get("optional", False))
+            step_start = time.monotonic()
+            validate_usage: dict[str, int] = {}
+            grounding_usage: dict[str, int] = {}
+            validate_dur = 0.0
+            grounding_dur = 0.0
 
             # ------------------------------------------------------------------
             # 1. Capture current screenshot
@@ -417,7 +441,8 @@ class SkillExecutor:
             # ------------------------------------------------------------------
             # 2. Valid-state check
             # ------------------------------------------------------------------
-            valid = await self._validate_state(step, screenshot)
+            valid, validate_usage, validate_dur = await self._validate_state(step, screenshot)
+            _merge_usage(total_token_usage, validate_usage)
 
             # ------------------------------------------------------------------
             # 3. Recovery subgoal when valid_state fails
@@ -434,10 +459,15 @@ class SkillExecutor:
                         screenshot=screenshot,
                         max_steps=self.max_recovery_steps,
                     )
+                    _merge_usage(total_token_usage, recovery_result.token_usage)
                     if recovery_result.success:
                         # Refresh screenshot and re-validate after recovery
                         screenshot = recovery_result.final_screenshot or screenshot
-                        valid = await self._validate_state(step, screenshot)
+                        revalidate_result, revalidate_usage, revalidate_dur = await self._validate_state(step, screenshot)
+                        valid = revalidate_result
+                        _merge_usage(total_token_usage, revalidate_usage)
+                        _merge_usage(validate_usage, revalidate_usage)
+                        validate_dur += revalidate_dur
                         if not valid:
                             logger.warning(
                                 "Step %d: re-validation after recovery still failed", i
@@ -457,6 +487,7 @@ class SkillExecutor:
             # 4. If still invalid, record failure and decide whether to continue
             # ------------------------------------------------------------------
             if not valid and not _should_skip_validation(step.valid_state):
+                step_dur = time.monotonic() - step_start
                 step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
@@ -466,6 +497,9 @@ class SkillExecutor:
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
                     error=f"valid_state not reached: {step.valid_state}",
+                    token_usage=dict(validate_usage),
+                    duration_s=step_dur,
+                    validate_duration_s=validate_dur,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
@@ -482,10 +516,18 @@ class SkillExecutor:
             # 5. Execute action
             # ------------------------------------------------------------------
             try:
-                action, grounding_mode = await self._resolve_action(
+                action, grounding_mode, grounding_usage, grounding_dur = await self._resolve_action(
                     step, screenshot, params
                 )
+                _merge_usage(total_token_usage, grounding_usage)
                 result_text = await self.backend.execute(action, timeout=timeout)
+                # Allow the app to fully launch before the next step's
+                # screenshot / validate / grounding cycle.
+                if action.action_type == "open_app":
+                    await asyncio.sleep(2.0)
+                step_dur = time.monotonic() - step_start
+                step_token_usage = dict(validate_usage)
+                _merge_usage(step_token_usage, grounding_usage)
                 step_result = StepResult(
                     step_index=i,
                     action=action,
@@ -495,11 +537,16 @@ class SkillExecutor:
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
                     action_summary=f"{action.action_type} on {step.target or 'target'}",
+                    token_usage=step_token_usage,
+                    duration_s=step_dur,
+                    validate_duration_s=validate_dur,
+                    grounding_duration_s=grounding_dur,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
             except Exception as exc:
                 logger.error("Step %d execution error: %s", i, exc)
+                step_dur = time.monotonic() - step_start
                 step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
@@ -508,6 +555,9 @@ class SkillExecutor:
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
                     error=str(exc),
+                    token_usage=dict(validate_usage),
+                    duration_s=step_dur,
+                    validate_duration_s=validate_dur,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
@@ -529,6 +579,7 @@ class SkillExecutor:
             state=overall_state,
             execution_summary=_build_execution_summary(skill, step_results),
             error=error_msg,
+            token_usage=total_token_usage,
         )
         if self.trajectory_recorder is not None:
             self.trajectory_recorder.record_event(
@@ -550,22 +601,27 @@ class SkillExecutor:
         step: SkillStep,
         screenshot: Path | bytes | None,
         params: dict[str, str],
-    ) -> tuple[Action, str]:
-        """Return ``(action, grounding_mode)`` for the given step."""
+    ) -> tuple[Action, str, dict[str, int], float]:
+        """Return ``(action, grounding_mode, token_usage, duration_s)`` for the given step."""
         if step.fixed:
-            return _build_fixed_action(step, params), "fixed"
+            return _build_fixed_action(step, params), "fixed", {}, 0.0
 
         if self.action_grounder is not None and screenshot is not None:
             try:
+                t0 = time.monotonic()
                 action = await self.action_grounder.ground(step, screenshot, params)
-                return action, "llm"
+                duration = time.monotonic() - t0
+                usage: dict[str, int] = {}
+                if hasattr(self.action_grounder, "drain_usage"):
+                    usage = self.action_grounder.drain_usage()
+                return action, "llm", usage, duration
             except Exception as exc:
                 logger.warning(
                     "ActionGrounder failed for step %r, falling back to template: %s",
                     step.action_type, exc,
                 )
 
-        return _build_template_action(step, params), "template"
+        return _build_template_action(step, params), "template", {}, 0.0
 
     def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
         if self.trajectory_recorder is None:
@@ -585,27 +641,39 @@ class SkillExecutor:
             recovery_attempted=step_result.recovery_attempted,
             recovery_success=bool(step_result.recovery_result and step_result.recovery_result.success),
             error=step_result.error,
+            token_usage=step_result.token_usage or None,
+            duration_s=round(step_result.duration_s, 3) if step_result.duration_s else None,
+            validate_duration_s=round(step_result.validate_duration_s, 3) if step_result.validate_duration_s else None,
+            grounding_duration_s=round(step_result.grounding_duration_s, 3) if step_result.grounding_duration_s else None,
         )
 
     async def _validate_state(
         self,
         step: SkillStep,
         screenshot: Path | bytes | None,
-    ) -> bool:
-        """Validate per-step valid_state before execution."""
+    ) -> tuple[bool, dict[str, int], float]:
+        """Validate per-step valid_state. Returns ``(valid, token_usage, duration_s)``."""
+        if step.fixed:
+            return True, {}, 0.0
         if _should_skip_validation(step.valid_state):
-            return True
+            return True, {}, 0.0
         if self.state_validator is None:
             logger.debug("No state validator; allowing step %s", step.action_type)
-            return True
+            return True, {}, 0.0
+        t0 = time.monotonic()
         try:
-            return await self.state_validator.validate(
+            result = await self.state_validator.validate(
                 step.valid_state or "",
                 screenshot=screenshot,
             )
         except Exception as exc:
             logger.error("State validator error: %s", exc)
-            return True  # Fail-open
+            result = True  # Fail-open
+        duration = time.monotonic() - t0
+        usage: dict[str, int] = {}
+        if hasattr(self.state_validator, "drain_usage"):
+            usage = self.state_validator.drain_usage()
+        return result, usage, duration
 
     async def _get_screenshot(self) -> Path | bytes | None:
         """Capture the current screenshot via the ScreenshotProvider."""
@@ -624,3 +692,9 @@ def _serialize_action(action: Action) -> dict[str, Any]:
         for key, value in payload.items()
         if value is not None and not (key == "relative" and value is False)
     }
+
+
+def _merge_usage(target: dict[str, int], source: dict[str, int]) -> None:
+    """Merge *source* token counts into *target* in-place, summing each key."""
+    for k, v in source.items():
+        target[k] = target.get(k, 0) + v
