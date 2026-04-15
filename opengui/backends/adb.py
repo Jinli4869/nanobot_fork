@@ -593,6 +593,11 @@ class AdbBackend:
                             "shell", "input", "keyevent", "KEYCODE_ENTER",
                             timeout=timeout,
                         )
+                if action.auto_enter:
+                    await self._run(
+                        "shell", "input", "keyevent", "KEYCODE_ENTER",
+                        timeout=timeout,
+                    )
 
         elif t == "enter":
             await self._run("shell", "input", "keyevent", "KEYCODE_ENTER", timeout=timeout)

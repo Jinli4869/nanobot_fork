@@ -361,6 +361,11 @@ class HdcBackend:
                     str(tx), str(ty), text,
                     timeout=timeout,
                 )
+            if action.auto_enter:
+                await self._run(
+                    "shell", "uitest", "uiInput", "keyEvent", "2054",
+                    timeout=timeout,
+                )
 
         elif t == "hotkey":
             keys = action.key or []
