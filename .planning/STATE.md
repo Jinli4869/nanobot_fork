@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.6
 milestone_name: Shortcut Extraction and Stable Execution
 status: verifying
-stopped_at: Completed 31-02-PLAN.md
-last_updated: "2026-04-03T13:38:54Z"
-last_activity: 2026-04-03
+stopped_at: Completed 32-03-PLAN.md
+last_updated: "2026-04-07T16:39:38.453Z"
+last_activity: 2026-04-07
 progress:
-  total_phases: 4
-  completed_phases: 4
-  total_plans: 10
-  completed_plans: 10
+  total_phases: 6
+  completed_phases: 5
+  total_plans: 13
+  completed_plans: 13
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-02)
 
 **Core value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously.
-**Current focus:** Phase 31 — shortcut-observability-and-regression-hardening
-Status: Ready for verification
-Last Activity: 2026-04-03
+**Current focus:** Phase 33 — low-token-applicability-and-step-scoped-validation
+Status: Phase 32 complete; Phase 33 pending planning
+Last Activity: 2026-04-08
 
 ## Current Position
 
-Phase: 31 (shortcut-observability-and-regression-hardening) — EXECUTING
-Plan: 2 of 2
+Phase: 32 (prefix-only-shortcut-extraction-and-canonicalization) — COMPLETE
+Plan: 3 of 3
 
 ## Performance Metrics
 
@@ -42,6 +42,8 @@ Plan: 2 of 2
 
 Phase 28 is complete and verified. Milestone tracking is now focused on Phase 30 execution and fallback hardening.
 | Phase 31 P02 | 8m | 1 tasks | 2 files |
+| Phase 32 P02 | 5m | 2 tasks | 2 files |
+| Phase 32 P03 | 4 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -173,6 +175,10 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 31 P01]: recorder injection in GuiAgent.run() placed immediately before execute() so it takes effect on each dispatch without creating a second recorder
 - [Phase 31]: Three-layer non-fixed step merge order: step.parameters (lowest) -> grounding.resolved_params -> caller params (highest). Grounding overrides stale coords; step.parameters provides static typed fields.
 - [Phase 31]: Do not mark promoted shortcut steps fixed=True as a workaround — the seam must remain a non-fixed path so live coordinate re-grounding works correctly.
+- [Phase 32]: ShortcutSkillProducer now infers placeholders from target templates and task-varying selector-like parameters instead of templating only input_text.text.
+- [Phase 32]: Stable labels such as Send, Back, and Compose remain literal to avoid placeholder explosion in stored shortcuts.
+- [Phase 32]: Canonicalized selector-like params remain asserted through the existing recipient placeholder slot when the promoted target already encodes recipient intent.
+- [Phase 32]: Phase 32 closeout stayed test-only; the only blocking fix in the full regression slice was a stale Phase 30 fixture missing agent_profile.
 
 ### Pending Todos
 
@@ -218,6 +224,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
 | 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
 | 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
+| 260407-s5f | 修复 Android `input_text` 多行输入只落第一行的问题：按行输入并在行间显式发送回车，补回归测试覆盖换行文本 | 2026-04-07 | uncommitted | [260407-s5f-trace-jsonl-input-text](./quick/260407-s5f-trace-jsonl-input-text/) |
+| 260405-knn | 根据 /Users/jinli/.nanobot/workspace/gui_runs/2026-04-05_144819_197174 中出现 exception 的原因进行 debug 并修复 | 2026-04-05 | uncommitted | [260405-knn-users-jinli-nanobot-workspace-gui-runs-2](./quick/260405-knn-users-jinli-nanobot-workspace-gui-runs-2/) |
 | 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
 | 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
 | 260403-soi | 把 gui.agent_profile 配置项正式补上 | 2026-04-03 | a322466 | [260403-soi-gui-agent-profile](./quick/260403-soi-gui-agent-profile/) |
@@ -225,13 +233,19 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260404-tas | 参考 gelab-zero 的输入链路改进 Android 中文输入：ADBKeyboard 失败后回退到 yadb，并保留 ASCII `input text` 兜底 | 2026-04-04 | uncommitted | [260404-tas-gelab-zero-action-tools-py](./quick/260404-tas-gelab-zero-action-tools-py/) |
 | 260404-te3 | 自动探测并切换 ADBKeyboard IME，使已安装但未激活 ADBKeyboard 的设备也能自动走中文输入广播链路 | 2026-04-04 | uncommitted | [260404-te3-adbkeyboard-ime](./quick/260404-te3-adbkeyboard-ime/) |
 | 260404-tot | 让 OpenGUI 自带并自动下发 yadb，不再依赖另一个本地仓库中的 yadb 资产 | 2026-04-04 | uncommitted | [260404-tot-opengui-yadb-yadb](./quick/260404-tot-opengui-yadb-yadb/) |
+| 260405-ptg | Create a publishable skill for Android deep link probing that explores adb/dumpsys signals and consolidates findings for the main agent | 2026-04-05 | uncommitted | [260405-ptg-create-a-publishable-skill-for-android-d](./quick/260405-ptg-create-a-publishable-skill-for-android-d/) |
+| 260407-ezs | 允许失败的 GUI 轨迹也参与技能提炼，使用失败 prompt 而不是直接跳过 | 2026-04-07 | uncommitted | [260407-ezs-gui-prompt](./quick/260407-ezs-gui-prompt/) |
+| 260407-glp | 让 evaluation 读取截图字段兼容当前 trace 的 screenshot_path 格式 | 2026-04-07 | uncommitted | [260407-glp-evaluation-trace-screenshot-path](./quick/260407-glp-evaluation-trace-screenshot-path/) |
+| 260407-k7k | 修复 OpenGUI ADB 文本输入在空格处被截断的问题 | 2026-04-07 | uncommitted | [260407-k7k-opengui-adb](./quick/260407-k7k-opengui-adb/) |
+| 260407-ku8 | 让 GUI trace 记录 input_text 的真实文本，不再写成 redacted 占位符 | 2026-04-07 | uncommitted | [260407-ku8-gui-trace-input-text-redacted](./quick/260407-ku8-gui-trace-input-text-redacted/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
+| 260409-lpz | 关闭shortcut功能只保留skill提取和execution | 2026-04-09 | 97f2db6 | [260409-lpz-shortcut-skill-execution](./quick/260409-lpz-shortcut-skill-execution/) |
 
 ## Session Continuity
 
-Last activity: 2026-04-04 - Completed quick task 260404-tot: 让 OpenGUI 自带并自动下发 yadb
+Last activity: 2026-04-09 - Completed quick task 260409-lpz: 关闭shortcut功能只保留skill提取和execution
 
-Last session: 2026-04-03T10:45:23.628Z
-Stopped at: Completed 31-02-PLAN.md
+Last session: 2026-04-07T16:39:38.442Z
+Stopped at: Completed 32-03-PLAN.md
 Resume file: None

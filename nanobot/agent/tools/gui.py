@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import sys
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -17,9 +16,9 @@ import numpy as np
 
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
-from nanobot.utils.gui_evaluation import evaluate_gui_trajectory
 from opengui.agent import GuiAgent
 from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
+from opengui.postprocessing import EvaluationConfig, PostRunProcessor
 from opengui.skills.normalization import get_gui_skill_store_root
 from opengui.trajectory.recorder import TrajectoryRecorder
 
@@ -30,7 +29,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
-DEFAULT_GUI_EVALUATION_FILENAME = "evaluation.json"
 _EMBEDDING_BATCH_SIZE = 10
 _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
     {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
@@ -63,10 +61,22 @@ class GuiSubagentTool(Tool):
         self._llm_adapter = NanobotLLMAdapter(provider, model)
         self._embedding_adapter = self._build_embedding_adapter() if gui_config.embedding_model else None
         self._skill_libraries: dict[str, Any] = {}
-        self._background_postprocess_tasks: set[asyncio.Task[None]] = set()
 
         self._backend = self._build_backend(gui_config.backend)
         self._skill_library = self._get_skill_library(self._backend.platform)
+        self._postprocessor = PostRunProcessor(
+            llm=self._llm_adapter,
+            merge_llm=self._llm_adapter,
+            embedding_provider=self._embedding_adapter,
+            skill_store_root=get_gui_skill_store_root(self._workspace),
+            enable_skill_extraction=gui_config.enable_skill_extraction,
+            evaluation=EvaluationConfig(
+                enabled=gui_config.evaluation.enabled,
+                judge_model=gui_config.evaluation.judge_model,
+                api_key=gui_config.evaluation.api_key,
+                api_base=gui_config.evaluation.api_base,
+            ),
+        )
 
     @property
     def name(self) -> str:
@@ -208,8 +218,8 @@ class GuiSubagentTool(Tool):
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
+        self._refresh_cached_skill_stores()
         skill_library = self._get_skill_library(active_backend.platform)
-        unified_skill_search = self._get_unified_skill_search(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
             output_dir=run_dir,
@@ -218,24 +228,15 @@ class GuiSubagentTool(Tool):
         )
 
         skill_executor = None
-        shortcut_executor = None
-        shortcut_applicability_router = None
         if self._gui_config.enable_skill_execution:
             from opengui.agent import (
                 _AgentActionGrounder,
                 _AgentScreenshotProvider,
                 _AgentSubgoalRunner,
             )
-            from opengui.grounding.llm import LLMGrounder
             from opengui.skills.executor import LLMStateValidator, SkillExecutor
-            from opengui.skills.multi_layer_executor import (
-                LLMConditionEvaluator,
-                ShortcutExecutor,
-            )
-            from opengui.skills.shortcut_router import ShortcutApplicabilityRouter
 
             state_validator = LLMStateValidator(self._llm_adapter)
-            condition_evaluator = LLMConditionEvaluator(state_validator)
             skill_executor = SkillExecutor(
                 backend=active_backend,
                 state_validator=state_validator,
@@ -250,25 +251,16 @@ class GuiSubagentTool(Tool):
                     state_validator=state_validator,
                     model=self._model,
                     artifacts_root=run_dir,
+                    trajectory_recorder=recorder,
                     agent_profile=self._gui_config.agent_profile,
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
                     backend=active_backend,
                     artifacts_root=run_dir,
                 ),
-                stop_on_failure=False,
+                trajectory_recorder=recorder,
+                stop_on_failure=True,
                 max_recovery_steps=3,
-            )
-            shortcut_screenshot_dir = run_dir / "shortcut_screenshots"
-            shortcut_screenshot_dir.mkdir(parents=True, exist_ok=True)
-            shortcut_executor = ShortcutExecutor(
-                backend=active_backend,
-                grounder=LLMGrounder(llm=self._llm_adapter),
-                condition_evaluator=condition_evaluator,
-                screenshot_dir=shortcut_screenshot_dir,
-            )
-            shortcut_applicability_router = ShortcutApplicabilityRouter(
-                condition_evaluator=condition_evaluator,
             )
 
         agent = GuiAgent(
@@ -282,11 +274,8 @@ class GuiSubagentTool(Tool):
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
             skill_executor=skill_executor,
-            shortcut_executor=shortcut_executor,
             intervention_handler=self._build_intervention_handler(active_backend, task),
-            unified_skill_search=unified_skill_search,
             memory_store=memory_store,
-            shortcut_applicability_router=shortcut_applicability_router,
             agent_profile=self._gui_config.agent_profile,
         )
 
@@ -297,7 +286,13 @@ class GuiSubagentTool(Tool):
             summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
             error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
-        self._schedule_trajectory_postprocessing(trace_path, result.success, active_backend.platform, task)
+        post_run_state = self._build_post_run_state(
+            trace_path=trace_path,
+            success=result.success,
+            summary=summary,
+            error=error,
+        )
+        self._postprocessor.schedule(trace_path, is_success=result.success, platform=active_backend.platform, task=task)
 
         return json.dumps(
             {
@@ -307,104 +302,141 @@ class GuiSubagentTool(Tool):
                 "trace_path": str(trace_path) if trace_path is not None else result.trace_path,
                 "steps_taken": result.steps_taken,
                 "error": error,
+                "post_run_state": post_run_state,
             },
             ensure_ascii=False,
         )
 
-    def _schedule_trajectory_postprocessing(
-        self,
-        trace_path: Path | None,
-        is_success: bool,
-        platform: str,
-        task: str,
-    ) -> None:
-        if trace_path is None or not trace_path.exists():
-            return
-
-        background_task = asyncio.create_task(
-            self._run_trajectory_postprocessing(trace_path, is_success, platform, task),
-            name=f"gui-postprocess-{trace_path.stem}",
-        )
-        self._background_postprocess_tasks.add(background_task)
-        background_task.add_done_callback(self._handle_background_postprocess_done)
-
-    async def _run_trajectory_postprocessing(
-        self,
-        trace_path: Path,
-        is_success: bool,
-        platform: str,
-        task: str,
-    ) -> None:
-        trajectory_summary, _, _ = await asyncio.gather(
-            self._summarize_trajectory(trace_path),
-            self._promote_shortcut(trace_path, is_success, platform),
-            self._maybe_run_evaluation(task=task, trace_path=trace_path, is_success=is_success),
-        )
-        if trajectory_summary:
-            logger.info("Trajectory summary: %s", trajectory_summary[:200])
-
-    async def _maybe_run_evaluation(
+    def _build_post_run_state(
         self,
         *,
-        task: str,
-        trace_path: Path,
-        is_success: bool,
-    ) -> dict[str, Any] | None:
-        evaluation = self._gui_config.evaluation
-        if not evaluation.enabled:
-            return None
-        if not is_success:
-            logger.info("Skipping GUI evaluation for unsuccessful task: %s", task)
-            return None
-        if not trace_path.exists():
-            logger.info("Skipping GUI evaluation because trace is missing: %s", trace_path)
-            return None
+        trace_path: Path | None,
+        success: bool,
+        summary: str,
+        error: str | None,
+    ) -> dict[str, Any]:
+        step_event = self._load_latest_step_event(trace_path)
+        observation = self._extract_latest_observation(step_event)
+        last_action = step_event.get("action") if isinstance(step_event, dict) else None
+        last_action_summary = None
+        latest_screenshot_path = None
+        if isinstance(step_event, dict):
+            last_action_summary = self._string_or_none(step_event.get("model_output"))
+            latest_screenshot_path = self._string_or_none(step_event.get("screenshot_path"))
+        if latest_screenshot_path is None and observation:
+            latest_screenshot_path = self._string_or_none(observation.get("screenshot_path"))
 
-        api_key = evaluation.api_key or os.getenv("OPENAI_API_KEY", "")
-        if not api_key:
-            logger.info("Skipping GUI evaluation because no api_key is configured")
-            return None
+        foreground_app = self._string_or_none(observation.get("foreground_app")) if observation else None
+        platform = self._string_or_none(observation.get("platform")) if observation else None
+        resolution = self._format_resolution(observation)
+        current_state = self._describe_current_state(
+            success=success,
+            summary=summary,
+            error=error,
+            foreground_app=foreground_app,
+            resolution=resolution,
+        )
 
-        try:
-            result = await evaluate_gui_trajectory(
-                instruction=task,
-                trace_path=trace_path,
-                model=evaluation.judge_model,
-                api_key=api_key,
-                api_base=evaluation.api_base,
-                task_id=trace_path.parent.name,
-                output_path=trace_path.parent / DEFAULT_GUI_EVALUATION_FILENAME,
-            )
-            logger.info(
-                "GUI evaluation completed: success=%s reason=%s",
-                result.get("success"),
-                result.get("reason"),
-            )
-            return result
-        except Exception:
-            logger.warning("GUI evaluation failed for %s", trace_path, exc_info=True)
-            return None
+        return {
+            "trace_read": trace_path is not None and trace_path.exists(),
+            "latest_screenshot_path": latest_screenshot_path,
+            "last_action": last_action,
+            "last_action_summary": last_action_summary,
+            "last_foreground_app": foreground_app,
+            "platform": platform,
+            "screen_resolution": resolution,
+            "current_state": current_state,
+            "completion_assessment": "completed" if success else "not_completed",
+        }
 
     async def _wait_for_pending_postprocessing(self) -> None:
-        if not self._background_postprocess_tasks:
-            return
-        await asyncio.gather(*list(self._background_postprocess_tasks), return_exceptions=True)
+        """Drain all pending post-processing background tasks."""
+        await self._postprocessor.drain()
 
-    def _handle_background_postprocess_done(self, task: asyncio.Task[None]) -> None:
-        self._background_postprocess_tasks.discard(task)
-        if task.cancelled():
-            logger.debug("Background GUI postprocessing task was cancelled")
-            return
+    @staticmethod
+    def _load_latest_step_event(trace_path: Path | None) -> dict[str, Any]:
+        if trace_path is None or not trace_path.exists():
+            return {}
+
+        latest_step: dict[str, Any] = {}
         try:
-            exc = task.exception()
-        except Exception:
-            logger.warning("Background GUI postprocessing task failed", exc_info=True)
-            return
-        if exc is not None:
-            logger.warning(
-                "Background GUI postprocessing task failed",
-                exc_info=(type(exc), exc, exc.__traceback__),
-            )
+            with open(trace_path, encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(event, dict) and event.get("type") == "step":
+                        latest_step = event
+        except OSError:
+            logger.warning("Could not read GUI trace for post-run state: %s", trace_path, exc_info=True)
+        return latest_step
+
+    @staticmethod
+    def _extract_latest_observation(step_event: dict[str, Any]) -> dict[str, Any]:
+        execution = step_event.get("execution") if isinstance(step_event, dict) else None
+        if isinstance(execution, dict):
+            next_observation = execution.get("next_observation")
+            if isinstance(next_observation, dict):
+                return next_observation
+
+        observation = step_event.get("observation") if isinstance(step_event, dict) else None
+        if isinstance(observation, dict):
+            return observation
+
+        prompt = step_event.get("prompt") if isinstance(step_event, dict) else None
+        if isinstance(prompt, dict):
+            current_observation = prompt.get("current_observation")
+            if isinstance(current_observation, dict):
+                return current_observation
+
+        return {}
+
+    @staticmethod
+    def _format_resolution(observation: dict[str, Any]) -> str | None:
+        width = observation.get("screen_width")
+        height = observation.get("screen_height")
+        if isinstance(width, int) and isinstance(height, int):
+            return f"{width}x{height}"
+        return None
+
+    @staticmethod
+    def _string_or_none(value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            return text or None
+        return str(value)
+
+    @staticmethod
+    def _describe_current_state(
+        *,
+        success: bool,
+        summary: str,
+        error: str | None,
+        foreground_app: str | None,
+        resolution: str | None,
+    ) -> str:
+        if success:
+            parts = [summary.strip() or "GUI task completed successfully."]
+            if foreground_app:
+                parts.append(f"Latest visible app: {foreground_app}.")
+            if resolution:
+                parts.append(f"Screen resolution: {resolution}.")
+            return " ".join(parts)
+
+        parts = [summary.strip() or "GUI task did not complete successfully."]
+        if error:
+            parts.append(f"Error: {error}.")
+        if foreground_app:
+            parts.append(f"Latest visible app: {foreground_app}.")
+        if resolution:
+            parts.append(f"Screen resolution: {resolution}.")
+        return " ".join(parts)
 
     def _select_backend(self, backend: str | None) -> Any:
         if backend is None or backend == self._gui_config.backend:
@@ -548,7 +580,7 @@ class GuiSubagentTool(Tool):
         if backend_name == "ios":
             from opengui.backends.ios_wda import WdaBackend
 
-            return WdaBackend()
+            return WdaBackend(wda_url=self._gui_config.ios.wda_url)
 
         if backend_name == "hdc":
             from opengui.backends.hdc import HdcBackend
@@ -647,6 +679,12 @@ class GuiSubagentTool(Tool):
             )
         return self._skill_libraries[cache_key]
 
+    def _refresh_cached_skill_stores(self) -> None:
+        for cached in getattr(self, "_skill_libraries", {}).values():
+            refresh_if_stale = getattr(cached, "refresh_if_stale", None)
+            if callable(refresh_if_stale):
+                refresh_if_stale()
+
     def _make_run_dir(self) -> Path:
         runs_root = self._workspace / self._gui_config.artifacts_dir
         while True:
@@ -656,40 +694,6 @@ class GuiSubagentTool(Tool):
                 return run_dir
             except FileExistsError:
                 continue
-
-    async def _promote_shortcut(self, trace_path: Path | None, is_success: bool, platform: str) -> str | None:
-        if trace_path is None or not trace_path.exists():
-            return None
-        if not is_success:
-            logger.info("Skipping shortcut promotion for unsuccessful task: %s", trace_path)
-            return None
-
-        from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
-        from opengui.skills.shortcut_store import ShortcutSkillStore
-
-        try:
-            store = ShortcutSkillStore(
-                store_dir=get_gui_skill_store_root(self._workspace),
-                embedding_provider=self._embedding_adapter,
-            )
-            pipeline = ShortcutPromotionPipeline(platform=platform)
-            return await pipeline.promote_from_trace(trace_path, is_success=is_success, store=store)
-        except Exception:
-            logger.warning("Shortcut promotion failed for %s", trace_path, exc_info=True)
-            return None
-
-    async def _summarize_trajectory(self, trace_path: Path | None) -> str:
-        """Summarize the trajectory via LLM; return empty string on error or when unavailable."""
-        if trace_path is None or not trace_path.exists():
-            return ""
-        from opengui.trajectory.summarizer import TrajectorySummarizer
-
-        try:
-            summarizer = TrajectorySummarizer(llm=self._llm_adapter)
-            return await summarizer.summarize_file(trace_path)
-        except Exception:
-            logger.warning("Trajectory summarization failed for %s", trace_path, exc_info=True)
-            return ""
 
     @staticmethod
     def _resolve_trace_path(recorder_path: Path | None, agent_trace_path: str | None) -> Path | None:
@@ -767,12 +771,3 @@ class _GuiToolInterventionHandler:
     @staticmethod
     def _scrub_payload(payload: dict[str, Any]) -> dict[str, Any]:
         return GuiAgent._scrub_for_log(payload)
-
-
-def _write_extraction_usage(trace_path: Path, usage: dict[str, int]) -> None:
-    """Persist LLM token usage from skill extraction next to the trace file."""
-    usage_path = trace_path.parent / "extraction_usage.json"
-    try:
-        usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
-    except OSError as exc:
-        logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)

@@ -95,6 +95,22 @@ class AgentResult:
     trace_path: str | None = None
     steps_taken: int = 0
     error: str | None = None
+    attempt_summary: str | None = None
+
+
+class _StepExecutionError(RuntimeError):
+    """Runtime error raised from _run_step with optional model snapshot context."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model_snapshot: dict[str, Any] | None = None,
+        attempt_summary: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.model_snapshot = model_snapshot
+        self.attempt_summary = attempt_summary
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +299,7 @@ class _AgentSubgoalRunner:
         state_validator: Any,
         model: str,
         artifacts_root: "Path",
+        trajectory_recorder: TrajectoryRecorder | None = None,
         agent_profile: str | None = None,
     ) -> None:
         self._llm = llm
@@ -290,6 +307,7 @@ class _AgentSubgoalRunner:
         self._state_validator = state_validator
         self._model = model
         self._artifacts_root = Path(artifacts_root)
+        self._trajectory_recorder = trajectory_recorder
         self._step_counter = 0
         self._agent_profile = canonicalize_agent_profile(agent_profile)
 
@@ -305,6 +323,13 @@ class _AgentSubgoalRunner:
 
         summaries: list[str] = []
         current_screenshot: Path | bytes = screenshot
+
+        if self._trajectory_recorder is not None:
+            self._trajectory_recorder.record_event(
+                "subgoal_start",
+                goal=goal,
+                max_steps=max_steps,
+            )
 
         for i in range(max_steps):
             # Build a minimal prompt for the subgoal
@@ -343,6 +368,25 @@ class _AgentSubgoalRunner:
                 )
             except Exception as exc:
                 logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=None,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=str(exc),
+                )
+                if self._trajectory_recorder is not None:
+                    self._trajectory_recorder.record_event(
+                        "subgoal_result",
+                        goal=goal,
+                        success=False,
+                        steps_taken=i,
+                        action_summaries=summaries,
+                        error=str(exc),
+                    )
                 return SubgoalResult(success=False, steps_taken=i, action_summaries=summaries, error=str(exc))
 
             try:
@@ -350,11 +394,31 @@ class _AgentSubgoalRunner:
             except Exception as exc:
                 logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=f"profile parse error: {exc}",
+                )
                 continue
 
             if not response.tool_calls or response.tool_calls[0].name != "computer_use":
                 logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
                 summaries.append(f"Sub-step {i+1}: no valid action returned")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error="no valid action returned",
+                )
                 continue
 
             tc = response.tool_calls[0]
@@ -363,11 +427,31 @@ class _AgentSubgoalRunner:
             except ActionError as exc:
                 logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=f"action parse error: {exc}",
+                )
                 continue
 
             # Skip terminal actions inside a subgoal
             if action.action_type in ("done", "request_intervention"):
                 summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=action,
+                    action_summary="terminal action skipped in subgoal",
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error="terminal action skipped in subgoal",
+                )
                 continue
 
             try:
@@ -375,6 +459,16 @@ class _AgentSubgoalRunner:
             except Exception as exc:
                 logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=action,
+                    action_summary=f"{action.action_type}",
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error=f"execution error: {exc}",
+                )
                 continue
 
             # Observe new screen
@@ -382,9 +476,11 @@ class _AgentSubgoalRunner:
             subgoal_dir = self._artifacts_root / "subgoal_screenshots"
             subgoal_dir.mkdir(parents=True, exist_ok=True)
             next_path = subgoal_dir / f"subgoal_{int(time.time() * 1000)}_{self._step_counter}.png"
+            screenshot_path: str | None = None
             try:
                 obs = await self._backend.observe(next_path)
                 current_screenshot = Path(obs.screenshot_path) if obs.screenshot_path else current_screenshot
+                screenshot_path = obs.screenshot_path
             except Exception as exc:
                 logger.warning("Subgoal observe failed at sub-step %d: %s", i, exc)
 
@@ -396,20 +492,48 @@ class _AgentSubgoalRunner:
             summaries.append(f"Sub-step {i+1}: {action_desc}")
 
             # Check if the goal state has been reached
+            reached = False
             if not _should_skip_validation(goal) and self._state_validator is not None:
                 try:
                     reached = await self._state_validator.validate(goal, screenshot=current_screenshot)
                 except Exception:
                     reached = False
-                if reached:
-                    logger.info("Subgoal reached after %d sub-steps", i + 1)
-                    return SubgoalResult(
+            self._record_subgoal_step(
+                goal=goal,
+                substep_index=i + 1,
+                model_output=response.content,
+                action=action,
+                action_summary=action_desc,
+                screenshot_path=screenshot_path,
+                goal_reached=reached,
+                error=None,
+            )
+            if reached:
+                logger.info("Subgoal reached after %d sub-steps", i + 1)
+                if self._trajectory_recorder is not None:
+                    self._trajectory_recorder.record_event(
+                        "subgoal_result",
+                        goal=goal,
                         success=True,
                         steps_taken=i + 1,
                         action_summaries=summaries,
-                        final_screenshot=current_screenshot,
+                        error=None,
                     )
-
+                return SubgoalResult(
+                    success=True,
+                    steps_taken=i + 1,
+                    action_summaries=summaries,
+                    final_screenshot=current_screenshot,
+                )
+        if self._trajectory_recorder is not None:
+            self._trajectory_recorder.record_event(
+                "subgoal_result",
+                goal=goal,
+                success=False,
+                steps_taken=max_steps,
+                action_summaries=summaries,
+                error=f"Subgoal not reached after {max_steps} sub-steps",
+            )
         return SubgoalResult(
             success=False,
             steps_taken=max_steps,
@@ -425,6 +549,41 @@ class _AgentSubgoalRunner:
             f"Respond using the configured `{self._agent_profile}` profile format. "
             f"{' '.join(contract['format'])}"
         )
+
+    def _record_subgoal_step(
+        self,
+        *,
+        goal: str,
+        substep_index: int,
+        model_output: str | None,
+        action: Action | None,
+        action_summary: str | None,
+        screenshot_path: str | None,
+        goal_reached: bool,
+        error: str | None,
+    ) -> None:
+        if self._trajectory_recorder is None:
+            return
+        self._trajectory_recorder.record_event(
+            "subgoal_step",
+            goal=goal,
+            substep_index=substep_index,
+            model_output=model_output,
+            action=self._serialize_action(action) if action is not None else None,
+            action_summary=action_summary,
+            screenshot_path=screenshot_path,
+            goal_reached=goal_reached,
+            error=error,
+        )
+
+    @staticmethod
+    def _serialize_action(action: Action) -> dict[str, Any]:
+        payload = dataclasses.asdict(action)
+        return {
+            key: value
+            for key, value in payload.items()
+            if value is not None and not (key == "relative" and value is False)
+        }
 
 
 class _AgentScreenshotProvider:
@@ -522,6 +681,7 @@ class GuiAgent:
         self._unified_skill_search = unified_skill_search
         self._memory_store = memory_store
         self._shortcut_applicability_router = shortcut_applicability_router
+        self._active_retry_summaries: tuple[str, ...] = ()
 
     # ------------------------------------------------------------------
     # Public API
@@ -559,15 +719,9 @@ class GuiAgent:
                 matched_skill, final_score = skill_match
             memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
 
-        # 3b. Retrieve shortcut candidates (multi-candidate, filtered by platform + app)
-        shortcut_candidates = await self._retrieve_shortcut_candidates(
-            task, platform=self.backend.platform, app_hint=app_hint,
-        )
-
-        # 4. If skill matched (legacy path), attempt skill execution first.
-        # Shortcut candidates from step 3b are evaluated inside the retry loop
-        # at attempt 0 using a live screenshot so applicability is screen-aware.
+        # 4. If skill matched, attempt skill execution first.
         skill_context: str | None = None
+        skill_result: Any | None = None
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
                 ExecutionPhase.SKILL,
@@ -599,164 +753,88 @@ class GuiAgent:
         last_trace_path: str | None = None
         last_steps_taken = 0
         result: AgentResult | None = None
+        retry_summaries: list[str] = []
 
-        # Tracks whether the first attempt used a shortcut so retries can clear
-        # matched_skill and skill_context to avoid stale shortcut context.
-        _shortcut_attempted: bool = False
+        try:
+            for attempt in range(max_retries):
+                self._active_retry_summaries = tuple(retry_summaries)
+                run_dir = self._make_run_dir(task, attempt)
+                last_trace_path = str(run_dir)
 
-        for attempt in range(max_retries):
-            run_dir = self._make_run_dir(task, attempt)
-            last_trace_path = str(run_dir)
-
-            # Attempt 0: evaluate shortcut applicability using a live screenshot.
-            # When applicability returns "run", the selected shortcut takes priority
-            # over any legacy _search_skill match and its execution result supplies
-            # skill_context for this attempt.
-            if attempt == 0 and shortcut_candidates:
-                pre_obs = await self.backend.observe(
-                    run_dir / "screenshots" / "pre_shortcut_check.png",
-                    timeout=self.step_timeout,
-                )
-                pre_screenshot = (
-                    Path(pre_obs.screenshot_path) if pre_obs.screenshot_path else None
-                )
-                applicability_decision = await self._evaluate_shortcut_applicability(
-                    shortcut_candidates,
-                    screenshot_path=pre_screenshot,
+                await self._log_attempt_event(
+                    run_dir,
+                    "attempt_start",
+                    attempt=attempt,
+                    max_retries=max_retries,
                     task=task,
                 )
-                if applicability_decision.outcome == "run":
-                    # Find the candidate matching the approved shortcut_id
-                    approved = next(
-                        (
-                            r for r in shortcut_candidates
-                            if r.skill.skill_id == applicability_decision.shortcut_id
-                        ),
-                        None,
+                try:
+                    result = await self._run_once(
+                        task, app_hint=app_hint, run_dir=run_dir,
+                        memory_context=memory_context,
+                        skill_context=skill_context,
                     )
-                    if approved is not None:
-                        matched_skill = approved.skill
-                        final_score = applicability_decision.score
-                        memory_context = await self._inject_skill_memory_context(
-                            matched_skill, memory_context
+                    await self._log_attempt_event(
+                        run_dir,
+                        "attempt_result",
+                        attempt=attempt,
+                        success=result.success,
+                        summary=result.summary,
+                        model_summary=result.model_summary,
+                        error=result.error,
+                        steps_taken=result.steps_taken,
+                        trace_path=result.trace_path,
+                    )
+                    if result.success:
+                        break
+                    last_error = result.error
+                    last_model_summary = result.model_summary
+                    last_trace_path = result.trace_path or last_trace_path
+                    last_steps_taken = result.steps_taken
+                    attempt_summary = result.attempt_summary or self._build_attempt_summary(
+                        failure_reason=result.error or result.summary,
+                        result_summary=result.summary,
+                        model_summary=result.model_summary,
+                        action_summaries=(),
+                    )
+                    retry_summaries.append(attempt_summary)
+                    if result.error and result.error.startswith("intervention_cancelled"):
+                        break
+                    if attempt < max_retries - 1:
+                        await self._log_attempt_event(
+                            run_dir,
+                            "retry",
+                            attempt=attempt,
+                            next_attempt=attempt + 1,
+                            reason=result.error or result.summary,
                         )
-                        if self._shortcut_executor is not None:
-                            score_text = f"{final_score:.2f}" if final_score is not None else "n/a"
-                            self._trajectory_recorder.set_phase(
-                                ExecutionPhase.SKILL,
-                                reason=(
-                                    f"Executing approved shortcut '{matched_skill.name}' "
-                                    f"via ShortcutExecutor (score={score_text})"
-                                ),
-                            )
-                            try:
-                                self._shortcut_executor.trajectory_recorder = self._trajectory_recorder
-                                shortcut_result = await self._shortcut_executor.execute(matched_skill)
-                                if shortcut_result.is_violation:
-                                    self._trajectory_recorder.record_event(
-                                        "shortcut_execution", outcome="violation",
-                                        skill_id=shortcut_result.skill_id,
-                                        step_index=shortcut_result.step_index,
-                                        boundary=shortcut_result.boundary,
-                                        failed_condition=shortcut_result.failed_condition.value,
-                                    )
-                                    matched_skill = None
-                                    skill_context = None
-                                    self._trajectory_recorder.set_phase(
-                                        ExecutionPhase.AGENT,
-                                        reason=(
-                                            "Shortcut contract violation, falling back "
-                                            "to free exploration"
-                                        ),
-                                    )
-                                else:
-                                    skill_context = _summarize_shortcut_success(shortcut_result)
-                                    self._trajectory_recorder.record_event(
-                                        "shortcut_execution", outcome="success",
-                                        skill_id=shortcut_result.skill_id,
-                                        steps_taken=len(shortcut_result.step_results),
-                                    )
-                                    self._trajectory_recorder.set_phase(
-                                        ExecutionPhase.AGENT,
-                                        reason="Shortcut complete, agent confirms",
-                                    )
-                            except Exception as exc:
-                                self._trajectory_recorder.record_event(
-                                    "shortcut_execution", outcome="exception",
-                                    error_type=type(exc).__name__,
-                                    error_message=str(exc),
-                                )
-                                matched_skill = None
-                                skill_context = None
-                                self._trajectory_recorder.set_phase(
-                                    ExecutionPhase.AGENT,
-                                    reason="Shortcut execution raised exception, falling back",
-                                )
-                        _shortcut_attempted = True
-
-            # On retries after a failed shortcut attempt, clear shortcut context so
-            # subsequent retries use free exploration instead of a stale shortcut.
-            if attempt > 0 and _shortcut_attempted:
-                matched_skill = None
-                skill_context = None
-
-            await self._log_attempt_event(
-                run_dir,
-                "attempt_start",
-                attempt=attempt,
-                max_retries=max_retries,
-                task=task,
-            )
-            try:
-                result = await self._run_once(
-                    task, app_hint=app_hint, run_dir=run_dir,
-                    memory_context=memory_context,
-                    skill_context=skill_context,
-                )
-                await self._log_attempt_event(
-                    run_dir,
-                    "attempt_result",
-                    attempt=attempt,
-                    success=result.success,
-                    summary=result.summary,
-                    model_summary=result.model_summary,
-                    error=result.error,
-                    steps_taken=result.steps_taken,
-                    trace_path=result.trace_path,
-                )
-                if result.success:
-                    break
-                last_error = result.error
-                last_model_summary = result.model_summary
-                last_trace_path = result.trace_path or last_trace_path
-                last_steps_taken = result.steps_taken
-                if result.error and result.error.startswith("intervention_cancelled"):
-                    break
-                if attempt < max_retries - 1:
+                except Exception as exc:
+                    last_error = f"{type(exc).__name__}: {exc}"
+                    model_snapshot = getattr(exc, "model_snapshot", None)
+                    attempt_summary = getattr(exc, "attempt_summary", None) or self._build_attempt_summary(
+                        failure_reason=last_error,
+                        result_summary="Attempt ended with an exception before completion.",
+                        action_summaries=(),
+                    )
+                    retry_summaries.append(attempt_summary)
                     await self._log_attempt_event(
                         run_dir,
-                        "retry",
+                        "attempt_exception",
                         attempt=attempt,
-                        next_attempt=attempt + 1,
-                        reason=result.error or result.summary,
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                        model_response=model_snapshot,
                     )
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-                await self._log_attempt_event(
-                    run_dir,
-                    "attempt_exception",
-                    attempt=attempt,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
-                if attempt < max_retries - 1:
-                    await self._log_attempt_event(
-                        run_dir,
-                        "retry",
-                        attempt=attempt,
-                        next_attempt=attempt + 1,
-                        reason=last_error,
-                    )
+                    if attempt < max_retries - 1:
+                        await self._log_attempt_event(
+                            run_dir,
+                            "retry",
+                            attempt=attempt,
+                            next_attempt=attempt + 1,
+                            reason=last_error,
+                        )
+        finally:
+            self._active_retry_summaries = ()
 
         if result is None or not result.success:
             result = AgentResult(
@@ -771,8 +849,13 @@ class GuiAgent:
         # 6. Finish trajectory
         self._trajectory_recorder.finish(success=result.success, error=result.error)
 
-        # 7. Post-run skill maintenance
-        await self._skill_maintenance(skill_match, result.success)
+        # 7. Post-run skill maintenance — use skill execution outcome,
+        #    not overall task result, so prefix skills aren't penalised
+        #    for agent failures after their steps complete.
+        skill_exec_success = (
+            skill_result is not None and skill_result.state.value == "succeeded"
+        ) if skill_result is not None else result.success
+        await self._skill_maintenance(skill_match, skill_exec_success)
 
         return result
 
@@ -852,7 +935,22 @@ class GuiAgent:
                     trace_path=str(run_dir),
                     steps_taken=step_index,
                     error="step_timeout",
+                    attempt_summary=self._build_attempt_summary(
+                        failure_reason="step_timeout",
+                        result_summary=f"Step {step_index} timed out.",
+                        action_summaries=tuple(turn.action_summary for turn in history),
+                    ),
                 )
+            except _StepExecutionError as exc:
+                raise _StepExecutionError(
+                    str(exc),
+                    model_snapshot=exc.model_snapshot,
+                    attempt_summary=self._build_attempt_summary(
+                        failure_reason=f"{type(exc).__name__}: {exc}",
+                        result_summary="Attempt ended with an exception before completion.",
+                        action_summaries=tuple(turn.action_summary for turn in history),
+                    ),
+                ) from exc
 
             steps_taken = step_index
 
@@ -932,15 +1030,11 @@ class GuiAgent:
                     )
 
             # Write trace entry
-            await self._write_trace(run_dir / "trace.jsonl", self._scrub_for_log({
+            await self._write_trace(run_dir / "trace.jsonl", self._scrub_for_artifact({
                 "event": "step",
                 "step_index": step_index,
                 "action": self._serialize_action(result.action),
-                "action_debug": result.action_debug,
-                "prompt": result.prompt_snapshot,
-                "model_output": result.model_snapshot,
-                "execution": result.execution_snapshot,
-                "tool_result": self._scrub_text_for_action(result.tool_result, result.action),
+                "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
                 "screenshot_path": (
                     result.next_observation.screenshot_path
                     if result.next_observation else None
@@ -951,38 +1045,77 @@ class GuiAgent:
 
             # Record trajectory step
             self._trajectory_recorder.record_step(
-                action=self._scrub_for_log(self._serialize_action(result.action)),
-                model_output=self._scrub_text_for_action(result.action_summary, result.action) or "",
+                action=self._scrub_for_artifact(self._serialize_action(result.action)),
+                model_output=self._scrub_text_for_artifact_action(result.action_summary, result.action) or "",
                 screenshot_path=(
                     str(result.next_observation.screenshot_path)
                     if result.next_observation and result.next_observation.screenshot_path
                     else None
                 ),
-                prompt=result.prompt_snapshot,
-                model_response=result.model_snapshot,
-                execution=result.execution_snapshot,
+                foreground_app=(
+                    result.next_observation.foreground_app
+                    if result.next_observation else None
+                ),
+                screen_width=(
+                    result.next_observation.screen_width
+                    if result.next_observation else None
+                ),
+                screen_height=(
+                    result.next_observation.screen_height
+                    if result.next_observation else None
+                ),
+                platform=(
+                    result.next_observation.platform
+                    if result.next_observation else None
+                ),
             )
 
             if intervention_cancelled:
+                termination_summary = await self._generate_termination_summary(
+                    task=task,
+                    termination_reason=f"Task was interrupted by policy: {cancellation_note}",
+                    history=history,
+                    run_dir=run_dir,
+                )
                 return AgentResult(
                     success=False,
-                    summary=f"Task cancelled during intervention after {steps_taken} step(s).",
+                    summary=termination_summary or f"Task cancelled during intervention after {steps_taken} step(s).",
                     model_summary=result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=f"intervention_cancelled: {cancellation_note}",
+                    attempt_summary=self._build_attempt_summary(
+                        failure_reason=f"intervention_cancelled: {cancellation_note}",
+                        result_summary=f"Task cancelled during intervention after {steps_taken} step(s).",
+                        model_summary=result.action_summary,
+                        action_summaries=tuple(
+                            list(turn.action_summary for turn in history) + [result.action_summary]
+                        ),
+                    ),
                 )
 
             if result.done:
                 success = result.action.status == "success"
                 return AgentResult(
                     success=success,
-                    summary=f"Task {'completed' if success else 'failed'} "
-                            f"after {steps_taken} step(s).",
+                    summary=(
+                        result.action.text
+                        if result.action.text
+                        else f"Task {'completed' if success else 'failed'} "
+                             f"after {steps_taken} step(s)."
+                    ),
                     model_summary=result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=None if success else result.tool_result,
+                    attempt_summary=None if success else self._build_attempt_summary(
+                        failure_reason=result.tool_result,
+                        result_summary=f"Task failed after {steps_taken} step(s).",
+                        model_summary=result.action_summary,
+                        action_summaries=tuple(
+                            list(turn.action_summary for turn in history) + [result.action_summary]
+                        ),
+                    ),
                 )
 
             history.append(
@@ -1008,13 +1141,24 @@ class GuiAgent:
             if result.next_observation is not None:
                 obs = result.next_observation
 
+        termination_summary = await self._generate_termination_summary(
+            task=task,
+            termination_reason=f"Reached maximum step limit ({self.max_steps})",
+            history=history,
+            run_dir=run_dir,
+        )
         return AgentResult(
             success=False,
-            summary=f"Reached max steps ({self.max_steps}) without completion.",
+            summary=termination_summary or f"Reached max steps ({self.max_steps}) without completion.",
             model_summary=None,
             trace_path=str(run_dir),
             steps_taken=steps_taken,
             error="max_steps_exceeded",
+            attempt_summary=self._build_attempt_summary(
+                failure_reason="max_steps_exceeded",
+                result_summary=f"Reached max steps ({self.max_steps}) without completion.",
+                action_summaries=tuple(turn.action_summary for turn in history),
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -1042,6 +1186,7 @@ class GuiAgent:
                 tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
                 tool_choice="required" if native_tools_enabled else None,
             )
+            raw_response_snapshot = self._snapshot_failed_model_response(response)
 
             try:
                 response = normalize_profile_response(self.agent_profile, response)
@@ -1052,11 +1197,18 @@ class GuiAgent:
                         "content": f"Format error: {exc}. Follow the required response format exactly.",
                     })
                     continue
-                raise RuntimeError(f"Failed to parse profile response after retries: {exc}") from exc
+                raise _StepExecutionError(
+                    f"Failed to parse profile response after retries: {exc}",
+                    model_snapshot=raw_response_snapshot,
+                ) from exc
 
             # Append assistant message
             assistant_msg = self._build_assistant_message(response)
             messages.append(assistant_msg)
+            assistant_snapshot = self._snapshot_failed_model_response(
+                response,
+                assistant_message=assistant_msg,
+            )
 
             # Validate tool call
             if not response.tool_calls or len(response.tool_calls) == 0:
@@ -1067,7 +1219,10 @@ class GuiAgent:
                         "content": "Error: no tool call found. You must use the computer_use tool.",
                     })
                     continue
-                raise RuntimeError("LLM did not return a computer_use tool call after retries.")
+                raise _StepExecutionError(
+                    "LLM did not return a computer_use tool call after retries.",
+                    model_snapshot=assistant_snapshot,
+                )
 
             tool_call = response.tool_calls[0]
             if tool_call.name != "computer_use":
@@ -1078,7 +1233,10 @@ class GuiAgent:
                         "content": f"Error: expected 'computer_use' tool, got '{tool_call.name}'.",
                     })
                     continue
-                raise RuntimeError(f"LLM called unexpected tool '{tool_call.name}'.")
+                raise _StepExecutionError(
+                    f"LLM called unexpected tool '{tool_call.name}'.",
+                    model_snapshot=assistant_snapshot,
+                )
 
             # Parse action
             try:
@@ -1092,7 +1250,10 @@ class GuiAgent:
                         "content": f"Error parsing action: {exc}. Please fix and retry.",
                     })
                     continue
-                raise RuntimeError(f"Failed to parse action after retries: {exc}") from exc
+                raise _StepExecutionError(
+                    f"Failed to parse action after retries: {exc}",
+                    model_snapshot=assistant_snapshot,
+                ) from exc
 
             # Report progress
             if self.progress_callback is not None:
@@ -1316,6 +1477,16 @@ class GuiAgent:
         if app_name:
             lines.append(f"Foreground app hint: {app_name}")
 
+        retry_summaries = self._format_retry_attempt_summaries(self._active_retry_summaries)
+        if retry_summaries:
+            lines.extend([
+                "",
+                "Previous attempt summaries:",
+                retry_summaries,
+                "",
+                "Continue from the current screen state. Reuse the progress above and avoid blindly repeating the same failed action sequence.",
+            ])
+
         lines.extend([
             "",
             "Previous actions:",
@@ -1342,6 +1513,98 @@ class GuiAgent:
             f"Step {turn.step_index}: {turn.action_summary}"
             for turn in history
         )
+
+    @staticmethod
+    def _format_retry_attempt_summaries(attempt_summaries: tuple[str, ...]) -> str:
+        if not attempt_summaries:
+            return ""
+        return "\n\n".join(
+            f"Attempt {index}:\n{summary}"
+            for index, summary in enumerate(attempt_summaries, start=1)
+        )
+
+    async def _generate_termination_summary(
+        self,
+        *,
+        task: str,
+        termination_reason: str,
+        history: list[HistoryTurn],
+        run_dir: Path,
+    ) -> str | None:
+        """Ask the LLM for a brief summary when the task terminates abnormally.
+
+        Takes a fresh screenshot of the current screen state and sends it along
+        with the action history to the LLM for a concise summary.
+
+        Returns ``None`` on any failure so callers can fall back to a template.
+        """
+        steps_text = "\n".join(
+            f"  {i}. {turn.action_summary}" for i, turn in enumerate(history, 1)
+        ) or "  (no steps completed)"
+
+        prompt_text = (
+            "You were executing a GUI automation task but it was terminated before completion.\n\n"
+            f"Task: {task}\n"
+            f"Termination reason: {termination_reason}\n"
+            f"Steps executed:\n{steps_text}\n\n"
+            "The attached screenshot shows the current screen state.\n"
+            "Based on the steps completed and the screenshot, provide a brief summary:\n"
+            "1. What progress was made and the current screen state (which app/page is showing)\n"
+            "2. Why it stopped\n"
+            "3. Any information that was retrieved or visible on screen\n"
+            "Keep it concise (2-4 sentences). Do not suggest next steps."
+        )
+        try:
+            # Take a fresh screenshot for the summary
+            screenshot_path = run_dir / "screenshots" / "termination_summary.png"
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            observation = await self.backend.observe(
+                screenshot_path, timeout=self.step_timeout,
+            )
+            content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
+            if observation.screenshot_path and Path(observation.screenshot_path).exists():
+                content.append(self._image_block(Path(observation.screenshot_path)))
+
+            response = await self.llm.chat(
+                messages=[{"role": "user", "content": content}],
+                tools=None,
+            )
+            text = response.content.strip()
+            return text if text else None
+        except Exception as exc:
+            logger.warning("Failed to generate termination summary: %s", exc)
+            return None
+
+    @staticmethod
+    def _build_attempt_summary(
+        *,
+        failure_reason: str,
+        result_summary: str | None,
+        action_summaries: tuple[str, ...],
+        model_summary: str | None = None,
+    ) -> str:
+        lines = [f"Failure reason: {failure_reason}"]
+        if result_summary and result_summary != failure_reason:
+            lines.append(f"Attempt result: {result_summary}")
+        if model_summary:
+            lines.append(f"Latest model summary: {model_summary}")
+
+        if action_summaries:
+            lines.append("Completed GUI actions before the failure:")
+            trimmed_actions = action_summaries[-6:]
+            omitted_count = len(action_summaries) - len(trimmed_actions)
+            if omitted_count > 0:
+                lines.append(f"- ... {omitted_count} earlier step(s) omitted")
+            start_index = len(action_summaries) - len(trimmed_actions) + 1
+            for step_offset, action_summary in enumerate(trimmed_actions, start=start_index):
+                lines.append(f"- Step {step_offset}: {action_summary}")
+        else:
+            lines.append("No completed GUI actions were recorded before the failure.")
+
+        lines.append(
+            "Retry guidance: Continue from the current screen state. Reuse the progress above and avoid blindly repeating the same failed action sequence."
+        )
+        return "\n".join(lines)
 
     def _history_user_message(
         self,
@@ -1429,7 +1692,7 @@ class GuiAgent:
         return {
             "task": task,
             "step_index": step_index,
-            "messages": self._scrub_for_log(messages),
+            "messages": self._scrub_for_artifact(messages),
             "history": [
                 {
                     "step_index": turn.step_index,
@@ -1451,20 +1714,41 @@ class GuiAgent:
         action_text: str,
     ) -> dict[str, Any]:
         return {
-            "raw_content": self._scrub_text_for_action(response.content, action),
+            "raw_content": self._scrub_text_for_artifact_action(response.content, action),
             "tool_calls": [
                 {
                     "id": tool_call.id,
                     "name": tool_call.name,
-                    "arguments": self._scrub_for_log(tool_call.arguments),
+                    "arguments": self._scrub_for_artifact(tool_call.arguments),
                 }
                 for tool_call in (response.tool_calls or [])
             ],
-            "assistant_message": self._scrub_assistant_message_for_log(assistant_message, action),
-            "parsed_action": self._scrub_for_log(self._serialize_action(action)),
-            "action_text": self._scrub_text_for_action(action_text, action),
-            "action_summary": self._scrub_text_for_action(self._action_summary(action_text), action),
+            "assistant_message": self._scrub_assistant_message_for_artifact(assistant_message, action),
+            "parsed_action": self._scrub_for_artifact(self._serialize_action(action)),
+            "action_text": self._scrub_text_for_artifact_action(action_text, action),
+            "action_summary": self._scrub_text_for_artifact_action(self._action_summary(action_text), action),
         }
+
+    def _snapshot_failed_model_response(
+        self,
+        response: LLMResponse,
+        *,
+        assistant_message: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {
+            "raw_content": self._scrub_text_for_artifact_action(response.content, None),
+            "tool_calls": [
+                {
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "arguments": self._scrub_for_artifact(tool_call.arguments),
+                }
+                for tool_call in (response.tool_calls or [])
+            ],
+        }
+        if assistant_message is not None:
+            snapshot["assistant_message"] = self._scrub_for_artifact(assistant_message)
+        return snapshot
 
     @staticmethod
     def _normalize_action_text(content: str, action: Action) -> str:
@@ -1516,33 +1800,51 @@ class GuiAgent:
 
     @staticmethod
     def _scrub_for_log(value: Any) -> Any:
+        return GuiAgent._scrub_value(value, redact_input_text=True)
+
+    @staticmethod
+    def _scrub_for_artifact(value: Any) -> Any:
+        return GuiAgent._scrub_value(value, redact_input_text=False)
+
+    @staticmethod
+    def _scrub_value(value: Any, *, redact_input_text: bool) -> Any:
         if isinstance(value, dict):
             scrubbed: dict[str, Any] = {}
             action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
             for key, item in value.items():
                 if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
                     scrubbed[key] = "<omitted:image-data-url>"
-                elif action_type == "input_text" and key == "text":
+                elif redact_input_text and action_type == "input_text" and key == "text":
                     scrubbed[key] = "<redacted:input_text>"
                 elif (action_type == "request_intervention" and key == "text") or key == "reason":
                     scrubbed[key] = "<redacted:intervention_reason>"
                 elif any(token in key.lower() for token in ("password", "secret", "token", "otp", "credential")):
                     scrubbed[key] = "<redacted:sensitive_field>"
                 else:
-                    scrubbed[key] = GuiAgent._scrub_for_log(item)
+                    scrubbed[key] = GuiAgent._scrub_value(item, redact_input_text=redact_input_text)
             return scrubbed
         if isinstance(value, list):
-            return [GuiAgent._scrub_for_log(item) for item in value]
+            return [GuiAgent._scrub_value(item, redact_input_text=redact_input_text) for item in value]
         if isinstance(value, str):
             return GuiAgent._scrub_sensitive_text(value)
         return value
 
     @staticmethod
-    def _scrub_text_for_action(text: str | None, action: Action) -> str | None:
+    def _scrub_text_for_action(text: str | None, action: Action | None) -> str | None:
+        return GuiAgent._scrub_text(text, action, redact_input_text=True)
+
+    @staticmethod
+    def _scrub_text_for_artifact_action(text: str | None, action: Action | None) -> str | None:
+        return GuiAgent._scrub_text(text, action, redact_input_text=False)
+
+    @staticmethod
+    def _scrub_text(text: str | None, action: Action | None, *, redact_input_text: bool) -> str | None:
         if text is None:
             return None
         scrubbed = GuiAgent._scrub_sensitive_text(text)
-        if action.action_type == "input_text" and action.text:
+        if action is None:
+            return scrubbed
+        if redact_input_text and action.action_type == "input_text" and action.text:
             scrubbed = scrubbed.replace(action.text, "<redacted:input_text>")
         if action.action_type == "request_intervention" and action.text:
             scrubbed = scrubbed.replace(action.text, "<redacted:intervention_reason>")
@@ -1582,6 +1884,34 @@ class GuiAgent:
                 )
             except json.JSONDecodeError:
                 function_payload["arguments"] = cls._scrub_text_for_action(arguments, action)
+        return scrubbed
+
+    @classmethod
+    def _scrub_assistant_message_for_artifact(
+        cls,
+        assistant_message: dict[str, Any],
+        action: Action,
+    ) -> dict[str, Any]:
+        scrubbed = cls._scrub_for_artifact(assistant_message)
+        content = scrubbed.get("content")
+        if isinstance(content, str):
+            scrubbed["content"] = cls._scrub_text_for_artifact_action(content, action)
+        for tool_call in scrubbed.get("tool_calls", []):
+            if not isinstance(tool_call, dict):
+                continue
+            function_payload = tool_call.get("function")
+            if not isinstance(function_payload, dict):
+                continue
+            arguments = function_payload.get("arguments")
+            if not isinstance(arguments, str):
+                continue
+            try:
+                function_payload["arguments"] = json.dumps(
+                    cls._scrub_for_artifact(json.loads(arguments)),
+                    ensure_ascii=False,
+                )
+            except json.JSONDecodeError:
+                function_payload["arguments"] = cls._scrub_text_for_artifact_action(arguments, action)
         return scrubbed
 
     # ------------------------------------------------------------------
@@ -1730,6 +2060,14 @@ class GuiAgent:
         if self._unified_skill_search is not None:
             search_results = await self._unified_skill_search.search(task, top_k=1)
             if not search_results:
+                self._trajectory_recorder.record_event(
+                    "skill_search",
+                    task=task,
+                    source="unified",
+                    matched=False,
+                    reason="no_results",
+                    threshold=self._skill_threshold,
+                )
                 return None
             result = search_results[0]
             if result.score >= self._skill_threshold:
@@ -1739,21 +2077,83 @@ class GuiAgent:
                     result.layer,
                     result.score,
                 )
+                self._trajectory_recorder.record_event(
+                    "skill_search",
+                    task=task,
+                    source="unified",
+                    matched=True,
+                    skill_id=result.skill.skill_id,
+                    skill_name=result.skill.name,
+                    score=round(result.score, 4),
+                    threshold=self._skill_threshold,
+                )
                 return result
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="unified",
+                matched=False,
+                reason="below_threshold",
+                skill_name=result.skill.name,
+                score=round(result.score, 4),
+                threshold=self._skill_threshold,
+            )
             return None
 
         if self._skill_library is None:
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="none",
+                matched=False,
+                reason="no_library",
+                threshold=self._skill_threshold,
+            )
             return None
         from opengui.skills.data import compute_confidence
 
-        search_results = await self._skill_library.search(task, top_k=1)
+        search_results = await self._skill_library.search(
+            task, platform=self.backend.platform, top_k=1,
+        )
         if not search_results:
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="legacy",
+                matched=False,
+                reason="no_results",
+                threshold=self._skill_threshold,
+            )
             return None
         skill, relevance = search_results[0]
         confidence = compute_confidence(skill)
         final_score = relevance * confidence
         if final_score >= self._skill_threshold:
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="legacy",
+                matched=True,
+                skill_id=skill.skill_id,
+                skill_name=skill.name,
+                score=round(final_score, 4),
+                confidence=round(confidence, 4),
+                relevance=round(relevance, 4),
+                threshold=self._skill_threshold,
+            )
             return (skill, final_score)
+        self._trajectory_recorder.record_event(
+            "skill_search",
+            task=task,
+            source="legacy",
+            matched=False,
+            reason="below_threshold",
+            skill_name=skill.name,
+            score=round(final_score, 4),
+            confidence=round(confidence, 4),
+            relevance=round(relevance, 4),
+            threshold=self._skill_threshold,
+        )
         return None
 
     async def _retrieve_shortcut_candidates(
@@ -1982,4 +2382,3 @@ class GuiAgent:
             self._skill_library.remove(skill.skill_id)
         else:
             self._skill_library.update(skill.skill_id, updated)
-            await self._skill_library.add_or_merge(updated)

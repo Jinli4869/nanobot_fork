@@ -27,6 +27,10 @@ uv.lock
 docs/
 opengui_runs/
 
+# Demo generated data (screenshots & trajectory JSON from convert-trajectory.py)
+demo/data/*/
+!demo/data/manifest.json
+
 # TUI web generated artifacts
 nanobot/tui/web/node_modules/
 # nanobot/tui/web/dist/

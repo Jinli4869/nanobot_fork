@@ -1,0 +1,510 @@
+/* ── Platform Tabs ── */
+.platform-tab {
+  padding: 10px 20px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.platform-tab:hover { color: var(--text-primary); }
+
+.platform-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ── Scenario Cards ── */
+.scenario-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  min-width: 200px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all var(--transition);
+  flex-shrink: 0;
+}
+
+.scenario-card:hover {
+  border-color: var(--text-muted);
+  background: var(--bg-tertiary);
+}
+
+.scenario-card.active {
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+
+.scenario-card .title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scenario-card .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.scenario-card .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.badge.success { background: rgba(63, 185, 80, 0.15); color: var(--accent-green); }
+.badge.failure { background: rgba(248, 81, 73, 0.15); color: var(--accent-red); }
+
+/* ── Agent Log ── */
+.log-entry {
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 1.5;
+  animation: fadeInUp 300ms ease;
+}
+
+.log-entry.inbound {
+  background: rgba(88, 166, 255, 0.08);
+  border-left: 3px solid var(--accent);
+}
+
+.log-entry.tool_call {
+  background: rgba(139, 148, 158, 0.08);
+  border-left: 3px solid var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.log-entry.tool_result {
+  background: rgba(63, 185, 80, 0.08);
+  border-left: 3px solid var(--accent-green);
+}
+
+.log-entry.tool_result.failed {
+  background: rgba(248, 81, 73, 0.08);
+  border-left-color: var(--accent-red);
+}
+
+.log-entry.outbound {
+  background: rgba(188, 140, 255, 0.08);
+  border-left: 3px solid var(--accent-purple);
+}
+
+.log-entry.outbound.telegram {
+  background: linear-gradient(180deg, rgba(0, 136, 204, 0.09), rgba(0, 136, 204, 0.05));
+  border-left-color: #169ad6;
+}
+
+.log-entry .label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.log-entry.highlight {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Telegram channel entries */
+.log-entry.telegram {
+  background: rgba(0, 136, 204, 0.08);
+  border-left: 3px solid #0088cc;
+}
+
+/* Tool-specific border colors */
+.log-entry.tool_call[data-tool="web_search"],
+.log-entry.tool_result[data-tool="web_search"] {
+  border-left-color: var(--accent-orange);
+}
+
+.log-entry.tool_call[data-tool="send_message"],
+.log-entry.tool_result[data-tool="send_message"] {
+  border-left-color: var(--accent-purple);
+}
+
+.log-entry .label .channel-icon {
+  margin-right: 4px;
+}
+
+.log-entry-content {
+  overflow-wrap: anywhere;
+}
+
+.log-entry-content.content-inbound,
+.log-entry-content.content-outbound,
+.log-entry-content.content-tool-call {
+  white-space: pre-wrap;
+}
+
+.log-entry-content.content-outbound {
+  display: flex;
+}
+
+.telegram-message-bubble {
+  width: min(100%, 320px);
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  box-shadow: 0 8px 20px rgba(31, 35, 40, 0.06);
+}
+
+.telegram-message-bubble.incoming {
+  margin-right: auto;
+  border-radius: 16px 16px 16px 6px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 249, 252, 0.98));
+  border-color: rgba(0, 136, 204, 0.12);
+  color: #163846;
+}
+
+.telegram-reply-bubble {
+  margin-left: auto;
+  width: min(100%, 320px);
+  padding: 10px 12px;
+  border-radius: 16px 16px 6px 16px;
+  background: linear-gradient(180deg, rgba(233, 248, 255, 0.98), rgba(216, 241, 252, 0.98));
+  border: 1px solid rgba(22, 154, 214, 0.2);
+  box-shadow: 0 8px 20px rgba(22, 154, 214, 0.1);
+  color: #0f3446;
+}
+
+.telegram-message-text {
+  line-height: 1.55;
+}
+
+.telegram-reply-paragraph {
+  line-height: 1.55;
+}
+
+.telegram-reply-paragraph + .telegram-reply-paragraph {
+  margin-top: 6px;
+}
+
+.telegram-reply-spacer {
+  height: 10px;
+}
+
+.telegram-reply-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 2px 0;
+}
+
+.telegram-reply-item {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  align-items: start;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.telegram-reply-bullet {
+  color: #169ad6;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.telegram-reply-item-text {
+  line-height: 1.5;
+}
+
+/* Model output step states */
+.model-output-step.active-step {
+  border-left: 2px solid var(--accent);
+  padding-left: 10px;
+}
+
+.model-output-step.past-step {
+  opacity: 0.6;
+}
+
+/* ── Device Viewer ── */
+#device-viewer .panel-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  position: relative;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.device-frame {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.device-frame.phone { max-width: 280px; max-height: 100%; }
+.device-frame.tablet { max-width: 520px; max-height: 100%; }
+.device-frame.desktop { max-width: 100%; max-height: 100%; }
+
+.screenshot-container {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow-lg);
+  background: #f0f0f0;
+}
+
+.screenshot-container img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  transition: opacity 400ms ease;
+}
+
+.screenshot-container img.fading { opacity: 0; }
+
+.action-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.step-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  padding: 4px 10px;
+  background: rgba(31, 35, 40, 0.7);
+  color: #fff;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  z-index: 10;
+}
+
+.no-screenshot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 300px;
+  height: 500px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ── Model Output ── */
+#model-output {
+  min-height: 0;
+}
+
+#model-output .panel-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.model-output-step {
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.model-output-step .step-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.model-output-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  margin-bottom: 12px;
+  min-height: 20px;
+}
+
+.model-output-text .cursor {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: var(--accent);
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: blink 1s step-end infinite;
+}
+
+.action-badge {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent-orange);
+}
+
+.action-badge .action-type {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.observation-info {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+/* ── Timeline ── */
+.timeline-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timeline-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  transition: all var(--transition);
+}
+
+.timeline-btn:hover {
+  background: var(--bg-primary);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.timeline-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.timeline-dots {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  justify-content: center;
+}
+
+.timeline-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+  cursor: pointer;
+  transition: all var(--transition);
+  border: 2px solid transparent;
+}
+
+.timeline-dot:hover { background: var(--text-muted); }
+
+.timeline-dot.active {
+  background: var(--accent);
+  border-color: var(--accent-hover);
+  transform: scale(1.3);
+}
+
+.timeline-dot.done {
+  background: var(--accent-green);
+}
+
+.timeline-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  min-width: 120px;
+  text-align: right;
+}
+
+.speed-btn {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.speed-btn:hover, .speed-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Empty State ── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-muted);
+  font-size: 14px;
+  gap: 8px;
+  text-align: center;
+  padding: 24px;
+}
+
+.empty-state .icon { font-size: 32px; opacity: 0.5; }
+
+@media (max-width: 1024px) {
+  .scenario-card {
+    min-width: 0;
+    width: 100%;
+    padding: 12px 14px;
+  }
+}

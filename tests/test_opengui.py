@@ -137,6 +137,49 @@ def test_parse_action_splits_paired_coordinates_from_x_list() -> None:
     assert action.relative is True
 
 
+def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> None:
+    action = parse_action({
+        "action": "tap",
+        "x": "[903, 130]",
+        "relative": "true",
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 903.0
+    assert action.y == 130.0
+    assert action.relative is True
+
+
+def test_parse_swipe_splits_all_coordinates_from_x_list() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "x": [120, 340, 760, 355],
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
+    assert action.relative is True
+
+
+def test_parse_swipe_splits_all_coordinates_from_stringified_x_list() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "x": "[120, 340, 760, 355]",
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
+    assert action.relative is True
+
+
 def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
     enter = parse_action({"action_type": "keyboard_enter"})
     recents = parse_action({"action_type": "recents"})
@@ -266,6 +309,52 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
     )
 
 
+@pytest.mark.asyncio
+async def test_adb_backend_foreground_app_uses_activity_dump_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="""
+      mResumedActivity: ActivityRecord{123 u0 com.coloros.calendar/.MainActivity t12}
+    """)
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    assert await backend._query_foreground_app(timeout=5.0) == "com.coloros.calendar"
+    run_mock.assert_awaited_once_with(
+        "shell",
+        "dumpsys",
+        "activity",
+        "activities",
+        timeout=10.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_foreground_app_falls_back_to_window_dump(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "header without resumed activity",
+        "mCurrentFocus=Window{42 u0 com.android.settings/com.android.settings.Settings}",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    assert await backend._query_foreground_app(timeout=5.0) == "com.android.settings"
+    assert run_mock.await_args_list[0].args == ("shell", "dumpsys", "activity", "activities")
+    assert run_mock.await_args_list[1].args == ("shell", "dumpsys", "window", "windows")
+
+
+def test_adb_backend_extract_foreground_app_supports_multiple_android_signals() -> None:
+    assert AdbBackend._extract_foreground_app(
+        "topResumedActivity=ActivityRecord{7 u0 com.heytap.browser/.Main t11}"
+    ) == "com.heytap.browser"
+    assert AdbBackend._extract_foreground_app(
+        "mFocusedApp=AppWindowToken{ token=Token{ ActivityRecord{7 u0 com.android.settings/.Settings t11}}}"
+    ) == "com.android.settings"
+    assert AdbBackend._extract_foreground_app("no foreground info here") == "unknown"
+
+
 def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> None:
     qwen_agent = GuiAgent(
         _ScriptedLLM([]),
@@ -350,6 +439,56 @@ def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> 
     }
 
 
+def test_qwen3vl_profile_falls_back_to_provider_tool_calls_when_content_contract_is_missing() -> None:
+    response = LLMResponse(
+        content='Thought: Continue\nAction: Tap the next result',
+        tool_calls=[
+            ToolCall(
+                id="provider-tool-call-0",
+                name="computer_use",
+                arguments={"action_type": "tap", "x": 321, "y": 654, "relative": True},
+            )
+        ],
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].id == "provider-tool-call-0"
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 321,
+        "y": 654,
+        "relative": True,
+    }
+
+
+def test_qwen3vl_profile_normalizes_provider_mobile_use_tool_calls() -> None:
+    response = LLMResponse(
+        content="Action: Tap the next result",
+        tool_calls=[
+            ToolCall(
+                id="provider-tool-call-0",
+                name="mobile_use",
+                arguments={"action": "click", "coordinate": [903, 130]},
+            )
+        ],
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].id == "provider-tool-call-0"
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 903,
+        "y": 130,
+        "relative": True,
+    }
+
+
 @pytest.mark.asyncio
 async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "grounder.png"
@@ -413,6 +552,81 @@ async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path
 
 
 @pytest.mark.asyncio
+async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
+    screenshot = tmp_path / "subgoal-record.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([
+        LLMResponse(
+            content=(
+                'Thought: Move toward the target\n'
+                'Action: "Tap settings"\n'
+                '<tool_call>{"name":"computer_use","arguments":{"action_type":"tap","x":400,"y":300,"relative":true}}</tool_call>'
+            ),
+            tool_calls=[
+                ToolCall(
+                    id="subgoal-tool-0",
+                    name="computer_use",
+                    arguments={"action_type": "tap", "x": 400, "y": 300, "relative": True},
+                )
+            ],
+        )
+    ])
+    backend = _SkillTestBackend()
+    validator = _RecordingValidator([True])
+    recorder = _make_recorder(tmp_path, "subgoal trace")
+    recorder.start()
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=backend,
+        state_validator=validator,
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts",
+        trajectory_recorder=recorder,
+    )
+
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+    trace_path = recorder.finish(success=True)
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result.success is True
+    names = [event["type"] for event in events]
+    assert "subgoal_start" in names
+    assert "subgoal_step" in names
+    assert "subgoal_result" in names
+    subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
+    assert subgoal_step["model_output"]
+    assert subgoal_step["goal_reached"] is True
+    assert subgoal_step["action"]["action_type"] == "tap"
+
+
+@pytest.mark.asyncio
+async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> None:
+    screenshot = tmp_path / "subgoal-failure.png"
+    screenshot.write_bytes(b"png")
+    llm = _RecordingLLM([LLMResponse(content="No valid tool call", tool_calls=None)])
+    recorder = _make_recorder(tmp_path, "subgoal trace failure")
+    recorder.start()
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=_SkillTestBackend(),
+        state_validator=_RecordingValidator([False]),
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts-failure",
+        trajectory_recorder=recorder,
+    )
+
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+    trace_path = recorder.finish(success=True)
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+
+    assert result.success is False
+    subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
+    assert subgoal_step["error"] == "no valid action returned"
+    subgoal_result = next(event for event in events if event["type"] == "subgoal_result")
+    assert subgoal_result["success"] is False
+
+
+@pytest.mark.asyncio
 async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> None:
     llm = _RecordingLLM([
         LLMResponse(
@@ -447,6 +661,78 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
     assert result.success
     assert len(llm.calls) == 2
     assert "Action:" in llm.calls[0][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_agent_runs_with_qwen3vl_provider_computer_use_stringified_x_coordinates(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: Tap the search bar",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="computer_use",
+                    arguments={"action_type": "click", "x": "[410, 125]", "relative": True},
+                )
+            ],
+        ),
+        LLMResponse(
+            content="Action: Finish successfully",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-1",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen provider stringified coords"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+        agent_profile="qwen3vl",
+    )
+
+    result = await agent.run("Tap then finish", max_retries=1)
+
+    assert result.success is True
+    assert result.summary
+
+
+@pytest.mark.asyncio
+async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: Finish successfully",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="mobile_use",
+                    arguments={"action": "terminate", "status": "success"},
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen provider tool"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        agent_profile="qwen3vl",
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is True
+    assert result.summary
 
 
 @pytest.mark.asyncio
@@ -527,34 +813,124 @@ async def test_adb_backend_scrolls_horizontally_from_center(
 
 
 @pytest.mark.asyncio
-async def test_adb_backend_input_text_prefers_b64_broadcast(
+async def test_adb_backend_input_text_prefers_yadb(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.android.adbkeyboard/.AdbIME",
-        "",
-    ])
+    run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt"))
+    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt")
+    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh"))
+    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh")
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
     await backend.execute(action)
 
-    expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[0].args == (
-        "shell", "settings", "get", "secure", "default_input_method",
+        "push", "/tmp/opengui-yadb-input.txt", "/data/local/tmp/opengui-yadb-input.txt",
     )
-    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[1].args == (
-        "shell", "am", "broadcast",
-        "-a", "ADB_INPUT_B64", "--es", "msg", expected_b64,
+        "push", "/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.sh",
     )
-    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[2].args == (
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input.sh",
+    )
+    assert run_mock.await_args_list[3].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[5].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.sh",
+    )
 
 
 @pytest.mark.asyncio
-async def test_adb_backend_input_text_auto_switches_to_adb_keyboard(
+async def test_adb_backend_input_text_multiline_sends_each_line_and_enter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+
+    async def fake_run(*args: object, timeout: float = 5.0) -> str:
+        return ""
+
+    run_mock = AsyncMock(side_effect=fake_run)
+    monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+    local_paths = iter([
+        Path("/tmp/opengui-yadb-input-1.txt"),
+        Path("/tmp/opengui-yadb-input-2.txt"),
+    ])
+    device_paths = iter([
+        "/data/local/tmp/opengui-yadb-input-1.txt",
+        "/data/local/tmp/opengui-yadb-input-2.txt",
+    ])
+    script_local_paths = iter([
+        Path("/tmp/opengui-yadb-input-1.sh"),
+        Path("/tmp/opengui-yadb-input-2.sh"),
+    ])
+    script_device_paths = iter([
+        "/data/local/tmp/opengui-yadb-input-1.sh",
+        "/data/local/tmp/opengui-yadb-input-2.sh",
+    ])
+    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: next(local_paths))
+    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: next(device_paths))
+    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: next(script_local_paths))
+    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: next(script_device_paths))
+
+    action = parse_action({"action_type": "input_text", "text": "第一行\n第二行"})
+    await backend.execute(action)
+
+    assert run_mock.await_args_list[0].args == (
+        "push", "/tmp/opengui-yadb-input-1.txt", "/data/local/tmp/opengui-yadb-input-1.txt",
+    )
+    assert run_mock.await_args_list[1].args == (
+        "push", "/tmp/opengui-yadb-input-1.sh", "/data/local/tmp/opengui-yadb-input-1.sh",
+    )
+    assert run_mock.await_args_list[2].args == (
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input-1.sh",
+    )
+    assert run_mock.await_args_list[3].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input-1.sh", "/data/local/tmp/opengui-yadb-input-1.txt",
+    )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-1.txt",
+    )
+    assert run_mock.await_args_list[5].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-1.sh",
+    )
+    assert run_mock.await_args_list[6].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
+    assert run_mock.await_args_list[7].args == (
+        "push", "/tmp/opengui-yadb-input-2.txt", "/data/local/tmp/opengui-yadb-input-2.txt",
+    )
+    assert run_mock.await_args_list[8].args == (
+        "push", "/tmp/opengui-yadb-input-2.sh", "/data/local/tmp/opengui-yadb-input-2.sh",
+    )
+    assert run_mock.await_args_list[9].args == (
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input-2.sh",
+    )
+    assert run_mock.await_args_list[10].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input-2.sh", "/data/local/tmp/opengui-yadb-input-2.txt",
+    )
+    assert run_mock.await_args_list[11].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-2.txt",
+    )
+    assert run_mock.await_args_list[12].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-2.sh",
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_falls_back_to_adb_keyboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
@@ -565,12 +941,15 @@ async def test_adb_backend_input_text_auto_switches_to_adb_keyboard(
         "",
     ])
     monkeypatch.setattr(backend, "_run", run_mock)
+    ensure_yadb_mock = AsyncMock(return_value=False)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
     await backend.execute(action)
 
     expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
+    ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[0].args == (
         "shell", "settings", "get", "secure", "default_input_method",
     )
@@ -601,6 +980,7 @@ async def test_adb_backend_input_text_enables_adb_keyboard_before_switching(
     monkeypatch.setattr(backend, "_run", run_mock)
     enable_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_needs_ime_enable_before_set", enable_mock)
+    monkeypatch.setattr(backend, "_ensure_yadb_available", AsyncMock(return_value=False))
 
     action = parse_action({"action_type": "input_text", "text": "你好"})
     await backend.execute(action)
@@ -619,14 +999,14 @@ async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.example.ime/.ExampleIme",
-        "com.other.ime/.OtherIme",
-        "",
-    ])
+    run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
+    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt"))
+    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt")
+    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh"))
+    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh")
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
@@ -635,22 +1015,23 @@ async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
     ensure_yadb_mock.assert_awaited_once_with(5.0)
 
     assert run_mock.await_args_list[0].args == (
-        "shell", "settings", "get", "secure", "default_input_method",
+        "push", "/tmp/opengui-yadb-input.txt", "/data/local/tmp/opengui-yadb-input.txt",
     )
-    assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[1].args == (
-        "shell", "ime", "list", "-s",
+        "push", "/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.sh",
     )
-    assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[2].args == (
-        "shell", "app_process",
-        "-Djava.class.path=/data/local/tmp/yadb",
-        "/data/local/tmp",
-        "com.ysbing.yadb.Main",
-        "-keyboard",
-        text,
+        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input.sh",
     )
-    assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[3].args == (
+        "shell", "sh", "/data/local/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.txt",
+    )
+    assert run_mock.await_args_list[5].args == (
+        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.sh",
+    )
 
 
 @pytest.mark.asyncio
@@ -673,9 +1054,43 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
 
     ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[2].args == (
-        "shell", "input", "text", "hello\\ world",
+        "shell", "input", "text", "hello%sworld",
     )
     assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+
+
+def test_adb_backend_text_segmentation_splits_emoji_boundaries() -> None:
+    from opengui.backends.adb import _iter_text_input_segments
+
+    assert _iter_text_input_segments("杭州✅明天☁️有雨") == [
+        "杭州",
+        "✅",
+        "明天",
+        "☁️",
+        "有雨",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_input_text_sends_text_after_emoji_as_later_segment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    segments: list[str] = []
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    async def fake_input_single_text(text: str, timeout: float) -> None:
+        assert timeout == 5.0
+        segments.append(text)
+
+    monkeypatch.setattr(backend, "_input_single_text", fake_input_single_text)
+
+    action = parse_action({"action_type": "input_text", "text": "已发送给苏✅请查收"})
+    await backend.execute(action)
+
+    assert segments == ["已发送给苏", "✅", "请查收"]
+    run_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -772,6 +1187,165 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
     attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
     assert attempt_exception["error_type"] == "RuntimeError"
     assert attempt_exception["error_message"] == "provider exploded"
+
+
+@pytest.mark.asyncio
+async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path) -> None:
+    class _MalformedToolCallLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            self.calls += 1
+            if self.calls <= 3:
+                return LLMResponse(
+                    content="Action: Swipe up to reveal the size options.",
+                    tool_calls=[ToolCall(
+                        id=f"bad-call-{self.calls}",
+                        name="computer_use",
+                        arguments={"action_type": "swipe", "x": [500, 750], "relative": True},
+                    )],
+                )
+            return LLMResponse(
+                content="Action: done",
+                tool_calls=[ToolCall(
+                    id="good-call",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            )
+
+    recorder = _make_recorder(tmp_path, "retry malformed tool call")
+    agent = GuiAgent(
+        _MalformedToolCallLLM(),
+        DryRunBackend(),
+        trajectory_recorder=recorder,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+    )
+
+    result = await agent.run("retry malformed tool call", max_retries=2)
+
+    assert result.success
+    assert recorder.path is not None
+    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
+    attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
+    assert attempt_exception["error_type"] == "_StepExecutionError"
+    assert "Failed to parse action after retries" in attempt_exception["error_message"]
+    assert attempt_exception["model_response"]["raw_content"] == "Action: Swipe up to reveal the size options."
+    assert attempt_exception["model_response"]["tool_calls"][0]["name"] == "computer_use"
+    assert attempt_exception["model_response"]["tool_calls"][0]["arguments"] == {
+        "action_type": "swipe",
+        "x": [500, 750],
+        "relative": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_retry_prompt_includes_previous_attempt_summary_after_max_steps(
+    tmp_path: Path,
+) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="wait briefly",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        # Termination summary call (text-only, no tool call) after max_steps hit
+        LLMResponse(content="Waited briefly but ran out of steps. Currently on home screen."),
+        LLMResponse(
+            content="finish task",
+            tool_calls=[ToolCall(
+                id="call-2",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "retry summary max steps"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Open Settings", max_retries=2)
+
+    assert result.success
+    # calls[0]=attempt1 step, calls[1]=termination summary, calls[2]=attempt2 step
+    second_attempt = llm.calls[2]
+    retry_text = "\n".join(
+        block["text"]
+        for block in second_attempt[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Previous attempt summaries:" in retry_text
+    assert "Attempt 1:" in retry_text
+    assert "Failure reason: max_steps_exceeded" in retry_text
+    assert "Step 1: wait briefly" in retry_text
+    assert "Continue from the current screen state" in retry_text
+
+
+@pytest.mark.asyncio
+async def test_retry_prompt_includes_previous_attempt_summary_after_exception(
+    tmp_path: Path,
+) -> None:
+    class _MalformedThenRecoverLLM:
+        def __init__(self) -> None:
+            self.calls: list[list[dict]] = []
+            self._call_count = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            del tools, tool_choice
+            self.calls.append(copy.deepcopy(messages))
+            self._call_count += 1
+            if self._call_count <= 3:
+                return LLMResponse(
+                    content="Action: Swipe up to reveal the size options.",
+                    tool_calls=[ToolCall(
+                        id=f"bad-call-{self._call_count}",
+                        name="computer_use",
+                        arguments={"action_type": "swipe", "x": [500, 750], "relative": True},
+                    )],
+                )
+            return LLMResponse(
+                content="finish task",
+                tool_calls=[ToolCall(
+                    id="good-call",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            )
+
+    llm = _MalformedThenRecoverLLM()
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "retry summary exception"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("retry malformed tool call", max_retries=2)
+
+    assert result.success
+    second_attempt = llm.calls[3]
+    retry_text = "\n".join(
+        block["text"]
+        for block in second_attempt[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Previous attempt summaries:" in retry_text
+    assert "Attempt 1:" in retry_text
+    assert "Failure reason: _StepExecutionError: Failed to parse action after retries" in retry_text
+    assert "No completed GUI actions were recorded before the failure." in retry_text
+    assert "Continue from the current screen state" in retry_text
 
 
 @pytest.mark.asyncio

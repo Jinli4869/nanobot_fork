@@ -459,6 +459,7 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `displayNum` | `int \| null` | `null` | Xvfb display number |
 | `displayWidth` | `int` | `1280` | Virtual display width in pixels |
 | `displayHeight` | `int` | `720` | Virtual display height in pixels |
+| `enableSkillExtraction` | `bool` | `false` | Extract and store learned skills after GUI runs |
 | `enableSkillExecution` | `bool` | `false` | Enable learned skill replay (see [Skills System](#skills-system)) |
 | `evaluation.enabled` | `bool` | `false` | Run post-task evaluation for successful GUI runs |
 | `evaluation.judgeModel` | `string` | `"qwen3-vl-plus"` | Judge model used for evaluation only |
@@ -1002,19 +1003,22 @@ OpenGUI learns from successful task runs. After each task it extracts a reusable
 | CLI (opengui) | `~/.opengui/skills/<platform>/` |
 | nanobot | `<workspace>/gui_skills/<platform>/` |
 
-### Enabling skill execution
+### Enabling skill extraction and execution
 
-Skill learning (extraction) is always on. Skill *execution* (replay) is opt-in:
+Both skill learning (extraction) and skill execution (replay) are opt-in:
 
 ```json
 "gui": {
+  "enableSkillExtraction": true,
   "enableSkillExecution": true,
   "skillThreshold": 0.6,
   "embeddingModel": "text-embedding-v4"
 }
 ```
 
-With `enableSkillExecution: false` (default), skills are extracted and stored for future use but never replayed. This lets you build up a library passively before enabling replay.
+With `enableSkillExtraction: false` (default), OpenGUI skips post-run skill promotion entirely.
+
+With `enableSkillExecution: false` (default), OpenGUI does not replay learned skills during future runs.
 
 ### Tuning `skillThreshold`
 

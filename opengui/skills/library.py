@@ -65,14 +65,37 @@ def _action_signature(skill: Skill) -> tuple[str, ...]:
 
 
 def _action_similarity(sig_a: tuple[str, ...], sig_b: tuple[str, ...]) -> float:
-    """Prefix-matching similarity between two action signatures."""
+    """Prefix-aware similarity between two action signatures.
+
+    When the shorter sequence is a perfect prefix of the longer one, the
+    score reflects that all overlapping actions match, with only a mild
+    penalty for the extra tail in the longer sequence.  This prevents
+    short navigational-prefix skills from being scored as dissimilar to
+    their longer counterparts.
+
+    Formula:
+        score = prefix_matches / min_len            (overlap quality, 0-1)
+              * (1 - 0.3 * tail_len / max_len)      (length penalty, 0.7-1)
+    """
     if not sig_a and not sig_b:
         return 1.0
+    min_len = min(len(sig_a), len(sig_b))
     max_len = max(len(sig_a), len(sig_b))
     if max_len == 0:
         return 1.0
-    matches = sum(1 for a, b in zip(sig_a, sig_b) if a == b)
-    return matches / max_len
+    # Count contiguous prefix matches (stricter than zip-anywhere).
+    prefix_matches = 0
+    for a, b in zip(sig_a, sig_b):
+        if a == b:
+            prefix_matches += 1
+        else:
+            break
+    if min_len == 0:
+        return 0.0
+    overlap_quality = prefix_matches / min_len
+    tail_len = max_len - min_len
+    length_penalty = 1.0 - 0.3 * (tail_len / max_len)
+    return overlap_quality * length_penalty
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +178,7 @@ class SkillLibrary:
     _documents: list[str] = field(default_factory=list, repr=False)
     _ordered_ids: list[str] = field(default_factory=list, repr=False)
     _index_dirty: bool = field(default=True, repr=False)
+    _loaded_mtime_ns: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         self.store_dir = Path(self.store_dir)
@@ -175,23 +199,62 @@ class SkillLibrary:
         conflict = self._find_best_conflict(skill)
         if conflict is None:
             self._upsert(skill)
+            logger.info(
+                "Skill dedup decision=ADD  new=%s [%s] app=%s  (no conflict found)",
+                skill.name, skill.skill_id[:8], skill.app,
+            )
             return "ADD", skill.skill_id
+
+        # Log conflict details with similarity scores for diagnostics.
+        name_sim = _name_token_similarity(conflict.name, skill.name)
+        action_sim = _action_similarity(
+            _action_signature(conflict), _action_signature(skill),
+        )
+        logger.info(
+            "Skill conflict found: new=%s [%s] vs existing=%s [%s]  "
+            "name_sim=%.3f action_sim=%.3f",
+            skill.name, skill.skill_id[:8],
+            conflict.name, conflict.skill_id[:8],
+            name_sim, action_sim,
+        )
 
         decision = await self._decide_merge(conflict, skill)
 
         if decision == "MERGE":
             merged = self._merge_skills(conflict, skill)
             self._upsert(merged, replace_id=conflict.skill_id)
+            logger.info(
+                "Skill dedup decision=MERGE  merged=%s [%s]  "
+                "(kept existing id, aggregated stats)",
+                merged.name, merged.skill_id[:8],
+            )
             return "MERGE", merged.skill_id
         elif decision == "KEEP_NEW":
             self._remove_internal(conflict.skill_id)
             self._upsert(skill)
+            logger.info(
+                "Skill dedup decision=KEEP_NEW  new=%s [%s]  "
+                "replaced=%s [%s]",
+                skill.name, skill.skill_id[:8],
+                conflict.name, conflict.skill_id[:8],
+            )
             return "KEEP_NEW", skill.skill_id
         elif decision == "KEEP_OLD":
+            logger.info(
+                "Skill dedup decision=KEEP_OLD  kept=%s [%s]  "
+                "discarded=%s [%s]",
+                conflict.name, conflict.skill_id[:8],
+                skill.name, skill.skill_id[:8],
+            )
             return "KEEP_OLD", conflict.skill_id
         else:
             # ADD — genuinely different
             self._upsert(skill)
+            logger.info(
+                "Skill dedup decision=ADD  new=%s [%s] app=%s  "
+                "(conflict found but decision=ADD)",
+                skill.name, skill.skill_id[:8], skill.app,
+            )
             return "ADD", skill.skill_id
 
     def add(self, skill: Skill) -> None:
@@ -380,13 +443,17 @@ class SkillLibrary:
 
     @staticmethod
     def _merge_skills(old: Skill, new: Skill) -> Skill:
-        """Deterministic merge: aggregate stats, prefer longer step sequence."""
+        """Deterministic merge: aggregate stats, prefer shorter step sequence.
+
+        Shorter skills are more generic navigational prefixes — the agent
+        handles remaining steps dynamically based on the specific task.
+        """
         old_sig = _action_signature(old)
         new_sig = _action_signature(new)
 
-        # Steps: prefer longer (better coverage) if sequences are similar
+        # Steps: prefer shorter (more generic prefix) if sequences are similar
         if _action_similarity(old_sig, new_sig) >= 0.8:
-            steps = new.steps if len(new.steps) >= len(old.steps) else old.steps
+            steps = new.steps if len(new.steps) <= len(old.steps) else old.steps
         else:
             steps = new.steps or old.steps
 
@@ -442,6 +509,12 @@ class SkillLibrary:
         bm25_scores = np.array(self._bm25.score(query), dtype=np.float32)
         bm25_scores[~mask] = -1e9
 
+        # Normalize BM25 to [0, 1] so it blends properly with cosine similarity
+        valid_bm25 = bm25_scores[mask]
+        bm25_max = float(valid_bm25.max()) if valid_bm25.size > 0 else 0.0
+        if bm25_max > 0:
+            bm25_scores = np.where(mask, bm25_scores / bm25_max, bm25_scores)
+
         # Embedding (optional)
         if self.embedding_provider is not None:
             query_emb = await self.embedding_provider.embed([query])
@@ -454,13 +527,11 @@ class SkillLibrary:
         else:
             emb_scores = None
 
-        # Normalize + blend
-        bm25_norm = _min_max_norm(bm25_scores, mask)
+        # Blend normalized scores
         if emb_scores is not None:
-            emb_norm = _min_max_norm(emb_scores, mask)
-            hybrid = (1.0 - self.alpha) * bm25_norm + self.alpha * emb_norm
+            hybrid = (1.0 - self.alpha) * bm25_scores + self.alpha * emb_scores
         else:
-            hybrid = bm25_norm
+            hybrid = bm25_scores.copy()
 
         ranked = np.argsort(-hybrid)
         results: list[tuple[Skill, float]] = []
@@ -477,6 +548,8 @@ class SkillLibrary:
     def load_all(self) -> None:
         self._skills.clear()
         if not self.store_dir.exists():
+            self._loaded_mtime_ns = 0
+            self._index_dirty = True
             return
         for skills_file in self._iter_skill_files():
             try:
@@ -491,11 +564,22 @@ class SkillLibrary:
             for skill_data in data.get("skills", []):
                 skill = self._normalize_skill(Skill.from_dict(skill_data))
                 self._skills[skill.skill_id] = skill
+        self._loaded_mtime_ns = self._snapshot_mtime_ns()
         self._index_dirty = True
+
+    def refresh_if_stale(self) -> bool:
+        current_mtime_ns = self._snapshot_mtime_ns()
+        if current_mtime_ns == self._loaded_mtime_ns:
+            return False
+        self.load_all()
+        return True
 
     def _iter_skill_files(self) -> list[Path]:
         files: list[Path] = []
         flat_platforms: set[str] = set()
+
+        if not self.store_dir.exists():
+            return files
 
         for platform_dir in sorted(path for path in self.store_dir.iterdir() if path.is_dir()):
             flat_file = platform_dir / "skills.json"
@@ -512,6 +596,15 @@ class SkillLibrary:
             files.append(skills_file)
 
         return files
+
+    def _snapshot_mtime_ns(self) -> int:
+        max_mtime_ns = 0
+        for skills_file in self._iter_skill_files():
+            try:
+                max_mtime_ns = max(max_mtime_ns, skills_file.stat().st_mtime_ns)
+            except FileNotFoundError:
+                continue
+        return max_mtime_ns
 
     def _upsert(self, skill: Skill, *, replace_id: str | None = None) -> None:
         skill = self._normalize_skill(skill)
@@ -547,6 +640,7 @@ class SkillLibrary:
             tmp.close()
             Path(tmp.name).replace(target)
             self._cleanup_legacy_platform_files(platform)
+            self._loaded_mtime_ns = self._snapshot_mtime_ns()
         except BaseException:
             Path(tmp.name).unlink(missing_ok=True)
             raise
@@ -593,14 +687,3 @@ class SkillLibrary:
             parts.extend(skill.preconditions)
         return " ".join(parts)
 
-
-def _min_max_norm(scores: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    valid = scores[mask]
-    if len(valid) == 0:
-        return np.zeros_like(scores)
-    lo, hi = valid.min(), valid.max()
-    if hi - lo < 1e-9:
-        out = np.zeros_like(scores)
-        out[mask] = 0.5
-        return out
-    return np.where(mask, (scores - lo) / (hi - lo), 0.0)

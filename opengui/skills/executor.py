@@ -17,6 +17,7 @@ Execution pipeline per step:
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import time
@@ -32,6 +33,7 @@ from opengui.skills.data import Skill, SkillStep
 
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
+    from opengui.trajectory.recorder import TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -311,6 +313,8 @@ def _build_template_action(step: SkillStep, params: dict[str, str]) -> Action:
         kwargs["text"] = grounded["text"]
     elif step.action_type == "input_text":
         kwargs["text"] = target
+    elif step.action_type == "open_app":
+        kwargs["text"] = target
     return Action(**kwargs)
 
 
@@ -377,6 +381,7 @@ class SkillExecutor:
     action_grounder: ActionGrounder | None = None
     subgoal_runner: SubgoalRunner | None = None
     screenshot_provider: ScreenshotProvider | None = None
+    trajectory_recorder: TrajectoryRecorder | None = None
     stop_on_failure: bool = True
     max_recovery_steps: int = 3
 
@@ -392,6 +397,14 @@ class SkillExecutor:
         step_results: list[StepResult] = []
         overall_state = ExecutionState.RUNNING
         error_msg: str | None = None
+
+        if self.trajectory_recorder is not None:
+            self.trajectory_recorder.record_event(
+                "skill_execution_start",
+                skill_id=skill.skill_id,
+                skill_name=skill.name,
+                step_count=len(skill.steps),
+            )
 
         for i, step in enumerate(skill.steps):
             is_optional = bool(step.parameters.get("optional", False))
@@ -444,7 +457,7 @@ class SkillExecutor:
             # 4. If still invalid, record failure and decide whether to continue
             # ------------------------------------------------------------------
             if not valid and not _should_skip_validation(step.valid_state):
-                step_results.append(StepResult(
+                step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
                     backend_result="",
@@ -453,7 +466,9 @@ class SkillExecutor:
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
                     error=f"valid_state not reached: {step.valid_state}",
-                ))
+                )
+                step_results.append(step_result)
+                self._record_skill_step(skill, step, step_result)
                 if is_optional:
                     logger.info("Optional step %d skipped (valid_state not reached)", i)
                     continue
@@ -471,7 +486,7 @@ class SkillExecutor:
                     step, screenshot, params
                 )
                 result_text = await self.backend.execute(action, timeout=timeout)
-                step_results.append(StepResult(
+                step_result = StepResult(
                     step_index=i,
                     action=action,
                     backend_result=result_text,
@@ -480,10 +495,12 @@ class SkillExecutor:
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
                     action_summary=f"{action.action_type} on {step.target or 'target'}",
-                ))
+                )
+                step_results.append(step_result)
+                self._record_skill_step(skill, step, step_result)
             except Exception as exc:
                 logger.error("Step %d execution error: %s", i, exc)
-                step_results.append(StepResult(
+                step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
                     backend_result=str(exc),
@@ -491,7 +508,9 @@ class SkillExecutor:
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
                     error=str(exc),
-                ))
+                )
+                step_results.append(step_result)
+                self._record_skill_step(skill, step, step_result)
                 if is_optional:
                     logger.info("Optional step %d failed with exception, continuing", i)
                     continue
@@ -504,13 +523,23 @@ class SkillExecutor:
         if overall_state != ExecutionState.FAILED:
             overall_state = ExecutionState.SUCCEEDED
 
-        return SkillExecutionResult(
+        result = SkillExecutionResult(
             skill=skill,
             step_results=step_results,
             state=overall_state,
             execution_summary=_build_execution_summary(skill, step_results),
             error=error_msg,
         )
+        if self.trajectory_recorder is not None:
+            self.trajectory_recorder.record_event(
+                "skill_execution_result",
+                skill_id=skill.skill_id,
+                skill_name=skill.name,
+                state=result.state.value,
+                execution_summary=result.execution_summary,
+                error=result.error,
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -537,6 +566,26 @@ class SkillExecutor:
                 )
 
         return _build_template_action(step, params), "template"
+
+    def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
+        if self.trajectory_recorder is None:
+            return
+        self.trajectory_recorder.record_event(
+            "skill_step",
+            skill_id=skill.skill_id,
+            skill_name=skill.name,
+            step_index=step_result.step_index,
+            target=step.target,
+            action=_serialize_action(step_result.action),
+            action_summary=step_result.action_summary,
+            grounding_mode=step_result.grounding_mode,
+            backend_result=step_result.backend_result,
+            valid_state=step.valid_state,
+            valid_state_check=step_result.valid_state_check,
+            recovery_attempted=step_result.recovery_attempted,
+            recovery_success=bool(step_result.recovery_result and step_result.recovery_result.success),
+            error=step_result.error,
+        )
 
     async def _validate_state(
         self,
@@ -566,3 +615,12 @@ class SkillExecutor:
             except Exception as exc:
                 logger.warning("ScreenshotProvider failed: %s", exc)
         return None
+
+
+def _serialize_action(action: Action) -> dict[str, Any]:
+    payload = dataclasses.asdict(action)
+    return {
+        key: value
+        for key, value in payload.items()
+        if value is not None and not (key == "relative" and value is False)
+    }

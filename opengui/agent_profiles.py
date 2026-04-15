@@ -219,7 +219,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Output exactly one short `Action:` line in assistant text.",
                 "- Put structured arguments only in the native tool call, not in assistant text.",
                 "- Execute one action per step.",
-                "- If the task is complete, call `computer_use` with `action_type=\"done\"` and the appropriate status.",
+                "- If the task is complete, call `computer_use` with `action_type=\"done\"`, the appropriate status, and a `text` field containing a brief completion summary. The summary should include: (1) what was accomplished or why it failed; (2) the current screen state (which app/page is showing); (3) if the task involved retrieving information, include the key findings (e.g. prices, messages, search results). Keep the summary concise but informative — the caller depends on it to understand what happened.",
                 "- If the task reaches a sensitive, blocked, or unsafe state, call `computer_use` with `action_type=\"request_intervention\"` and a short reason instead of continuing or using `done`.",
             ),
         }
@@ -312,7 +312,17 @@ def normalize_profile_response(profile_name: str | None, response: LLMResponse) 
 
     content = response.content or ""
     if content.strip():
-        arguments = _parse_content_action(profile, content)
+        try:
+            arguments = _parse_content_action(profile, content)
+        except ValueError:
+            if response.tool_calls:
+                return LLMResponse(
+                    content=response.content,
+                    tool_calls=_normalize_profile_tool_calls(profile, response.tool_calls),
+                    raw=response.raw,
+                    usage=response.usage,
+                )
+            raise
         synthetic = ToolCall(
             id="content-tool-call-0",
             name="computer_use",
@@ -326,7 +336,12 @@ def normalize_profile_response(profile_name: str | None, response: LLMResponse) 
         )
 
     if response.tool_calls:
-        return response
+        return LLMResponse(
+            content=response.content,
+            tool_calls=_normalize_profile_tool_calls(profile, response.tool_calls),
+            raw=response.raw,
+            usage=response.usage,
+        )
 
     return response
 
@@ -348,6 +363,35 @@ def _parse_content_action(profile_name: str, content: str) -> dict[str, Any]:
     if profile_name == "seed":
         return _normalize_seed_action(content)
     raise ValueError(f"Content parsing not defined for profile {profile_name!r}.")
+
+
+def _normalize_profile_tool_calls(profile_name: str, tool_calls: list[ToolCall]) -> list[ToolCall]:
+    normalized: list[ToolCall] = []
+    for tool_call in tool_calls:
+        arguments = tool_call.arguments
+        name = tool_call.name
+
+        if profile_name == "qwen3vl":
+            if name == "mobile_use" or (name == "computer_use" and "action_type" not in arguments):
+                arguments = _normalize_qwen3vl_action(arguments)
+                name = "computer_use"
+        elif profile_name == "general_e2e":
+            if name == "mobile_use" or (name == "computer_use" and "action_type" not in arguments):
+                arguments = _normalize_general_e2e_action(arguments)
+                name = "computer_use"
+        elif profile_name == "mai_ui":
+            if name == "mobile_use" or (name == "computer_use" and "action_type" not in arguments):
+                arguments = _normalize_general_e2e_action(arguments)
+                name = "computer_use"
+
+        normalized.append(
+            ToolCall(
+                id=tool_call.id,
+                name=name,
+                arguments=arguments,
+            )
+        )
+    return normalized
 
 
 def _extract_action_json(content: str) -> dict[str, Any]:

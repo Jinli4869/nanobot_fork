@@ -496,6 +496,10 @@ async def _execute_agent(
             installed_apps = None
 
     recorder = TrajectoryRecorder(output_dir=run_root, task=task, platform=backend.platform)
+    if skill_executor is not None:
+        skill_executor.trajectory_recorder = recorder
+        if getattr(skill_executor, "subgoal_runner", None) is not None:
+            skill_executor.subgoal_runner._trajectory_recorder = recorder
     agent = GuiAgent(
         llm=provider,
         backend=backend,

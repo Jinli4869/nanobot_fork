@@ -2,7 +2,7 @@
 
 ## Overview
 
-OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI subagent core, v1.1-v1.2 completed safe background execution across major desktop targets, v1.3 added a local-first nanobot web workspace, v1.4 made planning and routing capability-aware, and v1.5 shipped the new shortcut/task skill architecture. Milestone v1.6 turns that architecture into a stable production shortcut path.
+OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI subagent core, v1.1-v1.2 completed safe background execution across major desktop targets, v1.3 added a local-first nanobot web workspace, v1.4 made planning and routing capability-aware, and v1.5 shipped the new shortcut/task skill architecture. Milestone v1.6 turns that architecture into a stable production shortcut path, then closes the remaining production gaps around concise extraction, low-token validation, and reliable reuse.
 
 ## Milestones
 
@@ -12,7 +12,7 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 - ✅ **v1.3 Nanobot Web Workspace** - Phases 17-20 (shipped 2026-03-22)
 - ✅ **v1.4 Capability-Aware Planning and Routing** - Phases 21-23 (shipped 2026-03-28)
 - ✅ **v1.5 New OpenGUI Skills Architecture** - Phases 24-27 (shipped 2026-04-02)
-- 🚧 **v1.6 Shortcut Extraction and Stable Execution** - Phases 28-31 (current)
+- 🚧 **v1.6 Shortcut Extraction and Stable Execution** - Phases 28-33 (current)
 
 ## Completed Milestone: v1.5 New OpenGUI Skills Architecture
 
@@ -29,9 +29,9 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 
 ## Current Milestone: v1.6 Shortcut Extraction and Stable Execution
 
-**Goal:** Turn the shipped shortcut architecture into a stable production path by extracting trustworthy shortcuts from traces, selecting them with screen-aware applicability checks, and executing them with live binding, settle/verification guards, and safe fallback behavior.
+**Goal:** Turn the shipped shortcut architecture into a stable production path by extracting trustworthy shortcuts from traces, selecting them with screen-aware applicability checks, and executing them with live binding, low-token verification, and safe fallback behavior.
 
-**Requirements:** 12 mapped / 12 total
+**Requirements:** 17 mapped / 17 total
 
 | Phase | Name | Goal | Requirements | Success Criteria |
 |-------|------|------|--------------|------------------|
@@ -39,6 +39,8 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 | 29 | 2/2 | Complete    | 2026-04-03 | 4 |
 | 30 | 3/3 | Complete   | 2026-04-03 | 4 |
 | 31 | 2/2 | Complete    | 2026-04-03 | 4 |
+| 32 | 3/3 | Complete   | 2026-04-07 | 4 |
+| 33 | Low-Token Applicability and Step-Scoped Validation | Match shortcuts once at entry, execute them with step-local validation, and keep reuse stable without paying avoidable token cost. | SUSE-03, SSTA-05, SSTA-06 | 4 |
 
 ### Phase 28: Shortcut Extraction Productionization
 
@@ -115,12 +117,54 @@ Plans:
 3. Focused regression coverage proves shortcut extraction/use is stable on representative mobile and desktop seams or CI-safe equivalents.
 4. The milestone closes with enough evidence to trust shortcut behavior as a production optimization rather than an experimental side path.
 
+### Phase 32: Prefix-Only Shortcut Extraction and Canonicalization
+
+**Goal:** Make promoted shortcuts concise and reusable by extracting only the stable prefix of long GUI trajectories, removing redundant path noise, and parameterizing dynamic action arguments instead of freezing them into brittle recorded literals.
+**Status:** Complete (2026-04-08)
+
+**Depends on:** Phase 31
+**Requirements:** SXTR-05, SXTR-06, SXTR-07
+**Plans:** 3/3 plans complete
+
+Plans:
+- [x] 32-01-PLAN.md - Replace coarse long-horizon truncation with deterministic reusable-boundary extraction
+- [x] 32-02-PLAN.md - Canonicalize replay noise before extraction so stored shortcuts stay concise
+- [x] 32-03-PLAN.md - Widen placeholder emission and lock the cleaned promotion path with end-to-end regressions
+
+**Success Criteria** (what must be TRUE):
+1. Long-chain traces no longer promote full end-to-end task paths when only the prefix is reusable; stored shortcuts stop at the last stable reusable boundary.
+2. Promoted shortcut steps are canonicalized so repeated/no-op path noise is removed and stored paths stay concise rather than replay-like.
+3. Parameters that can be grounded at runtime are represented as placeholders/parameter slots instead of stale hard-coded values wherever that improves reuse stability.
+4. Regression coverage proves long-trace extraction, prefix truncation, redundant-step removal, and placeholder emission behave deterministically on representative traces.
+
+### Phase 33: Low-Token Applicability and Step-Scoped Validation
+
+**Goal:** Make shortcut reuse cheaper and more reliable by separating one-time shortcut applicability checks from per-step validation, and by validating only the local state needed to keep execution on track.
+**Status:** Pending gap-closure phase
+
+**Depends on:** Phase 32
+**Requirements:** SUSE-03, SSTA-05, SSTA-06
+**Plans:** 0/0 plans complete
+
+Planned focus:
+- Evaluate shortcut-level preconditions once before execution instead of rechecking global contracts at every step
+- Move runtime validation toward step-local `valid_state` / `expected_state` checks with a bounded verification policy
+- Add low-token validation policy controls so reuse stays efficient on long or high-frequency shortcut runs
+
+**Success Criteria** (what must be TRUE):
+1. Shortcut-level applicability is evaluated once at entry using live screen evidence, and shortcuts that fail this gate are skipped before execution begins.
+2. Runtime validation uses step-local state requirements rather than re-evaluating the full shortcut contract before and after every single step.
+3. Verification policy keeps token usage bounded through deterministic skip rules, key-step validation, or other explicit budgeting controls without hiding drift.
+4. Shortcut execution remains recoverable and observable when local validation fails, with telemetry explaining which checks ran, which were skipped, and why fallback happened.
+
 ## Phase Ordering Rationale
 
 - **Phase 28 comes first** because the current production gap begins after a GUI run completes; until new shortcuts are actually promoted into the new store, later runtime work cannot learn from real traces.
 - **Phase 29 isolates applicability routing** because retrieval and execution safety are different problems; splitting them avoids conflating search quality with runtime correctness.
 - **Phase 30 focuses on execution stability** only after candidate selection is trustworthy, so runtime work can target the real execution path instead of hypothetical candidates.
 - **Phase 31 closes with observability and regression hardening** because shortcut stability claims are only credible once the team can inspect and test them directly.
+- **Phase 32 revisits extraction quality after productionization** because real traces revealed that some promoted shortcuts are still too long, too redundant, or too frozen to be dependable reusable units.
+- **Phase 33 tightens runtime cost and validation scope** so the newly-concise shortcuts stay cheap enough to reuse frequently while still failing safely when screen state drifts.
 
 ## Research Flags
 

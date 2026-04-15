@@ -22,7 +22,29 @@ _SUPPORTED_ACTION_TYPES = frozenset({
     "swipe",
     "press",
     "wait",
+    "open_app",
 })
+_COMMIT_HINTS = (
+    "send",
+    "submit",
+    "post",
+    "publish",
+    "confirm",
+    "checkout",
+    "pay",
+    "delete",
+    "share",
+)
+_BRANCH_HINTS = (
+    "if ",
+    "else",
+    "otherwise",
+    "retry",
+    "fail",
+    "failed",
+    "success",
+    "succeeded",
+)
 
 
 class ShortcutPromotionPipeline:
@@ -50,6 +72,15 @@ class ShortcutPromotionPipeline:
             return None
 
         steps = self._filter_promotable_steps(attempt_rows)
+        if not steps:
+            return None
+        steps = self._canonicalize_steps(steps)
+        if not steps:
+            return None
+        steps = self._collapse_app_opening_prefix(steps)
+        if not steps:
+            return None
+        steps = self._truncate_to_reusable_prefix(steps)
         if not steps:
             return None
 
@@ -159,7 +190,7 @@ class ShortcutPromotionPipeline:
         steps: list[dict[str, Any]],
         metadata: dict[str, Any],
     ) -> str | None:
-        if len(steps) < 2:
+        if not steps:
             return "too_few_promotable_steps"
         if str(metadata.get("app", "unknown")) == "unknown":
             return "unknown_app"
@@ -174,6 +205,180 @@ class ShortcutPromotionPipeline:
         if unsupported:
             return f"unsupported_action_type:{unsupported[0]}"
         return None
+
+    def _truncate_to_reusable_prefix(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        boundary = self._find_reusable_boundary(steps)
+        if boundary is None:
+            return list(steps)
+        return list(steps[:boundary])
+
+    def _canonicalize_steps(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if not steps:
+            return []
+
+        canonicalized: list[dict[str, Any]] = []
+        for step in steps:
+            if canonicalized and self._is_duplicate_wait(canonicalized[-1], step):
+                canonicalized[-1] = step
+                continue
+            if canonicalized and self._is_duplicate_interaction(canonicalized[-1], step):
+                canonicalized[-1] = self._prefer_richer_step(canonicalized[-1], step)
+                continue
+            canonicalized.append(step)
+        return canonicalized
+
+    _OPENING_ACTIONS = frozenset({"tap", "click", "scroll", "swipe", "wait"})
+
+    def _collapse_app_opening_prefix(self, steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace app-launching preamble steps with a single ``open_app`` step."""
+        if not steps:
+            return steps
+        if self._action_type(steps[0]) == "open_app":
+            return steps
+
+        target_app = self._derive_app_hint(steps)
+        if not target_app or target_app == "unknown":
+            return steps
+
+        prefix_end: int | None = None
+        for i, step in enumerate(steps[:5]):
+            if self._action_type(step) not in self._OPENING_ACTIONS:
+                break
+            obs = step.get("observation", {})
+            if isinstance(obs, dict):
+                fg = obs.get("foreground_app") or obs.get("app") or ""
+                if self._normalize_text(fg) == self._normalize_text(target_app):
+                    prefix_end = i
+                    break
+
+        if prefix_end is None:
+            return steps
+
+        last_prefix_step = steps[prefix_end]
+        synthetic: dict[str, Any] = {
+            **last_prefix_step,
+            "action": {"action_type": "open_app", "text": target_app},
+            "model_output": f"open_app({target_app})",
+            "valid_state": "No need to verify",
+            "expected_state": f"{target_app} is open and in the foreground",
+        }
+        return [synthetic] + steps[prefix_end + 1:]
+
+    def _find_reusable_boundary(self, steps: list[dict[str, Any]]) -> int | None:
+        for index, step in enumerate(steps):
+            if self._is_task_specific_payload_step(step):
+                return index
+            if self._is_commit_or_branch_step(step):
+                return index
+        return None
+
+    def _is_task_specific_payload_step(self, step: dict[str, Any]) -> bool:
+        action = step.get("action", {})
+        action_type = str(action.get("action_type", "")).strip().lower()
+        if action_type != "input_text":
+            return False
+        text = str(action.get("text", "")).strip()
+        if not text:
+            return False
+        return "{{" not in text or "}}" not in text
+
+    def _is_commit_or_branch_step(self, step: dict[str, Any]) -> bool:
+        combined = " ".join(
+            part
+            for part in (
+                str(step.get("model_output", "")).strip().lower(),
+                str(step.get("expected_state", "")).strip().lower(),
+            )
+            if part
+        )
+        if any(hint in combined for hint in _COMMIT_HINTS):
+            return True
+        return any(hint in combined for hint in _BRANCH_HINTS)
+
+    def _is_duplicate_wait(self, previous: dict[str, Any], current: dict[str, Any]) -> bool:
+        return (
+            self._action_type(previous) == "wait"
+            and self._action_type(current) == "wait"
+            and self._state_signature(previous) == self._state_signature(current)
+        )
+
+    def _is_duplicate_interaction(self, previous: dict[str, Any], current: dict[str, Any]) -> bool:
+        if self._action_type(previous) not in {"tap", "click"}:
+            return False
+        if self._action_type(previous) != self._action_type(current):
+            return False
+        if self._interaction_signature(previous) != self._interaction_signature(current):
+            return False
+        return self._states_match_or_one_is_richer(previous, current)
+
+    @staticmethod
+    def _action_type(step: dict[str, Any]) -> str:
+        action = step.get("action", {})
+        return str(action.get("action_type", "")).strip().lower()
+
+    def _interaction_signature(self, step: dict[str, Any]) -> tuple[str, str, str, str]:
+        return (
+            self._action_type(step),
+            self._normalize_text(step.get("model_output")),
+            self._normalize_params(step.get("action")),
+            self._normalize_app(step),
+        )
+
+    def _state_signature(self, step: dict[str, Any]) -> tuple[str, str, str]:
+        return (
+            self._normalize_app(step),
+            self._normalize_text(step.get("valid_state")),
+            self._normalize_text(step.get("expected_state")),
+        )
+
+    def _states_match_or_one_is_richer(self, previous: dict[str, Any], current: dict[str, Any]) -> bool:
+        previous_valid = self._normalize_text(previous.get("valid_state"))
+        current_valid = self._normalize_text(current.get("valid_state"))
+        previous_expected = self._normalize_text(previous.get("expected_state"))
+        current_expected = self._normalize_text(current.get("expected_state"))
+        return self._compatible_state_value(previous_valid, current_valid) and self._compatible_state_value(
+            previous_expected,
+            current_expected,
+        )
+
+    @staticmethod
+    def _compatible_state_value(previous: str, current: str) -> bool:
+        return previous == current or not previous or not current
+
+    def _prefer_richer_step(self, previous: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+        if self._state_richness(current) >= self._state_richness(previous):
+            return current
+        return previous
+
+    def _state_richness(self, step: dict[str, Any]) -> tuple[int, int]:
+        valid_state = self._normalize_text(step.get("valid_state"))
+        expected_state = self._normalize_text(step.get("expected_state"))
+        values = [value for value in (valid_state, expected_state) if value]
+        return (len(values), sum(len(value) for value in values))
+
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return " ".join(str(value).strip().lower().split())
+
+    def _normalize_params(self, action: Any) -> str:
+        if not isinstance(action, dict):
+            return ""
+        params = {
+            key: value
+            for key, value in action.items()
+            if key not in {"action_type", "x", "y", "x2", "y2"}
+        }
+        return json.dumps(params, sort_keys=True, separators=(",", ":"))
+
+    def _normalize_app(self, step: dict[str, Any]) -> str:
+        observation = step.get("observation", {})
+        if isinstance(observation, dict):
+            app = observation.get("app")
+            if app is not None:
+                return self._normalize_text(app)
+        return self._normalize_text(step.get("app"))
 
     def _enrich_candidate(
         self,

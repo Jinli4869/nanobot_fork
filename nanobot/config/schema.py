@@ -169,6 +169,12 @@ class HdcConfig(Base):
     serial: str | None = None
 
 
+class IosConfig(Base):
+    """WDA backend configuration for iOS device automation."""
+
+    wda_url: str = "http://localhost:8100"
+
+
 class GuiEvaluationConfig(Base):
     """Optional post-run evaluation for GUI tasks."""
 
@@ -181,11 +187,12 @@ class GuiEvaluationConfig(Base):
 class GuiConfig(Base):
     """GUI subagent configuration."""
 
-    backend: Literal["adb", "hdc", "local", "dry-run"] = "adb"
+    backend: Literal["adb", "ios", "hdc", "local", "dry-run"] = "adb"
     model: str | None = None
     provider: str | None = None
     agent_profile: str | None = None
     adb: AdbConfig = Field(default_factory=AdbConfig)
+    ios: IosConfig = Field(default_factory=IosConfig)
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
@@ -195,6 +202,7 @@ class GuiConfig(Base):
     display_num: int | None = None
     display_width: int = 1280
     display_height: int = 720
+    enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)

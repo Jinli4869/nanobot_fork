@@ -153,7 +153,7 @@ async def test_summarizer_called_post_run(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
         return_value="Summary text",
-    ) as mock_summarize, patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+    ) as mock_summarize, patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -175,7 +175,7 @@ async def test_summarizer_failure_non_fatal(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
         side_effect=RuntimeError("summarizer exploded"),
-    ), patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+    ), patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         raw = await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -190,7 +190,7 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     eval_mock = AsyncMock(return_value={"success": True, "reason": "final state matches"})
-    monkeypatch.setattr("nanobot.agent.tools.gui.evaluate_gui_trajectory", eval_mock)
+    monkeypatch.setattr("opengui.evaluation.evaluate_gui_trajectory", eval_mock)
 
     tool = _dry_run_tool(
         tmp_workspace,
@@ -205,7 +205,7 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
     )
     promote_mock = AsyncMock(return_value=None)
 
-    with patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+    with patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -220,6 +220,27 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
 
 
 @pytest.mark.asyncio
+async def test_gui_tool_returns_post_run_state_from_latest_trace_step(
+    tmp_workspace: Path,
+) -> None:
+    tool = _dry_run_tool(tmp_workspace)
+
+    raw = await tool.execute(task="test task")
+    await tool._wait_for_pending_postprocessing()
+
+    result = json.loads(raw)
+    post_run_state = result["post_run_state"]
+
+    assert post_run_state["trace_read"] is True
+    assert post_run_state["completion_assessment"] == "completed"
+    assert post_run_state["latest_screenshot_path"] is not None
+    assert post_run_state["last_action"]["action_type"] == "done"
+    assert post_run_state["screen_resolution"] == "1080x1920"
+    assert post_run_state["last_foreground_app"] == "DryRun"
+    assert "Latest visible app: DryRun." in post_run_state["current_state"]
+
+
+@pytest.mark.asyncio
 async def test_gui_tool_returns_before_background_postprocessing_finishes_with_promotion(
     tmp_workspace: Path,
 ) -> None:
@@ -228,14 +249,14 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes_with_p
     postprocess_started = asyncio.Event()
     captured: dict[str, Any] = {}
 
-    async def fake_postprocess(
-        self,
+    async def fake_run_all(
+        self_inner,
         trace_path: Path,
+        *,
         is_success: bool,
         platform: str,
         task: str,
     ) -> None:
-        del self
         captured["trace_path"] = trace_path
         captured["is_success"] = is_success
         captured["platform"] = platform
@@ -243,7 +264,7 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes_with_p
         postprocess_started.set()
         await release_postprocess.wait()
 
-    with patch.object(type(tool), "_run_trajectory_postprocessing", new=fake_postprocess):
+    with patch.object(type(tool._postprocessor), "_run_all", new=fake_run_all):
         raw = await tool.execute(task="test task")
         await asyncio.wait_for(postprocess_started.wait(), timeout=1.0)
         result = json.loads(raw)
@@ -251,7 +272,7 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes_with_p
         assert captured["is_success"] is True
         assert captured["platform"] == "dry-run"
         assert captured["task"] == "test task"
-        assert tool._background_postprocess_tasks
+        assert tool._postprocessor._pending
         release_postprocess.set()
         await tool._wait_for_pending_postprocessing()
 
@@ -262,7 +283,7 @@ async def test_gui_evaluation_failure_is_non_fatal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "nanobot.agent.tools.gui.evaluate_gui_trajectory",
+        "opengui.evaluation.evaluate_gui_trajectory",
         AsyncMock(side_effect=RuntimeError("judge unavailable")),
     )
 
@@ -278,7 +299,7 @@ async def test_gui_evaluation_failure_is_non_fatal(
     )
     promote_mock = AsyncMock(return_value=None)
 
-    with patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+    with patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         raw = await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -323,7 +344,7 @@ async def test_summarizer_skipped_when_no_trace(
     with patch(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
-    ) as mock_summarize, patch.object(type(tool), "_promote_shortcut", new=promote_mock):
+    ) as mock_summarize, patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -371,8 +392,8 @@ def test_evaluate_gui_trajectory_counts_only_step_rows(
         captured["screenshots"] = screenshots
         return True, "ok"
 
-    monkeypatch.setattr("nanobot.utils.gui_evaluation.judge_success", fake_judge_success)
-    monkeypatch.setattr("nanobot.utils.gui_evaluation.OpenAI", lambda **kwargs: object())
+    monkeypatch.setattr("opengui.evaluation.judge_success", fake_judge_success)
+    monkeypatch.setattr("opengui.evaluation.OpenAI", lambda **kwargs: object())
 
     result = evaluate_gui_trajectory_sync(
         instruction="test instruction",
@@ -387,6 +408,29 @@ def test_evaluate_gui_trajectory_counts_only_step_rows(
     assert result["steps"] == 2
     assert [row.get("type") for row in captured["traj_rows"]] == ["step", "step"]
     assert len(captured["screenshots"]) == 2
+
+
+def test_load_screenshots_for_judge_supports_screenshot_path_field(tmp_path: Path) -> None:
+    from nanobot.utils.gui_evaluation import load_screenshots_for_judge
+
+    trace_path = tmp_path / "trace.jsonl"
+    screenshot_path = tmp_path / "screenshots" / "step_001.png"
+    screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+    screenshot_path.write_bytes(b"png-bytes")
+    trace_path.write_text("", encoding="utf-8")
+
+    screenshots = load_screenshots_for_judge(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 1,
+                "screenshot_path": str(screenshot_path),
+            }
+        ],
+    )
+
+    assert screenshots == [b"png-bytes"]
 
 
 def test_eval_script_uses_step_only_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

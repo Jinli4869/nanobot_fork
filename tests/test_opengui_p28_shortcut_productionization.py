@@ -14,7 +14,7 @@ from nanobot.providers.base import LLMProvider as NanobotLLMProvider
 from nanobot.providers.base import LLMResponse as NanobotLLMResponse
 from nanobot.providers.base import ToolCallRequest
 from opengui.skills import ShortcutSkill, ShortcutSkillStore
-from opengui.skills.data import SkillStep
+from opengui.skills.data import Skill, SkillStep
 from opengui.skills.shortcut import ParameterSlot, StateDescriptor
 from opengui.skills.shortcut_extractor import (
     ExtractionRejected,
@@ -127,7 +127,7 @@ def _write_jsonl(trace_path: Path, lines: list[str]) -> None:
 async def test_gui_postprocessing_uses_shortcut_promotion_not_legacy_extractor(
     tmp_workspace: Path,
 ) -> None:
-    tool = _dry_run_tool(tmp_workspace)
+    tool = _dry_run_tool(tmp_workspace, gui_overrides={"enableSkillExtraction": True})
     promote_mock = AsyncMock(return_value="shortcut-promoted")
     legacy_extract_mock = AsyncMock(return_value=None)
 
@@ -148,6 +148,89 @@ async def test_gui_postprocessing_uses_shortcut_promotion_not_legacy_extractor(
     assert result["success"] is True
     promote_mock.assert_awaited_once()
     legacy_extract_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_shortcut_promotion_uses_failure_extractor_and_persists(
+    tmp_workspace: Path,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    tool = _dry_run_tool(tmp_workspace, gui_overrides={"enableSkillExtraction": True})
+    trace_path = tmp_workspace / "gui_runs" / "failed-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Open settings", "platform": "dry-run"}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Tap settings icon", "expected_state": "Settings opens", "valid_state": "Desktop is visible", "observation": {"app": "settings"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Tap wrong icon", "expected_state": "Wrong app opens", "valid_state": "Desktop is visible", "observation": {"app": "settings"}}',
+            '{"type": "result", "success": false, "error": "clicked wrong icon"}',
+        ],
+    )
+
+    extract_calls: list[tuple[Path, bool]] = []
+
+    async def fake_extract(self, trajectory_path: Path, *, is_success: bool = True) -> Skill:
+        del self
+        extract_calls.append((trajectory_path, is_success))
+        return Skill(
+            skill_id="failed-settings-shortcut",
+            name="recover_open_settings",
+            description="Wrong icon was tapped; retry the Settings icon",
+            app="settings",
+            platform="dry-run",
+            parameters=("app_name",),
+            preconditions=("Desktop is visible",),
+            steps=(
+                SkillStep(
+                    action_type="tap",
+                    target="Settings icon",
+                    parameters={},
+                    expected_state="Settings icon is highlighted",
+                    valid_state="Desktop is visible",
+                ),
+                SkillStep(
+                    action_type="tap",
+                    target="Retry Settings icon instead of the wrong icon",
+                    parameters={"is_corrective": True},
+                    expected_state="Settings opens",
+                    valid_state="Wrong app is not open",
+                ),
+            ),
+        )
+
+    promote_mock = AsyncMock(return_value=None)
+    with (
+        patch(
+            "opengui.skills.extractor.SkillExtractor.extract_from_file",
+            new=fake_extract,
+        ),
+        patch(
+            "opengui.skills.shortcut_promotion.ShortcutPromotionPipeline.promote_from_trace",
+            new=promote_mock,
+        ),
+    ):
+        promoted_id = await tool._postprocessor._promote_shortcut(trace_path, is_success=False, platform="dry-run")
+
+    assert promoted_id == "failed-settings-shortcut"
+    assert extract_calls == [(trace_path, False)]
+    promote_mock.assert_not_awaited()
+
+    store = ShortcutSkillStore(tmp_workspace / "gui_skills")
+    persisted = store.list_all(platform="dry-run", app="settings")
+    assert len(persisted) == 1
+    assert persisted[0].skill_id == "failed-settings-shortcut"
+    assert persisted[0].source_trace_path == str(trace_path)
+    assert persisted[0].source_step_indices == (0, 1)
+    assert tuple(slot.name for slot in persisted[0].parameter_slots) == ("app_name",)
+    assert tuple(state.value for state in persisted[0].preconditions) == (
+        "Desktop is visible",
+        "Wrong app is not open",
+    )
+    assert tuple(state.value for state in persisted[0].postconditions) == (
+        "Settings icon is highlighted",
+        "Settings opens",
+    )
 
 
 @pytest.mark.asyncio
@@ -197,8 +280,8 @@ async def test_promotion_pipeline_ignores_retry_noise_before_final_success(tmp_p
         )
 
     assert result is None
-    assert [step["step_index"] for step in captured["steps"]] == [2, 4]
-    assert [step["action"]["action_type"] for step in captured["steps"]] == ["tap", "input_text"]
+    assert [step["step_index"] for step in captured["steps"]] == [2]
+    assert [step["action"]["action_type"] for step in captured["steps"]] == ["tap"]
     assert all(step["phase"] == "agent" for step in captured["steps"])
     assert captured["metadata"]["task"] == "Send a message"
     assert captured["metadata"]["platform"] == "android"
@@ -361,17 +444,15 @@ async def test_promotion_pipeline_persists_full_shortcut_contract_after_store_re
     assert len(promoted) == 1
     assert promoted[0].app == "com.example.mail"
     assert promoted[0].platform == "android"
-    assert tuple(slot.name for slot in promoted[0].parameter_slots) == ("recipient", "message")
+    assert tuple(slot.name for slot in promoted[0].parameter_slots) == ("recipient",)
     assert tuple(state.value for state in promoted[0].preconditions) == (
         "Inbox visible",
-        "Composer visible",
     )
     assert tuple(state.value for state in promoted[0].postconditions) == (
         "Composer visible",
-        "Draft text entered",
     )
     assert promoted[0].source_trace_path == str(trace_path)
-    assert promoted[0].source_step_indices == (2, 4)
+    assert promoted[0].source_step_indices == (2,)
 
 
 @pytest.mark.asyncio
@@ -421,6 +502,236 @@ async def test_promotion_pipeline_rejects_low_value_candidates(tmp_path: Path) -
         assert result is None
         store.add.assert_not_called()
         store.add_or_merge.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_promotion_pipeline_truncates_after_reusable_prefix(tmp_path: Path) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "prefix-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a project update", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap", "x": 100, "y": 200}, "model_output": "Open compose for {{recipient}}", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "input_text", "text": "hello"}, "model_output": "Type {{message}} into the body", "valid_state": "Composer visible", "expected_state": "Draft text entered", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "tap", "x": 300, "y": 400}, "model_output": "Send the message", "valid_state": "Draft text entered", "expected_state": "Message sent", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
+    )
+
+    store = ShortcutSkillStore(tmp_path / "prefix-store")
+    skill_id = await ShortcutPromotionPipeline().promote_from_trace(
+        trace_path,
+        is_success=True,
+        store=store,
+    )
+
+    assert skill_id is not None
+    promoted = store.list_all(platform="android", app="com.example.mail")
+    assert len(promoted) == 1
+    assert promoted[0].source_step_indices == (0,)
+    assert len(promoted[0].steps) == 1
+    assert promoted[0].steps[0].parameters == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.reusable_boundary
+async def test_promotion_pipeline_keeps_reusable_setup_before_payload_boundary(
+    tmp_path: Path,
+) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "reusable-boundary-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Open compose", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Focus recipient field", "valid_state": "Composer visible", "expected_state": "Recipient field focused", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "input_text", "text": "alice@example.com"}, "model_output": "input_text recipient payload", "valid_state": "Recipient field focused", "expected_state": "Recipient filled", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 3, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Send message", "valid_state": "Recipient filled", "expected_state": "Message sent", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_run(self, steps: list[dict[str, Any]], metadata: dict[str, Any]) -> ExtractionRejected:
+        del self
+        captured["steps"] = steps
+        captured["metadata"] = metadata
+        return ExtractionRejected(
+            reason="trajectory_critic",
+            failed_step_verdict=None,
+            failed_trajectory_verdict=None,
+        )
+
+    store = Mock()
+    with patch("opengui.skills.shortcut_extractor.ExtractionPipeline.run", new=fake_run):
+        result = await ShortcutPromotionPipeline().promote_from_trace(
+            trace_path,
+            is_success=True,
+            store=store,
+        )
+
+    assert result is None
+    assert [step["step_index"] for step in captured["steps"]] == [0, 1]
+    assert [step["model_output"] for step in captured["steps"]] == [
+        "Open compose",
+        "Focus recipient field",
+    ]
+    assert captured["metadata"]["app"] == "com.example.mail"
+
+
+@pytest.mark.asyncio
+async def test_promotion_pipeline_canonicalizes_duplicate_waits_and_unchanged_ui_retries(
+    tmp_path: Path,
+) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "canonicalize-noise-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Open compose", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "wait", "duration_ms": 1000}, "model_output": "wait", "valid_state": "Composer visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "wait", "duration_ms": 1000}, "model_output": "wait", "valid_state": "Composer visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 3, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Focus recipient field", "valid_state": "Composer visible", "expected_state": "Recipient field focused", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 4, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Focus recipient field", "valid_state": "Composer visible", "expected_state": "Recipient field focused", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 5, "phase": "agent", "action": {"action_type": "input_text", "text": "alice@example.com"}, "model_output": "input_text recipient payload", "valid_state": "Recipient field focused", "expected_state": "Recipient filled", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 6, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Send message", "valid_state": "Recipient filled", "expected_state": "Message sent", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_run(self, steps: list[dict[str, Any]], metadata: dict[str, Any]) -> ExtractionRejected:
+        del self, metadata
+        captured["steps"] = steps
+        return ExtractionRejected(
+            reason="trajectory_critic",
+            failed_step_verdict=None,
+            failed_trajectory_verdict=None,
+        )
+
+    store = Mock()
+    with patch("opengui.skills.shortcut_extractor.ExtractionPipeline.run", new=fake_run):
+        result = await ShortcutPromotionPipeline().promote_from_trace(
+            trace_path,
+            is_success=True,
+            store=store,
+        )
+
+    assert result is None
+    assert [step["step_index"] for step in captured["steps"]] == [0, 2, 4]
+    assert [step["action"]["action_type"] for step in captured["steps"]] == [
+        "tap",
+        "wait",
+        "tap",
+    ]
+    assert sum(step["action"]["action_type"] == "wait" for step in captured["steps"]) == 1
+    assert sum(step["model_output"] == "Focus recipient field" for step in captured["steps"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_promotion_pipeline_stores_canonicalized_prefix_with_parameter_slots(
+    tmp_path: Path,
+) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "canonicalized-prefix-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Open compose", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "wait", "duration_ms": 1000}, "model_output": "wait", "valid_state": "Composer visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "wait", "duration_ms": 1000}, "model_output": "wait", "valid_state": "Composer visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 3, "phase": "agent", "action": {"action_type": "tap", "selector": "thread_alice"}, "model_output": "Focus recipient selector for {{recipient}}", "valid_state": "Composer visible", "expected_state": "Recipient field focused", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 4, "phase": "agent", "action": {"action_type": "input_text", "text": "Project update"}, "model_output": "Type {{message}} into the body", "valid_state": "Recipient field focused", "expected_state": "Draft text entered", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 5, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Send message", "valid_state": "Draft text entered", "expected_state": "Message sent", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
+    )
+
+    store = ShortcutSkillStore(tmp_path / "canonicalized-prefix-store")
+    skill_id = await ShortcutPromotionPipeline().promote_from_trace(
+        trace_path,
+        is_success=True,
+        store=store,
+    )
+
+    assert skill_id is not None
+    promoted = store.list_all(platform="android", app="com.example.mail")
+    assert len(promoted) == 1
+
+    shortcut = promoted[0]
+    assert shortcut.source_step_indices == (0, 2, 3)
+    assert [step.action_type for step in shortcut.steps] == ["tap", "wait", "tap"]
+    assert tuple(slot.name for slot in shortcut.parameter_slots) == ("recipient",)
+    assert shortcut.steps[-1].target == "Focus recipient selector for {{recipient}}"
+    assert shortcut.steps[-1].parameters == {"selector": "{{recipient}}"}
+    assert all("Send" not in step.target for step in shortcut.steps)
+
+
+@pytest.mark.asyncio
+async def test_promotion_pipeline_keeps_richer_state_evidence_when_collapsing_duplicates(
+    tmp_path: Path,
+) -> None:
+    from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+
+    trace_path = tmp_path / "richer-state-trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            '{"type": "metadata", "task": "Send a message", "platform": "android"}',
+            '{"type": "attempt_start", "attempt": 1}',
+            '{"type": "step", "step_index": 0, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Open compose", "valid_state": "Inbox visible", "expected_state": "Composer visible", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 1, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Focus recipient field", "valid_state": "Composer visible", "expected_state": "", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 2, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Focus recipient field", "valid_state": "Composer visible", "expected_state": "Recipient field focused", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 3, "phase": "agent", "action": {"action_type": "input_text", "text": "alice@example.com"}, "model_output": "input_text recipient payload", "valid_state": "Recipient field focused", "expected_state": "Recipient filled", "observation": {"app": "com.example.mail"}}',
+            '{"type": "step", "step_index": 4, "phase": "agent", "action": {"action_type": "tap"}, "model_output": "Send message", "valid_state": "Recipient filled", "expected_state": "Message sent", "observation": {"app": "com.example.mail"}}',
+            '{"type": "attempt_result", "attempt": 1, "success": true}',
+            '{"type": "result", "success": true}',
+        ],
+    )
+
+    captured: dict[str, Any] = {}
+
+    async def fake_run(self, steps: list[dict[str, Any]], metadata: dict[str, Any]) -> ExtractionRejected:
+        del self, metadata
+        captured["steps"] = steps
+        return ExtractionRejected(
+            reason="trajectory_critic",
+            failed_step_verdict=None,
+            failed_trajectory_verdict=None,
+        )
+
+    store = Mock()
+    with patch("opengui.skills.shortcut_extractor.ExtractionPipeline.run", new=fake_run):
+        result = await ShortcutPromotionPipeline().promote_from_trace(
+            trace_path,
+            is_success=True,
+            store=store,
+        )
+
+    assert result is None
+    assert [step["step_index"] for step in captured["steps"]] == [0, 2]
+    retained = captured["steps"][1]
+    assert retained["model_output"] == "Focus recipient field"
+    assert retained["expected_state"] == "Recipient field focused"
+    assert retained["step_index"] == 2
 
 
 @pytest.mark.asyncio
