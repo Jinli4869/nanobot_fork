@@ -241,6 +241,8 @@ class LocalDesktopBackend:
             paste_key = "command" if self._platform == "macos" else "ctrl"
             pyperclip.copy(action.text or "")
             pyautogui.hotkey(paste_key, "v")
+            if action.auto_enter:
+                pyautogui.press("enter")
 
         elif t == "hotkey":
             keys = self._normalize_keys(action.key or [])
