@@ -692,6 +692,7 @@ class GuiAgent:
         memory_retriever: Any = None,
         skill_library: Any = None,
         skill_executor: Any = None,
+        skill_reuser: Any = None,
         memory_top_k: int = 5,
         skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
@@ -716,6 +717,10 @@ class GuiAgent:
         self._skill_library = skill_library
         self._skill_executor = skill_executor
         self._memory_top_k = memory_top_k
+        if skill_reuser is None and skill_library is not None:
+            from opengui.skills.reuser import SkillReuser
+            skill_reuser = SkillReuser(llm, threshold=skill_threshold)
+        self._skill_reuser = skill_reuser
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
         self._intervention_handler = intervention_handler
@@ -745,8 +750,18 @@ class GuiAgent:
         # 2. Retrieve memory context (once)
         memory_context = await self._retrieve_memory(task)
 
-        # 3. Search skill library (once)
-        skill_match = await self._search_skill(task)
+        # 3. Search skill library (once); LLM-gated when SkillReuser is available.
+        reuser_usage: dict[str, int] = {}
+        if self._skill_reuser is not None and self._skill_library is not None:
+            skill_match = await self._skill_reuser.find(
+                task,
+                self._skill_library,
+                self.backend.platform,
+                trajectory_recorder=self._trajectory_recorder,
+            )
+            reuser_usage = self._skill_reuser.drain_usage()
+        else:
+            skill_match = await self._search_skill(task)
 
         matched_skill: Any | None = None
         final_score: float | None = None
@@ -793,11 +808,13 @@ class GuiAgent:
         last_steps_taken = 0
         result: AgentResult | None = None
         retry_summaries: list[str] = []
-        # Seed total_usage with tokens consumed during skill execution (if any)
+        # Seed total_usage with tokens consumed during skill retrieval + execution (if any)
         skill_token_usage: dict[str, int] = {}
         if skill_result is not None and hasattr(skill_result, "token_usage"):
             skill_token_usage = dict(skill_result.token_usage or {})
         total_usage: dict[str, int] = dict(skill_token_usage)
+        for k, v in reuser_usage.items():
+            total_usage[k] = total_usage.get(k, 0) + v
 
         try:
             for attempt in range(max_retries):
