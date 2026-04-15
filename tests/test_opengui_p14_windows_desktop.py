@@ -380,6 +380,7 @@ async def test_windows_isolated_backend_routes_observe_execute_and_list_apps_thr
                         "duration_ms": None,
                         "relative": False,
                         "status": None,
+                        "auto_enter": True,
                     },
                     "timeout": 5.0,
                 }

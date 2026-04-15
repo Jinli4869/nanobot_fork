@@ -241,6 +241,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 | 260409-lpz | 关闭shortcut功能只保留skill提取和execution | 2026-04-09 | 97f2db6 | [260409-lpz-shortcut-skill-execution](./quick/260409-lpz-shortcut-skill-execution/) |
+| 260415-agents-md | 编写 AGENTS.md，为 AI 编码 agent 提供 nanobot + OpenGUI 项目导航指南 | 2026-04-15 | uncommitted | — |
 
 ## Session Continuity
 

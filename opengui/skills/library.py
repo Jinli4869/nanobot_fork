@@ -126,23 +126,38 @@ def _lazy_faiss() -> _FaissIndex:
 # ---------------------------------------------------------------------------
 
 _MERGE_DECISION_PROMPT = """\
-You are a GUI skill librarian. Two skills appear to overlap. Decide how to handle them.
+  You are a GUI skill librarian. Two skills appear to overlap. Decide how to handle them.
 
-## Existing Skill (OLD)
-{old_skill_json}
+  ## Existing Skill (OLD)
+  {old_skill_json}
 
-## Incoming Skill (NEW)
-{new_skill_json}
+  ## Incoming Skill (NEW)
+  {new_skill_json}
 
-## Decision Rules
-- **MERGE**: Same intent, combine into one skill. Prefer the longer/better step sequence.
-- **KEEP_OLD**: Old skill is more complete or reliable; discard new.
-- **KEEP_NEW**: New skill is clearly better; replace old.
-- **ADD**: They are genuinely different skills; keep both.
+  ## Decision Rules
 
-Respond with ONLY a JSON object:
-{{"decision": "MERGE|KEEP_OLD|KEEP_NEW|ADD", "reason": "one-line explanation"}}
-"""
+  Use `success_count`, `failure_count`, and `failure_streak` as reliability signals.
+  **MERGE will keep the SHORTER step sequence** as a reusable navigational prefix.
+
+  - **MERGE**: Same intent AND the shorter sequence is a genuine navigational prefix
+    (it reaches the correct app/screen state; remaining steps are task-specific).
+    Do NOT choose MERGE if the shorter skill has never succeeded — it may be a
+    partial/failed recording, not a valid prefix.
+
+  - **KEEP_OLD**: Old is more reliable (more executions, higher success rate) and new
+    offers no structural improvement. Prefer when new has < 3 total executions vs
+    old's >= 5, unless new's steps fix a clear error in old.
+
+  - **KEEP_NEW**: New has a demonstrably better step sequence (corrects wrong actions,
+    fewer redundant steps) even with fewer executions. Also prefer when old has
+    failure_streak >= 3 and new has recent successes.
+
+  - **ADD**: Different target screens or intents, or structurally incompatible paths
+    that serve distinct use cases despite surface similarity.
+
+  Respond with ONLY a JSON object:
+  {{"decision": "MERGE|KEEP_OLD|KEEP_NEW|ADD", "reason": "one-line explanation"}}
+  """
 
 
 # ---------------------------------------------------------------------------
