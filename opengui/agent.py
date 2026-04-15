@@ -67,6 +67,8 @@ class StepResult:
     execution_snapshot: dict[str, Any] | None = None
     intervention_requested: bool = False
     done: bool = False
+    step_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+    duration_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,7 @@ class AgentResult:
     steps_taken: int = 0
     error: str | None = None
     attempt_summary: str | None = None
+    token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
 class _StepExecutionError(RuntimeError):
@@ -170,6 +173,13 @@ class _AgentActionGrounder:
         self._llm = llm
         self._model = model
         self._agent_profile = canonicalize_agent_profile(agent_profile)
+        self._usage_accum: dict[str, int] = {}
+
+    def drain_usage(self) -> dict[str, int]:
+        """Return accumulated token usage since last drain and reset the counter."""
+        usage = dict(self._usage_accum)
+        self._usage_accum.clear()
+        return usage
 
     async def ground(
         self,
@@ -215,6 +225,9 @@ class _AgentActionGrounder:
                 )
             except Exception as exc:
                 raise RuntimeError(f"ActionGrounder LLM call failed: {exc}") from exc
+
+            for k, v in (response.usage or {}).items():
+                self._usage_accum[k] = self._usage_accum.get(k, 0) + v
 
             try:
                 response = normalize_profile_response(self._agent_profile, response)
@@ -307,6 +320,7 @@ class _AgentSubgoalRunner:
 
         summaries: list[str] = []
         current_screenshot: Path | bytes = screenshot
+        subgoal_usage: dict[str, int] = {}
 
         if self._trajectory_recorder is not None:
             self._trajectory_recorder.record_event(
@@ -316,6 +330,8 @@ class _AgentSubgoalRunner:
             )
 
         for i in range(max_steps):
+            substep_start = time.monotonic()
+
             # Build a minimal prompt for the subgoal
             history_text = (
                 "\n".join(f"  Sub-step {j+1}: {s}" for j, s in enumerate(summaries))
@@ -352,6 +368,7 @@ class _AgentSubgoalRunner:
                 )
             except Exception as exc:
                 logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -361,6 +378,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=str(exc),
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 if self._trajectory_recorder is not None:
                     self._trajectory_recorder.record_event(
@@ -371,13 +390,20 @@ class _AgentSubgoalRunner:
                         action_summaries=summaries,
                         error=str(exc),
                     )
-                return SubgoalResult(success=False, steps_taken=i, action_summaries=summaries, error=str(exc))
+                return SubgoalResult(
+                    success=False, steps_taken=i, action_summaries=summaries,
+                    error=str(exc), token_usage=dict(subgoal_usage),
+                )
+
+            for k, v in (response.usage or {}).items():
+                subgoal_usage[k] = subgoal_usage.get(k, 0) + v
 
             try:
                 response = normalize_profile_response(self._agent_profile, response)
             except Exception as exc:
                 logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -387,12 +413,15 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=f"profile parse error: {exc}",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
             if not response.tool_calls or response.tool_calls[0].name != "computer_use":
                 logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
                 summaries.append(f"Sub-step {i+1}: no valid action returned")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -402,6 +431,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error="no valid action returned",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
@@ -411,6 +442,7 @@ class _AgentSubgoalRunner:
             except ActionError as exc:
                 logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -420,12 +452,15 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=f"action parse error: {exc}",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
             # Skip terminal actions inside a subgoal
             if action.action_type in ("done", "request_intervention"):
                 summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -435,6 +470,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error="terminal action skipped in subgoal",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
@@ -443,6 +480,7 @@ class _AgentSubgoalRunner:
             except Exception as exc:
                 logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -452,6 +490,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=f"execution error: {exc}",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
@@ -477,11 +517,21 @@ class _AgentSubgoalRunner:
 
             # Check if the goal state has been reached
             reached = False
+            validate_dur = 0.0
             if not _should_skip_validation(goal) and self._state_validator is not None:
+                validate_t0 = time.monotonic()
                 try:
                     reached = await self._state_validator.validate(goal, screenshot=current_screenshot)
                 except Exception:
                     reached = False
+                validate_dur = time.monotonic() - validate_t0
+                if hasattr(self._state_validator, "drain_usage"):
+                    for k, v in self._state_validator.drain_usage().items():
+                        subgoal_usage[k] = subgoal_usage.get(k, 0) + v
+
+            substep_dur = time.monotonic() - substep_start
+            # Snapshot usage for this substep (LLM call + validation)
+            substep_usage = dict(subgoal_usage)
             self._record_subgoal_step(
                 goal=goal,
                 substep_index=i + 1,
@@ -491,6 +541,9 @@ class _AgentSubgoalRunner:
                 screenshot_path=screenshot_path,
                 goal_reached=reached,
                 error=None,
+                duration_s=substep_dur,
+                validate_duration_s=validate_dur,
+                token_usage=substep_usage,
             )
             if reached:
                 logger.info("Subgoal reached after %d sub-steps", i + 1)
@@ -508,6 +561,7 @@ class _AgentSubgoalRunner:
                     steps_taken=i + 1,
                     action_summaries=summaries,
                     final_screenshot=current_screenshot,
+                    token_usage=dict(subgoal_usage),
                 )
         if self._trajectory_recorder is not None:
             self._trajectory_recorder.record_event(
@@ -523,6 +577,7 @@ class _AgentSubgoalRunner:
             steps_taken=max_steps,
             action_summaries=summaries,
             error=f"Subgoal not reached after {max_steps} sub-steps",
+            token_usage=dict(subgoal_usage),
         )
 
     def _profile_subgoal_instruction(self) -> str:
@@ -545,6 +600,9 @@ class _AgentSubgoalRunner:
         screenshot_path: str | None,
         goal_reached: bool,
         error: str | None,
+        duration_s: float = 0.0,
+        validate_duration_s: float = 0.0,
+        token_usage: dict[str, int] | None = None,
     ) -> None:
         if self._trajectory_recorder is None:
             return
@@ -558,6 +616,9 @@ class _AgentSubgoalRunner:
             screenshot_path=screenshot_path,
             goal_reached=goal_reached,
             error=error,
+            duration_s=round(duration_s, 3) if duration_s else None,
+            validate_duration_s=round(validate_duration_s, 3) if validate_duration_s else None,
+            token_usage=token_usage or None,
         )
 
     @staticmethod
@@ -613,7 +674,7 @@ class GuiAgent:
 
     _MAX_TOOL_RETRIES = 2
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
-    _POST_ACTION_SETTLE_SECONDS = 0.25
+    _POST_ACTION_SETTLE_SECONDS = 0.50
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
 
     def __init__(
@@ -732,6 +793,11 @@ class GuiAgent:
         last_steps_taken = 0
         result: AgentResult | None = None
         retry_summaries: list[str] = []
+        # Seed total_usage with tokens consumed during skill execution (if any)
+        skill_token_usage: dict[str, int] = {}
+        if skill_result is not None and hasattr(skill_result, "token_usage"):
+            skill_token_usage = dict(skill_result.token_usage or {})
+        total_usage: dict[str, int] = dict(skill_token_usage)
 
         try:
             for attempt in range(max_retries):
@@ -752,6 +818,8 @@ class GuiAgent:
                         memory_context=memory_context,
                         skill_context=skill_context,
                     )
+                    for k, v in result.token_usage.items():
+                        total_usage[k] = total_usage.get(k, 0) + v
                     await self._log_attempt_event(
                         run_dir,
                         "attempt_result",
@@ -822,10 +890,17 @@ class GuiAgent:
                 trace_path=last_trace_path,
                 steps_taken=last_steps_taken,
                 error=last_error,
+                token_usage=total_usage,
             )
+        else:
+            result = dataclasses.replace(result, token_usage=total_usage)
 
         # 6. Finish trajectory
-        self._trajectory_recorder.finish(success=result.success, error=result.error)
+        self._trajectory_recorder.finish(
+            success=result.success,
+            error=result.error,
+            token_usage=result.token_usage or None,
+        )
 
         # 7. Post-run skill maintenance — use skill execution outcome,
         #    not overall task result, so prefix skills aren't penalised
@@ -882,6 +957,7 @@ class GuiAgent:
 
         # 4. Step loop
         steps_taken = 0
+        total_usage: dict[str, int] = {}
         for step in range(self.max_steps):
             step_index = step + 1
             messages = self._build_messages(
@@ -928,6 +1004,7 @@ class GuiAgent:
                         result_summary=f"Step {step_index} timed out.",
                         action_summaries=tuple(turn.action_summary for turn in history),
                     ),
+                    token_usage=total_usage,
                 )
             except _StepExecutionError as exc:
                 raise _StepExecutionError(
@@ -941,6 +1018,8 @@ class GuiAgent:
                 ) from exc
 
             steps_taken = step_index
+            for k, v in result.step_usage.items():
+                total_usage[k] = total_usage.get(k, 0) + v
 
             intervention_cancelled = False
             if result.intervention_requested:
@@ -1056,6 +1135,8 @@ class GuiAgent:
                     result.next_observation.platform
                     if result.next_observation else None
                 ),
+                token_usage=result.step_usage or None,
+                duration_s=result.duration_s or None,
             )
 
             if intervention_cancelled:
@@ -1080,6 +1161,7 @@ class GuiAgent:
                             list(turn.action_summary for turn in history) + [result.action_summary]
                         ),
                     ),
+                    token_usage=total_usage,
                 )
 
             if result.done:
@@ -1104,6 +1186,7 @@ class GuiAgent:
                             list(turn.action_summary for turn in history) + [result.action_summary]
                         ),
                     ),
+                    token_usage=total_usage,
                 )
 
             history.append(
@@ -1147,6 +1230,7 @@ class GuiAgent:
                 result_summary=f"Reached max steps ({self.max_steps}) without completion.",
                 action_summaries=tuple(turn.action_summary for turn in history),
             ),
+            token_usage=total_usage,
         )
 
     # ------------------------------------------------------------------
@@ -1162,7 +1246,9 @@ class GuiAgent:
         current_observation: Observation,
     ) -> StepResult:
         """Execute a single vision-action step with retries on malformed calls."""
+        _step_start = time.monotonic()
         retries_left = self._MAX_TOOL_RETRIES + 1
+        step_usage: dict[str, int] = {}
 
         while retries_left > 0:
             retries_left -= 1
@@ -1174,6 +1260,8 @@ class GuiAgent:
                 tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
                 tool_choice="required" if native_tools_enabled else None,
             )
+            for k, v in (response.usage or {}).items():
+                step_usage[k] = step_usage.get(k, 0) + v
             raw_response_snapshot = self._snapshot_failed_model_response(response)
 
             try:
@@ -1278,6 +1366,8 @@ class GuiAgent:
                         "done": True,
                     },
                     done=True,
+                    step_usage=step_usage,
+                    duration_s=time.monotonic() - _step_start,
                 )
 
             if action.action_type == "request_intervention":
@@ -1295,6 +1385,8 @@ class GuiAgent:
                         "done": False,
                     },
                     intervention_requested=True,
+                    step_usage=step_usage,
+                    duration_s=time.monotonic() - _step_start,
                 )
 
             # Normalize app name to package name for Android open/close
@@ -1345,6 +1437,8 @@ class GuiAgent:
                     "next_observation": self._serialize_observation(next_observation),
                     "done": False,
                 },
+                step_usage=step_usage,
+                duration_s=time.monotonic() - _step_start,
             )
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
