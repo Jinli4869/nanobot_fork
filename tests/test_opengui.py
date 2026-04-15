@@ -939,6 +939,7 @@ async def test_adb_backend_input_text_falls_back_to_adb_keyboard(
         "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
         "",
         "",
+        "",
     ])
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=False)
@@ -963,6 +964,9 @@ async def test_adb_backend_input_text_falls_back_to_adb_keyboard(
         "shell", "am", "broadcast",
         "-a", "ADB_INPUT_B64", "--es", "msg", expected_b64,
     )
+    assert run_mock.await_args_list[4].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
 
 
 @pytest.mark.asyncio
@@ -973,6 +977,7 @@ async def test_adb_backend_input_text_enables_adb_keyboard_before_switching(
     run_mock = AsyncMock(side_effect=[
         "com.example.ime/.ExampleIme",
         "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
+        "",
         "",
         "",
         "",
@@ -1043,6 +1048,7 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
         "com.example.ime/.ExampleIme",
         "com.other.ime/.OtherIme",
         "",
+        "",
     ])
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=False)
@@ -1057,6 +1063,9 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
         "shell", "input", "text", "hello%sworld",
     )
     assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
+    assert run_mock.await_args_list[3].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
 
 
 def test_adb_backend_text_segmentation_splits_emoji_boundaries() -> None:
@@ -1090,7 +1099,9 @@ async def test_adb_backend_input_text_sends_text_after_emoji_as_later_segment(
     await backend.execute(action)
 
     assert segments == ["已发送给苏", "✅", "请查收"]
-    run_mock.assert_not_awaited()
+    assert run_mock.await_args_list[0].args == (
+        "shell", "input", "keyevent", "KEYCODE_ENTER",
+    )
 
 
 @pytest.mark.asyncio

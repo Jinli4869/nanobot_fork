@@ -246,7 +246,11 @@ class _AgentActionGrounder:
         target = _ground_text(step.target, params)
         extra_ctx = ""
         if step.parameters:
-            extra_ctx = f"\nContext: {step.parameters}"
+            resolved_params = {
+                k: _ground_text(str(v), params) if isinstance(v, str) else v
+                for k, v in step.parameters.items()
+            }
+            extra_ctx = f"\nContext: {resolved_params}"
 
         prompt = (
             f"Locate the target UI element on screen and execute the action.\n"
@@ -254,11 +258,9 @@ class _AgentActionGrounder:
             f"  target: {target}{extra_ctx}\n\n"
             f"{self._profile_response_instruction(target_action=step.action_type)}"
         )
-        import base64
-        if isinstance(screenshot, Path):
-            image_data = base64.b64encode(screenshot.read_bytes()).decode()
-        else:
-            image_data = base64.b64encode(screenshot).decode()
+        from opengui.skills.executor import _scale_image_half
+        raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
+        image_data = base64.b64encode(_scale_image_half(raw)).decode()
 
         messages: list[dict[str, Any]] = [{
             "role": "user",
@@ -315,8 +317,7 @@ class _AgentActionGrounder:
             if attempt < self._MAX_RETRIES:
                 messages.append({"role": "assistant", "content": response.content or ""})
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": "error",
+                    "role": "user",
                     "content": "Error: no computer_use tool call. You must use it.",
                 })
             else:
@@ -399,12 +400,9 @@ class _AgentSubgoalRunner:
                 f"closer to the sub-goal. {self._profile_subgoal_instruction()}"
             )
 
-            import base64
-            if isinstance(current_screenshot, Path):
-                img_bytes = current_screenshot.read_bytes()
-            else:
-                img_bytes = current_screenshot
-            image_data = base64.b64encode(img_bytes).decode()
+            from opengui.skills.executor import _scale_image_half
+            img_bytes = current_screenshot.read_bytes() if isinstance(current_screenshot, Path) else current_screenshot
+            image_data = base64.b64encode(_scale_image_half(img_bytes)).decode()
 
             messages: list[dict[str, Any]] = [{
                 "role": "user",
@@ -546,6 +544,7 @@ class _AgentSubgoalRunner:
                         steps_taken=i + 1,
                         action_summaries=summaries,
                         final_screenshot=current_screenshot,
+                        done_judgment=True,
                         token_usage=dict(subgoal_usage),
                     )
                 break  # model says goal unreachable — let caller fall back
@@ -874,7 +873,10 @@ class GuiAgent:
                 reason=f"Matched skill: {matched_skill.name} (score={final_score:.2f})",
             )
             try:
-                skill_result = await self._skill_executor.execute(matched_skill)
+                skill_params: dict[str, str] = {}
+                if matched_skill.parameters:
+                    skill_params = await self._extract_skill_params(task, matched_skill)
+                skill_result = await self._skill_executor.execute(matched_skill, params=skill_params)
                 execution_summary = getattr(skill_result, "execution_summary", None)
                 skill_context = execution_summary if isinstance(execution_summary, str) else None
                 if skill_result.state.value == "succeeded":
@@ -1943,8 +1945,8 @@ class GuiAgent:
     @staticmethod
     def _image_block(path: Path) -> dict[str, Any]:
         """Create a base64 image content block for an LLM message."""
-        data = path.read_bytes()
-        b64 = base64.b64encode(data).decode()
+        from opengui.skills.executor import _scale_image_half
+        b64 = base64.b64encode(_scale_image_half(path.read_bytes())).decode()
         return {
             "type": "image_url",
             "image_url": {"url": f"data:image/png;base64,{b64}"},
@@ -2294,6 +2296,44 @@ class GuiAgent:
     ) -> str | None:
         """No-op: legacy Skill objects do not carry a memory_context_id."""
         return existing_context
+
+    async def _extract_skill_params(
+        self,
+        task: str,
+        skill: Any,
+    ) -> dict[str, str]:
+        """Extract runtime parameter values from the task description via LLM.
+
+        Uses the skill's declared ``parameters`` list as a schema and asks the
+        LLM to pull matching values from the task string.  Returns an empty
+        dict on any failure so callers can proceed with template fallback.
+        """
+        param_names: list[str] = list(skill.parameters)
+        if not param_names:
+            return {}
+        json_template = "{" + ", ".join(f'"{p}": "value"' for p in param_names) + "}"
+        prompt = (
+            f"Task: {task}\n\n"
+            f"Skill: {skill.name} — {skill.description}\n"
+            f"Parameters to extract: {param_names}\n\n"
+            f"Extract the value for each parameter from the task description.\n"
+            f"Return JSON only, with exactly these keys: {json_template}"
+        )
+        try:
+            response = await self.llm.chat([{"role": "user", "content": prompt}])
+        except Exception as exc:
+            logger.warning("Skill param extraction LLM call failed: %s", exc)
+            return {}
+        text = (response.content or "").strip()
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            try:
+                obj = json.loads(match.group(0))
+                return {k: str(v) for k, v in obj.items() if k in param_names}
+            except json.JSONDecodeError:
+                pass
+        logger.warning("Could not parse skill param extraction response: %r", text[:120])
+        return {}
 
     async def _skill_maintenance(
         self, skill_match: Any | None, success: bool
