@@ -236,13 +236,25 @@ class GuiSubagentTool(Tool):
             )
             from opengui.skills.executor import LLMStateValidator, SkillExecutor
 
-            state_validator = LLMStateValidator(self._llm_adapter)
+            validator_llm = (
+                NanobotLLMAdapter(self._provider, self._gui_config.validator_model)
+                if self._gui_config.validator_model
+                else self._llm_adapter
+            )
+            grounder_llm = (
+                NanobotLLMAdapter(self._provider, self._gui_config.grounder_model)
+                if self._gui_config.grounder_model
+                else self._llm_adapter
+            )
+            grounder_model = self._gui_config.grounder_model or self._model
+
+            state_validator = LLMStateValidator(validator_llm)
             skill_executor = SkillExecutor(
                 backend=active_backend,
                 state_validator=state_validator,
                 action_grounder=_AgentActionGrounder(
-                    llm=self._llm_adapter,
-                    model=self._model,
+                    llm=grounder_llm,
+                    model=grounder_model,
                     agent_profile=self._gui_config.agent_profile,
                 ),
                 subgoal_runner=_AgentSubgoalRunner(
