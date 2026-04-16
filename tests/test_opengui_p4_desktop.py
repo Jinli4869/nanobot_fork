@@ -11,7 +11,7 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -181,6 +181,34 @@ async def test_observe_hidpi_downscale(tmp_path: Path) -> None:
 
     # resized image was saved, not the original
     mock_resized.save.assert_called_once_with(str(screenshot_path), "PNG")
+
+
+@pytest.mark.asyncio
+async def test_observe_keeps_observation_orientation_in_sync_with_saved_image(
+    tmp_path: Path,
+) -> None:
+    screenshot_path = tmp_path / "orientation-sync.png"
+    backend = _make_backend("macos")
+
+    # Simulate a rotated capture where mss physical pixels are portrait while
+    # monitor logical dimensions are landscape. observe() should still normalize
+    # the saved image to logical dimensions and report matching observation dims.
+    mock_mss = _build_mss_mock(900, 1600, 1600, 900)
+    mock_pil_img = MagicMock()
+    mock_resized = MagicMock()
+    mock_pil_img.resize.return_value = mock_resized
+
+    with (
+        patch("opengui.backends.desktop.mss.mss", mock_mss),
+        patch("opengui.backends.desktop.Image.frombytes", return_value=mock_pil_img),
+        patch.object(backend, "_query_foreground_app", AsyncMock(return_value="Finder")),
+    ):
+        obs = await backend.observe(screenshot_path)
+
+    mock_pil_img.resize.assert_called_once_with((1600, 900), ANY)
+    mock_resized.save.assert_called_once_with(str(screenshot_path), "PNG")
+    assert obs.screen_width == 1600
+    assert obs.screen_height == 900
 
 
 @pytest.mark.asyncio

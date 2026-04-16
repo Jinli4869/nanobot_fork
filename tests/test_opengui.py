@@ -10,11 +10,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+import opengui.backends.adb as adb_backend_module
+import opengui.backends.hdc as hdc_backend_module
+import opengui.backends.ios_wda as ios_wda_module
 from opengui.action import Action, ActionError, parse_action, resolve_coordinate
 from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
 from opengui.agent_profiles import normalize_profile_response
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
+from opengui.backends.hdc import HdcBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
@@ -147,6 +151,34 @@ def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> Non
     assert action.action_type == "tap"
     assert action.x == 903.0
     assert action.y == 130.0
+    assert action.relative is True
+
+
+def test_parse_action_unwraps_duplicated_y_list() -> None:
+    action = parse_action({
+        "action_type": "tap",
+        "x": 321,
+        "y": [957, 957],
+        "relative": True,
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 321.0
+    assert action.y == 957.0
+    assert action.relative is True
+
+
+def test_parse_action_unwraps_duplicated_stringified_y_list() -> None:
+    action = parse_action({
+        "action_type": "tap",
+        "x": 321,
+        "y": "[957, 957]",
+        "relative": True,
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 321.0
+    assert action.y == 957.0
     assert action.relative is True
 
 
@@ -310,6 +342,50 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_adb_backend_observe_prefers_screenshot_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="")
+    screen_size_mock = AsyncMock(return_value=(1080, 2376))
+    foreground_mock = AsyncMock(return_value="com.example.app")
+
+    monkeypatch.setattr(backend, "_run", run_mock)
+    monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
+    monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
+    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (2376, 1080))
+
+    obs = await backend.observe(Path("/tmp/adb-orientation.png"))
+
+    assert obs.screen_width == 2376
+    assert obs.screen_height == 1080
+    assert backend._screen_width == 2376
+    assert backend._screen_height == 1080
+    screen_size_mock.assert_not_awaited()
+    foreground_mock.assert_awaited_once_with(5.0)
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_observe_falls_back_when_screenshot_size_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="")
+    screen_size_mock = AsyncMock(return_value=(1080, 2376))
+    foreground_mock = AsyncMock(return_value="com.example.app")
+
+    monkeypatch.setattr(backend, "_run", run_mock)
+    monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
+    monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
+    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: None)
+
+    obs = await backend.observe(Path("/tmp/adb-orientation-fallback.png"))
+
+    assert obs.screen_width == 1080
+    assert obs.screen_height == 2376
+    screen_size_mock.assert_awaited_once_with(5.0)
+    foreground_mock.assert_awaited_once_with(5.0)
+
+
+@pytest.mark.asyncio
 async def test_adb_backend_foreground_app_uses_activity_dump_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -353,6 +429,182 @@ def test_adb_backend_extract_foreground_app_supports_multiple_android_signals() 
         "mFocusedApp=AppWindowToken{ token=Token{ ActivityRecord{7 u0 com.android.settings/.Settings t11}}}"
     ) == "com.android.settings"
     assert AdbBackend._extract_foreground_app("no foreground info here") == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_hdc_backend_observe_prefers_screenshot_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    backend = HdcBackend()
+    run_mock = AsyncMock(return_value="")
+    screen_size_mock = AsyncMock(return_value=(1080, 2376))
+    foreground_mock = AsyncMock(return_value="com.example.harmony")
+
+    class _FakeImageContext:
+        def __enter__(self) -> "_FakeImageContext":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def save(self, path: str, format: str = "PNG") -> None:
+            del format
+            Path(path).write_bytes(b"png")
+
+    class _FakeImage:
+        @staticmethod
+        def open(_path: str) -> _FakeImageContext:
+            return _FakeImageContext()
+
+    monkeypatch.setattr(backend, "_run", run_mock)
+    monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
+    monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
+    monkeypatch.setattr(hdc_backend_module, "_import_pil_image", lambda: _FakeImage)
+    monkeypatch.setattr(hdc_backend_module, "_read_png_size", lambda _path: (2376, 1080))
+
+    obs = await backend.observe(Path("/tmp/hdc-orientation.png"))
+
+    assert obs.screen_width == 2376
+    assert obs.screen_height == 1080
+    assert backend._screen_width == 2376
+    assert backend._screen_height == 1080
+    screen_size_mock.assert_not_awaited()
+    foreground_mock.assert_awaited_once_with(5.0)
+
+
+@pytest.mark.asyncio
+async def test_hdc_backend_observe_falls_back_when_screenshot_size_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = HdcBackend()
+    run_mock = AsyncMock(return_value="")
+    screen_size_mock = AsyncMock(return_value=(1080, 2376))
+    foreground_mock = AsyncMock(return_value="com.example.harmony")
+
+    class _FakeImageContext:
+        def __enter__(self) -> "_FakeImageContext":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            del exc_type, exc, tb
+            return False
+
+        def save(self, path: str, format: str = "PNG") -> None:
+            del format
+            Path(path).write_bytes(b"png")
+
+    class _FakeImage:
+        @staticmethod
+        def open(_path: str) -> _FakeImageContext:
+            return _FakeImageContext()
+
+    monkeypatch.setattr(backend, "_run", run_mock)
+    monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
+    monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
+    monkeypatch.setattr(hdc_backend_module, "_import_pil_image", lambda: _FakeImage)
+    monkeypatch.setattr(hdc_backend_module, "_read_png_size", lambda _path: None)
+
+    obs = await backend.observe(Path("/tmp/hdc-orientation-fallback.png"))
+
+    assert obs.screen_width == 1080
+    assert obs.screen_height == 2376
+    screen_size_mock.assert_awaited_once_with(5.0)
+    foreground_mock.assert_awaited_once_with(5.0)
+
+
+@pytest.mark.asyncio
+async def test_hdc_backend_query_screen_size_preserves_landscape_orientation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = HdcBackend()
+    run_mock = AsyncMock(return_value="Display Resolution: 2376x1080")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    width, height = await backend._query_screen_size(timeout=5.0)
+
+    assert width == 2376
+    assert height == 1080
+
+
+@pytest.mark.asyncio
+async def test_ios_backend_observe_swaps_window_size_when_orientation_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    screenshot_path = tmp_path / "ios-mismatch.png"
+
+    class _FakeImage:
+        size = (2376, 1080)
+
+        def save(self, path: str, format: str = "PNG") -> None:
+            del format
+            Path(path).write_bytes(b"png")
+
+    class _FakeClient:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def screenshot(self) -> _FakeImage:
+            return _FakeImage()
+
+        def window_size(self) -> dict[str, int]:
+            return {"width": 1080, "height": 2376}
+
+        def app_current(self) -> dict[str, str]:
+            return {"bundleId": "com.example.ios"}
+
+    class _FakeWdaModule:
+        Client = _FakeClient
+
+    monkeypatch.setattr(ios_wda_module, "_import_wda", lambda: _FakeWdaModule)
+    backend = ios_wda_module.WdaBackend()
+
+    obs = await backend.observe(screenshot_path)
+
+    assert obs.screen_width == 2376
+    assert obs.screen_height == 1080
+    assert backend._screen_width == 2376
+    assert backend._screen_height == 1080
+
+
+@pytest.mark.asyncio
+async def test_ios_backend_observe_keeps_window_size_when_orientation_matches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    screenshot_path = tmp_path / "ios-match.png"
+
+    class _FakeImage:
+        size = (1080, 2376)
+
+        def save(self, path: str, format: str = "PNG") -> None:
+            del format
+            Path(path).write_bytes(b"png")
+
+    class _FakeClient:
+        def __init__(self, _url: str) -> None:
+            pass
+
+        def screenshot(self) -> _FakeImage:
+            return _FakeImage()
+
+        def window_size(self) -> dict[str, int]:
+            return {"width": 1080, "height": 2376}
+
+        def app_current(self) -> dict[str, str]:
+            return {"bundleId": "com.example.ios"}
+
+    class _FakeWdaModule:
+        Client = _FakeClient
+
+    monkeypatch.setattr(ios_wda_module, "_import_wda", lambda: _FakeWdaModule)
+    backend = ios_wda_module.WdaBackend()
+
+    obs = await backend.observe(screenshot_path)
+
+    assert obs.screen_width == 1080
+    assert obs.screen_height == 2376
+    assert backend._screen_width == 1080
+    assert backend._screen_height == 2376
 
 
 def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> None:
