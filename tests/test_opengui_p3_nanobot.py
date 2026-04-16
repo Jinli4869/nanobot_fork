@@ -301,7 +301,7 @@ def test_backend_selection(tmp_workspace: Path) -> None:
     )
 
     assert tool._backend.platform == "dry-run"
-    assert tool._skill_libraries["dry-run"].store_dir == tmp_workspace / "gui_skills"
+    assert tool._skill_libraries == {}
 
 
 def test_gui_config_defaults() -> None:
@@ -385,7 +385,15 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     result = json.loads(await tool.execute(task="Open Settings"))
 
     traces = list((tmp_workspace / "gui_runs").glob("**/*.jsonl"))
-    assert set(result) == {"success", "summary", "model_summary", "trace_path", "steps_taken", "error"}
+    assert set(result) == {
+        "success",
+        "summary",
+        "model_summary",
+        "trace_path",
+        "steps_taken",
+        "error",
+        "post_run_state",
+    }
     assert result["success"] is True
     assert result["steps_taken"] == 2
     assert result["error"] is None
@@ -434,7 +442,13 @@ async def test_auto_skill_extraction(tmp_workspace: Path) -> None:
             ]
         )
         tool = GuiSubagentTool(
-            gui_config=Config(gui={"backend": "dry-run"}).gui,
+            gui_config=Config(
+                gui={
+                    "backend": "dry-run",
+                    "enableSkillExtraction": True,
+                    "enableSkillExecution": False,
+                }
+            ).gui,
             provider=provider,
             model=provider.get_default_model(),
             workspace=tmp_workspace,
@@ -477,7 +491,13 @@ async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monke
         ]
     )
     tool = GuiSubagentTool(
-        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        gui_config=Config(
+            gui={
+                "backend": "dry-run",
+                "enableSkillExtraction": True,
+                "enableSkillExecution": False,
+            }
+        ).gui,
         provider=provider,
         model=provider.get_default_model(),
         workspace=tmp_workspace,
@@ -529,7 +549,13 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
         ]
     )
     tool = GuiSubagentTool(
-        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        gui_config=Config(
+            gui={
+                "backend": "dry-run",
+                "enableSkillExtraction": True,
+                "enableSkillExecution": False,
+            }
+        ).gui,
         provider=provider,
         model=provider.get_default_model(),
         workspace=tmp_workspace,

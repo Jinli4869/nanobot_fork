@@ -132,6 +132,38 @@ class TestSkillExecutorWiringDisabled:
         # skill_executor must be None (or absent, which defaults to None)
         assert captured_kwargs.get("skill_executor") is None
 
+    def test_skill_library_lookup_is_skipped_when_execution_disabled(self) -> None:
+        gui_config = _make_gui_config(enable_skill_execution=False)
+        tool = _make_tool(gui_config)
+
+        async def _run() -> None:
+            with (
+                patch.object(tool, "_refresh_cached_skill_stores") as refresh_mock,
+                patch.object(tool, "_get_skill_library") as get_lib_mock,
+                patch("nanobot.agent.tools.gui.GuiAgent.__init__", return_value=None),
+                patch(
+                    "nanobot.agent.tools.gui.TrajectoryRecorder",
+                    return_value=MagicMock(path=None),
+                ),
+                patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run,
+            ):
+                mock_run.return_value = MagicMock(
+                    success=True,
+                    summary="ok",
+                    model_summary="",
+                    trace_path=None,
+                    steps_taken=0,
+                    error=None,
+                )
+                try:
+                    await tool._run_task(tool._backend, "open settings")
+                except Exception:
+                    pass
+                refresh_mock.assert_not_called()
+                get_lib_mock.assert_not_called()
+
+        asyncio.run(_run())
+
 
 class TestSkillExecutorWiringEnabled:
     """When enable_skill_execution=True, GuiAgent must receive a SkillExecutor instance."""

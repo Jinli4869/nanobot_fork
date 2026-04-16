@@ -122,7 +122,9 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
     monkeypatch.setattr(litellm, "aembedding", aembedding_mock)
 
     provider = _FakeProvider()
-    config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})
+    config = Config(
+        gui={"backend": "dry-run", "embeddingModel": "embed-model", "enableSkillExecution": True}
+    )
     assert config.gui is not None
 
     tool = GuiSubagentTool(
@@ -300,8 +302,7 @@ async def test_gui_tool_skips_embedding_adapter_without_config(tmp_path: Path) -
     )
 
     assert tool._embedding_adapter is None
-    assert "dry-run" in tool._skill_libraries
-    assert tool._skill_libraries["dry-run"].embedding_provider is None
+    assert tool._skill_libraries == {}
 
 
 @pytest.mark.asyncio
@@ -326,7 +327,8 @@ async def test_gui_tool_builds_memory_retriever_from_default_opengui_dir(
         def __init__(self, store_dir: Path | str) -> None:
             seen_store_dirs.append(Path(store_dir))
 
-        def list_all(self) -> list[Any]:
+        def list_all(self, *, memory_type: Any | None = None) -> list[Any]:
+            del memory_type
             return indexed_entries
 
     with (
@@ -351,7 +353,7 @@ async def test_gui_tool_builds_memory_retriever_from_default_opengui_dir(
 
 
 @pytest.mark.asyncio
-async def test_gui_tool_passes_memory_retriever_to_gui_agent(
+async def test_gui_tool_passes_memory_store_to_gui_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -391,15 +393,19 @@ async def test_gui_tool_passes_memory_retriever_to_gui_agent(
                 error=None,
             )
 
-    memory_retriever = object()
-    monkeypatch.setattr("opengui.agent.GuiAgent", FakeGuiAgent)
-    monkeypatch.setattr(type(tool), "_build_memory_retriever", AsyncMock(return_value=memory_retriever))
-    monkeypatch.setattr(type(tool), "_schedule_trajectory_postprocessing", lambda *args, **kwargs: None)
+    memory_store = object()
+    monkeypatch.setattr("nanobot.agent.tools.gui.GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(
+        type(tool),
+        "_load_policy_context_and_memory_store",
+        lambda *_args, **_kwargs: (None, memory_store),
+    )
+    monkeypatch.setattr(tool._postprocessor, "schedule", lambda *args, **kwargs: None)
 
     result = await tool._run_task(tool._backend, "Open notification shade")
 
     assert '"success": true' in result
-    assert captured_kwargs["memory_retriever"] is memory_retriever
+    assert captured_kwargs["memory_store"] is memory_store
 
 
 # ---------------------------------------------------------------------------
