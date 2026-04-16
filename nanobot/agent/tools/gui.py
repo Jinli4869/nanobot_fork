@@ -63,7 +63,11 @@ class GuiSubagentTool(Tool):
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
-        self._skill_library = self._get_skill_library(self._backend.platform)
+        self._skill_library = (
+            self._get_skill_library(self._backend.platform)
+            if gui_config.enable_skill_execution
+            else None
+        )
         self._postprocessor = PostRunProcessor(
             llm=self._llm_adapter,
             merge_llm=self._llm_adapter,
@@ -218,8 +222,10 @@ class GuiSubagentTool(Tool):
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
-        self._refresh_cached_skill_stores()
-        skill_library = self._get_skill_library(active_backend.platform)
+        skill_library = None
+        if self._gui_config.enable_skill_execution:
+            self._refresh_cached_skill_stores()
+            skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
             output_dir=run_dir,
