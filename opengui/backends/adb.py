@@ -19,6 +19,7 @@ import base64
 import importlib.resources
 import os
 import re
+import struct
 import tempfile
 import unicodedata
 import uuid
@@ -88,6 +89,27 @@ _KEYCOMBINATION_UNSUPPORTED_MARKERS = (
     "unknown command: keycombination",
     "invalid arguments for command: keycombination",
 )
+
+
+def _read_png_size(path: Path) -> tuple[int, int] | None:
+    """Return PNG image size from *path* without external dependencies."""
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(24)
+    except OSError:
+        return None
+
+    if len(header) < 24:
+        return None
+    if header[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    if header[12:16] != b"IHDR":
+        return None
+
+    width, height = struct.unpack(">II", header[16:24])
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
 
 
 class AdbError(Exception):
@@ -325,10 +347,15 @@ class AdbBackend:
         await self._run("shell", "screencap", "-p", _DEVICE_SCREENSHOT_PATH, timeout=timeout)
         await self._run("pull", _DEVICE_SCREENSHOT_PATH, str(screenshot_path), timeout=timeout)
 
-        (width, height), fg_app = await asyncio.gather(
-            self._query_screen_size(timeout),
-            self._query_foreground_app(timeout),
-        )
+        screenshot_size = _read_png_size(screenshot_path)
+        if screenshot_size is None:
+            (width, height), fg_app = await asyncio.gather(
+                self._query_screen_size(timeout),
+                self._query_foreground_app(timeout),
+            )
+        else:
+            width, height = screenshot_size
+            fg_app = await self._query_foreground_app(timeout)
 
         self._screen_width = width
         self._screen_height = height
