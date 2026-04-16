@@ -5,6 +5,7 @@ import json
 import tomllib
 import asyncio
 import base64
+import io
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -180,6 +181,26 @@ def test_parse_action_unwraps_duplicated_stringified_y_list() -> None:
     assert action.x == 321.0
     assert action.y == 957.0
     assert action.relative is True
+
+
+def test_scale_image_accepts_custom_ratio() -> None:
+    from PIL import Image
+
+    from opengui.skills.executor import _scale_image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (120, 80), color=(255, 0, 0)).save(buf, format="PNG")
+
+    scaled = _scale_image(buf.getvalue(), scale_ratio=0.25)
+    with Image.open(io.BytesIO(scaled)) as img:
+        assert img.size == (30, 20)
+
+
+def test_scale_image_ratio_one_keeps_original_bytes() -> None:
+    from opengui.skills.executor import _scale_image
+
+    raw = b"not-an-image"
+    assert _scale_image(raw, scale_ratio=1.0) == raw
 
 
 def test_parse_swipe_splits_all_coordinates_from_x_list() -> None:

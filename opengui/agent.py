@@ -222,10 +222,17 @@ class _AgentActionGrounder:
 
     _MAX_RETRIES = 2
 
-    def __init__(self, llm: LLMProvider, model: str, agent_profile: str | None = None) -> None:
+    def __init__(
+        self,
+        llm: LLMProvider,
+        model: str,
+        agent_profile: str | None = None,
+        image_scale_ratio: float = 0.5,
+    ) -> None:
         self._llm = llm
         self._model = model
         self._agent_profile = canonicalize_agent_profile(agent_profile)
+        self._image_scale_ratio = image_scale_ratio
         self._usage_accum: dict[str, int] = {}
 
     def drain_usage(self) -> dict[str, int]:
@@ -258,9 +265,11 @@ class _AgentActionGrounder:
             f"  target: {target}{extra_ctx}\n\n"
             f"{self._profile_response_instruction(target_action=step.action_type)}"
         )
-        from opengui.skills.executor import _scale_image_half
+        from opengui.skills.executor import _scale_image
         raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
-        image_data = base64.b64encode(_scale_image_half(raw)).decode()
+        image_data = base64.b64encode(
+            _scale_image(raw, scale_ratio=self._image_scale_ratio)
+        ).decode()
 
         messages: list[dict[str, Any]] = [{
             "role": "user",
@@ -359,6 +368,7 @@ class _AgentSubgoalRunner:
         trajectory_recorder: TrajectoryRecorder | None = None,
         agent_profile: str | None = None,
         step_timeout: float = 30.0,
+        image_scale_ratio: float = 0.5,
     ) -> None:
         self._llm = llm
         self._backend = backend
@@ -369,6 +379,7 @@ class _AgentSubgoalRunner:
         self._step_counter = 0
         self._agent_profile = canonicalize_agent_profile(agent_profile)
         self._step_timeout = step_timeout
+        self._image_scale_ratio = image_scale_ratio
 
     async def run_subgoal(
         self,
@@ -406,9 +417,11 @@ class _AgentSubgoalRunner:
                 f"closer to the sub-goal. {self._profile_subgoal_instruction()}"
             )
 
-            from opengui.skills.executor import _scale_image_half
+            from opengui.skills.executor import _scale_image
             img_bytes = current_screenshot.read_bytes() if isinstance(current_screenshot, Path) else current_screenshot
-            image_data = base64.b64encode(_scale_image_half(img_bytes)).decode()
+            image_data = base64.b64encode(
+                _scale_image(img_bytes, scale_ratio=self._image_scale_ratio)
+            ).decode()
 
             messages: list[dict[str, Any]] = [{
                 "role": "user",
@@ -823,6 +836,7 @@ class GuiAgent:
         policy_context: str | None = None,
         memory_store: Any = None,
         agent_profile: str | None = None,
+        image_scale_ratio: float = 0.5,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -849,6 +863,7 @@ class GuiAgent:
         self._intervention_handler = intervention_handler
         self._memory_store = memory_store
         self._active_retry_summaries: tuple[str, ...] = ()
+        self._image_scale_ratio = image_scale_ratio
 
     # ------------------------------------------------------------------
     # Public API
@@ -1974,11 +1989,12 @@ class GuiAgent:
             return action_text.split(":", 1)[1].strip()
         return action_text.strip()
 
-    @staticmethod
-    def _image_block(path: Path) -> dict[str, Any]:
+    def _image_block(self, path: Path) -> dict[str, Any]:
         """Create a base64 image content block for an LLM message."""
-        from opengui.skills.executor import _scale_image_half
-        b64 = base64.b64encode(_scale_image_half(path.read_bytes())).decode()
+        from opengui.skills.executor import _scale_image
+        b64 = base64.b64encode(
+            _scale_image(path.read_bytes(), scale_ratio=self._image_scale_ratio)
+        ).decode()
         return {
             "type": "image_url",
             "image_url": {"url": f"data:image/png;base64,{b64}"},
