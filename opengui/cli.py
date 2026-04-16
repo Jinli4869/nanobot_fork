@@ -153,6 +153,7 @@ class CliConfig:
     ios: IosConfig = field(default_factory=IosConfig)
     hdc: HdcConfig = field(default_factory=HdcConfig)
     max_steps: int = 15
+    image_scale_ratio: float = 0.5
     memory_dir: Path | None = None
     skills_dir: Path | None = None
     agent_profile: str | None = None
@@ -393,6 +394,7 @@ def load_config(path: Path | None = None) -> CliConfig:
         ios=ios,
         hdc=hdc,
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
+        image_scale_ratio=_coerce_image_scale_ratio(raw.get("image_scale_ratio"), default=0.5),
         memory_dir=_optional_path(raw.get("memory_dir")),
         skills_dir=_optional_path(raw.get("skills_dir")),
         agent_profile=_optional_string(raw, "agent_profile"),
@@ -443,7 +445,10 @@ async def build_optional_components(
         embedding_provider=embedding_provider,
         merge_llm=provider,
     )
-    state_validator = LLMStateValidator(provider)
+    state_validator = LLMStateValidator(
+        provider,
+        image_scale_ratio=config.image_scale_ratio,
+    )
     skill_executor = SkillExecutor(
         backend=backend,
         state_validator=state_validator,
@@ -451,6 +456,7 @@ async def build_optional_components(
             llm=provider,
             model=model_name,
             agent_profile=config.agent_profile,
+            image_scale_ratio=config.image_scale_ratio,
         ),
         subgoal_runner=_AgentSubgoalRunner(
             llm=provider,
@@ -460,6 +466,7 @@ async def build_optional_components(
             artifacts_root=artifacts_root,
             agent_profile=config.agent_profile,
             step_timeout=30.0,
+            image_scale_ratio=config.image_scale_ratio,
         ),
         screenshot_provider=_AgentScreenshotProvider(
             backend=backend,
@@ -519,6 +526,7 @@ async def _execute_agent(
         installed_apps=installed_apps,
         intervention_handler=_build_intervention_handler(backend),
         agent_profile=args.agent_profile or config.agent_profile,
+        image_scale_ratio=config.image_scale_ratio,
     )
     return await agent.run(task)
 
@@ -789,6 +797,18 @@ def _coerce_positive_int(value: Any, *, default: int) -> int:
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Expected positive integer, got {value!r}") from exc
     return parsed if parsed > 0 else default
+
+
+def _coerce_image_scale_ratio(value: Any, *, default: float) -> float:
+    if value in (None, ""):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Expected image_scale_ratio in (0, 1], got {value!r}") from exc
+    if not (0 < parsed <= 1):
+        raise ValueError(f"Expected image_scale_ratio in (0, 1], got {value!r}")
+    return parsed
 
 
 if __name__ == "__main__":

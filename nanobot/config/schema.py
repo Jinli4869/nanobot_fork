@@ -204,6 +204,7 @@ class GuiConfig(Base):
     display_num: int | None = None
     display_width: int = 1280
     display_height: int = 720
+    image_scale_ratio: float = 0.5
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
@@ -219,6 +220,13 @@ class GuiConfig(Base):
         from opengui.agent_profiles import canonicalize_agent_profile
 
         return canonicalize_agent_profile(value)
+
+    @field_validator("image_scale_ratio")
+    @classmethod
+    def _validate_image_scale_ratio(cls, value: float) -> float:
+        if not (0 < value <= 1):
+            raise ValueError("image_scale_ratio must be in (0, 1].")
+        return value
 
     @model_validator(mode="after")
     def _validate_background_requires_local(self) -> "GuiConfig":

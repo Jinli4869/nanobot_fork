@@ -197,8 +197,9 @@ Respond with ONLY a JSON object: {{"valid": true/false, "reason": "one-line"}}
 class LLMStateValidator:
     """Validate screen state using a vision LLM."""
 
-    def __init__(self, llm: LLMProvider) -> None:
+    def __init__(self, llm: LLMProvider, image_scale_ratio: float = 0.5) -> None:
         self._llm = llm
+        self._image_scale_ratio = _normalize_image_scale_ratio(image_scale_ratio)
         self._usage_accum: dict[str, int] = {}
 
     def drain_usage(self) -> dict[str, int]:
@@ -222,7 +223,9 @@ class LLMStateValidator:
         prompt = _VALIDATION_PROMPT.format(valid_state=valid_state)
 
         raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
-        image_data = base64.b64encode(_scale_image_half(raw)).decode()
+        image_data = base64.b64encode(
+            _scale_image(raw, scale_ratio=self._image_scale_ratio)
+        ).decode()
         content: list[dict[str, Any]] = [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}},
@@ -269,22 +272,46 @@ def _should_skip_validation(valid_state: str | None) -> bool:
     return any(hint in lowered for hint in skip_hints)
 
 
-def _scale_image_half(data: bytes) -> bytes:
-    """Return *data* scaled to 1/2 width and height as PNG bytes.
+def _normalize_image_scale_ratio(scale_ratio: float | None) -> float:
+    """Normalize user-provided image scaling ratio to a safe range."""
+    if scale_ratio is None:
+        return 0.5
+    try:
+        value = float(scale_ratio)
+    except (TypeError, ValueError):
+        return 0.5
+    if value <= 0:
+        return 0.5
+    return min(1.0, value)
+
+
+def _scale_image(data: bytes, *, scale_ratio: float = 0.5) -> bytes:
+    """Return *data* scaled by *scale_ratio* as PNG bytes.
 
     Falls back to the original bytes if PIL is unavailable or the image cannot
     be decoded (e.g. non-PNG/JPEG formats the LLM provider may still accept).
     """
+    scale_ratio = _normalize_image_scale_ratio(scale_ratio)
+    if scale_ratio >= 1.0:
+        return data
     try:
         from PIL import Image
         with Image.open(io.BytesIO(data)) as img:
             w, h = img.size
-            scaled = img.resize((max(1, w // 2), max(1, h // 2)), Image.LANCZOS)
+            scaled = img.resize(
+                (max(1, int(w * scale_ratio)), max(1, int(h * scale_ratio))),
+                Image.LANCZOS,
+            )
             buf = io.BytesIO()
             scaled.save(buf, format="PNG")
             return buf.getvalue()
     except Exception:
         return data
+
+
+def _scale_image_half(data: bytes) -> bytes:
+    """Backward-compatible helper for existing call sites."""
+    return _scale_image(data, scale_ratio=0.5)
 
 
 # ---------------------------------------------------------------------------
