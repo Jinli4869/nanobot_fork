@@ -244,8 +244,18 @@ def _normalize_coordinate_pair(
             if secondary in (None, [], ()):
                 payload[secondary_key] = primary_items[1]
 
-    if secondary_items is not None and len(secondary_items) == 1:
-        payload[secondary_key] = secondary_items[0]
+    if secondary_items is not None:
+        if len(secondary_items) == 1:
+            payload[secondary_key] = secondary_items[0]
+        elif len(secondary_items) == 2:
+            # Some providers emit duplicated scalar coordinates as two-item
+            # lists (e.g. y=[957, 957]); collapse them to a single scalar.
+            if secondary_items[0] == secondary_items[1]:
+                payload[secondary_key] = secondary_items[0]
+            # Also accept swapped pair payloads like y=[x, y] when x is absent.
+            elif primary in (None, [], ()):
+                payload[primary_key] = secondary_items[0]
+                payload[secondary_key] = secondary_items[1]
 
 
 def _coerce_coordinate_sequence(value: typing.Any) -> tuple[typing.Any, ...] | None:

@@ -170,6 +170,13 @@ class WdaBackend:
 
         # Persist screenshot as PNG.
         screenshot_img.save(str(screenshot_path), format="PNG")
+        screenshot_size: tuple[int, int] | None = None
+        raw_size = getattr(screenshot_img, "size", None)
+        if isinstance(raw_size, (tuple, list)) and len(raw_size) >= 2:
+            shot_w = int(raw_size[0])
+            shot_h = int(raw_size[1])
+            if shot_w > 0 and shot_h > 0:
+                screenshot_size = shot_w, shot_h
 
         # Unpack window dimensions (wda may return a namedtuple or dict).
         if hasattr(window_size, "width") and hasattr(window_size, "height"):
@@ -182,6 +189,17 @@ class WdaBackend:
         else:
             width, height = self._screen_width, self._screen_height
             logger.warning("Unexpected window_size format %r; using cached %dx%d", window_size, width, height)
+
+        if screenshot_size is not None:
+            shot_w, shot_h = screenshot_size
+            window_is_landscape = width > height
+            screenshot_is_landscape = shot_w > shot_h
+            if (
+                width != height
+                and shot_w != shot_h
+                and window_is_landscape != screenshot_is_landscape
+            ):
+                width, height = height, width
 
         self._screen_width = width
         self._screen_height = height
