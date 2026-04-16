@@ -292,6 +292,10 @@ class _AgentSubgoalRunner:
     runs up to ``max_steps`` observe → LLM → execute → validate cycles.
     """
 
+    _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
+    _POST_ACTION_SETTLE_SECONDS = 0.50
+    _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
+
     def __init__(
         self,
         llm: LLMProvider,
@@ -301,6 +305,7 @@ class _AgentSubgoalRunner:
         artifacts_root: "Path",
         trajectory_recorder: TrajectoryRecorder | None = None,
         agent_profile: str | None = None,
+        step_timeout: float = 30.0,
     ) -> None:
         self._llm = llm
         self._backend = backend
@@ -310,6 +315,7 @@ class _AgentSubgoalRunner:
         self._trajectory_recorder = trajectory_recorder
         self._step_counter = 0
         self._agent_profile = canonicalize_agent_profile(agent_profile)
+        self._step_timeout = step_timeout
 
     async def run_subgoal(
         self,
@@ -424,6 +430,7 @@ class _AgentSubgoalRunner:
             tc = response.tool_calls[0]
             try:
                 action = parse_action(tc.arguments)
+                action = self._normalize_relative_coordinates(action)
             except ActionError as exc:
                 logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
@@ -455,7 +462,7 @@ class _AgentSubgoalRunner:
                 continue
 
             try:
-                await self._backend.execute(action)
+                await self._backend.execute(action, timeout=self._step_timeout)
             except Exception as exc:
                 logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
@@ -471,6 +478,10 @@ class _AgentSubgoalRunner:
                 )
                 continue
 
+            settle = self._post_action_settle_seconds(action)
+            if settle > 0:
+                await asyncio.sleep(settle)
+
             # Observe new screen
             self._step_counter += 1
             subgoal_dir = self._artifacts_root / "subgoal_screenshots"
@@ -478,7 +489,7 @@ class _AgentSubgoalRunner:
             next_path = subgoal_dir / f"subgoal_{int(time.time() * 1000)}_{self._step_counter}.png"
             screenshot_path: str | None = None
             try:
-                obs = await self._backend.observe(next_path)
+                obs = await self._backend.observe(next_path, timeout=self._step_timeout)
                 current_screenshot = Path(obs.screenshot_path) if obs.screenshot_path else current_screenshot
                 screenshot_path = obs.screenshot_path
             except Exception as exc:
@@ -585,6 +596,27 @@ class _AgentSubgoalRunner:
             if value is not None and not (key == "relative" and value is False)
         }
 
+    def _coordinate_mode(self) -> str:
+        return coordinate_mode_for_profile(self._agent_profile, self._model)
+
+    def _model_uses_relative_grid(self) -> bool:
+        return self._coordinate_mode() == "relative_999"
+
+    def _normalize_relative_coordinates(self, action: Action) -> Action:
+        if action.relative or action.action_type not in self._COORDINATE_ACTIONS:
+            return action
+        if not self._model_uses_relative_grid():
+            return action
+        coords = [v for v in (action.x, action.y, action.x2, action.y2) if v is not None]
+        if coords and all(0 <= v <= 999 for v in coords):
+            return replace(action, relative=True)
+        return action
+
+    def _post_action_settle_seconds(self, action: Action) -> float:
+        if action.action_type in self._NO_SETTLE_ACTIONS:
+            return 0.0
+        return self._POST_ACTION_SETTLE_SECONDS
+
 
 class _AgentScreenshotProvider:
     """Provide the current screenshot via ``DeviceBackend.observe()``."""
@@ -629,7 +661,7 @@ class GuiAgent:
 
     _MAX_TOOL_RETRIES = 2
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
-    _POST_ACTION_SETTLE_SECONDS = 0.25
+    _POST_ACTION_SETTLE_SECONDS = 0.50
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
 
     def __init__(

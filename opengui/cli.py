@@ -175,14 +175,18 @@ class OpenAICompatibleLLMProvider:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {
-            "model": self._model,
+            "model": model or self._model,
             "messages": _sanitize_messages(messages),
         }
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
         response = await self._client.chat.completions.create(**kwargs)
         if not response.choices:
@@ -455,6 +459,7 @@ async def build_optional_components(
             model=model_name,
             artifacts_root=artifacts_root,
             agent_profile=config.agent_profile,
+            step_timeout=30.0,
         ),
         screenshot_provider=_AgentScreenshotProvider(
             backend=backend,

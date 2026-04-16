@@ -20,12 +20,21 @@ class LLMGrounder:
     def __init__(self, llm: LLMProvider, grounder_id: str = "llm:default") -> None:
         self._llm = llm
         self._grounder_id = grounder_id
+        self._usage_accum: dict[str, int] = {}
+
+    def drain_usage(self) -> dict[str, int]:
+        """Return accumulated token usage since last drain and reset the counter."""
+        usage = dict(self._usage_accum)
+        self._usage_accum.clear()
+        return usage
 
     async def ground(self, target: str, context: GroundingContext) -> GroundingResult:
         prompt = self._build_prompt(target, context)
         response = await self._llm.chat(
             messages=[{"role": "user", "content": [{"type": "text", "text": prompt}]}]
         )
+        for k, v in (response.usage or {}).items():
+            self._usage_accum[k] = self._usage_accum.get(k, 0) + v
         payload = self._extract_payload(response.content, response.tool_calls)
         return GroundingResult(
             grounder_id=payload.get("grounder_id", self._grounder_id),

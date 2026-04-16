@@ -76,6 +76,7 @@ class Action:
     duration_ms: int | None = None
     relative: bool = False
     status: str | None = None
+    auto_enter: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +136,7 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     duration_ms = _optional_int(payload, "duration_ms", action_type)
     relative = bool(payload.get("relative", False))
     status = _optional_str(payload, "status")
+    auto_enter = bool(payload.get("auto_enter", True))
 
     # 5. Validate
     _validate(action_type=action_type, x=x, y=y, x2=x2, y2=y2,
@@ -143,7 +145,7 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     return Action(
         action_type=action_type, x=x, y=y, x2=x2, y2=y2,
         text=text, key=key, pixels=pixels, duration_ms=duration_ms,
-        relative=relative, status=status,
+        relative=relative, status=status, auto_enter=auto_enter,
     )
 
 
@@ -237,8 +239,10 @@ def _normalize_coordinate_pair(
     if primary_items is not None:
         if len(primary_items) == 1:
             payload[primary_key] = primary_items[0]
-        elif len(primary_items) == 2 and secondary in (None, [], ()):
-            payload[primary_key], payload[secondary_key] = primary_items
+        elif len(primary_items) == 2:
+            payload[primary_key] = primary_items[0]
+            if secondary in (None, [], ()):
+                payload[secondary_key] = primary_items[1]
 
     if secondary_items is not None and len(secondary_items) == 1:
         payload[secondary_key] = secondary_items[0]
