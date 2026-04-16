@@ -315,6 +315,7 @@ def test_gui_config_defaults() -> None:
     assert config.artifacts_dir == "gui_runs"
     assert config.max_steps == 15
     assert config.skill_threshold == pytest.approx(0.6)
+    assert config.image_scale_ratio == pytest.approx(0.5)
     assert config.agent_profile is None
 
 
@@ -325,10 +326,15 @@ def test_gui_config_validation() -> None:
     assert GuiConfig(backend="ios").backend == "ios"
     assert GuiConfig(agent_profile="qwen3vl").agent_profile == "qwen3vl"
     assert GuiConfig.model_validate({"agentProfile": "gelab"}).agent_profile == "gelab"
+    assert GuiConfig.model_validate({"imageScaleRatio": 0.25}).image_scale_ratio == pytest.approx(0.25)
     with pytest.raises(ValidationError):
         GuiConfig(backend="invalid")
     with pytest.raises(ValidationError):
         GuiConfig(agent_profile="invalid-profile")
+    with pytest.raises(ValidationError):
+        GuiConfig(image_scale_ratio=0)
+    with pytest.raises(ValidationError):
+        GuiConfig(image_scale_ratio=1.2)
 
 
 def test_config_gui_none_by_default() -> None:
