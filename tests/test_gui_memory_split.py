@@ -195,3 +195,57 @@ async def test_gui_agent_falls_back_to_retriever_when_no_policy_context(tmp_path
     mock_retriever.search.assert_called()
 
 
+# ---------------------------------------------------------------------------
+# Test 7: GuiAgent can combine direct policy + filtered guide retrieval
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gui_agent_combines_policy_with_filtered_retrieval(tmp_path: Path) -> None:
+    """When platform/app context is provided, policy + retrieved guide memory are both injected."""
+    from opengui.agent import GuiAgent
+    from opengui.backends.dry_run import DryRunBackend
+    from opengui.memory.types import MemoryEntry, MemoryType
+    from opengui.trajectory.recorder import TrajectoryRecorder
+
+    recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="test task")
+    recorder.start()
+
+    mock_retriever = MagicMock()
+    mock_retriever.search = AsyncMock(
+        return_value=[
+            (
+                MemoryEntry(
+                    entry_id="app-guide-1",
+                    memory_type=MemoryType.APP_GUIDE,
+                    platform="android",
+                    app="com.tencent.mm",
+                    content="WeChat '+' compose button is in the top-right corner.",
+                ),
+                0.92,
+            )
+        ]
+    )
+    mock_retriever.format_context = MagicMock(
+        return_value="- [APP] (com.tencent.mm) WeChat '+' compose button is in the top-right corner."
+    )
+
+    agent = GuiAgent(
+        llm=MagicMock(),
+        backend=DryRunBackend(),
+        trajectory_recorder=recorder,
+        policy_context="- Never send messages without explicit user confirmation.",
+        memory_retriever=mock_retriever,
+    )
+
+    result = await agent._retrieve_memory(
+        "open wechat and draft a message",
+        platform="android",
+        app="com.tencent.mm",
+    )
+
+    assert result is not None
+    assert "Never send messages without explicit user confirmation." in result
+    assert "WeChat '+' compose button is in the top-right corner." in result
+    mock_retriever.search.assert_called()
+

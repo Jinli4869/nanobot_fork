@@ -218,6 +218,7 @@ class GuiSubagentTool(Tool):
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
+        memory_retriever = await self._build_memory_retriever(memory_store=memory_store)
         self._refresh_cached_skill_stores()
         skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
@@ -271,6 +272,7 @@ class GuiSubagentTool(Tool):
             artifacts_root=run_dir,
             max_steps=self._gui_config.max_steps,
             policy_context=policy_context,
+            memory_retriever=memory_retriever,
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
             skill_executor=skill_executor,
@@ -443,11 +445,12 @@ class GuiSubagentTool(Tool):
             return self._backend
         return self._build_backend(backend)
 
-    async def _build_memory_retriever(self) -> Any | None:
-        """Build a memory retriever indexed with POLICY entries only.
+    async def _build_memory_retriever(self, *, memory_store: Any | None = None) -> Any | None:
+        """Build a memory retriever indexed with guide entries (os/app/icon).
 
-        Guide entries (os_guide, app_guide, icon_guide) are now consumed by the planner
-        via PlanningContext.gui_memory_context instead of being surfaced here.
+        Policy memory is injected directly into the GUI agent prompt to guarantee
+        always-on safety constraints, while guide memory is retrieved by relevance
+        during execution.
         """
         if self._embedding_adapter is None:
             return None
@@ -457,12 +460,14 @@ class GuiSubagentTool(Tool):
         from opengui.memory.types import MemoryType
 
         try:
-            memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
-            policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
-            if not policy_entries:
+            store = memory_store if memory_store is not None else MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            guide_entries = []
+            for memory_type in (MemoryType.OS_GUIDE, MemoryType.APP_GUIDE, MemoryType.ICON_GUIDE):
+                guide_entries.extend(store.list_all(memory_type=memory_type))
+            if not guide_entries:
                 return None
             memory_retriever = MemoryRetriever(embedding_provider=self._embedding_adapter, top_k=5)
-            await memory_retriever.index(policy_entries)
+            await memory_retriever.index(guide_entries)
             return memory_retriever
         except Exception:
             logger.warning(

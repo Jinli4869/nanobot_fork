@@ -728,7 +728,10 @@ class GuiAgent:
         self._trajectory_recorder.start(phase=ExecutionPhase.AGENT)
 
         # 2. Retrieve memory context (once)
-        memory_context = await self._retrieve_memory(task)
+        memory_context = await self._retrieve_memory(
+            task,
+            platform=self.backend.platform,
+        )
 
         # 3. Search skill library (once)
         skill_match = await self._search_skill(task)
@@ -932,6 +935,8 @@ class GuiAgent:
         history: list[HistoryTurn] = []
         current_thinking_mode = "fast"
         careful_mode_until_step = 0
+        last_memory_refresh_step = 0
+        last_memory_refresh_app: str | None = None
 
         # 4. Step loop
         steps_taken = 0
@@ -961,6 +966,20 @@ class GuiAgent:
                     stagnation_reason=stagnation_signal.reason,
                 )
             current_thinking_mode = thinking_mode
+            (
+                memory_context,
+                last_memory_refresh_step,
+                last_memory_refresh_app,
+            ) = await self._maybe_refresh_memory_context(
+                task=task,
+                step_index=step_index,
+                current_observation=obs,
+                existing_context=memory_context,
+                stagnation_signal=stagnation_signal,
+                run_dir=run_dir,
+                last_refresh_step=last_memory_refresh_step,
+                last_refresh_app=last_memory_refresh_app,
+            )
             messages = self._build_messages(
                 task=task,
                 current_observation=obs,
@@ -2208,7 +2227,69 @@ class GuiAgent:
     # Memory / skill / trajectory helpers
     # ------------------------------------------------------------------
 
-    async def _retrieve_memory(self, task: str) -> str | None:
+    async def _maybe_refresh_memory_context(
+        self,
+        *,
+        task: str,
+        step_index: int,
+        current_observation: Observation,
+        existing_context: str | None,
+        stagnation_signal: StagnationSignal,
+        run_dir: Path,
+        last_refresh_step: int,
+        last_refresh_app: str | None,
+    ) -> tuple[str | None, int, str | None]:
+        """Refresh memory context when foreground app changes or progress stalls."""
+        # If neither retriever nor policy context is available, keep the original context.
+        if self._memory_retriever is None and self._policy_context is None:
+            return existing_context, last_refresh_step, last_refresh_app
+
+        current_app = (current_observation.foreground_app or "").strip() or None
+        should_refresh = False
+        reason = ""
+
+        if step_index == 1 and current_app:
+            should_refresh = True
+            reason = "initial_foreground_app"
+        elif current_app and current_app != last_refresh_app:
+            should_refresh = True
+            reason = "foreground_app_changed"
+        elif (
+            stagnation_signal.detected
+            and step_index - last_refresh_step >= 2
+        ):
+            should_refresh = True
+            reason = f"stagnation:{stagnation_signal.reason or 'unknown'}"
+
+        if not should_refresh:
+            return existing_context, last_refresh_step, last_refresh_app
+
+        refreshed_context = await self._retrieve_memory(
+            task,
+            platform=self.backend.platform,
+            app=current_app,
+        )
+        if refreshed_context is None:
+            refreshed_context = existing_context
+
+        await self._log_attempt_event(
+            run_dir,
+            "memory_refresh",
+            step_index=step_index,
+            reason=reason,
+            foreground_app=current_app,
+            context_changed=refreshed_context != existing_context,
+            context_present=bool(refreshed_context),
+        )
+        return refreshed_context, step_index, current_app
+
+    async def _retrieve_memory(
+        self,
+        task: str,
+        *,
+        platform: str | None = None,
+        app: str | None = None,
+    ) -> str | None:
         """Return memory context for the current task.
 
         When ``_policy_context`` is set (nanobot path), policy entries are injected
@@ -2216,18 +2297,37 @@ class GuiAgent:
         legacy ``_memory_retriever`` path (opengui CLI) is preserved for backward
         compatibility when ``_policy_context`` is not provided.
         """
-        if self._policy_context is not None:
-            self._log_policy_injection(self._policy_context)
-            return self._policy_context
+        policy_context = self._policy_context.strip() if isinstance(self._policy_context, str) else None
+        if policy_context:
+            self._log_policy_injection(policy_context)
+            # Backward-compatible fast path: direct policy injection without retriever
+            # when no extra filtering context is requested.
+            if platform is None and app is None:
+                return policy_context
 
         # Existing retriever-based path — used by the opengui CLI and any callers that
         # construct GuiAgent directly with a memory_retriever.
         if self._memory_retriever is None:
-            return None
+            return policy_context
         from opengui.memory.types import MemoryType
 
-        # Fetch relevant entries by query
-        results = await self._memory_retriever.search(task, top_k=self._memory_top_k + 10)
+        search_kwargs: dict[str, Any] = {"top_k": self._memory_top_k + 10}
+        if platform:
+            search_kwargs["platform"] = platform
+        if app:
+            search_kwargs["app"] = app
+
+        # Fetch relevant entries by query; relax filters when strict app matches are absent.
+        results = await self._memory_retriever.search(task, **search_kwargs)
+        if app and not results:
+            relaxed_kwargs = dict(search_kwargs)
+            relaxed_kwargs.pop("app", None)
+            results = await self._memory_retriever.search(task, **relaxed_kwargs)
+        if platform and not results:
+            global_kwargs = dict(search_kwargs)
+            global_kwargs.pop("platform", None)
+            global_kwargs.pop("app", None)
+            results = await self._memory_retriever.search(task, **global_kwargs)
 
         # Separate POLICY entries from search results
         policies = [(e, s) for e, s in results if e.memory_type == MemoryType.POLICY]
@@ -2235,19 +2335,25 @@ class GuiAgent:
             : self._memory_top_k
         ]
 
-        # Also fetch all POLICY entries separately (they must always be included)
-        policy_results = await self._memory_retriever.search(
-            task, memory_type=MemoryType.POLICY, top_k=50,
-        )
-        # Merge: add any POLICY entries not already in the list
-        seen_ids = {e.entry_id for e, _ in policies}
-        for entry, score in policy_results:
-            if entry.entry_id not in seen_ids:
-                policies.append((entry, score))
-                seen_ids.add(entry.entry_id)
+        if policy_context:
+            # Policy is injected in full via policy_context; avoid duplicate policy snippets.
+            policies = []
+        else:
+            # Also fetch all POLICY entries separately (they must always be included).
+            policy_results = await self._memory_retriever.search(
+                task,
+                memory_type=MemoryType.POLICY,
+                top_k=50,
+            )
+            # Merge: add any POLICY entries not already in the list.
+            seen_ids = {e.entry_id for e, _ in policies}
+            for entry, score in policy_results:
+                if entry.entry_id not in seen_ids:
+                    policies.append((entry, score))
+                    seen_ids.add(entry.entry_id)
 
         memory_entries = policies + others
-        if not memory_entries:
+        if not memory_entries and not policy_context:
             logger.info("Memory retrieval: no hits for task=%r", task)
             self._trajectory_recorder.record_event(
                 "memory_retrieval",
@@ -2256,9 +2362,13 @@ class GuiAgent:
                 hits=[],
                 context="",
             )
-            return None
-        context = self._memory_retriever.format_context(memory_entries)
-        self._log_memory_retrieval(task, memory_entries, context)
+            return policy_context
+
+        retrieved_context = self._memory_retriever.format_context(memory_entries) if memory_entries else ""
+        context_parts = [part for part in (policy_context, retrieved_context) if part]
+        context = "\n\n".join(context_parts)
+        if memory_entries:
+            self._log_memory_retrieval(task, memory_entries, context)
         return context
 
     def _log_policy_injection(self, context: str) -> None:
