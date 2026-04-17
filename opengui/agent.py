@@ -2311,48 +2311,64 @@ class GuiAgent:
             return policy_context
         from opengui.memory.types import MemoryType
 
-        search_kwargs: dict[str, Any] = {"top_k": self._memory_top_k + 10}
-        if platform:
-            search_kwargs["platform"] = platform
-        if app:
-            search_kwargs["app"] = app
+        async def _search_with_relaxation(
+            *,
+            memory_type: MemoryType,
+            top_k: int,
+            prefer_app_match: bool = False,
+        ) -> list[tuple[Any, float]]:
+            kwargs: dict[str, Any] = {
+                "memory_type": memory_type,
+                "top_k": top_k,
+            }
+            if platform:
+                kwargs["platform"] = platform
+            if prefer_app_match and app:
+                kwargs["app"] = app
 
-        # Fetch relevant entries by query; relax filters when strict app matches are absent.
-        results = await self._memory_retriever.search(task, **search_kwargs)
-        if app and not results:
-            relaxed_kwargs = dict(search_kwargs)
-            relaxed_kwargs.pop("app", None)
-            results = await self._memory_retriever.search(task, **relaxed_kwargs)
-        if platform and not results:
-            global_kwargs = dict(search_kwargs)
-            global_kwargs.pop("platform", None)
-            global_kwargs.pop("app", None)
-            results = await self._memory_retriever.search(task, **global_kwargs)
+            hits = await self._memory_retriever.search(task, **kwargs)
+            if prefer_app_match and app and not hits:
+                kwargs.pop("app", None)
+                hits = await self._memory_retriever.search(task, **kwargs)
+            if platform and not hits:
+                kwargs.pop("platform", None)
+                hits = await self._memory_retriever.search(task, **kwargs)
+            return hits
 
-        # Separate POLICY entries from search results
-        policies = [(e, s) for e, s in results if e.memory_type == MemoryType.POLICY]
-        others = [(e, s) for e, s in results if e.memory_type != MemoryType.POLICY][
-            : self._memory_top_k
-        ]
-
-        if policy_context:
-            # Policy is injected in full via policy_context; avoid duplicate policy snippets.
-            policies = []
-        else:
-            # Also fetch all POLICY entries separately (they must always be included).
-            policy_results = await self._memory_retriever.search(
+        policy_hits: list[tuple[Any, float]] = []
+        if policy_context is None:
+            policy_hits = await self._memory_retriever.search(
                 task,
                 memory_type=MemoryType.POLICY,
                 top_k=50,
             )
-            # Merge: add any POLICY entries not already in the list.
-            seen_ids = {e.entry_id for e, _ in policies}
-            for entry, score in policy_results:
-                if entry.entry_id not in seen_ids:
-                    policies.append((entry, score))
-                    seen_ids.add(entry.entry_id)
 
-        memory_entries = policies + others
+        app_hits = await _search_with_relaxation(
+            memory_type=MemoryType.APP_GUIDE,
+            top_k=self._memory_top_k,
+            prefer_app_match=True,
+        )
+        system_hits = await _search_with_relaxation(
+            memory_type=MemoryType.OS_GUIDE,
+            top_k=max(2, self._memory_top_k // 2),
+            prefer_app_match=False,
+        )
+        icon_hits = await _search_with_relaxation(
+            memory_type=MemoryType.ICON_GUIDE,
+            top_k=max(2, self._memory_top_k // 2),
+            prefer_app_match=False,
+        )
+
+        # Tiered ordering: policy (always), app (task-specific), system (navigation), icon (fallback grounding).
+        memory_entries: list[tuple[Any, float]] = []
+        seen_entry_ids: set[str] = set()
+        for bucket in (policy_hits, app_hits, system_hits, icon_hits):
+            for entry, score in bucket:
+                if entry.entry_id in seen_entry_ids:
+                    continue
+                seen_entry_ids.add(entry.entry_id)
+                memory_entries.append((entry, score))
+
         if not memory_entries and not policy_context:
             logger.info("Memory retrieval: no hits for task=%r", task)
             self._trajectory_recorder.record_event(
