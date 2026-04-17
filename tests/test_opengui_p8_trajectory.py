@@ -153,7 +153,7 @@ async def test_summarizer_called_post_run(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
         return_value="Summary text",
-    ) as mock_summarize, patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    ) as mock_summarize, patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -175,7 +175,7 @@ async def test_summarizer_failure_non_fatal(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
         side_effect=RuntimeError("summarizer exploded"),
-    ), patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    ), patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         raw = await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -205,7 +205,7 @@ async def test_gui_evaluation_runs_from_background_postprocessing(
     )
     promote_mock = AsyncMock(return_value=None)
 
-    with patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    with patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -299,7 +299,7 @@ async def test_gui_evaluation_failure_is_non_fatal(
     )
     promote_mock = AsyncMock(return_value=None)
 
-    with patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    with patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         raw = await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -344,7 +344,7 @@ async def test_summarizer_skipped_when_no_trace(
     with patch(
         "opengui.trajectory.summarizer.TrajectorySummarizer.summarize_file",
         new_callable=AsyncMock,
-    ) as mock_summarize, patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    ) as mock_summarize, patch.object(tool._postprocessor, "_promote_shortcut", new=promote_mock):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 

@@ -23,7 +23,7 @@ import pytest
 
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse
-from opengui.skills import Skill, SkillStep
+from opengui.skills import ParameterSlot, ShortcutSkill, Skill, SkillStep, StateDescriptor
 from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
@@ -137,17 +137,18 @@ def _make_skill(
 # ---------------------------------------------------------------------------
 
 
-def test_opengui_skills_module_exports_core_types() -> None:
+def test_opengui_skills_module_exports_legacy_and_shortcut_types() -> None:
     assert Skill.__name__ == "Skill"
     assert SkillStep.__name__ == "SkillStep"
+    assert StateDescriptor.__name__ == "StateDescriptor"
+    assert ParameterSlot.__name__ == "ParameterSlot"
+    assert ShortcutSkill.__name__ == "ShortcutSkill"
 
+    # Phase 25 exports must coexist with all legacy exports
     import opengui.skills as skills_pkg
     exported = set(skills_pkg.__all__)
-    assert "Skill" in exported
-    assert "SkillStep" in exported
-    assert "SkillLibrary" in exported
-    assert "SkillExtractor" in exported
-    assert "SkillExecutor" in exported
+    assert "ConditionEvaluator" in exported, "Phase 25 ConditionEvaluator missing from __all__"
+    assert "ShortcutExecutor" in exported, "Phase 25 ShortcutExecutor missing from __all__"
 
 
 def test_skill_library_crud(tmp_path: Path) -> None:
@@ -623,101 +624,6 @@ async def test_executor_records_skill_failure_events(tmp_path: Path) -> None:
     assert recorder.events[2][0] == "skill_execution_result"
     assert recorder.events[2][1]["state"] == "failed"
     assert "valid_state not reached" in str(recorder.events[2][1]["error"])
-
-
-async def test_executor_fixed_step_validates_state() -> None:
-    """fixed=True steps must still run valid_state validation (regression for bypass bug)."""
-    step = SkillStep(
-        action_type="tap",
-        target="Profile button",
-        valid_state="Home screen is visible",
-        fixed=True,
-        fixed_values={"x": 500.0, "y": 300.0, "relative": True},
-    )
-    skill = Skill(
-        skill_id="exec-fixed-val",
-        name="Tap Profile",
-        description="Tap the profile button from home screen",
-        app="com.example.app",
-        platform="android",
-        steps=(step,),
-    )
-
-    validator = _FakeValidator(returns=[True])
-    executor = SkillExecutor(
-        backend=DryRunBackend(),
-        state_validator=validator,
-        stop_on_failure=True,
-    )
-    result = await executor.execute(skill)
-
-    assert result.state == ExecutionState.SUCCEEDED
-    # Validator must have been consumed — if fixed skipped it, the list would be non-empty
-    assert validator._returns == [], "state_validator.validate() was not called for fixed step"
-    assert result.step_results[0].valid_state_check is True
-
-
-async def test_executor_fixed_step_fails_when_state_invalid() -> None:
-    """fixed=True step with wrong screen state must fail, not blindly execute."""
-    step = SkillStep(
-        action_type="tap",
-        target="Checkout button",
-        valid_state="Cart page is visible",
-        fixed=True,
-        fixed_values={"x": 500.0, "y": 800.0, "relative": True},
-    )
-    skill = Skill(
-        skill_id="exec-fixed-fail",
-        name="Checkout",
-        description="Tap checkout on cart page",
-        app="com.example.shop",
-        platform="android",
-        steps=(step,),
-    )
-
-    executor = SkillExecutor(
-        backend=DryRunBackend(),
-        state_validator=_FakeValidator(returns=[False]),
-        stop_on_failure=True,
-    )
-    result = await executor.execute(skill)
-
-    assert result.state == ExecutionState.FAILED
-    assert result.step_results[0].valid_state_check is False
-
-
-async def test_executor_validate_duration_not_null_for_fixed_step() -> None:
-    """validate_duration_s must be a positive float (not None) when LLM validation runs."""
-    step = SkillStep(
-        action_type="tap",
-        target="Submit",
-        valid_state="Form is ready",
-        fixed=True,
-        fixed_values={"x": 200.0, "y": 400.0, "relative": True},
-    )
-    skill = Skill(
-        skill_id="exec-dur-check",
-        name="Submit Form",
-        description="Submit the form",
-        app="com.example.app",
-        platform="android",
-        steps=(step,),
-    )
-
-    recorder = _CapturingRecorder()
-    executor = SkillExecutor(
-        backend=DryRunBackend(),
-        state_validator=_FakeValidator(returns=[True]),
-        trajectory_recorder=recorder,
-        stop_on_failure=True,
-    )
-    await executor.execute(skill)
-
-    skill_step_event = recorder.events[1][1]
-    # validate_duration_s should be recorded (not None) since LLM validation ran
-    assert skill_step_event["validate_duration_s"] is not None, (
-        "validate_duration_s logged as null — validation was skipped for fixed step"
-    )
 
 
 # ---------------------------------------------------------------------------

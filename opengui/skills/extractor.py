@@ -40,17 +40,6 @@ _SUCCESS_PROMPT = """\
 You are a GUI automation expert. Given the following trajectory of a \
 **successful** GUI task, extract a reusable skill.
 
-# Trajectory Format
-The trajectory below may contain two phases:
-- **skill_phase**: A previously-learned skill that was executed. Each step shows the \
-skill's intended action and whether it succeeded. If a step has \
-``subgoal_recovery_attempts``, those are the visual-verification sub-steps the executor \
-tried before concluding the ``valid_state`` was not reached.
-- **agent_phase**: Free agent steps taken after the skill completed or partially succeeded.
-
-Synthesize the BEST reusable action sequence from the combined context of both phases. \
-Understand what the skill intended, how/why it failed, and how the agent corrected it.
-
 # Trajectory
 {trajectory}
 
@@ -116,30 +105,10 @@ omit the open_app step entirely.
       "target": "description, may contain {{{{param}}}}",
       "parameters": {{}},
       "expected_state": "state after step",
-      "valid_state": "required state before step",
-      "fixed": true
+      "valid_state": "required state before step"
     }}
   ]
 }}
-
-## fixed field guidelines
-- ``open_app`` MUST always have ``"fixed": true``.
-- Set ``"fixed": true`` for: navigation taps on static/structural UI elements \
-(menu items, nav bars, fixed toolbar buttons), system actions (back, home, enter), \
-any step whose target UI position is stable across repeated runs.
-- Set ``"fixed": false`` for: taps on search results or dynamic list items \
-(position varies by content), ``input_text`` with user-variable content, \
-scrolls/swipes whose extent depends on current screen state, any step where \
-the target element location may differ on re-execution.
-- When ``"fixed": true`` AND the action requires coordinates \
-(tap, long_press, double_tap, drag, swipe): copy the exact ``x``, ``y`` \
-(and ``x2``, ``y2`` for drag/swipe) values from the corresponding trajectory \
-action into ``parameters``. If the trajectory action shows ``"relative": true``, \
-include ``"relative": true`` in ``parameters`` as well.
-- When ``"fixed": true`` for ``input_text``: include the concrete ``text`` value \
-in ``parameters``.
-- When ``"fixed": false``: omit ``x``/``y`` from ``parameters``; use \
-``{{{{param}}}}`` placeholders for user-variable text values.
 
 ## valid_state guidelines
 - For app launch / wait actions: "No need to verify"
@@ -147,32 +116,12 @@ in ``parameters``.
 - For input_text: "text input field is visible and focused"
 - For scroll/swipe: "content area is scrollable and visible"
 - Be specific about which UI element should be visible.
-
-## Quality checks
-- The ``description`` field MUST accurately reflect what the steps actually do. \
-Do NOT describe steps that are not present (e.g., do not say "from the hot feed" \
-if no step navigates to a hot/trending tab).
-- Do NOT include error-recovery language (correction, fix, retry, loop) in the \
-description for successful trajectories.
-- If the trajectory shows the agent undoing a previous action (e.g., pressing Back), \
-exclude both the undone action AND the Back action from the skill.
 """
 
 _FAILURE_PROMPT = """\
 You are a GUI automation expert. Given the following trajectory of a \
 **failed** GUI task, extract a partial skill from the reliable prefix \
 (actions before the failure) plus one corrective action.
-
-# Trajectory Format
-The trajectory below may contain two phases:
-- **skill_phase**: A previously-learned skill that was executed. Each step shows the \
-skill's intended action and whether it succeeded. If a step has \
-``subgoal_recovery_attempts``, those are the visual-verification sub-steps the executor \
-tried before concluding the ``valid_state`` was not reached.
-- **agent_phase**: Free agent steps taken after the skill completed or partially succeeded.
-
-Synthesize the BEST reusable action sequence from the combined context of both phases. \
-Understand what the skill intended, how/why it failed, and how the agent corrected it.
 
 # Trajectory
 {trajectory}
@@ -241,17 +190,10 @@ Return ONLY a JSON object (no markdown fences):
       "target": "description",
       "parameters": {{}},
       "expected_state": "state after step",
-      "valid_state": "required state before step",
-      "fixed": true
+      "valid_state": "required state before step"
     }}
   ]
 }}
-
-## fixed field guidelines
-Same rules as above: ``open_app`` is always ``fixed: true``; \
-static navigation taps include concrete ``x``/``y`` from the trajectory; \
-dynamic or user-variable steps use ``fixed: false`` with ``{{{{param}}}}`` \
-placeholders and no coordinates.
 """
 
 # Max screenshots forwarded to the LLM per extraction call.
@@ -333,25 +275,19 @@ class SkillExtractor:
         lines = trajectory_path.read_text(encoding="utf-8").strip().splitlines()
         events = [json.loads(line) for line in lines if line.strip()]
 
+        # Filter to step events
+        steps = [e for e in events if e.get("type") == "step"]
+        if len(steps) < 2:
+            logger.info("Trajectory too short (%d steps)", len(steps))
+            return None
+
         # Check outcome from result event if available
         result_events = [e for e in events if e.get("type") == "result"]
         if result_events:
             outcome = result_events[-1].get("success", is_success)
             is_success = bool(outcome)
 
-        # Build rich trajectory including skill, subgoal, and agent phases
-        trajectory, screenshot_events = _build_full_trajectory(events)
-
-        agent_steps = [e for e in events if e.get("type") == "step"]
-        skill_steps = [e for e in events if e.get("type") == "skill_step"]
-        if len(agent_steps) + len(skill_steps) < 1:
-            logger.info(
-                "Trajectory too short (%d agent steps, %d skill steps)",
-                len(agent_steps), len(skill_steps),
-            )
-            return None
-
-        return await self._extract(trajectory, screenshot_events, is_success=is_success)
+        return await self._extract(steps, is_success=is_success)
 
     async def extract_from_steps(
         self,
@@ -359,12 +295,10 @@ class SkillExtractor:
         *,
         is_success: bool = True,
     ) -> Skill | None:
-        """Extract a skill from pre-parsed agent step dicts (backward-compatible)."""
+        """Extract a skill from pre-parsed step dicts."""
         if len(steps) < 2:
             return None
-        trajectory: dict[str, Any] = {"agent_phase": steps}
-        screenshot_events = [s for s in steps if s.get("screenshot_path")]
-        return await self._extract(trajectory, screenshot_events, is_success=is_success)
+        return await self._extract(steps, is_success=is_success)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -372,55 +306,35 @@ class SkillExtractor:
 
     async def _extract(
         self,
-        trajectory: dict[str, Any],
-        screenshot_events: list[dict[str, Any]],
+        steps: list[dict[str, Any]],
         *,
         is_success: bool,
     ) -> Skill | None:
-        trajectory_text = json.dumps(trajectory, ensure_ascii=False, indent=2)
+        trajectory_text = json.dumps(steps, ensure_ascii=False, indent=2)
         prompt_template = _SUCCESS_PROMPT if is_success else _FAILURE_PROMPT
         prompt = prompt_template.format(trajectory=trajectory_text)
 
-        messages = self._build_messages(prompt, screenshot_events)
+        messages = self._build_messages(prompt, steps)
         response = await self._llm.chat(messages)
 
         self._accumulate_usage(response.usage)
-        skill = self._parse_response(response.content)
-        if skill is not None and not _passes_quality_check(skill, is_success):
-            return None
-        return skill
+        return self._parse_response(response.content)
 
     def _build_messages(
         self,
         prompt: str,
-        screenshot_events: list[dict[str, Any]],
+        steps: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Build the LLM messages list, attaching screenshots when available.
-
-        ``screenshot_events`` is a flat chronological list of trace events
-        (``subgoal_step`` and/or ``step``) that carry a ``screenshot_path``.
-        Each screenshot is labelled by its event type so the LLM can map it
-        to the correct phase in the trajectory.
-        """
+        """Build the LLM messages list, attaching screenshots when available."""
         if not self._include_screenshots:
             return [{"role": "user", "content": prompt}]
 
-        # Collect (index, path, label) for events with readable screenshots.
-        candidates: list[tuple[int, str, str]] = []
-        for i, event in enumerate(screenshot_events):
-            path = event.get("screenshot_path")
-            if not path or not Path(path).is_file():
-                continue
-            action_type = (event.get("action") or {}).get("action_type", "?")
-            if event.get("type") == "subgoal_step":
-                goal_snippet = (event.get("goal") or "")[:70]
-                label = (
-                    f"Subgoal substep {event.get('substep_index', i)} ({action_type})"
-                    f" — goal: {goal_snippet}"
-                )
-            else:
-                label = f"Agent step {event.get('step_index', i)} — {action_type}"
-            candidates.append((i, path, label))
+        # Collect (step_index, path) pairs for steps that have readable screenshots.
+        candidates: list[tuple[int, str]] = []
+        for i, step in enumerate(steps):
+            path = step.get("screenshot_path")
+            if path and Path(path).is_file():
+                candidates.append((i, path))
 
         if not candidates:
             return [{"role": "user", "content": prompt}]
@@ -429,18 +343,22 @@ class SkillExtractor:
         selected = _uniform_sample(candidates, self._max_screenshots)
 
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+
         content.append({
             "type": "text",
             "text": (
                 f"\n\nThe following {len(selected)} screenshot(s) show the screen state "
-                "during execution (subgoal recovery attempts and agent steps). "
-                "Use them to verify element descriptions, remove redundant actions, "
-                "and write accurate valid_state fields."
+                "before the labelled step. Use them to verify element descriptions, "
+                "remove redundant actions, and write accurate valid_state fields."
             ),
         })
 
-        for _, path, label in selected:
-            content.append({"type": "text", "text": f"\n{label}:"})
+        for step_idx, path in selected:
+            action_type = steps[step_idx].get("action", {}).get("action_type", "?")
+            content.append({
+                "type": "text",
+                "text": f"\nStep {step_idx} — {action_type}:",
+            })
             b64 = _encode_image_b64(path)
             if b64 is not None:
                 content.append({
@@ -471,22 +389,12 @@ class SkillExtractor:
         try:
             steps = []
             for s in data.get("steps", []):
-                action_type = s["action_type"]
-                parameters = s.get("parameters", {})
-                # open_app is always fixed; otherwise honour the model's choice
-                fixed = action_type == "open_app" or bool(s.get("fixed", False))
-                # For fixed steps, concrete values live in fixed_values so the
-                # executor can bypass grounding; parameters are kept as-is for
-                # documentation and template-fallback purposes.
-                fixed_values = dict(parameters) if fixed else {}
                 steps.append(SkillStep(
-                    action_type=action_type,
+                    action_type=s["action_type"],
                     target=s.get("target", ""),
-                    parameters=parameters,
+                    parameters=s.get("parameters", {}),
                     expected_state=s.get("expected_state"),
                     valid_state=s.get("valid_state"),
-                    fixed=fixed,
-                    fixed_values=fixed_values,
                 ))
 
             return Skill(
@@ -510,173 +418,6 @@ class SkillExtractor:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_full_trajectory(
-    events: list[dict[str, Any]],
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Convert raw trace events into a structured trajectory dict.
-
-    Returns
-    -------
-    trajectory:
-        A dict with up to two keys:
-
-        * ``skill_phase`` — present when a matched skill was executed.
-          Each step embeds any ``subgoal_recovery_attempts`` that were run
-          to verify the step's ``valid_state``.
-        * ``agent_phase`` — free agent steps taken after the skill finished
-          (or directly, when no skill was matched).
-
-    screenshot_events:
-        Flat chronological list of events that carry a ``screenshot_path``
-        (``subgoal_step`` and ``step`` events only), ready to pass to
-        :meth:`SkillExtractor._build_messages`.
-    """
-    screenshot_events: list[dict[str, Any]] = []
-
-    # ------------------------------------------------------------------
-    # Skill phase
-    # ------------------------------------------------------------------
-    skill_exec_start = next(
-        (e for e in events if e.get("type") == "skill_execution_start"), None
-    )
-    skill_phase: dict[str, Any] | None = None
-
-    if skill_exec_start:
-        skill_search = next(
-            (e for e in events if e.get("type") == "skill_search" and e.get("matched")),
-            None,
-        )
-        skill_exec_result = next(
-            (e for e in events if e.get("type") == "skill_execution_result"), None
-        )
-
-        # Group subgoal events by goal text so they can be attached to the
-        # skill step that triggered them (matched by valid_state == goal).
-        subgoal_steps_by_goal: dict[str, list[dict[str, Any]]] = {}
-        subgoal_result_by_goal: dict[str, dict[str, Any]] = {}
-        for e in events:
-            goal = e.get("goal", "")
-            if e.get("type") == "subgoal_step":
-                subgoal_steps_by_goal.setdefault(goal, []).append(e)
-                if e.get("screenshot_path"):
-                    screenshot_events.append(e)
-            elif e.get("type") == "subgoal_result":
-                subgoal_result_by_goal[goal] = e
-
-        enriched_steps: list[dict[str, Any]] = []
-        for e in events:
-            if e.get("type") != "skill_step":
-                continue
-            step_info: dict[str, Any] = {
-                "step_index": e.get("step_index"),
-                "target": e.get("target"),
-                "action": e.get("action"),
-                "action_summary": e.get("action_summary"),
-                "valid_state": e.get("valid_state"),
-                "succeeded": bool(e.get("valid_state_check", True)) and not e.get("error"),
-                "error": e.get("error"),
-            }
-            # Attach subgoal recovery attempts for this step if any.
-            valid_state = e.get("valid_state") or ""
-            if valid_state in subgoal_steps_by_goal:
-                step_info["subgoal_recovery_attempts"] = [
-                    {
-                        "substep_index": s.get("substep_index"),
-                        "action": s.get("action"),
-                        "action_summary": s.get("action_summary"),
-                        "goal_reached": s.get("goal_reached"),
-                    }
-                    for s in subgoal_steps_by_goal[valid_state]
-                ]
-                result = subgoal_result_by_goal.get(valid_state)
-                if result:
-                    if result.get("success"):
-                        step_info["subgoal_recovery_outcome"] = "succeeded"
-                    else:
-                        step_info["subgoal_recovery_outcome"] = (
-                            f"failed after {result.get('steps_taken', 0)} attempts"
-                            + (f": {result['error']}" if result.get("error") else "")
-                        )
-            enriched_steps.append(step_info)
-
-        skill_phase = {
-            "matched_skill": skill_exec_start.get("skill_name"),
-            "match_score": skill_search.get("score") if skill_search else None,
-            "steps": enriched_steps,
-            "outcome": skill_exec_result.get("execution_summary") if skill_exec_result else None,
-        }
-
-    # ------------------------------------------------------------------
-    # Agent phase
-    # ------------------------------------------------------------------
-    agent_steps_raw = [e for e in events if e.get("type") == "step"]
-    for e in agent_steps_raw:
-        if e.get("screenshot_path"):
-            screenshot_events.append(e)
-
-    agent_phase = [
-        {
-            "step_index": e.get("step_index"),
-            "action": e.get("action"),
-            "model_output": e.get("model_output"),
-            "foreground_app": (e.get("observation") or {}).get("foreground_app"),
-        }
-        for e in agent_steps_raw
-    ]
-
-    # ------------------------------------------------------------------
-    # Assemble trajectory
-    # ------------------------------------------------------------------
-    trajectory: dict[str, Any] = {}
-    if skill_phase:
-        trajectory["skill_phase"] = skill_phase
-    if agent_phase:
-        trajectory["agent_phase"] = agent_phase
-
-    return trajectory, screenshot_events
-
-
-_CORRECTIVE_KEYWORDS = frozenset({
-    "correction", "corrective", "fix", "fixed", "loop", "retry",
-    "repetitive", "broke", "wrong", "undo",
-})
-
-
-def _passes_quality_check(skill: "Skill", is_success: bool) -> bool:
-    """Return ``False`` when the extracted skill is likely low-quality.
-
-    Filters:
-    1. Successful trajectories should not produce skills whose description
-       contains error-recovery language — that signals the LLM misread the
-       trajectory.
-    2. Skills with zero non-open_app steps are too trivial to keep.
-    """
-    desc_lower = skill.description.lower()
-
-    # Filter 1: corrective language in a success-extracted skill
-    if is_success:
-        for kw in _CORRECTIVE_KEYWORDS:
-            if kw in desc_lower:
-                logger.info(
-                    "Quality filter: rejecting skill %r — corrective keyword %r "
-                    "in description of a successful trajectory",
-                    skill.name, kw,
-                )
-                return False
-
-    # Filter 2: trivial skill (only open_app / wait steps)
-    substantive = [s for s in skill.steps if s.action_type not in ("open_app", "wait")]
-    if not substantive:
-        logger.info(
-            "Quality filter: rejecting skill %r — no substantive steps",
-            skill.name,
-        )
-        return False
-
-    return True
-
 
 def _encode_image_b64(path: str) -> str | None:
     """Return base64-encoded PNG of *path* scaled to 1/4 width and height, or ``None`` on error."""

@@ -921,7 +921,7 @@ async def test_gui_tool_intervention_flow_returns_structured_resume_result(
     with (
         patch.object(type(tool), "_build_intervention_handler", return_value=_ResumeHandler(), create=True),
         patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="")),
-        patch.object(tool._postprocessor, "_extract_skill", new=AsyncMock(return_value=None)),
+        patch.object(tool._postprocessor, "_promote_shortcut", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("Handle payroll login"))
         await tool._wait_for_pending_postprocessing()
@@ -967,7 +967,7 @@ async def test_gui_tool_intervention_trace_payload_is_scrubbed(
     with (
         patch.object(type(tool), "_build_intervention_handler", return_value=_CancelHandler(), create=True),
         patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="")),
-        patch.object(tool._postprocessor, "_extract_skill", new=AsyncMock(return_value=None)),
+        patch.object(tool._postprocessor, "_promote_shortcut", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("Handle payroll login"))
         await tool._wait_for_pending_postprocessing()
@@ -1016,7 +1016,7 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes(tmp_pa
 
     with (
         patch("opengui.agent.GuiAgent.run", new=fake_run),
-        patch.object(tool._postprocessor, "_extract_skill", new=AsyncMock(side_effect=fake_promote)),
+        patch.object(tool._postprocessor, "_promote_shortcut", new=AsyncMock(side_effect=fake_promote)),
         patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="background summary")),
         patch.object(tool._postprocessor, "_run_evaluation", new=AsyncMock(return_value=None)),
     ):
@@ -1056,8 +1056,8 @@ async def test_gui_tool_promotion_failure_is_non_fatal(tmp_path: Path) -> None:
         patch("opengui.agent.GuiAgent.run", new=fake_run),
         patch.object(
             tool._postprocessor,
-            "_extract_skill",
-            new=AsyncMock(side_effect=RuntimeError("extraction exploded")),
+            "_promote_shortcut",
+            new=AsyncMock(side_effect=RuntimeError("promotion exploded")),
         ),
         patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="background summary")),
         patch.object(tool._postprocessor, "_run_evaluation", new=AsyncMock(return_value=None)),
@@ -1072,13 +1072,15 @@ async def test_gui_tool_promotion_failure_is_non_fatal(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gui_tool_skips_skill_extraction_when_disabled(tmp_path: Path) -> None:
+async def test_gui_tool_skips_shortcut_promotion_when_skill_extraction_disabled(tmp_path: Path) -> None:
     tool = _make_gui_tool(background=False, enable_skill_extraction=False)
     tool._workspace = tmp_path
 
     trace_path = tmp_path / "trace.jsonl"
     trace_path.write_text('{"type":"metadata"}\n', encoding="utf-8")
 
-    result = await tool._postprocessor._extract_skill(trace_path, is_success=True, platform="linux")
+    with patch("opengui.skills.shortcut_promotion.ShortcutPromotionPipeline.promote_from_trace", new=AsyncMock()) as promote_mock:
+        result = await tool._postprocessor._promote_shortcut(trace_path, is_success=True, platform="linux")
 
     assert result is None
+    promote_mock.assert_not_called()

@@ -195,7 +195,6 @@ class PostRunProcessor:
                 trace_path,
                 decision,
             )
-
             self._write_extraction_result(trace_path, {
                 "status": "processed",
                 "decision": decision,
@@ -327,3 +326,90 @@ class PostRunProcessor:
                 result_path, exc,
             )
 
+    @staticmethod
+    def _legacy_skill_to_shortcut(*, skill: Any, trace_path: Path) -> Any:
+        """Convert a legacy Skill object to a ShortcutSkill for storage."""
+        from datetime import datetime
+
+        from opengui.skills.shortcut import ParameterSlot, ShortcutSkill, StateDescriptor
+
+        parameter_slots = tuple(
+            ParameterSlot(
+                name=str(name),
+                type="string",
+                description=f"Value for {name}",
+            )
+            for name in getattr(skill, "parameters", ())
+        )
+        preconditions = _dedupe_state_descriptors(
+            [
+                StateDescriptor(kind="screen_state", value=str(value))
+                for value in getattr(skill, "preconditions", ())
+                if str(value).strip()
+            ]
+            + [
+                StateDescriptor(kind="screen_state", value=str(step.valid_state))
+                for step in getattr(skill, "steps", ())
+                if getattr(step, "valid_state", None)
+                and str(step.valid_state).strip().lower() != "no need to verify"
+            ]
+        )
+        postconditions = _dedupe_state_descriptors(
+            [
+                StateDescriptor(kind="screen_state", value=str(step.expected_state))
+                for step in getattr(skill, "steps", ())
+                if getattr(step, "expected_state", None)
+                and str(step.expected_state).strip()
+            ]
+        )
+        source_step_indices = tuple(_load_trace_step_indices(trace_path))
+        return ShortcutSkill(
+            skill_id=str(skill.skill_id),
+            name=str(skill.name),
+            description=str(skill.description),
+            app=str(skill.app),
+            platform=str(skill.platform),
+            steps=tuple(getattr(skill, "steps", ())),
+            parameter_slots=parameter_slots,
+            preconditions=preconditions,
+            postconditions=postconditions,
+            tags=tuple(getattr(skill, "tags", ())),
+            source_task=getattr(skill, "description", None),
+            source_trace_path=str(trace_path),
+            source_run_id=trace_path.parent.name or None,
+            source_step_indices=source_step_indices,
+            promotion_version=1,
+            shortcut_version=1,
+            created_at=float(getattr(skill, "created_at", datetime.now().timestamp())),
+        )
+
+
+def _dedupe_state_descriptors(states: list) -> tuple:
+    """Remove duplicate StateDescriptor entries by (kind, value, negated)."""
+    deduped: dict[tuple, Any] = {}
+    for state in states:
+        key = (state.kind, state.value, state.negated)
+        deduped[key] = state
+    return tuple(deduped.values())
+
+
+def _load_trace_step_indices(trace_path: Path) -> list[int]:
+    """Extract step indices from a JSONL trace file."""
+    import json
+
+    step_indices: list[int] = []
+    try:
+        with open(trace_path, encoding="utf-8") as handle:
+            for raw_line in handle:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                if row.get("type") != "step":
+                    continue
+                index = row.get("step_index")
+                if isinstance(index, int):
+                    step_indices.append(index)
+    except (OSError, json.JSONDecodeError):
+        logger.warning("Could not load step indices from %s", trace_path, exc_info=True)
+    return step_indices
