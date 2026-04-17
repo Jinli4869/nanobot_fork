@@ -27,8 +27,11 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +39,8 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_FILENAME = "evaluation.json"
+DEFAULT_MEMORY_CANDIDATE_FILENAME = "memory_candidate.json"
+DEFAULT_MEMORY_REVIEW_QUEUE = Path.home() / ".opengui" / "memory" / "review_queue.jsonl"
 
 
 @dataclass
@@ -71,6 +76,12 @@ class PostRunProcessor:
         skill_store_root: Path | None = None,
         enable_skill_extraction: bool = False,
         evaluation: EvaluationConfig = field(default_factory=EvaluationConfig),
+        max_pending: int = 6,
+        max_parallel: int = 1,
+        summarize_timeout_seconds: float = 20.0,
+        skill_timeout_seconds: float = 60.0,
+        evaluation_timeout_seconds: float = 60.0,
+        memory_candidate_timeout_seconds: float = 5.0,
     ) -> None:
         self._llm = llm
         self._merge_llm = merge_llm
@@ -79,6 +90,12 @@ class PostRunProcessor:
         self._enable_skill_extraction = enable_skill_extraction
         self._evaluation = evaluation
         self._pending: set[asyncio.Task[None]] = set()
+        self._max_pending = max(1, int(max_pending))
+        self._semaphore = asyncio.Semaphore(max(1, int(max_parallel)))
+        self._summarize_timeout_seconds = max(1.0, float(summarize_timeout_seconds))
+        self._skill_timeout_seconds = max(1.0, float(skill_timeout_seconds))
+        self._evaluation_timeout_seconds = max(1.0, float(evaluation_timeout_seconds))
+        self._memory_candidate_timeout_seconds = max(1.0, float(memory_candidate_timeout_seconds))
 
     # ------------------------------------------------------------------
     # Public API
@@ -99,9 +116,17 @@ class PostRunProcessor:
         """
         if trace_path is None or not trace_path.exists():
             return
+        if len(self._pending) >= self._max_pending:
+            logger.warning(
+                "Skipping post-processing for %s: pending queue is full (%d/%d)",
+                trace_path,
+                len(self._pending),
+                self._max_pending,
+            )
+            return
 
         bg = asyncio.create_task(
-            self._run_all(trace_path, is_success=is_success, platform=platform, task=task),
+            self._run_guarded(trace_path, is_success=is_success, platform=platform, task=task),
             name=f"postprocess-{trace_path.stem}",
         )
         self._pending.add(bg)
@@ -117,6 +142,18 @@ class PostRunProcessor:
     # Orchestrator
     # ------------------------------------------------------------------
 
+    async def _run_guarded(
+        self,
+        trace_path: Path,
+        *,
+        is_success: bool,
+        platform: str,
+        task: str,
+    ) -> None:
+        """Limit concurrent postprocessing so learning never blocks user work."""
+        async with self._semaphore:
+            await self._run_all(trace_path, is_success=is_success, platform=platform, task=task)
+
     async def _run_all(
         self,
         trace_path: Path,
@@ -125,10 +162,38 @@ class PostRunProcessor:
         platform: str,
         task: str,
     ) -> None:
-        summary, _, _ = await asyncio.gather(
-            self._summarize_trajectory(trace_path),
-            self._extract_skill(trace_path, is_success, platform),
-            self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
+        summary, _, evaluation_result = await asyncio.gather(
+            self._run_with_timeout(
+                self._summarize_trajectory(trace_path),
+                timeout_seconds=self._summarize_timeout_seconds,
+                stage="summarization",
+                default="",
+            ),
+            self._run_with_timeout(
+                self._extract_skill(trace_path, is_success, platform),
+                timeout_seconds=self._skill_timeout_seconds,
+                stage="skill_extraction",
+                default=None,
+            ),
+            self._run_with_timeout(
+                self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
+                timeout_seconds=self._evaluation_timeout_seconds,
+                stage="evaluation",
+                default=None,
+            ),
+        )
+        await self._run_with_timeout(
+            self._emit_memory_candidate(
+                trace_path=trace_path,
+                is_success=is_success,
+                platform=platform,
+                task=task,
+                summary=summary,
+                evaluation_result=evaluation_result,
+            ),
+            timeout_seconds=self._memory_candidate_timeout_seconds,
+            stage="memory_candidate",
+            default=None,
         )
         if summary:
             logger.info("Trajectory summary: %s", summary[:200])
@@ -270,6 +335,211 @@ class PostRunProcessor:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _emit_memory_candidate(
+        self,
+        *,
+        trace_path: Path,
+        is_success: bool,
+        platform: str,
+        task: str,
+        summary: str,
+        evaluation_result: dict[str, Any] | None,
+    ) -> None:
+        """Create a pending memory candidate for successful common tasks.
+
+        This is a conservative "online learning" queue:
+        - only emits candidates for high-quality successful traces,
+        - writes to a review queue,
+        - does NOT auto-promote into memory files.
+        """
+        if not is_success or not trace_path.exists():
+            return
+        if evaluation_result is not None and not bool(evaluation_result.get("success", False)):
+            return
+
+        quality = self._analyze_trace_quality(trace_path)
+        if not quality["eligible"]:
+            return
+
+        latest_app = quality.get("latest_foreground_app")
+        memory_type = self._classify_memory_type(task=task, summary=summary, latest_app=latest_app)
+        content = self._build_memory_candidate_content(task=task, summary=summary, latest_app=latest_app)
+        confidence = self._estimate_candidate_confidence(
+            quality=quality,
+            has_summary=bool(summary.strip()),
+            eval_success=bool(evaluation_result and evaluation_result.get("success")),
+        )
+        candidate = {
+            "entry_id": str(uuid.uuid4()),
+            "memory_type": memory_type,
+            "platform": platform,
+            "app": latest_app if memory_type == "app" else None,
+            "tags": ["online_learning", "post_run_candidate"],
+            "created_at": time.time(),
+            "access_count": 0,
+            "confidence": confidence,
+            "source": "online_learning",
+            "review_status": "pending",
+            "success_count": 1,
+            "failure_count": 0,
+            "last_verified_at": None,
+            "content": content,
+            "candidate_meta": {
+                "task": task,
+                "trace_path": str(trace_path),
+                "summary_present": bool(summary.strip()),
+                "step_count": quality["step_count"],
+                "max_repeat_count": quality["max_repeat_count"],
+                "intervention_count": quality["intervention_count"],
+                "stagnation_event_count": quality["stagnation_event_count"],
+            },
+        }
+        self._write_memory_candidate(trace_path=trace_path, candidate=candidate)
+
+    @staticmethod
+    def _analyze_trace_quality(trace_path: Path) -> dict[str, Any]:
+        step_count = 0
+        max_repeat_count = 0
+        intervention_count = 0
+        stagnation_event_count = 0
+        latest_foreground_app: str | None = None
+
+        try:
+            with open(trace_path, encoding="utf-8") as handle:
+                for raw_line in handle:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        row = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+
+                    event_type = row.get("event") or row.get("type")
+                    if event_type == "step":
+                        step_count += 1
+                        stability = row.get("stability") if isinstance(row.get("stability"), dict) else {}
+                        repeat_count = stability.get("repeat_count")
+                        if isinstance(repeat_count, int):
+                            max_repeat_count = max(max_repeat_count, repeat_count)
+                        if bool(stability.get("stagnation_detected")):
+                            stagnation_event_count += 1
+
+                        execution = row.get("execution")
+                        if isinstance(execution, dict):
+                            obs = execution.get("next_observation")
+                            if isinstance(obs, dict):
+                                app = obs.get("foreground_app")
+                                if isinstance(app, str) and app.strip():
+                                    latest_foreground_app = app.strip()
+                    elif event_type in {"intervention_requested", "intervention_cancelled"}:
+                        intervention_count += 1
+        except OSError:
+            logger.warning("Could not read trace for memory candidate: %s", trace_path, exc_info=True)
+            return {"eligible": False}
+
+        eligible = (
+            step_count > 0
+            and step_count <= 30
+            and intervention_count == 0
+            and max_repeat_count <= 4
+            and stagnation_event_count <= 2
+        )
+        return {
+            "eligible": eligible,
+            "step_count": step_count,
+            "max_repeat_count": max_repeat_count,
+            "intervention_count": intervention_count,
+            "stagnation_event_count": stagnation_event_count,
+            "latest_foreground_app": latest_foreground_app,
+        }
+
+    @staticmethod
+    def _classify_memory_type(*, task: str, summary: str, latest_app: str | None) -> str:
+        text = f"{task}\n{summary}".lower()
+        policy_keywords = (
+            "支付", "付款", "转账", "下单", "购买",
+            "permission", "authorize", "allow", "camera", "microphone", "location",
+            "delete", "send", "message",
+        )
+        icon_keywords = ("icon", "图标", "按钮样式", "齿轮", "铅笔", "pencil", "trash")
+        if any(keyword in text for keyword in policy_keywords):
+            return "policy"
+        if any(keyword in text for keyword in icon_keywords):
+            return "icon"
+        if latest_app and latest_app.lower() not in {"unknown", "launcher", "home", "dryrun"}:
+            return "app"
+        return "os"
+
+    @staticmethod
+    def _build_memory_candidate_content(*, task: str, summary: str, latest_app: str | None) -> str:
+        app_hint = f" [app={latest_app}]" if latest_app else ""
+        if summary.strip():
+            base = f"Task: {task}{app_hint}\nObserved reliable path: {summary.strip()}"
+        else:
+            base = f"Task: {task}{app_hint}\nObserved reliable path from successful trajectory."
+        return base[:800]
+
+    @staticmethod
+    def _estimate_candidate_confidence(
+        *,
+        quality: dict[str, Any],
+        has_summary: bool,
+        eval_success: bool,
+    ) -> float:
+        score = 0.45
+        step_count = int(quality.get("step_count", 0) or 0)
+        if step_count <= 8:
+            score += 0.20
+        elif step_count <= 15:
+            score += 0.10
+        if has_summary:
+            score += 0.10
+        if int(quality.get("max_repeat_count", 0) or 0) <= 2:
+            score += 0.10
+        if eval_success:
+            score += 0.15
+        return max(0.0, min(0.95, round(score, 3)))
+
+    @staticmethod
+    def _write_memory_candidate(trace_path: Path, candidate: dict[str, Any]) -> None:
+        candidate_path = trace_path.parent / DEFAULT_MEMORY_CANDIDATE_FILENAME
+        try:
+            candidate_path.write_text(
+                json.dumps(candidate, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Could not write memory candidate to %s: %s", candidate_path, exc)
+
+        queue_path = DEFAULT_MEMORY_REVIEW_QUEUE
+        try:
+            queue_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(queue_path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(candidate, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            logger.warning("Could not append memory candidate queue %s: %s", queue_path, exc)
+
+    async def _run_with_timeout(
+        self,
+        awaitable: Any,
+        *,
+        timeout_seconds: float,
+        stage: str,
+        default: Any,
+    ) -> Any:
+        """Execute a postprocessing stage with a timeout and safe fallback."""
+        try:
+            return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+        except asyncio.TimeoutError:
+            logger.warning("Post-processing stage timed out: %s (%.1fs)", stage, timeout_seconds)
+            return default
+        except Exception:
+            logger.warning("Post-processing stage failed: %s", stage, exc_info=True)
+            return default
 
     def _on_done(self, task: asyncio.Task[None]) -> None:
         self._pending.discard(task)

@@ -5,6 +5,9 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Any
+
+import yaml
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -22,6 +25,7 @@ class SkillsLoader:
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
+        self._metadata_cache: dict[str, tuple[int, dict]] = {}
 
     def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
         """
@@ -51,6 +55,8 @@ class SkillsLoader:
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
                         skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
 
+        skills.sort(key=lambda item: item["name"])
+
         # Filter by requirements
         if filter_unavailable:
             return [s for s in skills if self._check_requirements(self._get_skill_meta(s["name"]))]
@@ -66,18 +72,10 @@ class SkillsLoader:
         Returns:
             Skill content or None if not found.
         """
-        # Check workspace first
-        workspace_skill = self.workspace_skills / name / "SKILL.md"
-        if workspace_skill.exists():
-            return workspace_skill.read_text(encoding="utf-8")
-
-        # Check built-in
-        if self.builtin_skills:
-            builtin_skill = self.builtin_skills / name / "SKILL.md"
-            if builtin_skill.exists():
-                return builtin_skill.read_text(encoding="utf-8")
-
-        return None
+        skill_file = self._resolve_skill_file(name)
+        if skill_file is None:
+            return None
+        return skill_file.read_text(encoding="utf-8")
 
     def load_skills_for_context(self, skill_names: list[str]) -> str:
         """
@@ -166,8 +164,13 @@ class SkillsLoader:
                 return content[match.end():].strip()
         return content
 
-    def _parse_nanobot_metadata(self, raw: str) -> dict:
+    def _parse_nanobot_metadata(self, raw: Any) -> dict:
         """Parse skill metadata JSON from frontmatter (supports nanobot and openclaw keys)."""
+        if isinstance(raw, dict):
+            data = raw
+            return data.get("nanobot", data.get("openclaw", {}))
+        if not isinstance(raw, str):
+            return {}
         try:
             data = json.loads(raw)
             return data.get("nanobot", data.get("openclaw", {})) if isinstance(data, dict) else {}
@@ -177,10 +180,20 @@ class SkillsLoader:
     def _check_requirements(self, skill_meta: dict) -> bool:
         """Check if skill requirements are met (bins, env vars)."""
         requires = skill_meta.get("requires", {})
-        for b in requires.get("bins", []):
+        if not isinstance(requires, dict):
+            return True
+
+        bins = requires.get("bins", [])
+        if isinstance(bins, str):
+            bins = [bins]
+        for b in bins:
             if not shutil.which(b):
                 return False
-        for env in requires.get("env", []):
+
+        envs = requires.get("env", [])
+        if isinstance(envs, str):
+            envs = [envs]
+        for env in envs:
             if not os.environ.get(env):
                 return False
         return True
@@ -196,7 +209,7 @@ class SkillsLoader:
         for s in self.list_skills(filter_unavailable=True):
             meta = self.get_skill_metadata(s["name"]) or {}
             skill_meta = self._parse_nanobot_metadata(meta.get("metadata", ""))
-            if skill_meta.get("always") or meta.get("always"):
+            if self._is_truthy(skill_meta.get("always")) or self._is_truthy(meta.get("always")):
                 result.append(s["name"])
         return result
 
@@ -210,19 +223,68 @@ class SkillsLoader:
         Returns:
             Metadata dict or None.
         """
-        content = self.load_skill(name)
-        if not content:
+        skill_file = self._resolve_skill_file(name)
+        if skill_file is None:
             return None
 
-        if content.startswith("---"):
-            match = re.match(r"^---\n(.*?)\n---", content, re.DOTALL)
-            if match:
-                # Simple YAML parsing
-                metadata = {}
-                for line in match.group(1).split("\n"):
-                    if ":" in line:
-                        key, value = line.split(":", 1)
-                        metadata[key.strip()] = value.strip().strip('"\'')
-                return metadata
+        cache_key = str(skill_file)
+        mtime_ns = skill_file.stat().st_mtime_ns
+        cached = self._metadata_cache.get(cache_key)
+        if cached is not None and cached[0] == mtime_ns:
+            return dict(cached[1])
+
+        content = skill_file.read_text(encoding="utf-8")
+        metadata = self._extract_frontmatter(content)
+        self._metadata_cache[cache_key] = (mtime_ns, dict(metadata))
+        return metadata
+
+    def _resolve_skill_file(self, name: str) -> Path | None:
+        """Resolve a skill name to its SKILL.md path, preferring workspace skills."""
+        workspace_skill = self.workspace_skills / name / "SKILL.md"
+        if workspace_skill.exists():
+            return workspace_skill
+
+        if self.builtin_skills:
+            builtin_skill = self.builtin_skills / name / "SKILL.md"
+            if builtin_skill.exists():
+                return builtin_skill
 
         return None
+
+    @staticmethod
+    def _extract_frontmatter(content: str) -> dict:
+        """Parse YAML frontmatter from markdown content."""
+        if not content.startswith("---"):
+            return {}
+
+        match = re.match(r"^---\n(.*?)\n---(?:\n|$)", content, re.DOTALL)
+        if not match:
+            return {}
+
+        frontmatter_text = match.group(1)
+        try:
+            loaded = yaml.safe_load(frontmatter_text) or {}
+            if isinstance(loaded, dict):
+                return loaded
+        except yaml.YAMLError:
+            pass
+
+        # Fallback for malformed YAML: parse simple key:value lines.
+        metadata: dict[str, Any] = {}
+        for line in frontmatter_text.split("\n"):
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            metadata[key.strip()] = value.strip().strip('"\'')
+        return metadata
+
+    @staticmethod
+    def _is_truthy(value: Any) -> bool:
+        """Return True for common truthy frontmatter representations."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return False

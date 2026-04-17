@@ -96,6 +96,12 @@ def _entry_to_section(entry: MemoryEntry) -> str:
         f"tags: {tags_str}",
         f"created_at: {entry.created_at}",
         f"access_count: {entry.access_count}",
+        f"confidence: {entry.confidence}",
+        f"source: {entry.source}",
+        f"review_status: {entry.review_status}",
+        f"success_count: {entry.success_count}",
+        f"failure_count: {entry.failure_count}",
+        f"last_verified_at: {entry.last_verified_at if entry.last_verified_at is not None else ''}",
         "",
         entry.content,
         "",
@@ -165,6 +171,30 @@ def _parse_section(chunk: str) -> MemoryEntry | None:
     except ValueError:
         access_count = 0
 
+    try:
+        confidence = float(meta.get("confidence", "0.5"))
+    except ValueError:
+        confidence = 0.5
+
+    source = meta.get("source", "manual") or "manual"
+    review_status = meta.get("review_status", "approved") or "approved"
+
+    try:
+        success_count = int(meta.get("success_count", "0"))
+    except ValueError:
+        success_count = 0
+
+    try:
+        failure_count = int(meta.get("failure_count", "0"))
+    except ValueError:
+        failure_count = 0
+
+    last_verified_raw = meta.get("last_verified_at", "")
+    try:
+        last_verified_at = float(last_verified_raw) if last_verified_raw else None
+    except ValueError:
+        last_verified_at = None
+
     return MemoryEntry(
         entry_id=entry_id,
         memory_type=memory_type,
@@ -174,6 +204,12 @@ def _parse_section(chunk: str) -> MemoryEntry | None:
         tags=tags,
         created_at=created_at,
         access_count=access_count,
+        confidence=confidence,
+        source=source,
+        review_status=review_status,
+        success_count=success_count,
+        failure_count=failure_count,
+        last_verified_at=last_verified_at,
     )
 
 
