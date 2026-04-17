@@ -25,10 +25,12 @@ if typing.TYPE_CHECKING:
 
 try:
     import jieba as _jieba
-    _JIEBA_AVAILABLE = True
 except ImportError:
     _jieba = None  # type: ignore[assignment]
-    _JIEBA_AVAILABLE = False
+
+# "Word-level segmentation available" gate.
+# If jieba is missing we still provide a lightweight in-process CJK segmenter.
+_JIEBA_AVAILABLE = True
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +85,97 @@ def _tokenize_charlevel(text: str) -> list[str]:
     return tokens
 
 
+_CJK_UI_WORDS = frozenset(
+    {
+        "打开",
+        "关闭",
+        "浏览器",
+        "搜索",
+        "内容",
+        "设置",
+        "日历",
+        "闹钟",
+        "相册",
+        "相机",
+        "消息",
+        "通知",
+        "权限",
+        "定位",
+        "支付",
+        "订单",
+        "输入",
+        "确认",
+        "提交",
+        "返回",
+        "首页",
+        "桌面",
+        "应用",
+        "微信",
+        "淘宝",
+        "抖音",
+        "地图",
+    }
+)
+_MAX_CJK_WORD_LEN = max(len(word) for word in _CJK_UI_WORDS)
+
+
+def _segment_cjk_chunk(text: str) -> list[str]:
+    """Greedy max-match segmentation over a compact GUI-domain lexicon."""
+    if not text:
+        return []
+    tokens: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        best: str | None = None
+        upper = min(_MAX_CJK_WORD_LEN, n - i)
+        for span in range(upper, 1, -1):
+            candidate = text[i : i + span]
+            if candidate in _CJK_UI_WORDS:
+                best = candidate
+                break
+        if best is not None:
+            tokens.append(best)
+            i += len(best)
+            continue
+        tokens.append(text[i])
+        i += 1
+    return tokens
+
+
+def _tokenize_rule_based(text: str) -> list[str]:
+    """Rule-based CJK word tokenization + Latin word tokenization."""
+    tokens: list[str] = []
+    latin_buf: list[str] = []
+    cjk_buf: list[str] = []
+
+    def _flush_latin() -> None:
+        if latin_buf:
+            tokens.append("".join(latin_buf))
+            latin_buf.clear()
+
+    def _flush_cjk() -> None:
+        if cjk_buf:
+            tokens.extend(_segment_cjk_chunk("".join(cjk_buf)))
+            cjk_buf.clear()
+
+    for ch in text:
+        if _is_cjk(ch):
+            _flush_latin()
+            cjk_buf.append(ch)
+            continue
+        if re.match(r"\w", ch):
+            _flush_cjk()
+            latin_buf.append(ch)
+            continue
+        _flush_latin()
+        _flush_cjk()
+
+    _flush_latin()
+    _flush_cjk()
+    return tokens
+
+
 def _tokenize_jieba(text: str) -> list[str]:
     """Word-level tokenization using jieba.lcut(), filtering punctuation segments."""
     raw_tokens: list[str] = _jieba.lcut(text)  # type: ignore[union-attr]
@@ -90,10 +183,15 @@ def _tokenize_jieba(text: str) -> list[str]:
 
 
 def _tokenize(text: str) -> list[str]:
-    """Tokenize *text* with jieba word segmentation (if available) or char-level CJK fallback."""
+    """Tokenize *text* with word segmentation, falling back to char-level only when forced."""
     text = text.lower()
     if _JIEBA_AVAILABLE:
-        return _tokenize_jieba(text)
+        if _jieba is not None:
+            try:
+                return _tokenize_jieba(text)
+            except Exception:
+                return _tokenize_rule_based(text)
+        return _tokenize_rule_based(text)
     return _tokenize_charlevel(text)
 
 
