@@ -198,12 +198,14 @@ class GuiConfig(Base):
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
+    stagnation_limit: int = 0
     skill_threshold: float = 0.6
     embedding_model: str | None = None
     background: bool = False
     display_num: int | None = None
     display_width: int = 1280
     display_height: int = 720
+    image_scale_ratio: float = 0.5
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
@@ -219,6 +221,20 @@ class GuiConfig(Base):
         from opengui.agent_profiles import canonicalize_agent_profile
 
         return canonicalize_agent_profile(value)
+
+    @field_validator("image_scale_ratio")
+    @classmethod
+    def _validate_image_scale_ratio(cls, value: float) -> float:
+        if not (0 < value <= 1):
+            raise ValueError("image_scale_ratio must be in (0, 1].")
+        return value
+
+    @field_validator("stagnation_limit")
+    @classmethod
+    def _validate_stagnation_limit(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("stagnation_limit must be >= 0.")
+        return value
 
     @model_validator(mode="after")
     def _validate_background_requires_local(self) -> "GuiConfig":

@@ -63,7 +63,11 @@ class GuiSubagentTool(Tool):
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
-        self._skill_library = self._get_skill_library(self._backend.platform)
+        self._skill_library = (
+            self._get_skill_library(self._backend.platform)
+            if gui_config.enable_skill_execution
+            else None
+        )
         self._postprocessor = PostRunProcessor(
             llm=self._llm_adapter,
             merge_llm=self._llm_adapter,
@@ -218,8 +222,10 @@ class GuiSubagentTool(Tool):
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
-        self._refresh_cached_skill_stores()
-        skill_library = self._get_skill_library(active_backend.platform)
+        skill_library = None
+        if self._gui_config.enable_skill_execution:
+            self._refresh_cached_skill_stores()
+            skill_library = self._get_skill_library(active_backend.platform)
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
             output_dir=run_dir,
@@ -248,7 +254,10 @@ class GuiSubagentTool(Tool):
             )
             grounder_model = self._gui_config.grounder_model or self._model
 
-            state_validator = LLMStateValidator(validator_llm)
+            state_validator = LLMStateValidator(
+                validator_llm,
+                image_scale_ratio=self._gui_config.image_scale_ratio,
+            )
             skill_executor = SkillExecutor(
                 backend=active_backend,
                 state_validator=state_validator,
@@ -256,6 +265,7 @@ class GuiSubagentTool(Tool):
                     llm=grounder_llm,
                     model=grounder_model,
                     agent_profile=self._gui_config.agent_profile,
+                    image_scale_ratio=self._gui_config.image_scale_ratio,
                 ),
                 subgoal_runner=_AgentSubgoalRunner(
                     llm=self._llm_adapter,
@@ -266,6 +276,7 @@ class GuiSubagentTool(Tool):
                     trajectory_recorder=recorder,
                     agent_profile=self._gui_config.agent_profile,
                     step_timeout=30.0,
+                    image_scale_ratio=self._gui_config.image_scale_ratio,
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
                     backend=active_backend,
@@ -290,6 +301,8 @@ class GuiSubagentTool(Tool):
             intervention_handler=self._build_intervention_handler(active_backend, task),
             memory_store=memory_store,
             agent_profile=self._gui_config.agent_profile,
+            image_scale_ratio=self._gui_config.image_scale_ratio,
+            stagnation_limit=self._gui_config.stagnation_limit,
         )
 
         result = await agent.run(task=task)

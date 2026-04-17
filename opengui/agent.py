@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import hashlib
 import json
 import logging
 import re
@@ -38,11 +39,6 @@ from opengui.interfaces import (
     LLMProvider,
     LLMResponse,
     ProgressCallback,
-)
-from opengui.skills.shortcut_router import (
-    ApplicabilityDecision,
-    ShortcutApplicabilityRouter,
-    filter_candidates_by_context,
 )
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.observation import Observation
@@ -72,6 +68,8 @@ class StepResult:
     execution_snapshot: dict[str, Any] | None = None
     intervention_requested: bool = False
     done: bool = False
+    step_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+    duration_s: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -96,6 +94,16 @@ class AgentResult:
     steps_taken: int = 0
     error: str | None = None
     attempt_summary: str | None = None
+    token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _ScreenFingerprint:
+    """Compact screen signature for loop-stagnation detection."""
+
+    app: str | None
+    method: str
+    digest: str
 
 
 class _StepExecutionError(RuntimeError):
@@ -116,6 +124,59 @@ class _StepExecutionError(RuntimeError):
 # ---------------------------------------------------------------------------
 # Tool schema
 # ---------------------------------------------------------------------------
+
+def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
+    """Build a minimal computer_use tool schema restricted to *action_type*.
+
+    Sending the full 13-action schema on every grounder call adds ~200-300
+    unnecessary input tokens.  Since the target action type is already known
+    at call time, we strip the schema down to only the properties that are
+    relevant for that action, cutting prompt size by ~60-70 %.
+    """
+    _coord = {
+        "x": {"type": "number", "description": "Primary X coordinate."},
+        "y": {"type": "number", "description": "Primary Y coordinate."},
+        "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
+    }
+    _coord2 = {
+        "x2": {"type": "number", "description": "End X for swipe/drag."},
+        "y2": {"type": "number", "description": "End Y for swipe/drag."},
+    }
+    _text = {"text": {"type": "string", "description": "Text input or app identifier."}}
+    _dur = {"duration_ms": {"type": "integer", "description": "Duration in ms."}}
+
+    prop_sets: dict[str, dict] = {
+        "tap":               {**_coord},
+        "double_tap":        {**_coord},
+        "long_press":        {**_coord, **_dur},
+        "swipe":             {**_coord, **_coord2},
+        "drag":              {**_coord, **_coord2, **_dur},
+        "input_text":        {**_text, **_coord},
+        "hotkey":            {"key": {"type": "array", "items": {"type": "string"}, "description": "Keys for hotkey."}},
+        "scroll":            {**_coord, "text": {"type": "string", "description": "Direction."}, "pixels": {"type": "integer", "description": "Scroll distance."}},
+        "wait":              {},
+        "open_app":          {**_text},
+        "close_app":         {**_text},
+        "back":              {},
+        "home":              {},
+        "done":              {"status": {"type": "string", "enum": ["success", "failure"]}},
+        "request_intervention": {**_text},
+    }
+    props = prop_sets.get(action_type, {})
+    props = {"action_type": {"type": "string", "enum": [action_type]}, **props}
+    return {
+        "type": "function",
+        "function": {
+            "name": "computer_use",
+            "description": f"Perform a {action_type} GUI action on the device screen.",
+            "parameters": {
+                "type": "object",
+                "properties": props,
+                "required": ["action_type"],
+            },
+        },
+    }
+
 
 _COMPUTER_USE_TOOL: dict[str, Any] = {
     "type": "function",
@@ -158,17 +219,6 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
 }
 
 
-def _summarize_shortcut_success(result: Any) -> str:
-    """Build a concise shortcut execution summary for subsequent agent steps."""
-    lines = [f"Shortcut '{result.skill_id}' executed {len(result.step_results)} step(s):"]
-    for step_result in result.step_results:
-        action_desc = getattr(step_result.action, "action_type", "unknown")
-        lines.append(
-            f"Step {step_result.step_index}: {action_desc} -> {step_result.backend_result}"
-        )
-    return "\n".join(lines)
-
-
 # ---------------------------------------------------------------------------
 # Agent-side protocol implementations for SkillExecutor
 # ---------------------------------------------------------------------------
@@ -182,10 +232,24 @@ class _AgentActionGrounder:
 
     _MAX_RETRIES = 2
 
-    def __init__(self, llm: LLMProvider, model: str, agent_profile: str | None = None) -> None:
+    def __init__(
+        self,
+        llm: LLMProvider,
+        model: str,
+        agent_profile: str | None = None,
+        image_scale_ratio: float = 0.5,
+    ) -> None:
         self._llm = llm
         self._model = model
         self._agent_profile = canonicalize_agent_profile(agent_profile)
+        self._image_scale_ratio = image_scale_ratio
+        self._usage_accum: dict[str, int] = {}
+
+    def drain_usage(self) -> dict[str, int]:
+        """Return accumulated token usage since last drain and reset the counter."""
+        usage = dict(self._usage_accum)
+        self._usage_accum.clear()
+        return usage
 
     async def ground(
         self,
@@ -199,19 +263,23 @@ class _AgentActionGrounder:
         target = _ground_text(step.target, params)
         extra_ctx = ""
         if step.parameters:
-            extra_ctx = f"\nContext: {step.parameters}"
+            resolved_params = {
+                k: _ground_text(str(v), params) if isinstance(v, str) else v
+                for k, v in step.parameters.items()
+            }
+            extra_ctx = f"\nContext: {resolved_params}"
 
         prompt = (
-            f"Look at the screenshot carefully. Perform the following action:\n"
+            f"Locate the target UI element on screen and execute the action.\n"
             f"  action_type: {step.action_type}\n"
             f"  target: {target}{extra_ctx}\n\n"
             f"{self._profile_response_instruction(target_action=step.action_type)}"
         )
-        import base64
-        if isinstance(screenshot, Path):
-            image_data = base64.b64encode(screenshot.read_bytes()).decode()
-        else:
-            image_data = base64.b64encode(screenshot).decode()
+        from opengui.skills.executor import _scale_image
+        raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
+        image_data = base64.b64encode(
+            _scale_image(raw, scale_ratio=self._image_scale_ratio)
+        ).decode()
 
         messages: list[dict[str, Any]] = [{
             "role": "user",
@@ -226,11 +294,16 @@ class _AgentActionGrounder:
                 native_tools_enabled = profile_uses_native_tools(self._agent_profile)
                 response = await self._llm.chat(
                     messages=messages,
-                    tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                    tools=[_minimal_tool_schema(step.action_type)] if native_tools_enabled else None,
                     tool_choice="required" if native_tools_enabled else None,
+                    model=self._model or None,
+                    max_tokens=256,
                 )
             except Exception as exc:
                 raise RuntimeError(f"ActionGrounder LLM call failed: {exc}") from exc
+
+            for k, v in (response.usage or {}).items():
+                self._usage_accum[k] = self._usage_accum.get(k, 0) + v
 
             try:
                 response = normalize_profile_response(self._agent_profile, response)
@@ -263,8 +336,7 @@ class _AgentActionGrounder:
             if attempt < self._MAX_RETRIES:
                 messages.append({"role": "assistant", "content": response.content or ""})
                 messages.append({
-                    "role": "tool",
-                    "tool_call_id": "error",
+                    "role": "user",
                     "content": "Error: no computer_use tool call. You must use it.",
                 })
             else:
@@ -306,6 +378,7 @@ class _AgentSubgoalRunner:
         trajectory_recorder: TrajectoryRecorder | None = None,
         agent_profile: str | None = None,
         step_timeout: float = 30.0,
+        image_scale_ratio: float = 0.5,
     ) -> None:
         self._llm = llm
         self._backend = backend
@@ -316,6 +389,7 @@ class _AgentSubgoalRunner:
         self._step_counter = 0
         self._agent_profile = canonicalize_agent_profile(agent_profile)
         self._step_timeout = step_timeout
+        self._image_scale_ratio = image_scale_ratio
 
     async def run_subgoal(
         self,
@@ -329,6 +403,7 @@ class _AgentSubgoalRunner:
 
         summaries: list[str] = []
         current_screenshot: Path | bytes = screenshot
+        subgoal_usage: dict[str, int] = {}
 
         if self._trajectory_recorder is not None:
             self._trajectory_recorder.record_event(
@@ -338,6 +413,8 @@ class _AgentSubgoalRunner:
             )
 
         for i in range(max_steps):
+            substep_start = time.monotonic()
+
             # Build a minimal prompt for the subgoal
             history_text = (
                 "\n".join(f"  Sub-step {j+1}: {s}" for j, s in enumerate(summaries))
@@ -350,12 +427,11 @@ class _AgentSubgoalRunner:
                 f"closer to the sub-goal. {self._profile_subgoal_instruction()}"
             )
 
-            import base64
-            if isinstance(current_screenshot, Path):
-                img_bytes = current_screenshot.read_bytes()
-            else:
-                img_bytes = current_screenshot
-            image_data = base64.b64encode(img_bytes).decode()
+            from opengui.skills.executor import _scale_image
+            img_bytes = current_screenshot.read_bytes() if isinstance(current_screenshot, Path) else current_screenshot
+            image_data = base64.b64encode(
+                _scale_image(img_bytes, scale_ratio=self._image_scale_ratio)
+            ).decode()
 
             messages: list[dict[str, Any]] = [{
                 "role": "user",
@@ -371,9 +447,11 @@ class _AgentSubgoalRunner:
                     messages=messages,
                     tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
                     tool_choice="required" if native_tools_enabled else None,
+                    model=self._model or None,
                 )
             except Exception as exc:
                 logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -383,6 +461,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=str(exc),
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 if self._trajectory_recorder is not None:
                     self._trajectory_recorder.record_event(
@@ -393,13 +473,20 @@ class _AgentSubgoalRunner:
                         action_summaries=summaries,
                         error=str(exc),
                     )
-                return SubgoalResult(success=False, steps_taken=i, action_summaries=summaries, error=str(exc))
+                return SubgoalResult(
+                    success=False, steps_taken=i, action_summaries=summaries,
+                    error=str(exc), token_usage=dict(subgoal_usage),
+                )
+
+            for k, v in (response.usage or {}).items():
+                subgoal_usage[k] = subgoal_usage.get(k, 0) + v
 
             try:
                 response = normalize_profile_response(self._agent_profile, response)
             except Exception as exc:
                 logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -409,12 +496,15 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=f"profile parse error: {exc}",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
             if not response.tool_calls or response.tool_calls[0].name != "computer_use":
                 logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
                 summaries.append(f"Sub-step {i+1}: no valid action returned")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -424,6 +514,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error="no valid action returned",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
@@ -434,6 +526,7 @@ class _AgentSubgoalRunner:
             except ActionError as exc:
                 logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -443,12 +536,52 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=f"action parse error: {exc}",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
-            # Skip terminal actions inside a subgoal
-            if action.action_type in ("done", "request_intervention"):
+            # Handle terminal actions inside a subgoal
+            if action.action_type == "done":
+                substep_dur = time.monotonic() - substep_start
+                goal_reached = getattr(action, "status", None) == "success"
+                summary = "goal reached by model judgment" if goal_reached else "model declared goal unreachable"
+                summaries.append(f"Sub-step {i+1}: {summary}")
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=action,
+                    action_summary=summary,
+                    screenshot_path=None,
+                    goal_reached=goal_reached,
+                    error=None if goal_reached else "model declared goal unreachable",
+                    duration_s=substep_dur,
+                    token_usage=None,
+                )
+                if goal_reached:
+                    if self._trajectory_recorder is not None:
+                        self._trajectory_recorder.record_event(
+                            "subgoal_result",
+                            goal=goal,
+                            success=True,
+                            steps_taken=i + 1,
+                            action_summaries=summaries,
+                            error=None,
+                        )
+                    return SubgoalResult(
+                        success=True,
+                        steps_taken=i + 1,
+                        action_summaries=summaries,
+                        final_screenshot=current_screenshot,
+                        done_judgment=True,
+                        token_usage=dict(subgoal_usage),
+                    )
+                break  # model says goal unreachable — let caller fall back
+
+            if action.action_type == "request_intervention":
                 summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -458,6 +591,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error="terminal action skipped in subgoal",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
@@ -466,6 +601,7 @@ class _AgentSubgoalRunner:
             except Exception as exc:
                 logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
+                substep_dur = time.monotonic() - substep_start
                 self._record_subgoal_step(
                     goal=goal,
                     substep_index=i + 1,
@@ -475,6 +611,8 @@ class _AgentSubgoalRunner:
                     screenshot_path=None,
                     goal_reached=False,
                     error=f"execution error: {exc}",
+                    duration_s=substep_dur,
+                    token_usage=None,
                 )
                 continue
 
@@ -504,11 +642,21 @@ class _AgentSubgoalRunner:
 
             # Check if the goal state has been reached
             reached = False
+            validate_dur = 0.0
             if not _should_skip_validation(goal) and self._state_validator is not None:
+                validate_t0 = time.monotonic()
                 try:
                     reached = await self._state_validator.validate(goal, screenshot=current_screenshot)
                 except Exception:
                     reached = False
+                validate_dur = time.monotonic() - validate_t0
+                if hasattr(self._state_validator, "drain_usage"):
+                    for k, v in self._state_validator.drain_usage().items():
+                        subgoal_usage[k] = subgoal_usage.get(k, 0) + v
+
+            substep_dur = time.monotonic() - substep_start
+            # Snapshot usage for this substep (LLM call + validation)
+            substep_usage = dict(subgoal_usage)
             self._record_subgoal_step(
                 goal=goal,
                 substep_index=i + 1,
@@ -518,6 +666,9 @@ class _AgentSubgoalRunner:
                 screenshot_path=screenshot_path,
                 goal_reached=reached,
                 error=None,
+                duration_s=substep_dur,
+                validate_duration_s=validate_dur,
+                token_usage=substep_usage,
             )
             if reached:
                 logger.info("Subgoal reached after %d sub-steps", i + 1)
@@ -535,6 +686,7 @@ class _AgentSubgoalRunner:
                     steps_taken=i + 1,
                     action_summaries=summaries,
                     final_screenshot=current_screenshot,
+                    token_usage=dict(subgoal_usage),
                 )
         if self._trajectory_recorder is not None:
             self._trajectory_recorder.record_event(
@@ -550,6 +702,7 @@ class _AgentSubgoalRunner:
             steps_taken=max_steps,
             action_summaries=summaries,
             error=f"Subgoal not reached after {max_steps} sub-steps",
+            token_usage=dict(subgoal_usage),
         )
 
     def _profile_subgoal_instruction(self) -> str:
@@ -572,6 +725,9 @@ class _AgentSubgoalRunner:
         screenshot_path: str | None,
         goal_reached: bool,
         error: str | None,
+        duration_s: float = 0.0,
+        validate_duration_s: float = 0.0,
+        token_usage: dict[str, int] | None = None,
     ) -> None:
         if self._trajectory_recorder is None:
             return
@@ -585,6 +741,9 @@ class _AgentSubgoalRunner:
             screenshot_path=screenshot_path,
             goal_reached=goal_reached,
             error=error,
+            duration_s=round(duration_s, 3) if duration_s else None,
+            validate_duration_s=round(validate_duration_s, 3) if validate_duration_s else None,
+            token_usage=token_usage or None,
         )
 
     @staticmethod
@@ -657,12 +816,15 @@ class GuiAgent:
         history_image_window: Number of recent screenshot turns kept as full image context.
         include_date_context: Whether to include today's date in the task framing text.
         progress_callback: Optional async callback for progress reporting.
+        stagnation_limit: Consecutive unchanged-screen transitions before abort.
     """
 
     _MAX_TOOL_RETRIES = 2
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.50
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
+    _STAGNATION_AHASH_SIZE = 8
+    _STAGNATION_AHASH_HAMMING_THRESHOLD = 4
 
     def __init__(
         self,
@@ -679,16 +841,16 @@ class GuiAgent:
         memory_retriever: Any = None,
         skill_library: Any = None,
         skill_executor: Any = None,
-        shortcut_executor: Any = None,
+        skill_reuser: Any = None,
         memory_top_k: int = 5,
-        skill_threshold: float = 0.6,
+        skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
-        unified_skill_search: Any = None,
         memory_store: Any = None,
-        shortcut_applicability_router: ShortcutApplicabilityRouter | None = None,
         agent_profile: str | None = None,
+        image_scale_ratio: float = 0.5,
+        stagnation_limit: int = 0,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -705,15 +867,22 @@ class GuiAgent:
         self._policy_context = policy_context
         self._skill_library = skill_library
         self._skill_executor = skill_executor
-        self._shortcut_executor = shortcut_executor
         self._memory_top_k = memory_top_k
+        if skill_reuser is None and skill_library is not None:
+            from opengui.skills.reuser import SkillReuser
+            skill_reuser = SkillReuser(llm, threshold=skill_threshold)
+        self._skill_reuser = skill_reuser
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
         self._intervention_handler = intervention_handler
-        self._unified_skill_search = unified_skill_search
         self._memory_store = memory_store
-        self._shortcut_applicability_router = shortcut_applicability_router
         self._active_retry_summaries: tuple[str, ...] = ()
+        self._image_scale_ratio = image_scale_ratio
+        try:
+            parsed_stagnation_limit = int(stagnation_limit)
+        except (TypeError, ValueError):
+            parsed_stagnation_limit = 0
+        self.stagnation_limit = max(0, parsed_stagnation_limit)
 
     # ------------------------------------------------------------------
     # Public API
@@ -738,8 +907,18 @@ class GuiAgent:
         # 2. Retrieve memory context (once)
         memory_context = await self._retrieve_memory(task)
 
-        # 3. Search skill library (once)
-        skill_match = await self._search_skill(task)
+        # 3. Search skill library (once); LLM-gated when SkillReuser is available.
+        reuser_usage: dict[str, int] = {}
+        if self._skill_reuser is not None and self._skill_library is not None:
+            skill_match = await self._skill_reuser.find(
+                task,
+                self._skill_library,
+                self.backend.platform,
+                trajectory_recorder=self._trajectory_recorder,
+            )
+            reuser_usage = self._skill_reuser.drain_usage()
+        else:
+            skill_match = await self._search_skill(task)
 
         matched_skill: Any | None = None
         final_score: float | None = None
@@ -760,7 +939,10 @@ class GuiAgent:
                 reason=f"Matched skill: {matched_skill.name} (score={final_score:.2f})",
             )
             try:
-                skill_result = await self._skill_executor.execute(matched_skill)
+                skill_params: dict[str, str] = {}
+                if matched_skill.parameters:
+                    skill_params = await self._extract_skill_params(task, matched_skill)
+                skill_result = await self._skill_executor.execute(matched_skill, params=skill_params)
                 execution_summary = getattr(skill_result, "execution_summary", None)
                 skill_context = execution_summary if isinstance(execution_summary, str) else None
                 if skill_result.state.value == "succeeded":
@@ -786,6 +968,13 @@ class GuiAgent:
         last_steps_taken = 0
         result: AgentResult | None = None
         retry_summaries: list[str] = []
+        # Seed total_usage with tokens consumed during skill retrieval + execution (if any)
+        skill_token_usage: dict[str, int] = {}
+        if skill_result is not None and hasattr(skill_result, "token_usage"):
+            skill_token_usage = dict(skill_result.token_usage or {})
+        total_usage: dict[str, int] = dict(skill_token_usage)
+        for k, v in reuser_usage.items():
+            total_usage[k] = total_usage.get(k, 0) + v
 
         try:
             for attempt in range(max_retries):
@@ -806,6 +995,8 @@ class GuiAgent:
                         memory_context=memory_context,
                         skill_context=skill_context,
                     )
+                    for k, v in result.token_usage.items():
+                        total_usage[k] = total_usage.get(k, 0) + v
                     await self._log_attempt_event(
                         run_dir,
                         "attempt_result",
@@ -830,7 +1021,10 @@ class GuiAgent:
                         action_summaries=(),
                     )
                     retry_summaries.append(attempt_summary)
-                    if result.error and result.error.startswith("intervention_cancelled"):
+                    if result.error and (
+                        result.error.startswith("intervention_cancelled")
+                        or result.error == "stagnation_detected"
+                    ):
                         break
                     if attempt < max_retries - 1:
                         await self._log_attempt_event(
@@ -868,7 +1062,7 @@ class GuiAgent:
         finally:
             self._active_retry_summaries = ()
 
-        if result is None or not result.success:
+        if result is None:
             result = AgentResult(
                 success=False,
                 summary=f"Failed after {max_retries} attempt(s).",
@@ -876,10 +1070,30 @@ class GuiAgent:
                 trace_path=last_trace_path,
                 steps_taken=last_steps_taken,
                 error=last_error,
+                token_usage=total_usage,
             )
+        elif not result.success:
+            if result.error == "stagnation_detected":
+                result = dataclasses.replace(result, token_usage=total_usage)
+            else:
+                result = AgentResult(
+                    success=False,
+                    summary=f"Failed after {max_retries} attempt(s).",
+                    model_summary=last_model_summary,
+                    trace_path=last_trace_path,
+                    steps_taken=last_steps_taken,
+                    error=last_error,
+                    token_usage=total_usage,
+                )
+        else:
+            result = dataclasses.replace(result, token_usage=total_usage)
 
         # 6. Finish trajectory
-        self._trajectory_recorder.finish(success=result.success, error=result.error)
+        self._trajectory_recorder.finish(
+            success=result.success,
+            error=result.error,
+            token_usage=result.token_usage or None,
+        )
 
         # 7. Post-run skill maintenance — use skill execution outcome,
         #    not overall task result, so prefix skills aren't penalised
@@ -887,6 +1101,16 @@ class GuiAgent:
         skill_exec_success = (
             skill_result is not None and skill_result.state.value == "succeeded"
         ) if skill_result is not None else result.success
+
+        # 7b. Agent compensation detection — if the skill "succeeded" but the
+        #     agent needed significantly more steps than the skill itself had,
+        #     the skill didn't actually advance the task.  Demote to failure.
+        if skill_exec_success and skill_result is not None and result is not None:
+            skill_step_count = len(getattr(skill_result, "step_results", ()) or ())
+            agent_steps = getattr(result, "steps_taken", 0)
+            if agent_steps > skill_step_count + 1:
+                skill_exec_success = False
+
         await self._skill_maintenance(skill_match, skill_exec_success)
 
         return result
@@ -923,9 +1147,14 @@ class GuiAgent:
         )
 
         history: list[HistoryTurn] = []
+        previous_fingerprint: _ScreenFingerprint | None = None
+        stagnation_streak = 0
+        if self.stagnation_limit > 0:
+            previous_fingerprint = self._build_screen_fingerprint(obs)
 
         # 4. Step loop
         steps_taken = 0
+        total_usage: dict[str, int] = {}
         for step in range(self.max_steps):
             step_index = step + 1
             messages = self._build_messages(
@@ -972,6 +1201,7 @@ class GuiAgent:
                         result_summary=f"Step {step_index} timed out.",
                         action_summaries=tuple(turn.action_summary for turn in history),
                     ),
+                    token_usage=total_usage,
                 )
             except _StepExecutionError as exc:
                 raise _StepExecutionError(
@@ -985,6 +1215,8 @@ class GuiAgent:
                 ) from exc
 
             steps_taken = step_index
+            for k, v in result.step_usage.items():
+                total_usage[k] = total_usage.get(k, 0) + v
 
             intervention_cancelled = False
             if result.intervention_requested:
@@ -1100,6 +1332,8 @@ class GuiAgent:
                     result.next_observation.platform
                     if result.next_observation else None
                 ),
+                token_usage=result.step_usage or None,
+                duration_s=result.duration_s or None,
             )
 
             if intervention_cancelled:
@@ -1124,6 +1358,7 @@ class GuiAgent:
                             list(turn.action_summary for turn in history) + [result.action_summary]
                         ),
                     ),
+                    token_usage=total_usage,
                 )
 
             if result.done:
@@ -1148,7 +1383,58 @@ class GuiAgent:
                             list(turn.action_summary for turn in history) + [result.action_summary]
                         ),
                     ),
+                    token_usage=total_usage,
                 )
+
+            if self.stagnation_limit > 0 and result.next_observation is not None:
+                current_fingerprint = self._build_screen_fingerprint(result.next_observation)
+                if (
+                    previous_fingerprint is not None
+                    and current_fingerprint is not None
+                    and self._is_same_screen(previous_fingerprint, current_fingerprint)
+                ):
+                    stagnation_streak += 1
+                else:
+                    stagnation_streak = 0
+                previous_fingerprint = current_fingerprint
+
+                if stagnation_streak >= self.stagnation_limit:
+                    app_label = (
+                        result.next_observation.foreground_app
+                        or obs.foreground_app
+                        or "unknown"
+                    )
+                    await self._log_attempt_event(
+                        run_dir,
+                        "stagnation_detected",
+                        step_index=step_index,
+                        stagnation_streak=stagnation_streak,
+                        stagnation_limit=self.stagnation_limit,
+                        foreground_app=app_label,
+                    )
+                    return AgentResult(
+                        success=False,
+                        summary=(
+                            "Detected unchanged screen state for "
+                            f"{stagnation_streak} consecutive step(s) in app {app_label}; "
+                            "task stopped to avoid repeating the same action loop."
+                        ),
+                        model_summary=result.action_summary,
+                        trace_path=str(run_dir),
+                        steps_taken=steps_taken,
+                        error="stagnation_detected",
+                        attempt_summary=self._build_attempt_summary(
+                            failure_reason="stagnation_detected",
+                            result_summary=(
+                                "Detected unchanged screen state loop and terminated early."
+                            ),
+                            model_summary=result.action_summary,
+                            action_summaries=tuple(
+                                list(turn.action_summary for turn in history) + [result.action_summary]
+                            ),
+                        ),
+                        token_usage=total_usage,
+                    )
 
             history.append(
                 HistoryTurn(
@@ -1191,6 +1477,7 @@ class GuiAgent:
                 result_summary=f"Reached max steps ({self.max_steps}) without completion.",
                 action_summaries=tuple(turn.action_summary for turn in history),
             ),
+            token_usage=total_usage,
         )
 
     # ------------------------------------------------------------------
@@ -1206,7 +1493,9 @@ class GuiAgent:
         current_observation: Observation,
     ) -> StepResult:
         """Execute a single vision-action step with retries on malformed calls."""
+        _step_start = time.monotonic()
         retries_left = self._MAX_TOOL_RETRIES + 1
+        step_usage: dict[str, int] = {}
 
         while retries_left > 0:
             retries_left -= 1
@@ -1218,6 +1507,8 @@ class GuiAgent:
                 tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
                 tool_choice="required" if native_tools_enabled else None,
             )
+            for k, v in (response.usage or {}).items():
+                step_usage[k] = step_usage.get(k, 0) + v
             raw_response_snapshot = self._snapshot_failed_model_response(response)
 
             try:
@@ -1322,6 +1613,8 @@ class GuiAgent:
                         "done": True,
                     },
                     done=True,
+                    step_usage=step_usage,
+                    duration_s=time.monotonic() - _step_start,
                 )
 
             if action.action_type == "request_intervention":
@@ -1339,6 +1632,8 @@ class GuiAgent:
                         "done": False,
                     },
                     intervention_requested=True,
+                    step_usage=step_usage,
+                    duration_s=time.monotonic() - _step_start,
                 )
 
             # Normalize app name to package name for Android open/close
@@ -1389,6 +1684,8 @@ class GuiAgent:
                     "next_observation": self._serialize_observation(next_observation),
                     "done": False,
                 },
+                step_usage=step_usage,
+                duration_s=time.monotonic() - _step_start,
             )
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
@@ -1414,6 +1711,76 @@ class GuiAgent:
             return 0.0
         return self._POST_ACTION_SETTLE_SECONDS
 
+    def _build_screen_fingerprint(self, observation: Observation) -> _ScreenFingerprint | None:
+        screenshot = observation.screenshot_path
+        if not screenshot:
+            return None
+        screenshot_path = Path(screenshot)
+        if not screenshot_path.exists():
+            return None
+
+        app_name = self._normalize_stagnation_app(observation.foreground_app)
+        try:
+            data = screenshot_path.read_bytes()
+        except OSError:
+            return None
+
+        try:
+            from PIL import Image
+
+            with Image.open(screenshot_path) as img:
+                resampling = getattr(Image, "Resampling", Image)
+                ahash_size = self._STAGNATION_AHASH_SIZE
+                grayscale = img.convert("L").resize(
+                    (ahash_size, ahash_size),
+                    resampling.BILINEAR,
+                )
+                pixels = list(grayscale.tobytes())
+                if pixels:
+                    mean = sum(pixels) / len(pixels)
+                    bits = 0
+                    for value in pixels:
+                        bits = (bits << 1) | (1 if value >= mean else 0)
+                    return _ScreenFingerprint(
+                        app=app_name,
+                        method="ahash64",
+                        digest=f"{bits:016x}",
+                    )
+        except Exception:
+            pass
+
+        return _ScreenFingerprint(
+            app=app_name,
+            method="sha256",
+            digest=hashlib.sha256(data).hexdigest(),
+        )
+
+    @classmethod
+    def _is_same_screen(
+        cls,
+        previous: _ScreenFingerprint,
+        current: _ScreenFingerprint,
+    ) -> bool:
+        if previous.app and current.app and previous.app != current.app:
+            return False
+
+        if previous.method == "ahash64" and current.method == "ahash64":
+            try:
+                distance = (int(previous.digest, 16) ^ int(current.digest, 16)).bit_count()
+            except ValueError:
+                return previous.digest == current.digest
+            return distance <= cls._STAGNATION_AHASH_HAMMING_THRESHOLD
+
+        if previous.method != current.method:
+            return False
+        return previous.digest == current.digest
+
+    def _normalize_stagnation_app(self, app: str | None) -> str | None:
+        if not app:
+            return None
+        normalized = normalize_app_identifier(self.backend.platform, app)
+        return None if normalized == "unknown" else normalized
+
     # ------------------------------------------------------------------
     # Message helpers
     # ------------------------------------------------------------------
@@ -1428,7 +1795,12 @@ class GuiAgent:
         memory_context: str | None = None,
         skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build a Mobile-Agent-style prompt window with summaries and recent screenshots."""
+        """Build the prompt for the current step.
+
+        History is represented as text-only action summaries in the instruction
+        prompt. Only the current screenshot is attached — no history screenshots
+        or raw tool-call parameters are replayed into the context.
+        """
         messages: list[dict[str, Any]] = [{
             "role": "system",
             "content": build_system_prompt(
@@ -1449,36 +1821,15 @@ class GuiAgent:
             app_hint=app_hint,
             skill_context=skill_context,
         )
-        recent_history = history[-self.history_image_window:]
-
-        if recent_history:
-            for idx, turn in enumerate(recent_history):
-                messages.append(
-                    self._history_user_message(
-                        turn.observation,
-                        prompt_text if idx == 0 else None,
-                    )
-                )
-                messages.append(turn.assistant_message)
-                messages.append(turn.tool_result_message)
-            messages.append(
-                self._current_user_message(
-                    current_observation,
-                    task=task,
-                    step_index=len(history),
-                    app_hint=app_hint,
-                )
+        messages.append(
+            self._current_user_message(
+                current_observation,
+                task=task,
+                step_index=len(history),
+                app_hint=app_hint,
+                prompt_text=prompt_text,
             )
-        else:
-            messages.append(
-                self._current_user_message(
-                    current_observation,
-                    task=task,
-                    step_index=0,
-                    app_hint=app_hint,
-                    prompt_text=prompt_text,
-                )
-            )
+        )
 
         return messages
 
@@ -1492,8 +1843,7 @@ class GuiAgent:
         skill_context: str | None = None,
     ) -> str:
         """Build the text prompt that frames the current step."""
-        summarized_history = history[: -self.history_image_window] if len(history) > self.history_image_window else []
-        previous_actions = self._format_previous_actions(summarized_history)
+        previous_actions = self._format_previous_actions(history)
         lines = [
             "Please generate the next move according to the UI screenshot, instruction and previous actions.",
             "",
@@ -1798,11 +2148,12 @@ class GuiAgent:
             return action_text.split(":", 1)[1].strip()
         return action_text.strip()
 
-    @staticmethod
-    def _image_block(path: Path) -> dict[str, Any]:
+    def _image_block(self, path: Path) -> dict[str, Any]:
         """Create a base64 image content block for an LLM message."""
-        data = path.read_bytes()
-        b64 = base64.b64encode(data).decode()
+        from opengui.skills.executor import _scale_image
+        b64 = base64.b64encode(
+            _scale_image(path.read_bytes(), scale_ratio=self._image_scale_ratio)
+        ).decode()
         return {
             "type": "image_url",
             "image_url": {"url": f"data:image/png;base64,{b64}"},
@@ -2088,50 +2439,7 @@ class GuiAgent:
         )
 
     async def _search_skill(self, task: str) -> Any | None:
-        """Search skill libraries and return the top match when above threshold."""
-        if self._unified_skill_search is not None:
-            search_results = await self._unified_skill_search.search(task, top_k=1)
-            if not search_results:
-                self._trajectory_recorder.record_event(
-                    "skill_search",
-                    task=task,
-                    source="unified",
-                    matched=False,
-                    reason="no_results",
-                    threshold=self._skill_threshold,
-                )
-                return None
-            result = search_results[0]
-            if result.score >= self._skill_threshold:
-                logger.info(
-                    "Skill match: %s (layer=%s, score=%.2f)",
-                    result.skill.name,
-                    result.layer,
-                    result.score,
-                )
-                self._trajectory_recorder.record_event(
-                    "skill_search",
-                    task=task,
-                    source="unified",
-                    matched=True,
-                    skill_id=result.skill.skill_id,
-                    skill_name=result.skill.name,
-                    score=round(result.score, 4),
-                    threshold=self._skill_threshold,
-                )
-                return result
-            self._trajectory_recorder.record_event(
-                "skill_search",
-                task=task,
-                source="unified",
-                matched=False,
-                reason="below_threshold",
-                skill_name=result.skill.name,
-                score=round(result.score, 4),
-                threshold=self._skill_threshold,
-            )
-            return None
-
+        """Search the skill library and return the top match when above threshold."""
         if self._skill_library is None:
             self._trajectory_recorder.record_event(
                 "skill_search",
@@ -2159,7 +2467,7 @@ class GuiAgent:
             return None
         skill, relevance = search_results[0]
         confidence = compute_confidence(skill)
-        final_score = relevance * confidence
+        final_score = relevance
         if final_score >= self._skill_threshold:
             self._trajectory_recorder.record_event(
                 "skill_search",
@@ -2188,198 +2496,51 @@ class GuiAgent:
         )
         return None
 
-    async def _retrieve_shortcut_candidates(
-        self,
-        task: str,
-        *,
-        platform: str,
-        app_hint: str | None = None,
-    ) -> list:
-        """Retrieve shortcut candidates filtered by platform and optional app context.
-
-        Calls ``UnifiedSkillSearch.search(task, top_k=5)``, keeps only results
-        at or above ``skill_threshold``, then applies platform + app filtering via
-        ``filter_candidates_by_context``.  Emits a ``shortcut_retrieval`` trajectory
-        event regardless of whether any candidates are found.
-
-        Returns an empty list when ``unified_skill_search`` is not configured.
-        The returned list is stored in ``run()`` for use by Plan 02's applicability
-        gate; the existing score-only ``_search_skill`` path is left unchanged.
-        """
-        if self._unified_skill_search is None:
-            return []
-
-        search_results = await self._unified_skill_search.search(task, top_k=5)
-        candidates = [r for r in search_results if r.score >= self._skill_threshold]
-        filtered = filter_candidates_by_context(
-            candidates, platform=platform, app_hint=app_hint,
-        )
-
-        self._trajectory_recorder.record_event(
-            "shortcut_retrieval",
-            task=task,
-            platform=platform,
-            app_hint=app_hint,
-            candidate_count=len(filtered),
-            candidates=[
-                {
-                    "skill_id": r.skill.skill_id,
-                    "name": r.skill.name,
-                    "score": round(r.score, 4),
-                }
-                for r in filtered
-            ],
-        )
-
-        if filtered:
-            logger.info(
-                "Shortcut retrieval: %d candidate(s) for task=%r platform=%s",
-                len(filtered),
-                task,
-                platform,
-            )
-
-        return filtered
-
-    async def _evaluate_shortcut_applicability(
-        self,
-        candidates: list,
-        *,
-        screenshot_path: Path | None,
-        task: str,
-    ) -> ApplicabilityDecision:
-        """Evaluate shortcut candidates against the live screen and return a decision.
-
-        Iterates candidates in score order and returns the first one whose
-        preconditions are satisfied.  When the candidate list is empty, or when
-        no router / screenshot is available, returns a structured decision with
-        a descriptive ``reason`` and emits a ``shortcut_applicability`` trajectory
-        event on every code path for full traceability.
-
-        Parameters
-        ----------
-        candidates:
-            Ordered list of :class:`~opengui.skills.shortcut_store.SkillSearchResult`
-            instances (highest-score first).
-        screenshot_path:
-            Path to the most recent screenshot for condition evaluation.
-        task:
-            The active task string, included in log output.
-        """
-        if not candidates:
-            decision = ApplicabilityDecision(outcome="fallback", reason="no_candidates")
-            self._trajectory_recorder.record_event(
-                "shortcut_applicability",
-                outcome=decision.outcome,
-                shortcut_id=None,
-                reason=decision.reason,
-            )
-            return decision
-
-        if self._shortcut_applicability_router is None or screenshot_path is None:
-            # No router or no screenshot — select first candidate by score as best-effort
-            best = candidates[0]
-            decision = ApplicabilityDecision(
-                outcome="run",
-                shortcut_id=best.skill.skill_id,
-                reason="no_applicability_router",
-                score=best.score,
-            )
-            self._trajectory_recorder.record_event(
-                "shortcut_applicability",
-                outcome=decision.outcome,
-                shortcut_id=decision.shortcut_id,
-                reason=decision.reason,
-                score=decision.score,
-            )
-            logger.info(
-                "Shortcut applicability (no router): selecting %r for task=%r",
-                decision.shortcut_id,
-                task,
-            )
-            return decision
-
-        # Evaluate candidates in score order; return first that passes all preconditions
-        last_decision: ApplicabilityDecision | None = None
-        for result in candidates:
-            candidate_decision = await self._shortcut_applicability_router.evaluate(
-                result.skill, Path(screenshot_path),
-            )
-            if candidate_decision.outcome == "run":
-                decision = ApplicabilityDecision(
-                    outcome="run",
-                    shortcut_id=result.skill.skill_id,
-                    reason=candidate_decision.reason,
-                    score=result.score,
-                )
-                self._trajectory_recorder.record_event(
-                    "shortcut_applicability",
-                    outcome=decision.outcome,
-                    shortcut_id=decision.shortcut_id,
-                    reason=decision.reason,
-                    score=decision.score,
-                )
-                logger.info(
-                    "Shortcut applicability: approved %r (score=%.2f) for task=%r",
-                    decision.shortcut_id,
-                    decision.score or 0.0,
-                    task,
-                )
-                return decision
-            last_decision = candidate_decision
-
-        # All candidates failed applicability — emit a single fallback event
-        assert last_decision is not None  # candidates was non-empty
-        fallback = ApplicabilityDecision(
-            outcome="fallback",
-            shortcut_id=None,
-            reason=f"all_candidates_failed:{last_decision.reason}",
-            failed_condition=last_decision.failed_condition,
-        )
-        self._trajectory_recorder.record_event(
-            "shortcut_applicability",
-            outcome=fallback.outcome,
-            shortcut_id=None,
-            reason=fallback.reason,
-            failed_condition=(
-                {
-                    "kind": fallback.failed_condition.kind,
-                    "value": fallback.failed_condition.value,
-                }
-                if fallback.failed_condition else None
-            ),
-        )
-        logger.info(
-            "Shortcut applicability: all %d candidate(s) failed for task=%r",
-            len(candidates),
-            task,
-        )
-        return fallback
-
     async def _inject_skill_memory_context(
         self,
         skill: Any,
         existing_context: str | None,
     ) -> str | None:
-        """Inject app memory context referenced by a TaskSkill.memory_context_id."""
-        from opengui.skills.task_skill import TaskSkill as _TaskSkill
+        """No-op: legacy Skill objects do not carry a memory_context_id."""
+        return existing_context
 
-        if not isinstance(skill, _TaskSkill) or skill.memory_context_id is None:
-            return existing_context
-        if self._memory_store is None:
-            return existing_context
+    async def _extract_skill_params(
+        self,
+        task: str,
+        skill: Any,
+    ) -> dict[str, str]:
+        """Extract runtime parameter values from the task description via LLM.
 
-        entry = self._memory_store.get(skill.memory_context_id)
-        if entry is None:
-            logger.warning(
-                "Skill %s references missing memory context %s",
-                skill.skill_id,
-                skill.memory_context_id,
-            )
-            return existing_context
-
-        injected = f"[Skill memory context]\n{entry.content}"
-        return f"{injected}\n\n{existing_context}" if existing_context else injected
+        Uses the skill's declared ``parameters`` list as a schema and asks the
+        LLM to pull matching values from the task string.  Returns an empty
+        dict on any failure so callers can proceed with template fallback.
+        """
+        param_names: list[str] = list(skill.parameters)
+        if not param_names:
+            return {}
+        json_template = "{" + ", ".join(f'"{p}": "value"' for p in param_names) + "}"
+        prompt = (
+            f"Task: {task}\n\n"
+            f"Skill: {skill.name} — {skill.description}\n"
+            f"Parameters to extract: {param_names}\n\n"
+            f"Extract the value for each parameter from the task description.\n"
+            f"Return JSON only, with exactly these keys: {json_template}"
+        )
+        try:
+            response = await self.llm.chat([{"role": "user", "content": prompt}])
+        except Exception as exc:
+            logger.warning("Skill param extraction LLM call failed: %s", exc)
+            return {}
+        text = (response.content or "").strip()
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            try:
+                obj = json.loads(match.group(0))
+                return {k: str(v) for k, v in obj.items() if k in param_names}
+            except json.JSONDecodeError:
+                pass
+        logger.warning("Could not parse skill param extraction response: %r", text[:120])
+        return {}
 
     async def _skill_maintenance(
         self, skill_match: Any | None, success: bool
@@ -2410,7 +2571,7 @@ class GuiAgent:
 
         new_conf = compute_confidence(updated)
         total_attempts = updated.success_count + updated.failure_count
-        if total_attempts >= 5 and new_conf < 0.3:
+        if total_attempts >= 5 and new_conf < 0.25:
             self._skill_library.remove(skill.skill_id)
         else:
             self._skill_library.update(skill.skill_id, updated)

@@ -301,7 +301,7 @@ def test_backend_selection(tmp_workspace: Path) -> None:
     )
 
     assert tool._backend.platform == "dry-run"
-    assert tool._skill_libraries["dry-run"].store_dir == tmp_workspace / "gui_skills"
+    assert tool._skill_libraries == {}
 
 
 def test_gui_config_defaults() -> None:
@@ -314,7 +314,9 @@ def test_gui_config_defaults() -> None:
     assert config.ios.wda_url == "http://localhost:8100"
     assert config.artifacts_dir == "gui_runs"
     assert config.max_steps == 15
+    assert config.stagnation_limit == 0
     assert config.skill_threshold == pytest.approx(0.6)
+    assert config.image_scale_ratio == pytest.approx(0.5)
     assert config.agent_profile is None
 
 
@@ -325,10 +327,18 @@ def test_gui_config_validation() -> None:
     assert GuiConfig(backend="ios").backend == "ios"
     assert GuiConfig(agent_profile="qwen3vl").agent_profile == "qwen3vl"
     assert GuiConfig.model_validate({"agentProfile": "gelab"}).agent_profile == "gelab"
+    assert GuiConfig.model_validate({"imageScaleRatio": 0.25}).image_scale_ratio == pytest.approx(0.25)
+    assert GuiConfig.model_validate({"stagnationLimit": 3}).stagnation_limit == 3
     with pytest.raises(ValidationError):
         GuiConfig(backend="invalid")
     with pytest.raises(ValidationError):
         GuiConfig(agent_profile="invalid-profile")
+    with pytest.raises(ValidationError):
+        GuiConfig(stagnation_limit=-1)
+    with pytest.raises(ValidationError):
+        GuiConfig(image_scale_ratio=0)
+    with pytest.raises(ValidationError):
+        GuiConfig(image_scale_ratio=1.2)
 
 
 def test_config_gui_none_by_default() -> None:
@@ -379,7 +389,15 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     result = json.loads(await tool.execute(task="Open Settings"))
 
     traces = list((tmp_workspace / "gui_runs").glob("**/*.jsonl"))
-    assert set(result) == {"success", "summary", "model_summary", "trace_path", "steps_taken", "error"}
+    assert set(result) == {
+        "success",
+        "summary",
+        "model_summary",
+        "trace_path",
+        "steps_taken",
+        "error",
+        "post_run_state",
+    }
     assert result["success"] is True
     assert result["steps_taken"] == 2
     assert result["error"] is None
@@ -428,7 +446,13 @@ async def test_auto_skill_extraction(tmp_workspace: Path) -> None:
             ]
         )
         tool = GuiSubagentTool(
-            gui_config=Config(gui={"backend": "dry-run"}).gui,
+            gui_config=Config(
+                gui={
+                    "backend": "dry-run",
+                    "enableSkillExtraction": True,
+                    "enableSkillExecution": False,
+                }
+            ).gui,
             provider=provider,
             model=provider.get_default_model(),
             workspace=tmp_workspace,
@@ -471,7 +495,13 @@ async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monke
         ]
     )
     tool = GuiSubagentTool(
-        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        gui_config=Config(
+            gui={
+                "backend": "dry-run",
+                "enableSkillExtraction": True,
+                "enableSkillExecution": False,
+            }
+        ).gui,
         provider=provider,
         model=provider.get_default_model(),
         workspace=tmp_workspace,
@@ -523,7 +553,13 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
         ]
     )
     tool = GuiSubagentTool(
-        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        gui_config=Config(
+            gui={
+                "backend": "dry-run",
+                "enableSkillExtraction": True,
+                "enableSkillExecution": False,
+            }
+        ).gui,
         provider=provider,
         model=provider.get_default_model(),
         workspace=tmp_workspace,

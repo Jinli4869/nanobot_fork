@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import math
 import re
+import struct
 from pathlib import Path
 
 from opengui.action import Action, describe_action, resolve_coordinate
@@ -60,6 +61,27 @@ _COMMON_HARMONY_BUNDLES: list[str] = [
     "com.huawei.hmos.filemanager",
     "com.huawei.hmos.browser",
 ]
+
+
+def _read_png_size(path: Path) -> tuple[int, int] | None:
+    """Return PNG image size from *path* without external dependencies."""
+    try:
+        with path.open("rb") as handle:
+            header = handle.read(24)
+    except OSError:
+        return None
+
+    if len(header) < 24:
+        return None
+    if header[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    if header[12:16] != b"IHDR":
+        return None
+
+    width, height = struct.unpack(">II", header[16:24])
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
 
 
 # ---------------------------------------------------------------------------
@@ -256,11 +278,16 @@ class HdcBackend:
 
         await asyncio.to_thread(_convert)
 
-        # --- Screen size + foreground app in parallel ---
-        (width, height), fg_app = await asyncio.gather(
-            self._query_screen_size(timeout),
-            self._query_foreground_app(timeout),
-        )
+        screenshot_size = _read_png_size(screenshot_path)
+        if screenshot_size is None:
+            # --- Screen size + foreground app in parallel ---
+            (width, height), fg_app = await asyncio.gather(
+                self._query_screen_size(timeout),
+                self._query_foreground_app(timeout),
+            )
+        else:
+            width, height = screenshot_size
+            fg_app = await self._query_foreground_app(timeout)
 
         self._screen_width = width
         self._screen_height = height
@@ -283,8 +310,7 @@ class HdcBackend:
             match = _RENDER_SERVICE_RE.search(output)
             if match:
                 w, h = int(match.group(1)), int(match.group(2))
-                # Ensure portrait orientation (swap if landscape dump)
-                return (min(w, h), max(w, h))
+                return w, h
         except (HdcError, TimeoutError):
             pass
         return self._screen_width, self._screen_height

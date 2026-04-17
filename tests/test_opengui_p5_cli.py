@@ -150,6 +150,8 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert cfg.provider.base_url == "http://localhost:1234/v1"
     assert cfg.provider.model == "qwen-gui"
     assert cfg.provider.api_key == "env-key"
+    assert cfg.image_scale_ratio == pytest.approx(0.5)
+    assert cfg.stagnation_limit == 0
 
     custom_config = _write_config(
         tmp_path / "custom.yaml",
@@ -169,6 +171,20 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert override.provider.api_key == "inline-key"
     assert override.adb.serial == "emulator-5554"
     assert override.adb.adb_path == "/tmp/adb"
+
+    scaled_config = _write_config(
+        tmp_path / "scaled.yaml",
+        """
+        provider:
+          base_url: http://localhost:9999/v1
+          model: qwen-custom
+        image_scale_ratio: 0.25
+        stagnation_limit: 3
+        """,
+    )
+    scaled = cli.load_config(scaled_config)
+    assert scaled.image_scale_ratio == pytest.approx(0.25)
+    assert scaled.stagnation_limit == 3
 
 
 def test_build_backend_variants(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -283,6 +299,7 @@ def test_cli_runs_dry_run_agent_loop(
     assert agent_state["model"] == "qwen-gui"
     assert agent_state["agent_profile"] == "seed"
     assert agent_state["artifacts_root"] == recorder_state["output_dir"]
+    assert agent_state["stagnation_limit"] == 0
 
 
 def test_cli_json_output(
@@ -437,8 +454,8 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             )
 
     class FakeValidator:
-        def __init__(self, provider: Any) -> None:
-            calls["validator"].append(provider)
+        def __init__(self, provider: Any, **kwargs: Any) -> None:
+            calls["validator"].append({"provider": provider, **kwargs})
 
     class FakeGrounder:
         def __init__(self, **kwargs: Any) -> None:
@@ -503,10 +520,13 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
     assert calls["retriever"][0]["top_k"] == 5
     assert calls["skill_library"][0]["store_dir"] == cli.DEFAULT_SKILLS_DIR
     assert calls["skill_library"][0]["merge_llm"] is provider
-    assert calls["validator"] == [provider]
+    assert calls["validator"][0]["provider"] is provider
+    assert calls["validator"][0]["image_scale_ratio"] == pytest.approx(0.5)
     assert calls["skill_executor"][0]["backend"] is backend
     assert calls["grounder"][0]["agent_profile"] == "qwen3vl"
+    assert calls["grounder"][0]["image_scale_ratio"] == pytest.approx(0.5)
     assert calls["runner"][0]["agent_profile"] == "qwen3vl"
+    assert calls["runner"][0]["image_scale_ratio"] == pytest.approx(0.5)
     assert calls["screenshots"][0]["artifacts_root"] == artifacts_root
 
     before = {key: len(value) for key, value in calls.items()}
