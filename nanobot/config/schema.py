@@ -198,6 +198,7 @@ class GuiConfig(Base):
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
+    stagnation_limit: int = 0
     skill_threshold: float = 0.6
     embedding_model: str | None = None
     background: bool = False
@@ -226,6 +227,13 @@ class GuiConfig(Base):
     def _validate_image_scale_ratio(cls, value: float) -> float:
         if not (0 < value <= 1):
             raise ValueError("image_scale_ratio must be in (0, 1].")
+        return value
+
+    @field_validator("stagnation_limit")
+    @classmethod
+    def _validate_stagnation_limit(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("stagnation_limit must be >= 0.")
         return value
 
     @model_validator(mode="after")
