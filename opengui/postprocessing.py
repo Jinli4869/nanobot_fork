@@ -34,6 +34,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -164,26 +165,26 @@ class PostRunProcessor:
     ) -> None:
         summary, _, evaluation_result = await asyncio.gather(
             self._run_with_timeout(
-                self._summarize_trajectory(trace_path),
+                lambda: self._summarize_trajectory(trace_path),
                 timeout_seconds=self._summarize_timeout_seconds,
                 stage="summarization",
                 default="",
             ),
             self._run_with_timeout(
-                self._extract_skill(trace_path, is_success, platform),
+                lambda: self._promote_shortcut(trace_path, is_success=is_success, platform=platform),
                 timeout_seconds=self._skill_timeout_seconds,
-                stage="skill_extraction",
+                stage="shortcut_promotion",
                 default=None,
             ),
             self._run_with_timeout(
-                self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
+                lambda: self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
                 timeout_seconds=self._evaluation_timeout_seconds,
                 stage="evaluation",
                 default=None,
             ),
         )
         await self._run_with_timeout(
-            self._emit_memory_candidate(
+            lambda: self._emit_memory_candidate(
                 trace_path=trace_path,
                 is_success=is_success,
                 platform=platform,
@@ -218,15 +219,73 @@ class PostRunProcessor:
     # Skill extraction / shortcut promotion
     # ------------------------------------------------------------------
 
-    async def _extract_skill(
-        self, trace_path: Path, is_success: bool, platform: str,
+    async def _promote_shortcut(
+        self,
+        trace_path: Path,
+        *,
+        is_success: bool,
+        platform: str,
     ) -> str | None:
+        """Compatibility seam for post-run skill promotion.
+
+        Strategy:
+        - Success traces: try production shortcut promotion first.
+        - If promotion yields nothing, fallback to legacy extraction.
+        - Failed traces: skip promotion and run failure-oriented legacy extraction,
+          persisted into ShortcutSkillStore for later recovery reuse.
+        """
         if not self._enable_skill_extraction:
             logger.info("Skipping skill extraction: disabled")
             return None
         if not trace_path.exists():
             return None
 
+        if is_success:
+            promoted_id = await self._try_shortcut_promotion(trace_path, platform=platform)
+            if promoted_id:
+                return promoted_id
+            return await self._extract_skill(trace_path, is_success=is_success, platform=platform)
+
+        return await self._extract_failed_skill_to_shortcut(
+            trace_path,
+            is_success=is_success,
+            platform=platform,
+        )
+
+    async def _try_shortcut_promotion(self, trace_path: Path, *, platform: str) -> str | None:
+        from opengui.skills.shortcut_promotion import ShortcutPromotionPipeline
+        from opengui.skills.shortcut_store import ShortcutSkillStore
+
+        try:
+            store = ShortcutSkillStore(
+                store_dir=self._skill_store_root,
+                embedding_provider=self._embedding_provider,
+            )
+            pipeline = ShortcutPromotionPipeline(platform=platform)
+            promoted_id = await pipeline.promote_from_trace(
+                trace_path,
+                is_success=True,
+                store=store,
+            )
+            if promoted_id:
+                self._write_extraction_result(
+                    trace_path,
+                    {
+                        "status": "shortcut_promoted",
+                        "trace": str(trace_path),
+                        "is_success": True,
+                        "platform": platform,
+                        "result_skill_id": promoted_id,
+                    },
+                )
+            return promoted_id
+        except Exception:
+            logger.warning("Shortcut promotion failed for %s", trace_path, exc_info=True)
+            return None
+
+    async def _extract_skill(
+        self, trace_path: Path, is_success: bool, platform: str,
+    ) -> str | None:
         from opengui.skills.extractor import SkillExtractor
         from opengui.skills.library import SkillLibrary
 
@@ -283,6 +342,74 @@ class PostRunProcessor:
                 "is_success": is_success,
                 "platform": platform,
             })
+            return None
+
+    async def _extract_failed_skill_to_shortcut(
+        self,
+        trace_path: Path,
+        *,
+        is_success: bool,
+        platform: str,
+    ) -> str | None:
+        from opengui.skills.extractor import SkillExtractor
+        from opengui.skills.shortcut_store import ShortcutSkillStore
+
+        try:
+            extractor = SkillExtractor(llm=self._llm)
+            skill = await extractor.extract_from_file(trace_path, is_success=is_success)
+            self._write_extraction_usage(trace_path, extractor.total_usage)
+            if skill is None:
+                logger.info("No failure-skill candidate extracted from %s", trace_path)
+                self._write_extraction_result(
+                    trace_path,
+                    {
+                        "status": "no_candidate",
+                        "trace": str(trace_path),
+                        "is_success": is_success,
+                        "platform": platform,
+                        "store": "shortcut",
+                    },
+                )
+                return None
+
+            shortcut = self._legacy_skill_to_shortcut(skill=skill, trace_path=trace_path)
+            store = ShortcutSkillStore(
+                store_dir=self._skill_store_root,
+                embedding_provider=self._embedding_provider,
+            )
+            decision, skill_id = await store.add_or_merge(shortcut)
+            final_id = skill_id or shortcut.skill_id
+            self._write_extraction_result(
+                trace_path,
+                {
+                    "status": "processed",
+                    "decision": decision,
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "platform": platform,
+                    "store": "shortcut",
+                    "extracted_skill": {
+                        "skill_id": skill.skill_id,
+                        "name": skill.name,
+                        "app": skill.app,
+                        "step_count": len(skill.steps),
+                    },
+                    "result_skill_id": final_id,
+                },
+            )
+            return final_id
+        except Exception:
+            logger.warning("Failure skill extraction failed for %s", trace_path, exc_info=True)
+            self._write_extraction_result(
+                trace_path,
+                {
+                    "status": "error",
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "platform": platform,
+                    "store": "shortcut",
+                },
+            )
             return None
 
     # ------------------------------------------------------------------
@@ -525,7 +652,7 @@ class PostRunProcessor:
 
     async def _run_with_timeout(
         self,
-        awaitable: Any,
+        awaitable_or_factory: Awaitable[Any] | Callable[[], Awaitable[Any]],
         *,
         timeout_seconds: float,
         stage: str,
@@ -533,6 +660,11 @@ class PostRunProcessor:
     ) -> Any:
         """Execute a postprocessing stage with a timeout and safe fallback."""
         try:
+            awaitable = (
+                awaitable_or_factory()
+                if callable(awaitable_or_factory)
+                else awaitable_or_factory
+            )
             return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
         except asyncio.TimeoutError:
             logger.warning("Post-processing stage timed out: %s (%.1fs)", stage, timeout_seconds)
