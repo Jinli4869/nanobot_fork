@@ -1601,6 +1601,161 @@ async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_agent_stagnation_detection_terminates_before_max_steps(tmp_path: Path) -> None:
+    responses = [
+        LLMResponse(
+            content=f"wait #{idx}",
+            tool_calls=[ToolCall(
+                id=f"call-{idx}",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        )
+        for idx in range(1, 7)
+    ]
+    agent = GuiAgent(
+        _ScriptedLLM(responses),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "stagnation"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=6,
+        stagnation_limit=3,
+    )
+
+    result = await agent.run("wait on unchanged screen", max_retries=1)
+
+    assert not result.success
+    assert result.error == "stagnation_detected"
+    assert result.steps_taken == 3
+    assert result.steps_taken < agent.max_steps
+
+
+@pytest.mark.asyncio
+async def test_agent_stagnation_counter_resets_when_screen_changes(tmp_path: Path) -> None:
+    class _ChangingBackend(DryRunBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self._observe_calls = 0
+
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            del timeout
+            from PIL import Image, ImageDraw
+
+            self._observe_calls += 1
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            img = Image.new("L", (32, 32), color=0)
+            draw = ImageDraw.Draw(img)
+            if self._observe_calls in {1, 2}:
+                draw.rectangle((16, 0, 31, 31), fill=255)   # right half bright
+            else:
+                draw.rectangle((0, 16, 31, 31), fill=255)   # bottom half bright
+            img.save(screenshot_path, format="PNG")
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=32,
+                screen_height=32,
+                foreground_app="DryRun",
+                platform=self.platform,
+            )
+
+    llm = _ScriptedLLM([
+        LLMResponse(
+            content="wait 1",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="wait 2",
+            tool_calls=[ToolCall(
+                id="call-2",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="wait 3",
+            tool_calls=[ToolCall(
+                id="call-3",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="wait 4",
+            tool_calls=[ToolCall(
+                id="call-4",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="finish",
+            tool_calls=[ToolCall(
+                id="call-5",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        _ChangingBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "stagnation reset"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=6,
+        stagnation_limit=3,
+    )
+
+    result = await agent.run("wait with one screen change", max_retries=1)
+
+    assert result.success
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> None:
+    class _InfiniteWaitLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            del messages, tools, tool_choice
+            self.calls += 1
+            return LLMResponse(
+                content="wait",
+                tool_calls=[ToolCall(
+                    id=f"call-{self.calls}",
+                    name="computer_use",
+                    arguments={"action_type": "wait", "duration_ms": 1},
+                )],
+            )
+
+    recorder = _make_recorder(tmp_path, "stagnation retry short-circuit")
+    llm = _InfiniteWaitLLM()
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=recorder,
+        artifacts_root=tmp_path / "runs",
+        max_steps=8,
+        stagnation_limit=3,
+    )
+
+    result = await agent.run("repeat wait", max_retries=3)
+
+    assert not result.success
+    assert result.error == "stagnation_detected"
+    assert llm.calls == 3
+    assert recorder.path is not None
+    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
+    assert sum(1 for event in events if event["type"] == "attempt_start") == 1
+    assert not any(event["type"] == "retry" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) -> None:
     class _FlakyLLM:
         def __init__(self) -> None:

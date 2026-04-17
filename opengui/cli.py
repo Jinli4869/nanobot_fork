@@ -153,6 +153,7 @@ class CliConfig:
     ios: IosConfig = field(default_factory=IosConfig)
     hdc: HdcConfig = field(default_factory=HdcConfig)
     max_steps: int = 15
+    stagnation_limit: int = 0
     image_scale_ratio: float = 0.5
     memory_dir: Path | None = None
     skills_dir: Path | None = None
@@ -394,6 +395,7 @@ def load_config(path: Path | None = None) -> CliConfig:
         ios=ios,
         hdc=hdc,
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
+        stagnation_limit=_coerce_non_negative_int(raw.get("stagnation_limit"), default=0),
         image_scale_ratio=_coerce_image_scale_ratio(raw.get("image_scale_ratio"), default=0.5),
         memory_dir=_optional_path(raw.get("memory_dir")),
         skills_dir=_optional_path(raw.get("skills_dir")),
@@ -527,6 +529,7 @@ async def _execute_agent(
         intervention_handler=_build_intervention_handler(backend),
         agent_profile=args.agent_profile or config.agent_profile,
         image_scale_ratio=config.image_scale_ratio,
+        stagnation_limit=config.stagnation_limit,
     )
     return await agent.run(task)
 
@@ -797,6 +800,16 @@ def _coerce_positive_int(value: Any, *, default: int) -> int:
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Expected positive integer, got {value!r}") from exc
     return parsed if parsed > 0 else default
+
+
+def _coerce_non_negative_int(value: Any, *, default: int) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Expected non-negative integer, got {value!r}") from exc
+    return parsed if parsed >= 0 else default
 
 
 def _coerce_image_scale_ratio(value: Any, *, default: float) -> float:

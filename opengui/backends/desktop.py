@@ -93,6 +93,8 @@ class LocalDesktopBackend:
 
         self._screen_width: int = 0
         self._screen_height: int = 0
+        self._monitor_left: int = 0
+        self._monitor_top: int = 0
         self._target_display: DisplayInfo | None = None
 
     # ------------------------------------------------------------------
@@ -175,6 +177,8 @@ class LocalDesktopBackend:
 
         self._screen_width = logical_w
         self._screen_height = logical_h
+        self._monitor_left = monitor.get("left", 0)
+        self._monitor_top = monitor.get("top", 0)
 
         fg_app = await self._query_foreground_app()
         return Observation(
@@ -336,10 +340,10 @@ class LocalDesktopBackend:
     # ------------------------------------------------------------------
 
     def _resolve_x(self, value: float, *, relative: bool) -> int:
-        return resolve_coordinate(value, self._screen_width, relative=relative)
+        return resolve_coordinate(value, self._screen_width, relative=relative) + self._monitor_left
 
     def _resolve_y(self, value: float, *, relative: bool) -> int:
-        return resolve_coordinate(value, self._screen_height, relative=relative)
+        return resolve_coordinate(value, self._screen_height, relative=relative) + self._monitor_top
 
     def _resolve_point(self, action: Action) -> tuple[int, int]:
         if action.x is None or action.y is None:

@@ -302,6 +302,7 @@ class GuiSubagentTool(Tool):
             memory_store=memory_store,
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
+            stagnation_limit=self._gui_config.stagnation_limit,
         )
 
         result = await agent.run(task=task)

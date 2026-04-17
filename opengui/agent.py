@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import hashlib
 import json
 import logging
 import re
@@ -94,6 +95,15 @@ class AgentResult:
     error: str | None = None
     attempt_summary: str | None = None
     token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class _ScreenFingerprint:
+    """Compact screen signature for loop-stagnation detection."""
+
+    app: str | None
+    method: str
+    digest: str
 
 
 class _StepExecutionError(RuntimeError):
@@ -806,12 +816,15 @@ class GuiAgent:
         history_image_window: Number of recent screenshot turns kept as full image context.
         include_date_context: Whether to include today's date in the task framing text.
         progress_callback: Optional async callback for progress reporting.
+        stagnation_limit: Consecutive unchanged-screen transitions before abort.
     """
 
     _MAX_TOOL_RETRIES = 2
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.50
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
+    _STAGNATION_AHASH_SIZE = 8
+    _STAGNATION_AHASH_HAMMING_THRESHOLD = 4
 
     def __init__(
         self,
@@ -837,6 +850,7 @@ class GuiAgent:
         memory_store: Any = None,
         agent_profile: str | None = None,
         image_scale_ratio: float = 0.5,
+        stagnation_limit: int = 0,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -864,6 +878,11 @@ class GuiAgent:
         self._memory_store = memory_store
         self._active_retry_summaries: tuple[str, ...] = ()
         self._image_scale_ratio = image_scale_ratio
+        try:
+            parsed_stagnation_limit = int(stagnation_limit)
+        except (TypeError, ValueError):
+            parsed_stagnation_limit = 0
+        self.stagnation_limit = max(0, parsed_stagnation_limit)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1002,7 +1021,10 @@ class GuiAgent:
                         action_summaries=(),
                     )
                     retry_summaries.append(attempt_summary)
-                    if result.error and result.error.startswith("intervention_cancelled"):
+                    if result.error and (
+                        result.error.startswith("intervention_cancelled")
+                        or result.error == "stagnation_detected"
+                    ):
                         break
                     if attempt < max_retries - 1:
                         await self._log_attempt_event(
@@ -1040,7 +1062,7 @@ class GuiAgent:
         finally:
             self._active_retry_summaries = ()
 
-        if result is None or not result.success:
+        if result is None:
             result = AgentResult(
                 success=False,
                 summary=f"Failed after {max_retries} attempt(s).",
@@ -1050,6 +1072,19 @@ class GuiAgent:
                 error=last_error,
                 token_usage=total_usage,
             )
+        elif not result.success:
+            if result.error == "stagnation_detected":
+                result = dataclasses.replace(result, token_usage=total_usage)
+            else:
+                result = AgentResult(
+                    success=False,
+                    summary=f"Failed after {max_retries} attempt(s).",
+                    model_summary=last_model_summary,
+                    trace_path=last_trace_path,
+                    steps_taken=last_steps_taken,
+                    error=last_error,
+                    token_usage=total_usage,
+                )
         else:
             result = dataclasses.replace(result, token_usage=total_usage)
 
@@ -1112,6 +1147,10 @@ class GuiAgent:
         )
 
         history: list[HistoryTurn] = []
+        previous_fingerprint: _ScreenFingerprint | None = None
+        stagnation_streak = 0
+        if self.stagnation_limit > 0:
+            previous_fingerprint = self._build_screen_fingerprint(obs)
 
         # 4. Step loop
         steps_taken = 0
@@ -1346,6 +1385,56 @@ class GuiAgent:
                     ),
                     token_usage=total_usage,
                 )
+
+            if self.stagnation_limit > 0 and result.next_observation is not None:
+                current_fingerprint = self._build_screen_fingerprint(result.next_observation)
+                if (
+                    previous_fingerprint is not None
+                    and current_fingerprint is not None
+                    and self._is_same_screen(previous_fingerprint, current_fingerprint)
+                ):
+                    stagnation_streak += 1
+                else:
+                    stagnation_streak = 0
+                previous_fingerprint = current_fingerprint
+
+                if stagnation_streak >= self.stagnation_limit:
+                    app_label = (
+                        result.next_observation.foreground_app
+                        or obs.foreground_app
+                        or "unknown"
+                    )
+                    await self._log_attempt_event(
+                        run_dir,
+                        "stagnation_detected",
+                        step_index=step_index,
+                        stagnation_streak=stagnation_streak,
+                        stagnation_limit=self.stagnation_limit,
+                        foreground_app=app_label,
+                    )
+                    return AgentResult(
+                        success=False,
+                        summary=(
+                            "Detected unchanged screen state for "
+                            f"{stagnation_streak} consecutive step(s) in app {app_label}; "
+                            "task stopped to avoid repeating the same action loop."
+                        ),
+                        model_summary=result.action_summary,
+                        trace_path=str(run_dir),
+                        steps_taken=steps_taken,
+                        error="stagnation_detected",
+                        attempt_summary=self._build_attempt_summary(
+                            failure_reason="stagnation_detected",
+                            result_summary=(
+                                "Detected unchanged screen state loop and terminated early."
+                            ),
+                            model_summary=result.action_summary,
+                            action_summaries=tuple(
+                                list(turn.action_summary for turn in history) + [result.action_summary]
+                            ),
+                        ),
+                        token_usage=total_usage,
+                    )
 
             history.append(
                 HistoryTurn(
@@ -1621,6 +1710,76 @@ class GuiAgent:
         if action.action_type in self._NO_SETTLE_ACTIONS:
             return 0.0
         return self._POST_ACTION_SETTLE_SECONDS
+
+    def _build_screen_fingerprint(self, observation: Observation) -> _ScreenFingerprint | None:
+        screenshot = observation.screenshot_path
+        if not screenshot:
+            return None
+        screenshot_path = Path(screenshot)
+        if not screenshot_path.exists():
+            return None
+
+        app_name = self._normalize_stagnation_app(observation.foreground_app)
+        try:
+            data = screenshot_path.read_bytes()
+        except OSError:
+            return None
+
+        try:
+            from PIL import Image
+
+            with Image.open(screenshot_path) as img:
+                resampling = getattr(Image, "Resampling", Image)
+                ahash_size = self._STAGNATION_AHASH_SIZE
+                grayscale = img.convert("L").resize(
+                    (ahash_size, ahash_size),
+                    resampling.BILINEAR,
+                )
+                pixels = list(grayscale.tobytes())
+                if pixels:
+                    mean = sum(pixels) / len(pixels)
+                    bits = 0
+                    for value in pixels:
+                        bits = (bits << 1) | (1 if value >= mean else 0)
+                    return _ScreenFingerprint(
+                        app=app_name,
+                        method="ahash64",
+                        digest=f"{bits:016x}",
+                    )
+        except Exception:
+            pass
+
+        return _ScreenFingerprint(
+            app=app_name,
+            method="sha256",
+            digest=hashlib.sha256(data).hexdigest(),
+        )
+
+    @classmethod
+    def _is_same_screen(
+        cls,
+        previous: _ScreenFingerprint,
+        current: _ScreenFingerprint,
+    ) -> bool:
+        if previous.app and current.app and previous.app != current.app:
+            return False
+
+        if previous.method == "ahash64" and current.method == "ahash64":
+            try:
+                distance = (int(previous.digest, 16) ^ int(current.digest, 16)).bit_count()
+            except ValueError:
+                return previous.digest == current.digest
+            return distance <= cls._STAGNATION_AHASH_HAMMING_THRESHOLD
+
+        if previous.method != current.method:
+            return False
+        return previous.digest == current.digest
+
+    def _normalize_stagnation_app(self, app: str | None) -> str | None:
+        if not app:
+            return None
+        normalized = normalize_app_identifier(self.backend.platform, app)
+        return None if normalized == "unknown" else normalized
 
     # ------------------------------------------------------------------
     # Message helpers
