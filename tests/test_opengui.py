@@ -1756,6 +1756,161 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_agent_stagnation_requires_same_action_type(tmp_path: Path) -> None:
+    class _StaticScreenshotBackend(DryRunBackend):
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            del timeout
+            from PIL import Image
+
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (64, 64), color=(90, 90, 90)).save(
+                screenshot_path,
+                format="PNG",
+            )
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=64,
+                screen_height=64,
+                foreground_app="DryRun",
+                platform=self.platform,
+            )
+
+    agent = GuiAgent(
+        _ScriptedLLM([
+            LLMResponse(
+                content="wait",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="computer_use",
+                    arguments={"action_type": "wait", "duration_ms": 1},
+                )],
+            ),
+            LLMResponse(
+                content="tap",
+                tool_calls=[ToolCall(
+                    id="call-2",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "tap",
+                        "x": 10,
+                        "y": 10,
+                        "relative": True,
+                    },
+                )],
+            ),
+            LLMResponse(
+                content="wait",
+                tool_calls=[ToolCall(
+                    id="call-3",
+                    name="computer_use",
+                    arguments={"action_type": "wait", "duration_ms": 1},
+                )],
+            ),
+            LLMResponse(
+                content="tap",
+                tool_calls=[ToolCall(
+                    id="call-4",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "tap",
+                        "x": 20,
+                        "y": 20,
+                        "relative": True,
+                    },
+                )],
+            ),
+            LLMResponse(
+                content="done",
+                tool_calls=[ToolCall(
+                    id="call-5",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            ),
+        ]),
+        _StaticScreenshotBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "stagnation action type"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=5,
+        stagnation_limit=2,
+    )
+
+    result = await agent.run("alternate actions", max_retries=1)
+
+    assert result.success
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_stagnation_similarity_uses_ssim(tmp_path: Path) -> None:
+    from PIL import Image
+
+    base = tmp_path / "base.png"
+    similar = tmp_path / "similar.png"
+    changed = tmp_path / "changed.png"
+
+    width = 64
+    height = 64
+
+    def _pattern(path: Path, invert: bool = False, perturb: bool = False) -> None:
+        img = Image.new("L", (width, height))
+        for y in range(height):
+            for x in range(width):
+                value = (x * 3 + y * 5) % 256
+                if invert:
+                    value = 255 - value
+                img.putpixel((x, y), value)
+        if perturb:
+            img.putpixel((1, 1), (img.getpixel((1, 1)) + 1) % 256)
+        img.save(path, format="PNG")
+
+    _pattern(base)
+    _pattern(similar, perturb=True)
+    _pattern(changed, invert=True)
+
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "ssim stagnation"),
+        artifacts_root=tmp_path / "runs",
+    )
+
+    base_fp = agent._build_screen_fingerprint(
+        Observation(
+            screenshot_path=str(base),
+            screen_width=width,
+            screen_height=height,
+            foreground_app="DryRun",
+            platform="dry-run",
+        ),
+    )
+    similar_fp = agent._build_screen_fingerprint(
+        Observation(
+            screenshot_path=str(similar),
+            screen_width=width,
+            screen_height=height,
+            foreground_app="DryRun",
+            platform="dry-run",
+        ),
+    )
+    changed_fp = agent._build_screen_fingerprint(
+        Observation(
+            screenshot_path=str(changed),
+            screen_width=width,
+            screen_height=height,
+            foreground_app="DryRun",
+            platform="dry-run",
+        ),
+    )
+
+    assert base_fp is not None
+    assert similar_fp is not None
+    assert changed_fp is not None
+    assert agent._is_same_screen(base_fp, similar_fp)
+    assert not agent._is_same_screen(base_fp, changed_fp)
+
+
+@pytest.mark.asyncio
 async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) -> None:
     class _FlakyLLM:
         def __init__(self) -> None:
