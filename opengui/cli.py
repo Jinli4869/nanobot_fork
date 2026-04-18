@@ -446,6 +446,7 @@ async def build_optional_components(
         store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
         embedding_provider=embedding_provider,
         merge_llm=provider,
+        embedding_signature=config.embedding.model,
     )
     state_validator = LLMStateValidator(
         provider,

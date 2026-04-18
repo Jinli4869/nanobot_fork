@@ -27,6 +27,7 @@ from opengui.skills import Skill, SkillStep
 from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
+from opengui.skills.reuser import SkillReuser
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,44 @@ class _FakeEmbedder:
             slot = hash(text) % self.DIM
             vecs[i, slot] = 1.0
         return vecs
+
+
+class _CountingEmbedder(_FakeEmbedder):
+    def __init__(self) -> None:
+        self.calls = 0
+        self.query_calls = 0
+        self.index_calls = 0
+
+    async def embed(self, texts: list[str]) -> np.ndarray:
+        self.calls += 1
+        if len(texts) <= 1:
+            self.query_calls += 1
+        else:
+            self.index_calls += 1
+        return await super().embed(texts)
+
+
+class _ProbeFaiss:
+    def __init__(self, total_items: int) -> None:
+        self.total_items = total_items
+        self.search_k_calls: list[int] = []
+
+    def build(self, vectors: np.ndarray) -> None:
+        self.built = vectors
+
+    def search(self, query_emb: np.ndarray, k: int):
+        self.search_k_calls.append(int(k))
+        k_int = int(k)
+        valid_count = min(k_int, self.total_items)
+        scores = np.zeros(k_int, dtype=np.float32)
+        if valid_count > 0:
+            scores[:valid_count] = 1.0
+        ids = np.zeros(k_int, dtype=np.int64)
+        if self.total_items > 0:
+            ids[:valid_count] = np.arange(valid_count, dtype=np.int64)
+        if valid_count < k_int:
+            ids[valid_count:] = -1
+        return scores, ids
 
 
 class _ScriptedLLM:
@@ -96,6 +135,21 @@ class _CapturingRecorder:
 
     def record_event(self, event: str, **payload: object) -> None:
         self.events.append((event, payload))
+
+
+class _FakeSkillLibrary:
+    """Minimal fake SkillLibrary exposing only search() for reuser tests."""
+
+    def __init__(self, results: list[tuple[Skill, float]]) -> None:
+        self._results = results
+
+    async def search(
+        self,
+        task: str,
+        platform: str | None = None,
+        top_k: int = 5,
+    ) -> list[tuple[Skill, float]]:
+        return self._results
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +381,105 @@ async def test_skill_library_search_empty_library(tmp_path: Path) -> None:
     lib = SkillLibrary(store_dir=tmp_path / "skills_empty_search")
     results = await lib.search("anything")
     assert results == []
+
+
+async def test_skill_library_query_embedding_cache_hit_reuses_embedding(tmp_path: Path) -> None:
+    """Repeated same query should avoid duplicate query-embedding calls."""
+    embedder = _CountingEmbedder()
+    lib = SkillLibrary(
+        store_dir=tmp_path / "query_cache_hit",
+        embedding_provider=embedder,
+        embedding_signature="sig-v1",
+    )
+
+    lib.add(_make_skill("q1", "Open Settings", "Navigate to settings"))
+    lib.add(_make_skill("q2", "Open Camera", "Launch camera"))
+
+    await lib.search("  Open WIFI  ")
+    await lib.search("open wifi")
+
+    assert embedder.query_calls == 1
+
+
+async def test_skill_library_query_embedding_cache_persists_across_restarts(tmp_path: Path) -> None:
+    """Persisted cache file should be reused by a fresh library instance."""
+    cache_dir = tmp_path / "query_cache_persist"
+    first_embedder = _CountingEmbedder()
+    first_lib = SkillLibrary(
+        store_dir=cache_dir,
+        embedding_provider=first_embedder,
+        embedding_signature="sig-v1",
+    )
+    first_lib.add(_make_skill("q1", "Open Settings", "Navigate to settings"))
+
+    query = "open settings"
+    await first_lib.search(query)
+    assert first_embedder.query_calls == 1
+
+    cache_path = cache_dir / "query_embeddings_cache.json"
+    assert cache_path.is_file()
+
+    second_embedder = _CountingEmbedder()
+    second_lib = SkillLibrary(
+        store_dir=cache_dir,
+        embedding_provider=second_embedder,
+        embedding_signature="sig-v1",
+    )
+    await second_lib.search(query)
+
+    assert second_embedder.query_calls == 0
+
+
+async def test_skill_library_query_embedding_cache_mismatch_signature_forces_reembed(
+    tmp_path: Path,
+) -> None:
+    """Embedding signature drift should invalidate persisted query cache."""
+    cache_dir = tmp_path / "query_cache_signature"
+    old_lib = SkillLibrary(
+        store_dir=cache_dir,
+        embedding_provider=_CountingEmbedder(),
+        embedding_signature="sig-old",
+    )
+    old_lib.add(_make_skill("q1", "Open Settings", "Navigate to settings"))
+
+    query = "open settings"
+    await old_lib.search(query)
+
+    fresh_embedder = _CountingEmbedder()
+    new_lib = SkillLibrary(
+        store_dir=cache_dir,
+        embedding_provider=fresh_embedder,
+        embedding_signature="sig-new",
+    )
+    await new_lib.search(query)
+
+    assert fresh_embedder.query_calls == 1
+
+
+@pytest.mark.parametrize("search_mode", ["hybrid", "rrf", "hybrid_comprehensive"])
+async def test_skill_library_search_limits_faiss_k_to_top_k_times_2(
+    tmp_path: Path,
+    search_mode: str,
+) -> None:
+    """Search modes should not request full-collection FAISS scans."""
+    top_k = 4
+    total_skills = 20
+    probe = _ProbeFaiss(total_items=total_skills)
+
+    lib = SkillLibrary(
+        store_dir=tmp_path / "faiss_k_limit",
+        embedding_provider=_FakeEmbedder(),
+        search_mode=search_mode,
+        alpha=0.6,
+    )
+    for i in range(total_skills):
+        lib.add(_make_skill(f"s{i}", f"Skill {i}", f"This is skill {i}"))
+
+    lib._faiss = probe
+    await lib.search("skill", top_k=top_k)
+
+    assert probe.search_k_calls == [top_k * 2]
+
 
 
 # ---------------------------------------------------------------------------
@@ -888,3 +1041,52 @@ async def test_skill_extractor_prompt_prefers_observed_foreground_app() -> None:
     assert "observation.foreground_app" in prompt
     assert "strongest app identity signal" in prompt
     assert "com.android.settings" in prompt
+
+
+async def test_skill_reuser_auto_accept_threshold_short_circuits_judge() -> None:
+    """High-confidence candidate returns before LLM judging is invoked."""
+    judge_llm = _ScriptedLLM(["{\"applicable\": true}"])
+    reuser = SkillReuser(
+        llm=judge_llm,
+        threshold=0.1,
+        auto_accept_threshold=0.98,
+    )
+    library = _FakeSkillLibrary([
+        (_make_skill("auto-1", "High Confidence", "Confident match"), 0.99),
+        (_make_skill("auto-2", "Low Confidence", "Lower match"), 0.50),
+    ])
+
+    result = await reuser.find("open app", library, platform="android")
+
+    assert result is not None
+    skill, score = result
+    assert skill.skill_id == "auto-1"
+    assert score == 0.99
+    assert judge_llm.messages == []
+
+
+async def test_skill_reuser_low_confidence_still_uses_judge_in_order() -> None:
+    """Fallback path keeps ordered LLM judging when confidence is below threshold."""
+    judge_llm = _ScriptedLLM([
+        '{"applicable": false}',
+        '{"applicable": true}',
+    ])
+    reuser = SkillReuser(
+        llm=judge_llm,
+        threshold=0.5,
+        auto_accept_threshold=0.99,
+    )
+    library = _FakeSkillLibrary([
+        (_make_skill("low-1", "Candidate One", "Lower confidence"), 0.6),
+        (_make_skill("low-2", "Candidate Two", "Lower confidence"), 0.55),
+    ])
+
+    result = await reuser.find("open app", library, platform="android")
+
+    assert result is not None
+    skill, score = result
+    assert skill.skill_id == "low-2"
+    assert score == 0.55
+    assert len(judge_llm.messages) == 2
+    assert "Candidate One" in judge_llm.messages[0][0]["content"]
+    assert "Candidate Two" in judge_llm.messages[1][0]["content"]

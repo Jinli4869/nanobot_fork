@@ -58,6 +58,8 @@ class SkillReuser:
         The same :class:`~opengui.interfaces.LLMProvider` used by the main agent.
     top_k:
         Number of candidates to fetch from the library before LLM filtering.
+    auto_accept_threshold:
+        Candidate score threshold for immediate acceptance without LLM judge.
     threshold:
         Minimum hybrid retrieval score; candidates below this are skipped before
         any LLM call is made.
@@ -68,10 +70,12 @@ class SkillReuser:
         llm: LLMProvider,
         top_k: int = 5,
         threshold: float = 0.35,
+        auto_accept_threshold: float = 0.98,
     ) -> None:
         self._llm = llm
         self._top_k = top_k
         self._threshold = threshold
+        self._auto_accept_threshold = auto_accept_threshold
         self._usage_accum: dict[str, int] = {}
 
     def drain_usage(self) -> dict[str, int]:
@@ -105,6 +109,15 @@ class SkillReuser:
             return None
 
         for skill, score in candidates:
+            if score >= self._auto_accept_threshold:
+                _record(trajectory_recorder, "skill_search",
+                        source="reuser", matched=True,
+                        skill_id=skill.skill_id,
+                        skill_name=skill.name,
+                        score=round(score, 4),
+                        reason="auto_accept")
+                return skill, score
+
             applicable = await self._judge(task, skill)
             _record(trajectory_recorder, "skill_judge",
                     source="reuser",

@@ -59,12 +59,13 @@ class GuiSubagentTool(Tool):
         self._model = model
         self._workspace = Path(workspace)
         self._llm_adapter = NanobotLLMAdapter(provider, model)
+        self._embedding_signature: str | None = self._resolve_embedding_signature()
         self._embedding_adapter = self._build_embedding_adapter() if gui_config.embedding_model else None
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
         self._skill_library = (
-            self._get_skill_library(self._backend.platform)
+            self._get_skill_library(self._backend.platform, embedding_signature=self._embedding_signature)
             if gui_config.enable_skill_execution
             else None
         )
@@ -72,6 +73,7 @@ class GuiSubagentTool(Tool):
             llm=self._llm_adapter,
             merge_llm=self._llm_adapter,
             embedding_provider=self._embedding_adapter,
+            embedding_signature=self._embedding_signature,
             skill_store_root=get_gui_skill_store_root(self._workspace),
             enable_skill_extraction=gui_config.enable_skill_extraction,
             evaluation=EvaluationConfig(
@@ -225,7 +227,10 @@ class GuiSubagentTool(Tool):
         skill_library = None
         if self._gui_config.enable_skill_execution:
             self._refresh_cached_skill_stores()
-            skill_library = self._get_skill_library(active_backend.platform)
+            skill_library = self._get_skill_library(
+                active_backend.platform,
+                embedding_signature=self._embedding_signature,
+            )
         run_dir = self._make_run_dir()
         recorder = TrajectoryRecorder(
             output_dir=run_dir,
@@ -530,7 +535,9 @@ class GuiSubagentTool(Tool):
         - passes provider credentials to litellm so the correct API is used
         - normalises the response into an (n, dim) float32 numpy array
         """
-        embedding_model = self._gui_config.embedding_model  # guaranteed non-None by caller
+        resolved_model = self._resolve_embedding_model()
+
+        embedding_model = resolved_model
 
         direct_client = getattr(self._provider, "_client", None)
         if direct_client is not None and hasattr(direct_client, "embeddings"):
@@ -547,10 +554,6 @@ class GuiSubagentTool(Tool):
                 return await self._embed_texts_in_batches(texts, _request_batch)
 
             return NanobotEmbeddingAdapter(_embed_direct)
-
-        # Resolve the model name through the provider when the method is available.
-        resolve = getattr(self._provider, "_resolve_model", None)
-        resolved_model: str = resolve(embedding_model) if callable(resolve) else embedding_model
 
         provider = self._provider
 
@@ -575,6 +578,40 @@ class GuiSubagentTool(Tool):
             return await self._embed_texts_in_batches(texts, _request_batch)
 
         return NanobotEmbeddingAdapter(_embed)
+
+    def _resolve_embedding_model(self) -> str:
+        embedding_model = self._gui_config.embedding_model
+        if not embedding_model:
+            raise ValueError("embedding model is required to build embedding adapter")
+
+        resolve = getattr(self._provider, "_resolve_model", None)
+        return resolve(embedding_model) if callable(resolve) else embedding_model
+
+    def _resolve_embedding_signature(self) -> str | None:
+        embedding_model = self._gui_config.embedding_model
+        if not embedding_model:
+            return None
+
+        resolved_model = self._resolve_embedding_model()
+        direct_client = getattr(self._provider, "_client", None)
+        if direct_client is not None and hasattr(direct_client, "embeddings"):
+            resolved_model = self._normalize_direct_embedding_model(resolved_model)
+
+        gateway = getattr(self._provider, "_gateway", None)
+        provider_name = (
+            getattr(gateway, "name", None)
+            or getattr(gateway, "litellm_prefix", None)
+            or self._provider.__class__.__name__
+        )
+        api_base = getattr(self._provider, "api_base", None)
+        if not api_base:
+            api_base = getattr(self._provider, "_api_base", None)
+
+        parts = [str(provider_name)]
+        if api_base:
+            parts.append(str(api_base))
+        parts.append(resolved_model)
+        return "|".join(parts)
 
     async def _embed_texts_in_batches(
         self,
@@ -669,7 +706,12 @@ class GuiSubagentTool(Tool):
             return None
         return target_app_class or "classic-win32"
 
-    def _get_skill_library(self, platform: str) -> Any:
+    def _get_skill_library(
+        self,
+        platform: str,
+        *,
+        embedding_signature: str | None = None,
+    ) -> Any:
         if platform not in self._skill_libraries:
             from opengui.skills.library import SkillLibrary
 
@@ -677,6 +719,7 @@ class GuiSubagentTool(Tool):
                 store_dir=get_gui_skill_store_root(self._workspace),
                 embedding_provider=self._embedding_adapter,
                 merge_llm=self._llm_adapter,
+                embedding_signature=embedding_signature,
             )
         return self._skill_libraries[platform]
 

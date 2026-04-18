@@ -68,6 +68,7 @@ class PostRunProcessor:
         llm: Any,
         merge_llm: Any | None = None,
         embedding_provider: Any | None = None,
+        embedding_signature: str | None = None,
         skill_store_root: Path | None = None,
         enable_skill_extraction: bool = False,
         evaluation: EvaluationConfig = field(default_factory=EvaluationConfig),
@@ -75,6 +76,7 @@ class PostRunProcessor:
         self._llm = llm
         self._merge_llm = merge_llm
         self._embedding_provider = embedding_provider
+        self._embedding_signature = embedding_signature
         self._skill_store_root = skill_store_root
         self._enable_skill_extraction = enable_skill_extraction
         self._evaluation = evaluation
@@ -186,6 +188,7 @@ class PostRunProcessor:
                 store_dir=self._skill_store_root,
                 embedding_provider=self._embedding_provider,
                 merge_llm=self._merge_llm,
+                embedding_signature=self._embedding_signature,
             )
             decision, skill_id = await library.add_or_merge(skill)
             final_id = skill_id or skill.skill_id
@@ -326,4 +329,3 @@ class PostRunProcessor:
                 "Could not write extraction result to %s: %s",
                 result_path, exc,
             )
-
