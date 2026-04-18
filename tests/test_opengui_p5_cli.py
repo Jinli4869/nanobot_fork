@@ -405,6 +405,48 @@ def test_package_main_delegates_to_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called == ["main"]
 
 
+def test_cli_embedding_batch_splits_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import opengui.cli as cli
+
+    calls: list[dict[str, Any]] = []
+
+    class FakeEmbeddingsAPI:
+        async def create(self, *, model: str, input: list[str]) -> Any:
+            calls.append({"model": model, "input": list(input)})
+            return types.SimpleNamespace(
+                data=[
+                    types.SimpleNamespace(embedding=[float(int(text[1:]))])
+                    for text in input
+                ]
+            )
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.embeddings = FakeEmbeddingsAPI()
+
+    monkeypatch.setattr(
+        cli,
+        "AsyncOpenAI",
+        lambda **_: FakeClient(),
+    )
+
+    provider = cli.OpenAICompatibleEmbeddingProvider(
+        base_url="http://localhost:5678/v1",
+        model="embed-model",
+        api_key="embed-key",
+    )
+    texts = [f"t{i}" for i in range(23)]
+
+    vectors = asyncio.run(provider.embed(texts))
+
+    assert [len(call["input"]) for call in calls] == [10, 10, 3]
+    assert vectors.shape == (23, 1)
+    assert str(vectors.dtype) == "float32"
+    assert [row[0] for row in vectors.tolist()] == [float(i) for i in range(23)]
+
+
 def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
