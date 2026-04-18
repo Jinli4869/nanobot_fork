@@ -58,6 +58,7 @@ DEFAULT_MEMORY_DIR = Path.home() / ".opengui" / "memory"
 DEFAULT_SKILLS_DIR = Path.home() / ".opengui" / "skills"
 DEFAULT_APPS_DIR = Path.home() / ".opengui" / "apps"
 DEFAULT_RUNS_DIR = Path("opengui_runs")
+_EMBEDDING_BATCH_SIZE = 10
 WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
 
 
@@ -227,11 +228,14 @@ class OpenAICompatibleEmbeddingProvider:
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
 
-        response = await self._client.embeddings.create(
-            model=self._model,
-            input=texts,
-        )
-        vectors = [item.embedding for item in response.data]
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
+            batch = texts[start:start + _EMBEDDING_BATCH_SIZE]
+            response = await self._client.embeddings.create(
+                model=self._model,
+                input=batch,
+            )
+            vectors.extend(item.embedding for item in response.data)
         return np.array(vectors, dtype=np.float32)
 
 
