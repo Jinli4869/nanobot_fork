@@ -823,8 +823,8 @@ class GuiAgent:
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.50
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
-    _STAGNATION_AHASH_SIZE = 8
-    _STAGNATION_AHASH_HAMMING_THRESHOLD = 4
+    _STAGNATION_SSIM_SIZE = 64
+    _STAGNATION_SSIM_THRESHOLD = 0.985
 
     def __init__(
         self,
@@ -1148,6 +1148,7 @@ class GuiAgent:
 
         history: list[HistoryTurn] = []
         previous_fingerprint: _ScreenFingerprint | None = None
+        previous_action_type: str | None = None
         stagnation_streak = 0
         if self.stagnation_limit > 0:
             previous_fingerprint = self._build_screen_fingerprint(obs)
@@ -1391,12 +1392,14 @@ class GuiAgent:
                 if (
                     previous_fingerprint is not None
                     and current_fingerprint is not None
+                    and (previous_action_type is None or previous_action_type == result.action.action_type)
                     and self._is_same_screen(previous_fingerprint, current_fingerprint)
                 ):
                     stagnation_streak += 1
                 else:
                     stagnation_streak = 0
                 previous_fingerprint = current_fingerprint
+                previous_action_type = result.action.action_type
 
                 if stagnation_streak >= self.stagnation_limit:
                     app_label = (
@@ -1730,21 +1733,17 @@ class GuiAgent:
 
             with Image.open(screenshot_path) as img:
                 resampling = getattr(Image, "Resampling", Image)
-                ahash_size = self._STAGNATION_AHASH_SIZE
+                ssim_size = self._STAGNATION_SSIM_SIZE
                 grayscale = img.convert("L").resize(
-                    (ahash_size, ahash_size),
+                    (ssim_size, ssim_size),
                     resampling.BILINEAR,
                 )
                 pixels = list(grayscale.tobytes())
                 if pixels:
-                    mean = sum(pixels) / len(pixels)
-                    bits = 0
-                    for value in pixels:
-                        bits = (bits << 1) | (1 if value >= mean else 0)
                     return _ScreenFingerprint(
                         app=app_name,
-                        method="ahash64",
-                        digest=f"{bits:016x}",
+                        method="ssim",
+                        digest=base64.b64encode(bytes(pixels)).decode("ascii"),
                     )
         except Exception:
             pass
@@ -1764,16 +1763,56 @@ class GuiAgent:
         if previous.app and current.app and previous.app != current.app:
             return False
 
-        if previous.method == "ahash64" and current.method == "ahash64":
+        if previous.method == "ssim" and current.method == "ssim":
             try:
-                distance = (int(previous.digest, 16) ^ int(current.digest, 16)).bit_count()
-            except ValueError:
+                return cls._ssim_is_similar(previous.digest, current.digest)
+            except Exception:
                 return previous.digest == current.digest
-            return distance <= cls._STAGNATION_AHASH_HAMMING_THRESHOLD
 
         if previous.method != current.method:
             return False
         return previous.digest == current.digest
+
+    @classmethod
+    def _ssim_is_similar(cls, previous_digest: str, current_digest: str) -> bool:
+        previous_pixels = base64.b64decode(previous_digest)
+        current_pixels = base64.b64decode(current_digest)
+        if len(previous_pixels) != len(current_pixels) or len(previous_pixels) == 0:
+            return False
+        return cls._ssim_score(previous_pixels, current_pixels) >= cls._STAGNATION_SSIM_THRESHOLD
+
+    @classmethod
+    def _ssim_score(cls, previous_pixels: bytes, current_pixels: bytes) -> float:
+        del cls
+
+        if len(previous_pixels) != len(current_pixels) or len(previous_pixels) == 0:
+            return 0.0
+
+        n = len(previous_pixels)
+        previous_values = [value for value in previous_pixels]
+        current_values = [value for value in current_pixels]
+
+        previous_mean = sum(previous_values) / n
+        current_mean = sum(current_values) / n
+
+        previous_variance = sum((value - previous_mean) ** 2 for value in previous_values) / n
+        current_variance = sum((value - current_mean) ** 2 for value in current_values) / n
+        covariance = sum(
+            (previous_value - previous_mean) * (current_value - current_mean)
+            for previous_value, current_value in zip(previous_values, current_values)
+        ) / n
+
+        c1 = (0.01 * 255) ** 2
+        c2 = (0.03 * 255) ** 2
+        denominator = (previous_mean * previous_mean + current_mean * current_mean + c1) * (
+            previous_variance + current_variance + c2
+        )
+
+        if denominator == 0:
+            return 1.0 if previous_mean == current_mean else 0.0
+
+        numerator = (2 * previous_mean * current_mean + c1) * (2 * covariance + c2)
+        return numerator / denominator
 
     def _normalize_stagnation_app(self, app: str | None) -> str | None:
         if not app:
