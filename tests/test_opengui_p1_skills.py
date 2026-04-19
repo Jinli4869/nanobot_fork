@@ -1043,6 +1043,59 @@ async def test_skill_extractor_prompt_prefers_observed_foreground_app() -> None:
     assert "com.android.settings" in prompt
 
 
+async def test_skill_extractor_prompt_excludes_transient_popup_steps() -> None:
+    canned_json = json.dumps({
+        "name": "open_settings",
+        "description": "Navigate to the device settings screen",
+        "app": "com.android.settings",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": ["Device is unlocked"],
+        "steps": [
+            {
+                "action_type": "open_app",
+                "target": "Settings",
+                "parameters": {},
+                "expected_state": "Settings app is open",
+                "valid_state": "No need to verify",
+            },
+            {
+                "action_type": "tap",
+                "target": "Network & internet",
+                "parameters": {},
+                "expected_state": "Network settings visible",
+                "valid_state": "Settings app is open",
+            },
+        ],
+    })
+    llm = _ScriptedLLM([canned_json, canned_json])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    await extractor.extract_from_steps(
+        [
+            {"type": "step", "action": "tap", "target": "icon"},
+            {"type": "step", "action": "scroll", "target": "list"},
+        ],
+        is_success=True,
+    )
+    await extractor.extract_from_steps(
+        [
+            {"type": "step", "action": "tap", "target": "icon"},
+            {"type": "step", "action": "scroll", "target": "list"},
+        ],
+        is_success=False,
+    )
+
+    success_prompt = llm.messages[0][0]["content"]
+    failure_prompt = llm.messages[1][0]["content"]
+    for prompt in (success_prompt, failure_prompt):
+        lower = prompt.lower()
+        assert "notification" in lower
+        assert "permission" in lower
+        assert "dismiss" in lower
+        assert "explicitly" in lower
+
+
 async def test_skill_reuser_auto_accept_threshold_short_circuits_judge() -> None:
     """High-confidence candidate returns before LLM judging is invoked."""
     judge_llm = _ScriptedLLM(["{\"applicable\": true}"])
