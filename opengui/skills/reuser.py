@@ -45,7 +45,7 @@ Skill:
 Can this skill fully complete, or be a valid preceding sub-sequence for, the task above?
 If the task dosen't contain any app-specific requirement, return false to avoid false positives.
 
-Reply with JSON only: {{"applicable": true/false, "reason": "one line"}}
+Reply with JSON only: {{"applicable": true/false}}
 """
 
 

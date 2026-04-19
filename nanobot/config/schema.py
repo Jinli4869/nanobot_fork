@@ -192,6 +192,7 @@ class GuiConfig(Base):
     provider: str | None = None
     validator_model: str | None = None
     grounder_model: str | None = None
+    reuser_model: str | None = None
     agent_profile: str | None = None
     adb: AdbConfig = Field(default_factory=AdbConfig)
     ios: IosConfig = Field(default_factory=IosConfig)

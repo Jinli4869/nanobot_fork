@@ -292,6 +292,13 @@ class GuiSubagentTool(Tool):
                 max_recovery_steps=3,
             )
 
+        skill_reuser = None
+        if skill_library is not None and self._gui_config.reuser_model:
+            from opengui.skills.reuser import SkillReuser
+
+            reuser_llm = NanobotLLMAdapter(self._provider, self._gui_config.reuser_model)
+            skill_reuser = SkillReuser(reuser_llm, threshold=self._gui_config.skill_threshold)
+
         agent = GuiAgent(
             llm=self._llm_adapter,
             backend=active_backend,
@@ -303,6 +310,7 @@ class GuiSubagentTool(Tool):
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
             skill_executor=skill_executor,
+            skill_reuser=skill_reuser,
             intervention_handler=self._build_intervention_handler(active_backend, task),
             memory_store=memory_store,
             agent_profile=self._gui_config.agent_profile,

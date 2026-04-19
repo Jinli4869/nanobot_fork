@@ -190,7 +190,7 @@ the following description?
 
 Expected state: {valid_state}
 
-Respond with ONLY a JSON object: {{"valid": true/false, "reason": "one-line"}}
+Respond with ONLY a JSON object: {{"valid": true/false}}
 """
 
 
