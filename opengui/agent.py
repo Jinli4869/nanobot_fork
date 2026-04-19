@@ -1407,6 +1407,41 @@ class GuiAgent:
                         or obs.foreground_app
                         or "unknown"
                     )
+                    history_with_current_step = history + [
+                        HistoryTurn(
+                            step_index=step_index,
+                            observation=obs,
+                            assistant_message=self._scrub_assistant_message_for_log(
+                                result.assistant_message,
+                                result.action,
+                            ),
+                            tool_result_message={
+                                "role": "tool",
+                                "tool_call_id": result.tool_call_id,
+                                "content": self._scrub_text_for_action(
+                                    result.tool_result,
+                                    result.action,
+                                ),
+                            },
+                            action_summary=(
+                                self._scrub_text_for_action(
+                                    result.action_summary,
+                                    result.action,
+                                )
+                                or result.action_summary
+                            ),
+                        )
+                    ]
+                    termination_summary = await self._generate_termination_summary(
+                        task=task,
+                        termination_reason=(
+                            "Detected unchanged screen state for "
+                            f"{stagnation_streak} consecutive step(s) in app {app_label}; "
+                            "task stopped to avoid repeating the same action loop."
+                        ),
+                        history=history_with_current_step,
+                        run_dir=run_dir,
+                    )
                     await self._log_attempt_event(
                         run_dir,
                         "stagnation_detected",
@@ -1417,7 +1452,7 @@ class GuiAgent:
                     )
                     return AgentResult(
                         success=False,
-                        summary=(
+                        summary=termination_summary or (
                             "Detected unchanged screen state for "
                             f"{stagnation_streak} consecutive step(s) in app {app_label}; "
                             "task stopped to avoid repeating the same action loop."
