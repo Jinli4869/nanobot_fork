@@ -216,7 +216,14 @@ class LocalDesktopBackend:
             x, y = self._resolve_point(action)
             pyautogui.rightClick(x, y)
 
-        elif t in ("swipe", "drag"):
+        elif t == "drag":
+            x1, y1 = self._resolve_point(action)
+            x2, y2 = self._resolve_second_point(action)
+            duration = (action.duration_ms or 300) / 1000.0
+            pyautogui.mouseDown(x1, y1, button="left")
+            pyautogui.dragTo(x2, y2, duration=duration, button="left")
+
+        elif t == "swipe":
             x1, y1 = self._resolve_point(action)
             x2, y2 = self._resolve_second_point(action)
             duration = (action.duration_ms or 300) / 1000.0
@@ -245,8 +252,6 @@ class LocalDesktopBackend:
             paste_key = "command" if self._platform == "macos" else "ctrl"
             pyperclip.copy(action.text or "")
             pyautogui.hotkey(paste_key, "v")
-            if action.auto_enter:
-                pyautogui.press("enter")
 
         elif t == "hotkey":
             keys = self._normalize_keys(action.key or [])
