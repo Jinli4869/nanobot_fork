@@ -65,11 +65,20 @@ will take over after the skill finishes and handle any remaining steps \
 Do NOT include:
   - Confirmation/save buttons (Done, Save, OK, Submit) — the agent decides \
 when and whether to confirm.
+  - Notification/toast/banner overlays that are clearly transient.
+  - Permission prompts (permission request, allow/deny dialogs) and temporary \
+system popups if they are not the explicit goal.
+  - OS update prompts, ads, onboarding/intro tips, empty-state hints, and similar \
+non-task overlays.
+  - Actions taken solely to close/dismiss temporary notifications/popups (Close, \
+Cancel, Ignore, Later, Got it).
   - Fine-grained widget manipulation (date/time pickers, spinners, sliders, \
 dropdown selections) — these vary by task and device.
   - Post-input navigation or cleanup steps.
 - Prefer ONE parameterized step over multiple mechanical sub-steps.
 - When in doubt, **leave it out**. Fewer steps = more reusable.
+- Keep popup/notification/system overlay dismissal out of extracted skills unless the \
+original instruction explicitly asks to handle that popup/permission.
 
 # App-opening collapse rule
 If the trajectory begins with steps that navigate to and open an app \
@@ -186,6 +195,13 @@ the skill finishes to handle remaining steps and avoid the original failure.
 - Keep only essential navigation and core input steps from the reliable prefix. \
 Do NOT include:
   - Confirmation/save buttons (Done, Save, OK, Submit).
+  - Notification/toast/banner overlays that are clearly transient.
+  - Permission prompts (permission request, allow/deny dialogs) and temporary \
+system popups if they are not the explicit goal.
+  - OS update prompts, ads, onboarding/intro tips, empty-state hints, and similar \
+non-task overlays.
+  - Actions taken solely to close/dismiss temporary notifications/popups (Close, \
+Cancel, Ignore, Later, Got it).
   - Fine-grained widget manipulation (date/time pickers, spinners, sliders).
   - Post-input navigation or cleanup steps.
 - Prefer ONE parameterized step over multiple mechanical sub-steps.
@@ -225,6 +241,8 @@ Same as success extraction, but:
 6. If trajectory steps include ``observation.foreground_app`` or ``observation.app``,
    treat that observed foreground app as the strongest app identity signal.
    Prefer the observed package/app over guessed display names when filling ``app``.
+7. Do not use dismiss/allow/deny/ignore/later type popup-handling actions as the \
+corrective step unless the task explicitly requires handling that popup or permission.
 
 Return ONLY a JSON object (no markdown fences):
 
