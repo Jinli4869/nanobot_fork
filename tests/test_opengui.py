@@ -1756,6 +1756,50 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_stagnation_detection_generates_termination_summary(tmp_path: Path) -> None:
+    summary_text = "Task appears to loop on the same screen. Aborted to avoid repeated actions."
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="wait briefly",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content="wait again",
+            tool_calls=[ToolCall(
+                id="call-2",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(content=summary_text),
+    ])
+
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "stagnation summary"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=5,
+        stagnation_limit=2,
+    )
+
+    result = await agent.run("detect loop", max_retries=1)
+
+    assert not result.success
+    assert result.error == "stagnation_detected"
+    assert result.summary == summary_text
+    assert len(llm.calls) == 3
+    summary_call = llm.calls[2]
+    content = summary_call[-1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+
+
+@pytest.mark.asyncio
 async def test_agent_stagnation_requires_same_action_type(tmp_path: Path) -> None:
     class _StaticScreenshotBackend(DryRunBackend):
         async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:

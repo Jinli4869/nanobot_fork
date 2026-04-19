@@ -439,6 +439,7 @@ async def test_execute_input_text_uses_clipboard_on_macos() -> None:
 
     mock_pyperclip.copy.assert_called_once_with("Hello World")
     mock_pa.hotkey.assert_called_once_with("command", "v")
+    mock_pa.press.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -457,6 +458,7 @@ async def test_execute_input_text_uses_clipboard_on_linux() -> None:
 
     mock_pyperclip.copy.assert_called_once_with("Hello Linux")
     mock_pa.hotkey.assert_called_once_with("ctrl", "v")
+    mock_pa.press.assert_not_called()
 
 
 @pytest.mark.asyncio
