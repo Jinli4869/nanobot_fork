@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import json_repair
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
@@ -73,8 +73,17 @@ class CustomProvider(LLMProvider):
     ) -> LLMResponse:
         kwargs = self._build_kwargs(messages, tools, model, max_tokens, temperature, reasoning_effort, tool_choice)
         kwargs["stream"] = True
+        kwargs["stream_options"] = {"include_usage": True}
         try:
-            stream = await self._client.chat.completions.create(**kwargs)
+            try:
+                stream = await self._client.chat.completions.create(**kwargs)
+            except BadRequestError as exc:
+                # Some OpenAI-compatible backends reject stream_options/include_usage; retry without it.
+                error_text = str(exc).lower()
+                if "stream_options" not in error_text and "include_usage" not in error_text:
+                    raise
+                kwargs.pop("stream_options", None)
+                stream = await self._client.chat.completions.create(**kwargs)
             chunks: list[Any] = []
             async for chunk in stream:
                 chunks.append(chunk)
@@ -120,8 +129,11 @@ class CustomProvider(LLMProvider):
             if not chunk.choices:
                 if hasattr(chunk, "usage") and chunk.usage:
                     u = chunk.usage
-                    usage = {"prompt_tokens": u.prompt_tokens or 0, "completion_tokens": u.completion_tokens or 0,
-                             "total_tokens": u.total_tokens or 0}
+                    usage = {
+                        "prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                        "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+                        "total_tokens": getattr(u, "total_tokens", 0) or 0,
+                    }
                 continue
             choice = chunk.choices[0]
             if choice.finish_reason:
