@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,34 @@ class SubagentManager:
         self.gui_backend = gui_backend
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
+
+    @staticmethod
+    def _extract_exec_command(arguments: Any) -> str | None:
+        """Extract command text from an exec tool-call argument payload."""
+        if isinstance(arguments, dict):
+            command = arguments.get("command")
+            return command if isinstance(command, str) else None
+        return None
+
+    def _tool_call_block_reason(self, tool_name: str, arguments: Any) -> str | None:
+        """Return policy block reason for a subagent tool call, or None when allowed."""
+        if tool_name != "exec":
+            return None
+
+        backend = (self.gui_backend or "").strip().lower()
+        if backend != "ios":
+            return None
+
+        command = self._extract_exec_command(arguments)
+        if not command:
+            return None
+
+        if re.search(r"(^|[\s;&|()])(?:[^\s;&|()]+/)?(?:adb|hdc)(?=\s|$)", command.lower()):
+            return (
+                "Error: Command blocked by GUI backend policy. "
+                "Current backend is 'ios', so Android bridge commands (adb/hdc) are not allowed."
+            )
+        return None
 
     async def spawn(
         self,
@@ -145,7 +174,15 @@ class SubagentManager:
                     for tool_call in response.tool_calls:
                         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                         logger.debug("Subagent [{}] executing: {} with arguments: {}", task_id, tool_call.name, args_str)
-                        result = await tools.execute(tool_call.name, tool_call.arguments)
+                        block_reason = self._tool_call_block_reason(tool_call.name, tool_call.arguments)
+                        if block_reason:
+                            logger.warning(
+                                "Subagent [{}] blocked tool call by policy: {} with arguments: {}",
+                                task_id, tool_call.name, args_str,
+                            )
+                            result = block_reason
+                        else:
+                            result = await tools.execute(tool_call.name, tool_call.arguments)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": tool_call.id,
