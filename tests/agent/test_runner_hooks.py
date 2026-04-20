@@ -14,6 +14,56 @@ _MAX_TOOL_RESULT_CHARS = AgentDefaults().max_tool_result_chars
 
 
 @pytest.mark.asyncio
+async def test_runner_tool_policy_blocks_execution_and_returns_tool_result():
+    from nanobot.agent.runner import AgentRunner, AgentRunSpec
+
+    provider = MagicMock(spec=LLMProvider)
+    calls: list[list[dict]] = []
+
+    async def chat_with_retry(**kwargs):
+        calls.append(kwargs["messages"])
+        if len(calls) == 1:
+            return LLMResponse(
+                content=None,
+                tool_calls=[
+                    ToolCallRequest(
+                        id="call_exec",
+                        name="exec",
+                        arguments={"cmd": "adb devices"},
+                    )
+                ],
+            )
+        return LLMResponse(content="done", tool_calls=[], usage={})
+
+    provider.chat_with_retry = chat_with_retry
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+    tools.execute = AsyncMock(return_value="should not run")
+
+    runner = AgentRunner(provider)
+    result = await runner.run(AgentRunSpec(
+        initial_messages=[],
+        tools=tools,
+        model="test-model",
+        max_iterations=3,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+        tool_policy=lambda name, args: (
+            "Error: Command blocked by GUI backend policy."
+            if name == "exec" and args.get("cmd") == "adb devices"
+            else None
+        ),
+    ))
+
+    assert result.final_content == "done"
+    tools.execute.assert_not_awaited()
+    assert any(
+        message.get("role") == "tool"
+        and "Command blocked by GUI backend policy" in str(message.get("content"))
+        for message in calls[1]
+    )
+
+
+@pytest.mark.asyncio
 async def test_runner_calls_hooks_in_order():
     from nanobot.agent.hook import AgentHook, AgentHookContext
     from nanobot.agent.runner import AgentRunner, AgentRunSpec

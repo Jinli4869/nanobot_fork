@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -156,6 +157,34 @@ class SubagentManager:
         self.model = model
         self.runner.provider = provider
 
+    @staticmethod
+    def _extract_exec_command(arguments: Any) -> str | None:
+        """Extract command text from an exec tool-call argument payload."""
+        if isinstance(arguments, dict):
+            command = arguments.get("command") or arguments.get("cmd")
+            return command if isinstance(command, str) else None
+        return None
+
+    def _tool_call_block_reason(self, tool_name: str, arguments: Any) -> str | None:
+        """Return policy block reason for a subagent tool call, or None when allowed."""
+        if tool_name != "exec":
+            return None
+
+        backend = (self.gui_backend or "").strip().lower()
+        if backend != "ios":
+            return None
+
+        command = self._extract_exec_command(arguments)
+        if not command:
+            return None
+
+        if re.search(r"(^|[\s;&|()])(?:[^\s;&|()]+/)?(?:adb|hdc)(?=\s|$)", command.lower()):
+            return (
+                "Error: Command blocked by GUI backend policy. "
+                "Current backend is 'ios', so Android bridge commands (adb/hdc) are not allowed."
+            )
+        return None
+
     async def spawn(
         self,
         task: str,
@@ -264,6 +293,7 @@ class SubagentManager:
                     session_key=sess_key,
                     workspace=root,
                     llm_timeout_s=llm_timeout,
+                    tool_policy=self._tool_call_block_reason,
                 ))
             finally:
                 if token is not None:

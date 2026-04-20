@@ -104,6 +104,7 @@ class AgentRunSpec:
     goal_active_predicate: Callable[[], bool] | None = None
     goal_continue_message: GoalContinueMessage | None = None
     finalize_on_max_iterations: bool = True
+    tool_policy: Callable[[str, Any], str | None] | None = None
 
 
 @dataclass(slots=True)
@@ -1209,6 +1210,23 @@ class AgentRunner:
             return prep_error + hint, event, (
                 RuntimeError(prep_error) if spec.fail_on_tool_error else None
             )
+        if spec.tool_policy is not None:
+            block_reason = spec.tool_policy(tool_call.name, params)
+            if block_reason:
+                logger.warning(
+                    "Blocked tool call by policy: {}({})",
+                    tool_call.name,
+                    tool_call.arguments,
+                )
+                event = {
+                    "name": tool_call.name,
+                    "status": "error",
+                    "detail": block_reason.replace("\n", " ").strip()[:120],
+                }
+                payload = block_reason + hint
+                if spec.fail_on_tool_error:
+                    return payload, event, RuntimeError(block_reason)
+                return payload, event, None
         emit_file_edit_events = (
             spec.progress_callback is not None
             and on_progress_accepts_file_edit_events(spec.progress_callback)

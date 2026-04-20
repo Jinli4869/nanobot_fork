@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import re
 import time
 from contextlib import AsyncExitStack, nullcontext, suppress
 from dataclasses import dataclass, field
@@ -807,6 +808,40 @@ class AgentLoop:
         return budget if budget > 0 else max(128, self.context_window_tokens // 2)
 
     @staticmethod
+    def _extract_exec_command(arguments: Any) -> str | None:
+        """Extract command text from an exec tool-call argument payload."""
+        if isinstance(arguments, dict):
+            command = arguments.get("command") or arguments.get("cmd")
+            return command if isinstance(command, str) else None
+        return None
+
+    def _tool_call_block_reason(self, tool_name: str, arguments: Any) -> str | None:
+        """Return policy block reason for a tool call, or None when allowed."""
+        if tool_name != "exec":
+            return None
+        if self._gui_config is None:
+            return None
+
+        backend = (self._gui_config.backend or "").strip().lower()
+        if not backend:
+            return None
+
+        command = self._extract_exec_command(arguments)
+        if not command:
+            return None
+
+        # Block cross-platform device bridge binaries when GUI backend is iOS.
+        if backend == "ios":
+            # Match both bare binary names and absolute paths ending with /adb or /hdc.
+            if re.search(r"(^|[\s;&|()])(?:[^\s;&|()]+/)?(?:adb|hdc)(?=\s|$)", command.lower()):
+                return (
+                    "Error: Command blocked by GUI backend policy. "
+                    "Current backend is 'ios', so Android bridge commands (adb/hdc) are not allowed."
+                )
+
+        return None
+
+    @staticmethod
     def _format_plan_tree(node: Any, *, indent: int = 0) -> str:
         """Render a plan tree into a human-readable indented outline."""
         prefix = "  " * indent
@@ -1058,6 +1093,7 @@ class AgentLoop:
                     metadata=session_metadata,
                     message_metadata=metadata,
                 ),
+                tool_policy=self._tool_call_block_reason,
                 goal_active_predicate=lambda: sustained_goal_active(session.metadata) if session is not None else False,
                 goal_continue_message=_goal_continue,
                 finalize_on_max_iterations=turn_continuation.should_finalize_on_max_iterations(
