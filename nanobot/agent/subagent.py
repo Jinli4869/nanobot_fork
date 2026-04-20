@@ -88,6 +88,7 @@ class SubagentManager:
         max_concurrent_subagents: int | None = None,
         fail_on_tool_error: bool | None = None,
         llm_wall_timeout_for_session: Callable[[str | None], float | None] | None = None,
+        gui_backend: str | None = None,
     ):
         defaults = AgentDefaults()
         self.provider = provider
@@ -115,6 +116,7 @@ class SubagentManager:
         )
         self.runner = AgentRunner(provider)
         self._llm_wall_timeout_for_session = llm_wall_timeout_for_session
+        self.gui_backend = gui_backend
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         self._task_statuses: dict[str, SubagentStatus] = {}
         self._session_tasks: dict[str, set[str]] = {}  # session_key -> {task_id, ...}
@@ -369,13 +371,24 @@ class SubagentManager:
         skills_summary = SkillsLoader(
             root,
             disabled_skills=self.disabled_skills,
-        ).build_skills_summary()
-        return render_template(
+        ).build_skills_summary(gui_backend=self.gui_backend)
+        prompt = render_template(
             "agent/subagent_system.md",
             time_ctx=time_ctx,
             workspace=str(root),
             skills_summary=skills_summary or "",
         )
+
+        if self.gui_backend:
+            prompt = "\n\n".join(
+                [
+                    prompt,
+                    "## GUI Runtime\n\n"
+                    f"- Active GUI backend: `{self.gui_backend}`\n"
+                    "- Use only skills/commands compatible with this backend.",
+                ]
+            )
+        return prompt
 
     async def cancel_by_session(self, session_key: str) -> int:
         """Cancel all subagents for the given session. Returns count cancelled."""

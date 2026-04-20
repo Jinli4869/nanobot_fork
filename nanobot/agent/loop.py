@@ -351,6 +351,7 @@ class AgentLoop:
             max_concurrent_subagents=max_concurrent_subagents,
             fail_on_tool_error=fail_on_tool_error,
             llm_wall_timeout_for_session=lambda sk: runner_wall_llm_timeout_s(self.sessions, sk),
+            gui_backend=(self._gui_config.backend if self._gui_config is not None else None),
         )
         self._unified_session = unified_session
         self._max_messages = replay_max_messages_for_context(self.context_window_tokens)
@@ -744,6 +745,7 @@ class AgentLoop:
         return self.context.build_messages(
             history=history,
             current_message=image_generation_prompt(msg.content, msg.metadata),
+            gui_backend=(self._gui_config.backend if self._gui_config is not None else None),
             media=msg.media if msg.media else None,
             channel=msg.channel,
             chat_id=self._runtime_chat_id(msg),
@@ -1584,6 +1586,7 @@ class AgentLoop:
         messages = self.context.build_messages(
             history=history,
             current_message="" if is_subagent else msg.content,
+            gui_backend=(self._gui_config.backend if self._gui_config is not None else None),
             channel=channel,
             chat_id=chat_id,
             current_role=current_role,

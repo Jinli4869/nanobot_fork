@@ -312,6 +312,32 @@ def test_disabled_skills_excluded_from_get_always_skills(tmp_path: Path) -> None
     assert "beta" in always
 
 
+def test_gui_backend_filters_backend_specific_skills(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    ws_skills = workspace / "skills"
+    ws_skills.mkdir(parents=True)
+    _write_skill(ws_skills, "adb_skill", metadata_json={"guiBackends": ["adb"]})
+    _write_skill(ws_skills, "ios_skill", metadata_json={"guiBackends": "ios"})
+    _write_skill(ws_skills, "generic_skill")
+    builtin = tmp_path / "builtin"
+    builtin.mkdir()
+
+    loader = SkillsLoader(workspace, builtin_skills_dir=builtin)
+
+    assert [entry["name"] for entry in loader.list_skills(
+        filter_unavailable=False,
+        gui_backend="ios",
+    )] == ["generic_skill", "ios_skill"]
+    assert [entry["name"] for entry in loader.list_skills(
+        filter_unavailable=False,
+        gui_backend="adb",
+    )] == ["adb_skill", "generic_skill"]
+    summary = loader.build_skills_summary(gui_backend="ios")
+    assert "ios_skill" in summary
+    assert "generic_skill" in summary
+    assert "adb_skill" not in summary
+
+
 # -- multiline description tests (YAML folded > and literal |) -----------------
 
 

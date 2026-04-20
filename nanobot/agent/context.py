@@ -66,6 +66,7 @@ class ContextBuilder:
     def build_system_prompt(
         self,
         skill_names: list[str] | None = None,
+        gui_backend: str | None = None,
         channel: str | None = None,
         session_summary: str | None = None,
         workspace: Path | None = None,
@@ -87,13 +88,27 @@ class ContextBuilder:
         if memory and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
             parts.append(f"# Memory\n\n{memory}")
 
-        always_skills = self.skills.get_always_skills()
+        if gui_backend:
+            parts.append(
+                "\n".join(
+                    [
+                        "## GUI Runtime",
+                        f"- Active GUI backend: `{gui_backend}`",
+                        "- Use only skills/commands compatible with this backend.",
+                    ]
+                )
+            )
+
+        always_skills = self.skills.get_always_skills(gui_backend=gui_backend)
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
 
-        skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
+        skills_summary = self.skills.build_skills_summary(
+            exclude=set(always_skills),
+            gui_backend=gui_backend,
+        )
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
@@ -189,6 +204,7 @@ class ContextBuilder:
         history: list[dict[str, Any]],
         current_message: str,
         skill_names: list[str] | None = None,
+        gui_backend: str | None = None,
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
@@ -236,6 +252,7 @@ class ContextBuilder:
                 "role": "system",
                 "content": self.build_system_prompt(
                     skill_names,
+                    gui_backend=gui_backend,
                     channel=channel,
                     session_summary=session_summary,
                     workspace=root,

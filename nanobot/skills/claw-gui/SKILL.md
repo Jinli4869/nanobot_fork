@@ -1,7 +1,7 @@
 ---
 name: claw-gui
 description: "Android mobile device control: use ADB commands, voice assistant shortcuts, deeplink probing, and GUI automation. Prefer programmatic approaches; use visual GUI only when necessary."
-metadata: {"nanobot":{"emoji":"📱","os":["darwin","linux"],"requires":{"bins":["adb"]}}}
+metadata: {"nanobot":{"emoji":"📱","os":["darwin","linux"],"guiBackends":["adb"],"requires":{"bins":["adb"]}}}
 ---
 
 # Claw GUI — Android Device Control
