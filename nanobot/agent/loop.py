@@ -136,6 +136,7 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            gui_backend=(self._gui_config.backend if self._gui_config is not None else None),
         )
 
         self._running = False
@@ -727,6 +728,8 @@ class AgentLoop:
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        gui_backend = self._gui_config.backend if self._gui_config is not None else None
+
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
@@ -742,6 +745,7 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
                 current_role=current_role,
+                gui_backend=gui_backend,
             )
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
@@ -776,6 +780,7 @@ class AgentLoop:
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
+            gui_backend=gui_backend,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )

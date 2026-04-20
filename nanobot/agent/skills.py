@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 # Default builtin skills directory (relative to this file)
 BUILTIN_SKILLS_DIR = Path(__file__).parent.parent / "skills"
@@ -23,12 +24,18 @@ class SkillsLoader:
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
 
-    def list_skills(self, filter_unavailable: bool = True) -> list[dict[str, str]]:
+    def list_skills(
+        self,
+        filter_unavailable: bool = True,
+        gui_backend: str | None = None,
+    ) -> list[dict[str, str]]:
         """
         List all available skills.
 
         Args:
             filter_unavailable: If True, filter out skills with unmet requirements.
+            gui_backend: Optional GUI backend key (e.g. "adb", "ios").
+                When provided, skills restricted to other backends are filtered out.
 
         Returns:
             List of skill info dicts with 'name', 'path', 'source'.
@@ -50,6 +57,12 @@ class SkillsLoader:
                     skill_file = skill_dir / "SKILL.md"
                     if skill_file.exists() and not any(s["name"] == skill_dir.name for s in skills):
                         skills.append({"name": skill_dir.name, "path": str(skill_file), "source": "builtin"})
+
+        skills.sort(key=lambda item: item["name"])
+
+        # Filter by runtime GUI backend compatibility (if provided).
+        if gui_backend:
+            skills = [s for s in skills if self._check_gui_backend(self._get_skill_meta(s["name"]), gui_backend)]
 
         # Filter by requirements
         if filter_unavailable:
@@ -98,7 +111,7 @@ class SkillsLoader:
 
         return "\n\n---\n\n".join(parts) if parts else ""
 
-    def build_skills_summary(self) -> str:
+    def build_skills_summary(self, gui_backend: str | None = None) -> str:
         """
         Build a summary of all skills (name, description, path, availability).
 
@@ -108,7 +121,7 @@ class SkillsLoader:
         Returns:
             XML-formatted skills summary.
         """
-        all_skills = self.list_skills(filter_unavailable=False)
+        all_skills = self.list_skills(filter_unavailable=False, gui_backend=gui_backend)
         if not all_skills:
             return ""
 
@@ -185,15 +198,55 @@ class SkillsLoader:
                 return False
         return True
 
+    @staticmethod
+    def _as_str_list(value: Any) -> list[str]:
+        """Normalize frontmatter scalar/list values into lowercase string list."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value.strip().lower()] if value.strip() else []
+        if isinstance(value, (list, tuple, set)):
+            result: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    text = item.strip().lower()
+                    if text:
+                        result.append(text)
+            return result
+        return []
+
+    def _check_gui_backend(self, skill_meta: dict, gui_backend: str) -> bool:
+        """Return whether a skill is compatible with the active GUI backend."""
+        active = gui_backend.strip().lower()
+        if not active:
+            return True
+
+        allow = (
+            self._as_str_list(skill_meta.get("guiBackends"))
+            or self._as_str_list(skill_meta.get("gui_backends"))
+            or self._as_str_list(skill_meta.get("backends"))
+            or self._as_str_list(skill_meta.get("backend"))
+        )
+        deny = (
+            self._as_str_list(skill_meta.get("excludeGuiBackends"))
+            or self._as_str_list(skill_meta.get("exclude_gui_backends"))
+        )
+
+        if allow and active not in allow:
+            return False
+        if deny and active in deny:
+            return False
+        return True
+
     def _get_skill_meta(self, name: str) -> dict:
         """Get nanobot metadata for a skill (cached in frontmatter)."""
         meta = self.get_skill_metadata(name) or {}
         return self._parse_nanobot_metadata(meta.get("metadata", ""))
 
-    def get_always_skills(self) -> list[str]:
+    def get_always_skills(self, gui_backend: str | None = None) -> list[str]:
         """Get skills marked as always=true that meet requirements."""
         result = []
-        for s in self.list_skills(filter_unavailable=True):
+        for s in self.list_skills(filter_unavailable=True, gui_backend=gui_backend):
             meta = self.get_skill_metadata(s["name"]) or {}
             skill_meta = self._parse_nanobot_metadata(meta.get("metadata", ""))
             if skill_meta.get("always") or meta.get("always"):
