@@ -207,10 +207,22 @@ class OpenAICompatibleLLMProvider:
                 )
             )
 
+        usage_obj = getattr(response, "usage", None)
+        usage: dict[str, int] = (
+            {
+                "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0) or 0,
+                "completion_tokens": getattr(usage_obj, "completion_tokens", 0) or 0,
+                "total_tokens": getattr(usage_obj, "total_tokens", 0) or 0,
+            }
+            if usage_obj is not None
+            else {}
+        )
+
         return LLMResponse(
             content=_coerce_message_content(message.content),
             tool_calls=parsed_tool_calls or None,
             raw=response,
+            usage=usage,
         )
 
 

@@ -964,6 +964,25 @@ class OpenAICompatProvider(LLMProvider):
         )
         return any(marker in body_text for marker in compatibility_markers)
 
+    @staticmethod
+    def _should_retry_without_stream_options(e: Exception) -> bool:
+        """Retry streams when a compatible backend rejects usage options."""
+        response = getattr(e, "response", None)
+        status_code = getattr(e, "status_code", None)
+        if status_code is None and response is not None:
+            status_code = getattr(response, "status_code", None)
+        if status_code is not None and status_code not in {400, 404, 422}:
+            return False
+
+        body = (
+            getattr(e, "body", None)
+            or getattr(e, "doc", None)
+            or getattr(response, "text", None)
+            or str(e)
+        )
+        body_text = str(body).lower()
+        return "stream_options" in body_text or "include_usage" in body_text
+
     def _build_responses_body(
         self,
         messages: list[dict[str, Any]],
@@ -1634,7 +1653,13 @@ class OpenAICompatProvider(LLMProvider):
                 kwargs.setdefault("extra_body", {})["tool_stream"] = True
             kwargs["stream"] = True
             kwargs["stream_options"] = {"include_usage": True}
-            stream = await self._client.chat.completions.create(**kwargs)
+            try:
+                stream = await self._client.chat.completions.create(**kwargs)
+            except Exception as stream_error:
+                if not self._should_retry_without_stream_options(stream_error):
+                    raise
+                kwargs.pop("stream_options", None)
+                stream = await self._client.chat.completions.create(**kwargs)
             chunks: list[Any] = []
             stream_iter = stream.__aiter__()
             while True:

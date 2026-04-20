@@ -872,6 +872,70 @@ async def test_direct_openai_stream_responses_unsupported_param_falls_back() -> 
 
 
 @pytest.mark.asyncio
+async def test_chat_stream_retries_without_stream_options_when_backend_rejects_usage() -> None:
+    async def _stream_with_usage_chunk():
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason=None,
+                    delta=SimpleNamespace(
+                        content="fallback stream",
+                        reasoning_content=None,
+                        tool_calls=None,
+                    ),
+                )
+            ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    delta=SimpleNamespace(
+                        content=None,
+                        reasoning_content=None,
+                        tool_calls=None,
+                    ),
+                )
+            ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+        )
+
+    mock_chat = AsyncMock(
+        side_effect=[
+            _FakeResponsesError(400, "Unknown parameter: stream_options.include_usage"),
+            _stream_with_usage_chunk(),
+        ]
+    )
+
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI") as MockClient:
+        client_instance = MockClient.return_value
+        client_instance.chat.completions.create = mock_chat
+
+        provider = OpenAICompatProvider(
+            api_key="sk-test-key",
+            default_model="deepseek-chat",
+            spec=find_by_name("deepseek"),
+        )
+        result = await provider.chat_stream(
+            messages=[{"role": "user", "content": "hello"}],
+            model="deepseek-chat",
+        )
+
+    assert result.content == "fallback stream"
+    assert result.usage == {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+    assert mock_chat.await_count == 2
+    first_kwargs = mock_chat.await_args_list[0].kwargs
+    second_kwargs = mock_chat.await_args_list[1].kwargs
+    assert first_kwargs["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in second_kwargs
+
+
+@pytest.mark.asyncio
 async def test_direct_openai_responses_rate_limit_does_not_fallback() -> None:
     mock_chat = AsyncMock(return_value=_fake_chat_response("from chat"))
     mock_responses = AsyncMock(side_effect=_FakeResponsesError(429, "rate limit"))
