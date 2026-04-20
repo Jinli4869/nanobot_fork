@@ -37,6 +37,53 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_FILENAME = "evaluation.json"
 
+# Error strings (or prefixes) on the trajectory's final `result` event that
+# indicate the run was cut short by a detector or infrastructure fault rather
+# than reaching a meaningful outcome. These trajectories are excluded from
+# skill extraction to avoid polluting the library with noise.
+_ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
+    "stagnation_detected",     # opengui/agent.py — SSIM-detected repeat action/screen
+    "step_timeout",            # opengui/agent.py — per-step timeout
+    "intervention_cancelled",  # opengui/agent.py — human intervention cancelled (prefix)
+)
+
+
+def _load_trajectory_result(trace_path: Path) -> dict[str, Any] | None:
+    """Return the final `result` event from a trajectory JSONL, or None."""
+    import json
+
+    try:
+        with open(trace_path, "r", encoding="utf-8") as f:
+            last: dict[str, Any] | None = None
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict) and event.get("type") == "result":
+                    last = event
+            return last
+    except OSError:
+        return None
+
+
+def _is_abnormal_termination(result_event: dict[str, Any]) -> bool:
+    """True if the trajectory was cut short by a detector/infra fault."""
+    error = result_event.get("error")
+    total_steps = result_event.get("total_steps") or 0
+    # Preflight errors never execute a step; `error` is an arbitrary exception string.
+    if total_steps == 0 and error:
+        return True
+    if not isinstance(error, str):
+        return False
+    return any(
+        error == prefix or error.startswith(prefix + ":")
+        for prefix in _ABNORMAL_TERMINATION_PREFIXES
+    )
+
 
 @dataclass
 class EvaluationConfig:
@@ -162,6 +209,28 @@ class PostRunProcessor:
             logger.info("Skipping skill extraction: disabled")
             return None
         if not trace_path.exists():
+            return None
+
+        # Skip runs cut short by a detector or infra fault — stagnation (repeat
+        # action/screen), step timeout, intervention cancel, preflight error.
+        result_event = _load_trajectory_result(trace_path)
+        if result_event is not None and _is_abnormal_termination(result_event):
+            reason = result_event.get("error")
+            logger.info(
+                "Skipping skill extraction for abnormally-terminated trajectory "
+                "(reason=%s, total_steps=%s): %s",
+                reason,
+                result_event.get("total_steps"),
+                trace_path,
+            )
+            self._write_extraction_result(trace_path, {
+                "status": "skipped_abnormal",
+                "trace": str(trace_path),
+                "is_success": is_success,
+                "platform": platform,
+                "reason": reason,
+                "total_steps": result_event.get("total_steps"),
+            })
             return None
 
         from opengui.skills.extractor import SkillExtractor
