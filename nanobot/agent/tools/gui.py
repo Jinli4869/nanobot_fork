@@ -580,6 +580,8 @@ class GuiSubagentTool(Tool):
                 if api_key:
                     kwargs["api_key"] = api_key
                 api_base = getattr(provider, "api_base", None)
+                if not api_base:
+                    api_base = self._default_embedding_api_base(resolved_model)
                 if api_base:
                     kwargs["api_base"] = api_base
                 extra_headers = getattr(provider, "extra_headers", None)
@@ -640,12 +642,21 @@ class GuiSubagentTool(Tool):
         api_base = getattr(self._provider, "api_base", None)
         if not api_base:
             api_base = getattr(self._provider, "_api_base", None)
+        if not api_base:
+            api_base = self._default_embedding_api_base(resolved_model)
 
         parts = [str(provider_name)]
         if api_base:
             parts.append(str(api_base))
         parts.append(resolved_model)
         return "|".join(parts)
+
+    def _default_embedding_api_base(self, resolved_model: str) -> str | None:
+        """Return provider-specific fallback API base for embedding requests."""
+        provider_name = (self._gui_config.provider or "").strip().lower()
+        if provider_name == "dashscope" and resolved_model.startswith("openai/"):
+            return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        return None
 
     async def _embed_texts_in_batches(
         self,

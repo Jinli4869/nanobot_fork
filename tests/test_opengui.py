@@ -155,30 +155,58 @@ def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> Non
     assert action.relative is True
 
 
-def test_parse_action_accepts_coordinate_pair_field() -> None:
+def test_parse_action_maps_coordinate_alias_pair() -> None:
     action = parse_action({
         "action": "tap",
-        "coordinate": [319, 87],
+        "coordinate": [500, 261],
         "relative": True,
     })
 
     assert action.action_type == "tap"
-    assert action.x == 319.0
-    assert action.y == 87.0
+    assert action.x == 500.0
+    assert action.y == 261.0
     assert action.relative is True
 
 
-def test_parse_action_accepts_stringified_coordinate_pair_field() -> None:
+def test_parse_action_maps_stringified_coordinate_alias_pair() -> None:
     action = parse_action({
         "action": "tap",
-        "coordinate": "[319, 87]",
-        "relative": True,
+        "coordinate": "[780, 503]",
     })
 
     assert action.action_type == "tap"
-    assert action.x == 319.0
-    assert action.y == 87.0
+    assert action.x == 780.0
+    assert action.y == 503.0
+
+
+def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "start_coordinate": [120, 340],
+        "end_coordinate": [760, 355],
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
     assert action.relative is True
+
+
+def test_parse_swipe_maps_coordinate_and_coordinate2_aliases() -> None:
+    action = parse_action({
+        "action": "swipe",
+        "coordinate": [120, 340],
+        "coordinate2": [760, 355],
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
 
 
 def test_parse_action_unwraps_duplicated_y_list() -> None:
