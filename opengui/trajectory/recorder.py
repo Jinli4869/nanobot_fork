@@ -130,6 +130,8 @@ class TrajectoryRecorder:
         phase: ExecutionPhase | None = None,
         token_usage: dict[str, int] | None = None,
         duration_s: float | None = None,
+        chat_latency_s: float | None = None,
+        ttft_s: float | None = None,
     ) -> None:
         """Record one agent step.
 
@@ -189,6 +191,10 @@ class TrajectoryRecorder:
             event["token_usage"] = token_usage
         if duration_s is not None:
             event["duration_s"] = round(duration_s, 3)
+        if chat_latency_s is not None:
+            event["chat_latency_s"] = round(chat_latency_s, 3)
+        if ttft_s is not None:
+            event["ttft_s"] = round(ttft_s, 3)
 
         self._write_event(event)
         self._step_count += 1

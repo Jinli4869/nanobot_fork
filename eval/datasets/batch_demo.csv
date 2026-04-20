@@ -1,0 +1,4 @@
+task_id,task_type,abstract_category,instruction,instruction_ch,involved_apps,dependencies_count
+demo_001,single,navigation,Open the Settings app,打开设置应用,com.android.settings,0
+demo_002,single,search,Search for "weather" in the browser,在浏览器搜索"weather",browser,0
+demo_003,single,toggle,Turn on Wi-Fi from quick settings,从快捷设置打开 Wi-Fi,com.android.settings,0
