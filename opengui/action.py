@@ -210,10 +210,26 @@ def _fmt_coord(action: Action) -> str:
 
 def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
     normalized = dict(payload)
+    _normalize_coordinate_alias(normalized)
     _normalize_compact_path_coordinates(normalized)
     _normalize_coordinate_pair(normalized, "x", "y")
     _normalize_coordinate_pair(normalized, "x2", "y2")
     return normalized
+
+
+def _normalize_coordinate_alias(payload: dict[str, typing.Any]) -> None:
+    """Accept provider-style ``coordinate: [x, y]`` payloads.
+
+    This keeps default-profile parsing resilient when a provider emits
+    ``action`` + ``coordinate`` instead of canonical ``action_type`` + ``x/y``.
+    """
+    pair = _coerce_coordinate_sequence(payload.get("coordinate"))
+    if pair is None or len(pair) != 2:
+        return
+    if payload.get("x") is None:
+        payload["x"] = pair[0]
+    if payload.get("y") is None:
+        payload["y"] = pair[1]
 
 
 def _normalize_compact_path_coordinates(payload: dict[str, typing.Any]) -> None:
