@@ -155,6 +155,32 @@ def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> Non
     assert action.relative is True
 
 
+def test_parse_action_accepts_coordinate_pair_field() -> None:
+    action = parse_action({
+        "action": "tap",
+        "coordinate": [319, 87],
+        "relative": True,
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 319.0
+    assert action.y == 87.0
+    assert action.relative is True
+
+
+def test_parse_action_accepts_stringified_coordinate_pair_field() -> None:
+    action = parse_action({
+        "action": "tap",
+        "coordinate": "[319, 87]",
+        "relative": True,
+    })
+
+    assert action.action_type == "tap"
+    assert action.x == 319.0
+    assert action.y == 87.0
+    assert action.relative is True
+
+
 def test_parse_action_unwraps_duplicated_y_list() -> None:
     action = parse_action({
         "action_type": "tap",
