@@ -201,12 +201,25 @@ class LLMStateValidator:
         self._llm = llm
         self._image_scale_ratio = _normalize_image_scale_ratio(image_scale_ratio)
         self._usage_accum: dict[str, int] = {}
+        self._ttft_samples: list[float] = []
+        self._latency_samples: list[float] = []
 
     def drain_usage(self) -> dict[str, int]:
         """Return accumulated token usage since last drain and reset the counter."""
         usage = dict(self._usage_accum)
         self._usage_accum.clear()
         return usage
+
+    def drain_timings(self) -> dict[str, float]:
+        """Return mean ttft_s / chat_latency_s across samples and reset."""
+        out: dict[str, float] = {}
+        if self._ttft_samples:
+            out["ttft_s"] = sum(self._ttft_samples) / len(self._ttft_samples)
+        if self._latency_samples:
+            out["chat_latency_s"] = sum(self._latency_samples) / len(self._latency_samples)
+        self._ttft_samples.clear()
+        self._latency_samples.clear()
+        return out
 
     async def validate(
         self,
@@ -240,6 +253,10 @@ class LLMStateValidator:
 
         for k, v in (response.usage or {}).items():
             self._usage_accum[k] = self._usage_accum.get(k, 0) + v
+        if getattr(response, "ttft_s", None) is not None:
+            self._ttft_samples.append(response.ttft_s)
+        if getattr(response, "latency_s", None) is not None:
+            self._latency_samples.append(response.latency_s)
         return self._parse_response(response.content)
 
     @staticmethod
@@ -708,6 +725,12 @@ class SkillExecutor:
     def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
         if self.trajectory_recorder is None:
             return
+        timings: dict[str, float] = {}
+        for src in (self.action_grounder, self.state_validator):
+            drain = getattr(src, "drain_timings", None)
+            if callable(drain):
+                for k, v in drain().items():
+                    timings.setdefault(k, v)
         self.trajectory_recorder.record_event(
             "skill_step",
             skill_id=skill.skill_id,
@@ -727,6 +750,8 @@ class SkillExecutor:
             duration_s=round(step_result.duration_s, 3) if step_result.duration_s else None,
             validate_duration_s=round(step_result.validate_duration_s, 3) if step_result.validate_duration_s is not None else None,
             grounding_duration_s=round(step_result.grounding_duration_s, 3) if step_result.grounding_duration_s is not None else None,
+            chat_latency_s=round(timings["chat_latency_s"], 3) if "chat_latency_s" in timings else None,
+            ttft_s=round(timings["ttft_s"], 3) if "ttft_s" in timings else None,
         )
 
     async def _validate_state(

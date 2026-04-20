@@ -70,6 +70,8 @@ class StepResult:
     done: bool = False
     step_usage: dict[str, int] = dataclasses.field(default_factory=dict)
     duration_s: float = 0.0
+    chat_latency_s: float | None = None
+    ttft_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -244,12 +246,24 @@ class _AgentActionGrounder:
         self._agent_profile = canonicalize_agent_profile(agent_profile)
         self._image_scale_ratio = image_scale_ratio
         self._usage_accum: dict[str, int] = {}
+        self._ttft_samples: list[float] = []
+        self._latency_samples: list[float] = []
 
     def drain_usage(self) -> dict[str, int]:
         """Return accumulated token usage since last drain and reset the counter."""
         usage = dict(self._usage_accum)
         self._usage_accum.clear()
         return usage
+
+    def drain_timings(self) -> dict[str, float]:
+        out: dict[str, float] = {}
+        if self._ttft_samples:
+            out["ttft_s"] = sum(self._ttft_samples) / len(self._ttft_samples)
+        if self._latency_samples:
+            out["chat_latency_s"] = sum(self._latency_samples) / len(self._latency_samples)
+        self._ttft_samples.clear()
+        self._latency_samples.clear()
+        return out
 
     async def ground(
         self,
@@ -304,6 +318,10 @@ class _AgentActionGrounder:
 
             for k, v in (response.usage or {}).items():
                 self._usage_accum[k] = self._usage_accum.get(k, 0) + v
+            if getattr(response, "ttft_s", None) is not None:
+                self._ttft_samples.append(response.ttft_s)
+            if getattr(response, "latency_s", None) is not None:
+                self._latency_samples.append(response.latency_s)
 
             try:
                 response = normalize_profile_response(self._agent_profile, response)
@@ -1335,6 +1353,8 @@ class GuiAgent:
                 ),
                 token_usage=result.step_usage or None,
                 duration_s=result.duration_s or None,
+                chat_latency_s=result.chat_latency_s,
+                ttft_s=result.ttft_s,
             )
 
             if intervention_cancelled:
@@ -1534,6 +1554,8 @@ class GuiAgent:
         _step_start = time.monotonic()
         retries_left = self._MAX_TOOL_RETRIES + 1
         step_usage: dict[str, int] = {}
+        step_chat_latency_s: float = 0.0
+        step_ttft_s: float | None = None
 
         while retries_left > 0:
             retries_left -= 1
@@ -1547,6 +1569,10 @@ class GuiAgent:
             )
             for k, v in (response.usage or {}).items():
                 step_usage[k] = step_usage.get(k, 0) + v
+            if response.latency_s is not None:
+                step_chat_latency_s += response.latency_s
+            if step_ttft_s is None and response.ttft_s is not None:
+                step_ttft_s = response.ttft_s
             raw_response_snapshot = self._snapshot_failed_model_response(response)
 
             try:
@@ -1653,6 +1679,8 @@ class GuiAgent:
                     done=True,
                     step_usage=step_usage,
                     duration_s=time.monotonic() - _step_start,
+                    chat_latency_s=step_chat_latency_s or None,
+                    ttft_s=step_ttft_s,
                 )
 
             if action.action_type == "request_intervention":
@@ -1672,6 +1700,8 @@ class GuiAgent:
                     intervention_requested=True,
                     step_usage=step_usage,
                     duration_s=time.monotonic() - _step_start,
+                    chat_latency_s=step_chat_latency_s or None,
+                    ttft_s=step_ttft_s,
                 )
 
             # Normalize app name to package name for Android open/close
@@ -1724,6 +1754,8 @@ class GuiAgent:
                 },
                 step_usage=step_usage,
                 duration_s=time.monotonic() - _step_start,
+                chat_latency_s=step_chat_latency_s or None,
+                ttft_s=step_ttft_s,
             )
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")

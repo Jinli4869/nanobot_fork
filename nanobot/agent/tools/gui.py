@@ -58,7 +58,9 @@ class GuiSubagentTool(Tool):
         self._provider = provider
         self._model = model
         self._workspace = Path(workspace)
-        self._llm_adapter = NanobotLLMAdapter(provider, model)
+        self._llm_adapter = NanobotLLMAdapter(
+            provider, model, capture_ttft=gui_config.capture_ttft,
+        )
         self._embedding_signature: str | None = self._resolve_embedding_signature()
         self._embedding_adapter = self._build_embedding_adapter() if gui_config.embedding_model else None
         self._skill_libraries: dict[str, Any] = {}

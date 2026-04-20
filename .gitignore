@@ -37,3 +37,4 @@ nanobot/tui/web/node_modules/
 nanobot/tui/web/.vite/
 nanobot/tui/web/coverage/
 .opengui
+gui_runs/

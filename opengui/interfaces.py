@@ -36,6 +36,8 @@ class LLMResponse:
     tool_calls: list[ToolCall] | None = None
     raw: typing.Any = dataclasses.field(default=None, compare=False)
     usage: dict[str, int] = dataclasses.field(default_factory=dict, compare=False)
+    ttft_s: float | None = dataclasses.field(default=None, compare=False)
+    latency_s: float | None = dataclasses.field(default=None, compare=False)
 
 
 @dataclasses.dataclass(frozen=True)

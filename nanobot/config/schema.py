@@ -207,6 +207,7 @@ class GuiConfig(Base):
     display_width: int = 1280
     display_height: int = 720
     image_scale_ratio: float = 0.5
+    capture_ttft: bool = False
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
