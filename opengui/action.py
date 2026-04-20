@@ -210,26 +210,46 @@ def _fmt_coord(action: Action) -> str:
 
 def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
     normalized = dict(payload)
-    _normalize_coordinate_alias(normalized)
+    _normalize_named_coordinates(normalized)
     _normalize_compact_path_coordinates(normalized)
     _normalize_coordinate_pair(normalized, "x", "y")
     _normalize_coordinate_pair(normalized, "x2", "y2")
     return normalized
 
 
-def _normalize_coordinate_alias(payload: dict[str, typing.Any]) -> None:
-    """Accept provider-style ``coordinate: [x, y]`` payloads.
+def _normalize_named_coordinates(payload: dict[str, typing.Any]) -> None:
+    # General mobile-use style aliases.
+    _normalize_named_coordinate_pair(payload, "coordinate", "x", "y")
+    _normalize_named_coordinate_pair(payload, "start_coordinate", "x", "y")
+    _normalize_named_coordinate_pair(payload, "coordinate2", "x2", "y2")
+    _normalize_named_coordinate_pair(payload, "end_coordinate", "x2", "y2")
 
-    This keeps default-profile parsing resilient when a provider emits
-    ``action`` + ``coordinate`` instead of canonical ``action_type`` + ``x/y``.
-    """
-    pair = _coerce_coordinate_sequence(payload.get("coordinate"))
-    if pair is None or len(pair) != 2:
+    # Accept compact forms like coordinate=[x, y, x2, y2] when all canonical
+    # fields are absent.
+    compact = _coerce_coordinate_sequence(payload.get("coordinate"))
+    if compact is None or len(compact) != 4:
         return
-    if payload.get("x") is None:
-        payload["x"] = pair[0]
-    if payload.get("y") is None:
-        payload["y"] = pair[1]
+    if any(payload.get(key) is not None for key in ("x", "y", "x2", "y2")):
+        return
+    payload["x"], payload["y"], payload["x2"], payload["y2"] = compact
+
+
+def _normalize_named_coordinate_pair(
+    payload: dict[str, typing.Any],
+    source_key: str,
+    primary_key: str,
+    secondary_key: str,
+) -> None:
+    source = payload.get(source_key)
+    items = _coerce_coordinate_sequence(source)
+    if items is None:
+        return
+    if len(items) != 2:
+        return
+    if payload.get(primary_key) in (None, [], ()):
+        payload[primary_key] = items[0]
+    if payload.get(secondary_key) in (None, [], ()):
+        payload[secondary_key] = items[1]
 
 
 def _normalize_compact_path_coordinates(payload: dict[str, typing.Any]) -> None:
