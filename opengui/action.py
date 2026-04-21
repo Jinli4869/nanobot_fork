@@ -358,6 +358,10 @@ def _validate(
         raise ActionError(f"Action {action_type!r} requires both 'x' and 'y' coordinates.")
     if action_type in _XY2_REQUIRED and (x2 is None or y2 is None):
         raise ActionError(f"Action {action_type!r} requires 'x2' and 'y2' end-point coordinates.")
+    if action_type in _XY2_REQUIRED and x == x2 and y == y2:
+        raise ActionError(
+            f"Action {action_type!r} start and end coordinates must differ."
+        )
     if action_type == "hotkey" and not key:
         raise ActionError("Action 'hotkey' requires the 'key' field.")
     if action_type == "input_text" and text is None:
