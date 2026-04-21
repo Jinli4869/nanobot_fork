@@ -214,7 +214,40 @@ def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, t
     _normalize_compact_path_coordinates(normalized)
     _normalize_coordinate_pair(normalized, "x", "y")
     _normalize_coordinate_pair(normalized, "x2", "y2")
+    _normalize_endpoint_only_path_coordinates(normalized)
     return normalized
+
+
+def _normalize_endpoint_only_path_coordinates(payload: dict[str, typing.Any]) -> None:
+    """Recover swipe/drag payloads that provide only end-point coordinates.
+
+    Some providers occasionally emit ``x2/y2`` without ``x/y`` for path actions.
+    We synthesize a conservative start point to avoid parser hard-failures.
+    """
+    raw_type = payload.get("action_type") or payload.get("action") or ""
+    action_type = _ACTION_ALIASES.get(str(raw_type).strip().lower(), str(raw_type).strip().lower())
+    if action_type not in {"swipe", "drag"}:
+        return
+    if payload.get("x2") is None or payload.get("y2") is None:
+        return
+    if payload.get("x") is not None and payload.get("y") is not None:
+        return
+
+    try:
+        end_x = float(payload["x2"])
+        end_y = float(payload["y2"])
+    except (TypeError, ValueError):
+        return
+
+    if payload.get("x") is None:
+        payload["x"] = end_x
+    if payload.get("y") is None:
+        # Default to a medium path length in the opposite vertical direction.
+        if end_y >= (_RELATIVE_GRID_MAX / 2):
+            start_y = end_y - 250
+        else:
+            start_y = end_y + 250
+        payload["y"] = max(0.0, min(float(_RELATIVE_GRID_MAX), start_y))
 
 
 def _normalize_named_coordinates(payload: dict[str, typing.Any]) -> None:

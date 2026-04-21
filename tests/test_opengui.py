@@ -299,6 +299,21 @@ def test_parse_swipe_rejects_noop_path() -> None:
         })
 
 
+def test_parse_swipe_accepts_endpoint_only_coordinates() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "x2": 500,
+        "y2": 749,
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 500.0
+    assert action.y2 == 749.0
+    assert action.y is not None
+    assert action.y != action.y2
+
+
 def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
     enter = parse_action({"action_type": "keyboard_enter"})
     recents = parse_action({"action_type": "recents"})
