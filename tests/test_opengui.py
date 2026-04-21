@@ -287,6 +287,18 @@ def test_parse_swipe_splits_all_coordinates_from_stringified_x_list() -> None:
     assert action.relative is True
 
 
+def test_parse_swipe_rejects_noop_path() -> None:
+    with pytest.raises(ActionError, match="start and end coordinates must differ"):
+        parse_action({
+            "action_type": "swipe",
+            "x": 500,
+            "y": 700,
+            "x2": 500,
+            "y2": 700,
+            "relative": True,
+        })
+
+
 def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
     enter = parse_action({"action_type": "keyboard_enter"})
     recents = parse_action({"action_type": "recents"})
@@ -1189,6 +1201,70 @@ async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: P
 
     assert result.success is True
     assert result.summary
+
+
+@pytest.mark.asyncio
+async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "done",
+                        "text": "Task completed successfully and search results are visible.",
+                    },
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "done without status success"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is True
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "done",
+                        "text": "Task failed because login is required.",
+                    },
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "done without status failure"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is False
+    assert result.error == "Task terminated with status: failure"
 
 
 @pytest.mark.asyncio
