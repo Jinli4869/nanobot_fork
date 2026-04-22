@@ -66,9 +66,6 @@ def build_system_prompt(
         "- For size/quantity constraints, prefer exact match; small near-matches may be used only with explicit disclosure in the final response.",
         "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
         "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
-        "- For map/metro tasks, do city disambiguation first: if city is not explicitly given, use the current location city.",
-        "- Do not carry city/place assumptions from previous tasks unless the user explicitly says to continue the same context.",
-        "- For words like 'nearby'/'nearest'/'from here', anchor strictly to the current location shown on screen.",
         coordinate_rules,
     ]
 
