@@ -46,6 +46,22 @@ from opengui.prompts.system import build_system_prompt
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 
 logger = logging.getLogger(__name__)
+_DONE_FAILURE_HINTS: tuple[str, ...] = (
+    "fail",
+    "failed",
+    "failure",
+    "unable",
+    "cannot",
+    "can't",
+    "error",
+    "not completed",
+    "incomplete",
+    "失败",
+    "无法",
+    "不能",
+    "错误",
+    "未完成",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1383,7 +1399,7 @@ class GuiAgent:
                 )
 
             if result.done:
-                success = result.action.status == "success"
+                success = self._resolve_done_status(result.action) == "success"
                 return AgentResult(
                     success=success,
                     summary=(
@@ -1662,7 +1678,10 @@ class GuiAgent:
 
             # Handle terminal action (done)
             if action.action_type == "done":
-                tool_result = f"Task terminated with status: {action.status or 'unknown'}"
+                done_status = self._resolve_done_status(action)
+                if action.status != done_status:
+                    action = replace(action, status=done_status)
+                tool_result = f"Task terminated with status: {done_status}"
                 return StepResult(
                     action=action,
                     tool_call_id=tool_call.id,
@@ -2253,6 +2272,18 @@ class GuiAgent:
         if action_text.lower().startswith("action:"):
             return action_text.split(":", 1)[1].strip()
         return action_text.strip()
+
+    @staticmethod
+    def _resolve_done_status(action: Action) -> str:
+        """Resolve terminal status for done actions with safe fallback rules."""
+        if action.status in {"success", "failure"}:
+            return action.status
+        text = (action.text or "").strip().lower()
+        if any(hint in text for hint in _DONE_FAILURE_HINTS):
+            return "failure"
+        # Missing status is common for some providers; default to success so
+        # we do not retry already-completed tasks.
+        return "success"
 
     def _image_block(self, path: Path) -> dict[str, Any]:
         """Create a base64 image content block for an LLM message."""

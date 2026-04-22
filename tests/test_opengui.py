@@ -155,30 +155,58 @@ def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> Non
     assert action.relative is True
 
 
-def test_parse_action_accepts_coordinate_pair_field() -> None:
+def test_parse_action_maps_coordinate_alias_pair() -> None:
     action = parse_action({
         "action": "tap",
-        "coordinate": [319, 87],
+        "coordinate": [500, 261],
         "relative": True,
     })
 
     assert action.action_type == "tap"
-    assert action.x == 319.0
-    assert action.y == 87.0
+    assert action.x == 500.0
+    assert action.y == 261.0
     assert action.relative is True
 
 
-def test_parse_action_accepts_stringified_coordinate_pair_field() -> None:
+def test_parse_action_maps_stringified_coordinate_alias_pair() -> None:
     action = parse_action({
         "action": "tap",
-        "coordinate": "[319, 87]",
-        "relative": True,
+        "coordinate": "[780, 503]",
     })
 
     assert action.action_type == "tap"
-    assert action.x == 319.0
-    assert action.y == 87.0
+    assert action.x == 780.0
+    assert action.y == 503.0
+
+
+def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "start_coordinate": [120, 340],
+        "end_coordinate": [760, 355],
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
     assert action.relative is True
+
+
+def test_parse_swipe_maps_coordinate_and_coordinate2_aliases() -> None:
+    action = parse_action({
+        "action": "swipe",
+        "coordinate": [120, 340],
+        "coordinate2": [760, 355],
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 120.0
+    assert action.y == 340.0
+    assert action.x2 == 760.0
+    assert action.y2 == 355.0
 
 
 def test_parse_action_unwraps_duplicated_y_list() -> None:
@@ -257,6 +285,33 @@ def test_parse_swipe_splits_all_coordinates_from_stringified_x_list() -> None:
     assert action.x2 == 760.0
     assert action.y2 == 355.0
     assert action.relative is True
+
+
+def test_parse_swipe_rejects_noop_path() -> None:
+    with pytest.raises(ActionError, match="start and end coordinates must differ"):
+        parse_action({
+            "action_type": "swipe",
+            "x": 500,
+            "y": 700,
+            "x2": 500,
+            "y2": 700,
+            "relative": True,
+        })
+
+
+def test_parse_swipe_accepts_endpoint_only_coordinates() -> None:
+    action = parse_action({
+        "action_type": "swipe",
+        "x2": 500,
+        "y2": 749,
+        "relative": True,
+    })
+
+    assert action.action_type == "swipe"
+    assert action.x == 500.0
+    assert action.y2 == 749.0
+    assert action.y is not None
+    assert action.y != action.y2
 
 
 def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
@@ -1161,6 +1216,70 @@ async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: P
 
     assert result.success is True
     assert result.summary
+
+
+@pytest.mark.asyncio
+async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "done",
+                        "text": "Task completed successfully and search results are visible.",
+                    },
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "done without status success"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is True
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[
+                ToolCall(
+                    id="provider-tool-call-0",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "done",
+                        "text": "Task failed because login is required.",
+                    },
+                )
+            ],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "done without status failure"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is False
+    assert result.error == "Task terminated with status: failure"
 
 
 @pytest.mark.asyncio

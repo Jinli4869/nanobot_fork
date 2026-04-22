@@ -572,10 +572,16 @@ class GuiSubagentTool(Tool):
                 # Collect provider credentials — only pass keys that are truthy to avoid
                 # sending empty strings that some backends reject.
                 kwargs: dict[str, Any] = {"model": resolved_model, "input": batch}
+                # OpenAI-compatible embedding endpoints (including DashScope compatible-mode)
+                # expect an explicit encoding_format. LiteLLM may default to an unsupported
+                # format for some providers if omitted.
+                kwargs["encoding_format"] = "float"
                 api_key = getattr(provider, "api_key", None)
                 if api_key:
                     kwargs["api_key"] = api_key
                 api_base = getattr(provider, "api_base", None)
+                if not api_base:
+                    api_base = self._default_embedding_api_base(resolved_model)
                 if api_base:
                     kwargs["api_base"] = api_base
                 extra_headers = getattr(provider, "extra_headers", None)
@@ -583,7 +589,16 @@ class GuiSubagentTool(Tool):
                     kwargs["extra_headers"] = extra_headers
 
                 response = await litellm.aembedding(**kwargs)
-                return [item.embedding for item in response.data]
+                vectors: list[list[float]] = []
+                for item in response.data:
+                    if isinstance(item, dict):
+                        embedding = item.get("embedding")
+                    else:
+                        embedding = getattr(item, "embedding", None)
+                    if embedding is None:
+                        raise ValueError("Embedding response item missing 'embedding' field")
+                    vectors.append(embedding)
+                return vectors
 
             return await self._embed_texts_in_batches(texts, _request_batch)
 
@@ -595,7 +610,18 @@ class GuiSubagentTool(Tool):
             raise ValueError("embedding model is required to build embedding adapter")
 
         resolve = getattr(self._provider, "_resolve_model", None)
-        return resolve(embedding_model) if callable(resolve) else embedding_model
+        resolved = resolve(embedding_model) if callable(resolve) else embedding_model
+
+        # DashScope's compatible-mode endpoint is OpenAI-style under LiteLLM.
+        # When users configure bare model names like "text-embedding-v4", normalize
+        # to "openai/<model>" so provider routing is deterministic.
+        if (
+            isinstance(resolved, str)
+            and "/" not in resolved
+            and (self._gui_config.provider or "").strip().lower() == "dashscope"
+        ):
+            return f"openai/{resolved}"
+        return resolved
 
     def _resolve_embedding_signature(self) -> str | None:
         embedding_model = self._gui_config.embedding_model
@@ -616,12 +642,21 @@ class GuiSubagentTool(Tool):
         api_base = getattr(self._provider, "api_base", None)
         if not api_base:
             api_base = getattr(self._provider, "_api_base", None)
+        if not api_base:
+            api_base = self._default_embedding_api_base(resolved_model)
 
         parts = [str(provider_name)]
         if api_base:
             parts.append(str(api_base))
         parts.append(resolved_model)
         return "|".join(parts)
+
+    def _default_embedding_api_base(self, resolved_model: str) -> str | None:
+        """Return provider-specific fallback API base for embedding requests."""
+        provider_name = (self._gui_config.provider or "").strip().lower()
+        if provider_name == "dashscope" and resolved_model.startswith("openai/"):
+            return "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        return None
 
     async def _embed_texts_in_batches(
         self,

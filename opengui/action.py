@@ -210,26 +210,79 @@ def _fmt_coord(action: Action) -> str:
 
 def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
     normalized = dict(payload)
-    _normalize_coordinate_alias(normalized)
+    _normalize_named_coordinates(normalized)
     _normalize_compact_path_coordinates(normalized)
     _normalize_coordinate_pair(normalized, "x", "y")
     _normalize_coordinate_pair(normalized, "x2", "y2")
+    _normalize_endpoint_only_path_coordinates(normalized)
     return normalized
 
 
-def _normalize_coordinate_alias(payload: dict[str, typing.Any]) -> None:
-    """Accept provider-style ``coordinate: [x, y]`` payloads.
+def _normalize_endpoint_only_path_coordinates(payload: dict[str, typing.Any]) -> None:
+    """Recover swipe/drag payloads that provide only end-point coordinates.
 
-    This keeps default-profile parsing resilient when a provider emits
-    ``action`` + ``coordinate`` instead of canonical ``action_type`` + ``x/y``.
+    Some providers occasionally emit ``x2/y2`` without ``x/y`` for path actions.
+    We synthesize a conservative start point to avoid parser hard-failures.
     """
-    pair = _coerce_coordinate_sequence(payload.get("coordinate"))
-    if pair is None or len(pair) != 2:
+    raw_type = payload.get("action_type") or payload.get("action") or ""
+    action_type = _ACTION_ALIASES.get(str(raw_type).strip().lower(), str(raw_type).strip().lower())
+    if action_type not in {"swipe", "drag"}:
         return
+    if payload.get("x2") is None or payload.get("y2") is None:
+        return
+    if payload.get("x") is not None and payload.get("y") is not None:
+        return
+
+    try:
+        end_x = float(payload["x2"])
+        end_y = float(payload["y2"])
+    except (TypeError, ValueError):
+        return
+
     if payload.get("x") is None:
-        payload["x"] = pair[0]
+        payload["x"] = end_x
     if payload.get("y") is None:
-        payload["y"] = pair[1]
+        # Default to a medium path length in the opposite vertical direction.
+        if end_y >= (_RELATIVE_GRID_MAX / 2):
+            start_y = end_y - 250
+        else:
+            start_y = end_y + 250
+        payload["y"] = max(0.0, min(float(_RELATIVE_GRID_MAX), start_y))
+
+
+def _normalize_named_coordinates(payload: dict[str, typing.Any]) -> None:
+    # General mobile-use style aliases.
+    _normalize_named_coordinate_pair(payload, "coordinate", "x", "y")
+    _normalize_named_coordinate_pair(payload, "start_coordinate", "x", "y")
+    _normalize_named_coordinate_pair(payload, "coordinate2", "x2", "y2")
+    _normalize_named_coordinate_pair(payload, "end_coordinate", "x2", "y2")
+
+    # Accept compact forms like coordinate=[x, y, x2, y2] when all canonical
+    # fields are absent.
+    compact = _coerce_coordinate_sequence(payload.get("coordinate"))
+    if compact is None or len(compact) != 4:
+        return
+    if any(payload.get(key) is not None for key in ("x", "y", "x2", "y2")):
+        return
+    payload["x"], payload["y"], payload["x2"], payload["y2"] = compact
+
+
+def _normalize_named_coordinate_pair(
+    payload: dict[str, typing.Any],
+    source_key: str,
+    primary_key: str,
+    secondary_key: str,
+) -> None:
+    source = payload.get(source_key)
+    items = _coerce_coordinate_sequence(source)
+    if items is None:
+        return
+    if len(items) != 2:
+        return
+    if payload.get(primary_key) in (None, [], ()):
+        payload[primary_key] = items[0]
+    if payload.get(secondary_key) in (None, [], ()):
+        payload[secondary_key] = items[1]
 
 
 def _normalize_compact_path_coordinates(payload: dict[str, typing.Any]) -> None:
@@ -338,6 +391,10 @@ def _validate(
         raise ActionError(f"Action {action_type!r} requires both 'x' and 'y' coordinates.")
     if action_type in _XY2_REQUIRED and (x2 is None or y2 is None):
         raise ActionError(f"Action {action_type!r} requires 'x2' and 'y2' end-point coordinates.")
+    if action_type in _XY2_REQUIRED and x == x2 and y == y2:
+        raise ActionError(
+            f"Action {action_type!r} start and end coordinates must differ."
+        )
     if action_type == "hotkey" and not key:
         raise ActionError("Action 'hotkey' requires the 'key' field.")
     if action_type == "input_text" and text is None:

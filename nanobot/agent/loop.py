@@ -136,6 +136,7 @@ class AgentLoop:
             web_proxy=web_proxy,
             exec_config=self.exec_config,
             restrict_to_workspace=restrict_to_workspace,
+            gui_backend=(self._gui_config.backend if self._gui_config is not None else None),
         )
 
         self._running = False
@@ -244,6 +245,40 @@ class AgentLoop:
                 return tc.name
             return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
         return ", ".join(_fmt(tc) for tc in tool_calls)
+
+    @staticmethod
+    def _extract_exec_command(arguments: Any) -> str | None:
+        """Extract command text from an exec tool-call argument payload."""
+        if isinstance(arguments, dict):
+            command = arguments.get("command")
+            return command if isinstance(command, str) else None
+        return None
+
+    def _tool_call_block_reason(self, tool_name: str, arguments: Any) -> str | None:
+        """Return policy block reason for a tool call, or None when allowed."""
+        if tool_name != "exec":
+            return None
+        if self._gui_config is None:
+            return None
+
+        backend = (self._gui_config.backend or "").strip().lower()
+        if not backend:
+            return None
+
+        command = self._extract_exec_command(arguments)
+        if not command:
+            return None
+
+        # Block cross-platform device bridge binaries when GUI backend is iOS.
+        if backend == "ios":
+            # Match both bare binary names and absolute paths ending with /adb or /hdc.
+            if re.search(r"(^|[\s;&|()])(?:[^\s;&|()]+/)?(?:adb|hdc)(?=\s|$)", command.lower()):
+                return (
+                    "Error: Command blocked by GUI backend policy. "
+                    "Current backend is 'ios', so Android bridge commands (adb/hdc) are not allowed."
+                )
+
+        return None
 
     @staticmethod
     def _format_plan_tree(node: Any, *, indent: int = 0) -> str:
@@ -414,14 +449,23 @@ class AgentLoop:
                 # concurrent sessions don't clobber each other's routing.
                 self._set_tool_context(channel, chat_id, message_id)
 
-                # Execute all tool calls concurrently — the LLM batches
-                # independent calls in a single response on purpose.
-                # return_exceptions=True ensures all results are collected
-                # even if one tool is cancelled or raises BaseException.
-                results = await asyncio.gather(*(
-                    self.tools.execute(tc.name, tc.arguments)
-                    for tc in response.tool_calls
-                ), return_exceptions=True)
+                # Execute tool calls concurrently while applying runtime guardrails.
+                results: list[Any] = [None] * len(response.tool_calls)
+                pending_indices: list[int] = []
+                pending_calls: list[Any] = []
+                for idx, tc in enumerate(response.tool_calls):
+                    block_reason = self._tool_call_block_reason(tc.name, tc.arguments)
+                    if block_reason:
+                        logger.warning("Blocked tool call by policy: {}({})", tc.name, tc.arguments)
+                        results[idx] = block_reason
+                        continue
+                    pending_indices.append(idx)
+                    pending_calls.append(self.tools.execute(tc.name, tc.arguments))
+
+                if pending_calls:
+                    resolved = await asyncio.gather(*pending_calls, return_exceptions=True)
+                    for idx, result in zip(pending_indices, resolved):
+                        results[idx] = result
 
                 for tool_call, result in zip(response.tool_calls, results):
                     if isinstance(result, BaseException):
@@ -727,6 +771,8 @@ class AgentLoop:
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
+        gui_backend = self._gui_config.backend if self._gui_config is not None else None
+
         # System messages: parse origin from chat_id ("channel:chat_id")
         if msg.channel == "system":
             channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
@@ -742,6 +788,7 @@ class AgentLoop:
                 history=history,
                 current_message=msg.content, channel=channel, chat_id=chat_id,
                 current_role=current_role,
+                gui_backend=gui_backend,
             )
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
@@ -776,6 +823,7 @@ class AgentLoop:
         initial_messages = self.context.build_messages(
             history=history,
             current_message=msg.content,
+            gui_backend=gui_backend,
             media=msg.media if msg.media else None,
             channel=msg.channel, chat_id=msg.chat_id,
         )
