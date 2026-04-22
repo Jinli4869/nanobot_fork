@@ -60,6 +60,15 @@ def build_system_prompt(
         "- Some actions may take time to complete, so you may need to wait and observe again.",
         "- Use the latest screenshot as the source of truth.",
         "- Click the center of the intended UI element unless the task clearly requires an edge.",
+        "- When opening apps from home screen, do not rely on icon color alone; prefer exact text labels or app search.",
+        "- After opening an app, verify the foreground page belongs to the target app before continuing.",
+        "- Treat user constraints as tiered constraints: key constraints (date/time/location/price cap/model) must be exact.",
+        "- For size/quantity constraints, prefer exact match; small near-matches may be used only with explicit disclosure in the final response.",
+        "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
+        "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
+        "- For map/metro tasks, do city disambiguation first: if city is not explicitly given, use the current location city.",
+        "- Do not carry city/place assumptions from previous tasks unless the user explicitly says to continue the same context.",
+        "- For words like 'nearby'/'nearest'/'from here', anchor strictly to the current location shown on screen.",
         coordinate_rules,
     ]
 
