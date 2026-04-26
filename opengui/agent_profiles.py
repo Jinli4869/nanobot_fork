@@ -27,6 +27,7 @@ _PROFILE_ALIASES: dict[str | None, str] = {
     None: "default",
     "": "default",
     "planner_executor": "general_e2e",
+    "general_e2e_compact_skill": "general_e2e",
 }
 
 _DEFAULT_SCROLL_PIXELS = 420

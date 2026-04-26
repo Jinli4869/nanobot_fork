@@ -23,11 +23,12 @@ OpenGUI can be used in two ways:
    - [GUI section reference](#gui-section-reference)
    - [Switching backends](#switching-backends)
    - [Platform-specific examples](#platform-specific-examples)
-4. [Planner / Router Integration](#planner--router-integration)
-5. [App List Initialization](#app-list-initialization)
-6. [Memory Store](#memory-store)
-7. [Backends](#backends)
-8. [Skills System](#skills-system)
+4. [Live Demo](#live-demo)
+5. [Planner / Router Integration](#planner--router-integration)
+6. [App List Initialization](#app-list-initialization)
+7. [Memory Store](#memory-store)
+8. [Backends](#backends)
+9. [Skills System](#skills-system)
 
 ---
 
@@ -50,6 +51,12 @@ For the **iOS backend**, install the optional `facebook-wda` dependency:
 
 ```bash
 pip install facebook-wda
+```
+
+For the browser-based live demo, install the demo extras:
+
+```bash
+uv pip install -e ".[web,demo-live]"
 ```
 
 ---
@@ -444,12 +451,14 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `backend` | `"adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
+| `backend` | `"adb"` \| `"scrcpy-adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
 | `model` | `string \| null` | `null` | GUI-only model override; inherits `agents.defaults.model` when omitted |
 | `provider` | `string \| null` | `null` | GUI-only provider override; inherits main-agent provider resolution when omitted |
 | `agentProfile` | `string \| null` | `null` | Prompt/action profile for GUI-only models; defaults to native tool-calling when omitted |
 | `adb.serial` | `string \| null` | `null` | ADB device serial; `null` = auto-detect |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent server URL |
+| `ios.mjpegUrl` | `string` | `"http://127.0.0.1:9100"` | WebDriverAgent MJPEG live stream URL for the demo |
+| `ios.mjpegFrameTimeoutMs` | `int` | `3000` | Timeout while waiting for an iOS MJPEG frame |
 | `hdc.serial` | `string \| null` | `null` | HDC device serial; `null` = auto-detect |
 | `artifactsDir` | `string` | `"gui_runs"` | Directory for screenshots and run logs (relative to workspace) |
 | `maxSteps` | `int` | `15` | Maximum actions per task before giving up |
@@ -471,11 +480,12 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 Change the `backend` field in the `gui` section to switch between device and desktop control:
 
 ```json
-"gui": { "backend": "adb"      }   // Android device via ADB
-"gui": { "backend": "ios"      }   // iOS device via WebDriverAgent
-"gui": { "backend": "hdc"      }   // HarmonyOS device via HDC
-"gui": { "backend": "local"    }   // local desktop (macOS / Linux / Windows)
-"gui": { "backend": "dry-run"  }   // no real actions, for testing
+"gui": { "backend": "adb"        }   // Android device via ADB screenshots/actions
+"gui": { "backend": "scrcpy-adb" }   // Android scrcpy frames + ADB actions
+"gui": { "backend": "ios"        }   // iOS device via WebDriverAgent
+"gui": { "backend": "hdc"        }   // HarmonyOS device via HDC
+"gui": { "backend": "local"      }   // local desktop (macOS / Linux / Windows)
+"gui": { "backend": "dry-run"    }   // no real actions, for testing
 ```
 
 In the standalone CLI, use the `--backend` flag:
@@ -608,7 +618,11 @@ Run `adb devices` to list available serials.
   },
   "gui": {
     "backend": "ios",
-    "ios": { "wdaUrl": "http://localhost:8100" },
+    "ios": {
+      "wdaUrl": "http://localhost:8100",
+      "mjpegUrl": "http://127.0.0.1:9100",
+      "mjpegFrameTimeoutMs": 3000
+    },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
     "enableSkillExecution": true
@@ -621,9 +635,11 @@ Run `adb devices` to list available serials.
 > 2. Build and deploy [WebDriverAgent](https://github.com/appium/WebDriverAgent) onto your device via Xcode
 > 3. Start the WDA server (Xcode test runner or `xcodebuild test-without-building`) — it listens on port `8100` by default
 > 4. Forward the port over USB: `iproxy 8100 8100` (from `libimobiledevice`)
-> 5. Verify the server is reachable: `curl http://localhost:8100/status`
+> 5. Forward the MJPEG stream if needed: `iproxy 9100 9100`
+> 6. Verify the server is reachable: `curl http://localhost:8100/status`
+> 7. Verify the live stream is reachable: open or curl `http://127.0.0.1:9100`
 >
-> If WDA listens on a different host/port, update `wdaUrl` accordingly.
+> If WDA or MJPEG listens on a different host/port, update `wdaUrl` and `mjpegUrl` accordingly.
 
 #### HarmonyOS — HDC
 
@@ -664,6 +680,57 @@ Run `hdc list targets` to list available serials.
 
 ---
 
+## Live Demo
+
+The `demo/` sidecar can show a live device screen while a nanobot run streams
+agent output, `gui_task` tool calls, OpenGUI actions, and final trace metadata.
+Static demo scenarios remain available.
+
+Install the optional demo dependencies:
+
+```bash
+uv pip install -e ".[web,demo-live]"
+```
+
+Start the demo server:
+
+```bash
+uv run python demo/live_server.py --port 18880
+```
+
+Open `http://127.0.0.1:18880`, choose a live platform, then enter a task.
+
+- **Android**: the center screen uses a scrcpy video stream through
+  `py-scrcpy-sdk`; GUI execution uses the selected backend (`adb` by default,
+  or `scrcpy-adb` for scrcpy observations plus ADB actions).
+- **iOS**: the center screen uses WebDriverAgent MJPEG from
+  `gui.ios.mjpegUrl`; GUI execution uses the `ios` backend through WDA.
+
+Example iOS live-demo config:
+
+```json
+{
+  "gui": {
+    "backend": "ios",
+    "ios": {
+      "wdaUrl": "http://localhost:8100",
+      "mjpegUrl": "http://127.0.0.1:9100",
+      "mjpegFrameTimeoutMs": 3000
+    }
+  }
+}
+```
+
+For iOS, start WDA first, forward `8100` for WDA and `9100` for MJPEG when
+using a real device, then verify:
+
+```bash
+curl http://localhost:8100/status
+curl http://127.0.0.1:9100
+```
+
+---
+
 ## Planner / Router Integration
 
 When nanobot decomposes a multi-step task into a plan, it needs to know which GUI route to assign to each GUI subtask. OpenGUI exposes a **route sentinel** per backend that the planner uses to emit correctly-typed plan nodes.
@@ -673,7 +740,7 @@ When nanobot decomposes a multi-step task into a plan, it needs to know which GU
 | Backend | Route sentinel | When it is active |
 |---------|---------------|-------------------|
 | `local` or `dry-run` | `gui.desktop` | Default; local desktop control |
-| `adb` | `gui.adb` | Android device via ADB |
+| `adb` or `scrcpy-adb` | `gui.adb` | Android device via ADB-compatible control |
 | `ios` | `gui.ios` | iOS device via WebDriverAgent |
 | `hdc` | `gui.hdc` | HarmonyOS device via HDC |
 
@@ -681,6 +748,7 @@ The active sentinel is derived from `gui.backend` in your config:
 
 ```
 "backend": "adb"   →  planner emits  route_id = "gui.adb"
+"backend": "scrcpy-adb" → planner emits route_id = "gui.adb"
 "backend": "ios"   →  planner emits  route_id = "gui.ios"
 "backend": "hdc"   →  planner emits  route_id = "gui.hdc"
 "backend": "local" →  planner emits  route_id = "gui.desktop"

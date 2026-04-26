@@ -7,10 +7,17 @@ export function initAgentLog() {
   body = document.querySelector('#agent-log .panel-body');
 
   state.on('agentLog', () => {
-    // When a new scenario loads, clear everything
     body.innerHTML = '';
     renderedCount = 0;
-    showEmptyState();
+    const log = state.get('agentLog');
+    const count = state.get('mode') === 'live'
+      ? log?.entries?.length || 0
+      : state.get('visibleLogCount') || 0;
+    if (count > 0) {
+      renderUpTo(count);
+    } else {
+      showEmptyState();
+    }
   });
 
   state.on('visibleLogCount', (count) => {

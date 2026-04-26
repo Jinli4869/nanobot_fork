@@ -127,6 +127,14 @@ class AdbConfig:
 
 
 @dataclass(slots=True)
+class ScrcpyConfig:
+    max_fps: int = 12
+    jpeg_quality: int = 80
+    frame_timeout_ms: int = 3000
+    max_frame_age_ms: int = 1000
+
+
+@dataclass(slots=True)
 class IosConfig:
     wda_url: str = "http://localhost:8100"
 
@@ -151,6 +159,7 @@ class CliConfig:
     provider: ProviderConfig
     embedding: EmbeddingConfig | None = None
     adb: AdbConfig = field(default_factory=AdbConfig)
+    scrcpy: ScrcpyConfig = field(default_factory=ScrcpyConfig)
     ios: IosConfig = field(default_factory=IosConfig)
     hdc: HdcConfig = field(default_factory=HdcConfig)
     max_steps: int = 15
@@ -257,7 +266,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", dest="task_flag", help="Task description")
     parser.add_argument(
         "--backend",
-        choices=("adb", "ios", "hdc", "local", "dry-run"),
+        choices=("adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"),
         default="local",
         help="Execution backend",
     )
@@ -313,7 +322,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.task_input and not args.task_flag:
         parser.error("task is required via positional input or --task")
-    if args.background and args.backend in ("adb", "ios", "hdc", "dry-run"):
+    if args.background and args.backend in ("adb", "scrcpy-adb", "ios", "hdc", "dry-run"):
         parser.error("--background requires --backend local (or omit --backend)")
     if args.background and args.dry_run:
         parser.error("--background is incompatible with --dry-run")
@@ -389,6 +398,16 @@ def load_config(path: Path | None = None) -> CliConfig:
         adb_path=_optional_string(adb_raw, "adb_path") or "adb",
     )
 
+    scrcpy_raw = raw.get("scrcpy") or {}
+    if not isinstance(scrcpy_raw, dict):
+        raise ValueError("scrcpy config must be a mapping")
+    scrcpy = ScrcpyConfig(
+        max_fps=_coerce_positive_int(scrcpy_raw.get("max_fps"), default=12),
+        jpeg_quality=_coerce_positive_int(scrcpy_raw.get("jpeg_quality"), default=80),
+        frame_timeout_ms=_coerce_positive_int(scrcpy_raw.get("frame_timeout_ms"), default=3000),
+        max_frame_age_ms=_coerce_positive_int(scrcpy_raw.get("max_frame_age_ms"), default=1000),
+    )
+
     ios_raw = raw.get("ios") or {}
     if not isinstance(ios_raw, dict):
         raise ValueError("ios config must be a mapping")
@@ -408,6 +427,7 @@ def load_config(path: Path | None = None) -> CliConfig:
         provider=provider,
         embedding=embedding,
         adb=adb,
+        scrcpy=scrcpy,
         ios=ios,
         hdc=hdc,
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
@@ -422,6 +442,16 @@ def load_config(path: Path | None = None) -> CliConfig:
 def build_backend(name: str, config: CliConfig) -> Any:
     if name == "adb":
         return AdbBackend(serial=config.adb.serial, adb_path=config.adb.adb_path or "adb")
+    if name == "scrcpy-adb":
+        from opengui.backends.scrcpy_adb import ScrcpyAdbBackend
+        return ScrcpyAdbBackend(
+            serial=config.adb.serial,
+            adb_path=config.adb.adb_path or "adb",
+            max_fps=config.scrcpy.max_fps,
+            jpeg_quality=config.scrcpy.jpeg_quality,
+            frame_timeout_ms=config.scrcpy.frame_timeout_ms,
+            max_frame_age_ms=config.scrcpy.max_frame_age_ms,
+        )
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend
         return WdaBackend(wda_url=config.ios.wda_url)
@@ -431,7 +461,9 @@ def build_backend(name: str, config: CliConfig) -> Any:
     if name == "local":
         desktop_backend_cls = LocalDesktopBackend
         if desktop_backend_cls is None:
-            from opengui.backends.desktop import LocalDesktopBackend as desktop_backend_cls
+            from opengui.backends.desktop import LocalDesktopBackend as ImportedLocalDesktopBackend
+
+            desktop_backend_cls = ImportedLocalDesktopBackend
         return desktop_backend_cls()
     if name == "dry-run":
         return DryRunBackend()
@@ -572,7 +604,9 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
 
             probe_fn = runtime_probe_isolated_background_support
         if resolve_fn is None:
-            from opengui.backends.background_runtime import resolve_run_mode as runtime_resolve_run_mode
+            from opengui.backends.background_runtime import (
+                resolve_run_mode as runtime_resolve_run_mode,
+            )
 
             resolve_fn = runtime_resolve_run_mode
         if log_fn is None:
@@ -600,21 +634,27 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
         if decision.mode == "isolated":
             mgr = _build_isolated_display_manager(args, probe)
             if probe.backend_name == "windows_isolated_desktop":
-                isolated_backend_cls = WindowsIsolatedBackend
-                if isolated_backend_cls is None:
+                backend_cls = WindowsIsolatedBackend
+                if backend_cls is None:
                     from opengui.backends.windows_isolated import (
-                        WindowsIsolatedBackend as isolated_backend_cls,  # type: ignore[assignment]
+                        WindowsIsolatedBackend as ImportedWindowsIsolatedBackend,
                     )
-                wrapped_backend = isolated_backend_cls(
+
+                    backend_cls = ImportedWindowsIsolatedBackend
+                wrapped_backend = backend_cls(
                     backend,
                     mgr,
                     run_metadata={"owner": "cli", "task": task},
                 )
             else:
-                bg_cls = BackgroundDesktopBackend
-                if bg_cls is None:
-                    from opengui.backends.background import BackgroundDesktopBackend as bg_cls  # type: ignore[assignment]
-                wrapped_backend = bg_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
+                backend_cls = BackgroundDesktopBackend
+                if backend_cls is None:
+                    from opengui.backends.background import (
+                        BackgroundDesktopBackend as ImportedBackgroundDesktopBackend,
+                    )
+
+                    backend_cls = ImportedBackgroundDesktopBackend
+                wrapped_backend = backend_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
             try:
                 return await _execute_agent(args, config, wrapped_backend, provider, task)
             finally:

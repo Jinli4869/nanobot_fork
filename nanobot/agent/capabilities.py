@@ -144,7 +144,7 @@ class CapabilityCatalogBuilder:
     ) -> CapabilityCatalog:
         """Return planner-facing route summaries for currently usable routes.
 
-        When *gui_backend* is ``"adb"``, the gui_task route is emitted as
+        When *gui_backend* is ``"adb"`` or ``"scrcpy-adb"``, the gui_task route is emitted as
         ``gui.adb`` (targeting the connected Android device via ADB) instead of
         the default ``gui.desktop``.  All other backend values keep the existing
         ``gui.desktop`` route unchanged.
@@ -161,7 +161,7 @@ class CapabilityCatalogBuilder:
                 continue
 
             # Override the GUI route metadata when the active backend is ADB.
-            if tool_name == "gui_task" and gui_backend == "adb":
+            if tool_name == "gui_task" and gui_backend in {"adb", "scrcpy-adb"}:
                 route_id = "gui.adb"
                 kind = "adb"
                 summary = "Use the GUI subagent to operate apps on the connected Android device"

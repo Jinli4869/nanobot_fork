@@ -24,7 +24,7 @@ from nanobot.agent.automation_turns import publish_next_deferred_turn
 from nanobot.agent.capabilities import CapabilityCatalogBuilder, PlanningContext
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.cron_turns import CronTurnCoordinator
-from nanobot.agent.hook import AgentHook, AgentTurnHookFactory
+from nanobot.agent.hook import AgentHook, AgentHookContext, AgentTurnHookFactory
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.planning_memory import PlanningMemoryHintExtractor
 from nanobot.agent.runner import _MAX_INJECTIONS_PER_TURN, AgentRunner, AgentRunSpec
@@ -156,6 +156,37 @@ class TurnContext:
     trace: list[StateTraceEntry] = field(default_factory=list)
 
 
+class _EventCallbackHook(AgentHook):
+    """Bridge runner lifecycle events to demo/live JSON callbacks."""
+
+    def __init__(self, callback: Callable[[dict[str, Any]], Awaitable[None]]) -> None:
+        super().__init__()
+        self._callback = callback
+
+    async def before_execute_tools(self, context: AgentHookContext) -> None:
+        for tool_call in context.tool_calls:
+            await self._callback({
+                "type": "tool_call",
+                "tool": tool_call.name,
+                "arguments": tool_call.arguments,
+                "tool_call_id": tool_call.id,
+            })
+
+    async def after_iteration(self, context: AgentHookContext) -> None:
+        for tool_call, result in zip(context.tool_calls, context.tool_results):
+            await self._callback({
+                "type": "tool_result",
+                "tool": tool_call.name,
+                "tool_call_id": tool_call.id,
+                "result": result,
+            })
+        if context.final_content is not None and context.stop_reason == "completed":
+            await self._callback({
+                "type": "assistant_final",
+                "content": context.final_content,
+            })
+
+
 # ---------------------------------------------------------------------------
 # Complexity assessment tool — used by _needs_planning to decide whether a
 # task should be decomposed via TaskPlanner before execution.
@@ -252,6 +283,8 @@ class AgentLoop:
         gui_config: "GuiConfig | None" = None,
         gui_provider: LLMProvider | None = None,
         gui_model: str | None = None,
+        gui_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        gui_frame_callback: Callable[[bytes, dict[str, Any]], None] | None = None,
         timezone: str | None = None,
         session_ttl_minutes: int = 0,
         consolidation_ratio: float = 0.5,
@@ -329,6 +362,8 @@ class AgentLoop:
         self._gui_config = gui_config
         self._gui_provider = gui_provider
         self._gui_model = gui_model
+        self._gui_event_callback = gui_event_callback
+        self._gui_frame_callback = gui_frame_callback
         self._extra_hooks: list[AgentHook] = hooks or []
         self._hook_factories: list[AgentTurnHookFactory] = hook_factories or []
 
@@ -619,6 +654,8 @@ class AgentLoop:
                     provider=self._gui_provider or self.provider,
                     model=self._gui_model or self.model,
                     workspace=self.workspace,
+                    gui_event_callback=self._gui_event_callback,
+                    gui_frame_callback=self._gui_frame_callback,
                 )
             )
             registered.append("gui_task")
@@ -1232,7 +1269,11 @@ class AgentLoop:
         gui_memory_context = self._load_gui_memory_for_planner()
         # Derive the stable planner route_id from the active backend.
         # "local" maps to "gui.desktop" (not "gui.local"); "dry-run" falls back to "gui.desktop".
-        active_gui_route = f"gui.{gui_backend}" if gui_backend in ("adb", "ios", "hdc", "desktop") else "gui.desktop"
+        active_gui_route = (
+            "gui.adb"
+            if gui_backend == "scrcpy-adb"
+            else f"gui.{gui_backend}" if gui_backend in ("adb", "ios", "hdc", "desktop") else "gui.desktop"
+        )
         planning_context = PlanningContext(
             catalog=catalog,
             memory_hints=memory_hints,
@@ -1551,6 +1592,9 @@ class AgentLoop:
         gui_tool = self.tools.get("gui_task")
         if gui_tool is not None:
             await gui_tool._wait_for_pending_postprocessing()
+            shutdown = getattr(gui_tool, "shutdown", None)
+            if callable(shutdown):
+                await shutdown()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
@@ -1580,6 +1624,7 @@ class AgentLoop:
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
         pending_queue: asyncio.Queue | None = None,
+        hooks: list[AgentHook] | None = None,
         hook_factories: list[AgentTurnHookFactory] | None = None,
     ) -> OutboundMessage | None:
         """Process a system inbound message (e.g. subagent announce)."""
@@ -1643,6 +1688,7 @@ class AgentLoop:
             metadata=msg.metadata,
             session_key=key,
             pending_queue=pending_queue,
+            hooks=hooks,
             hook_factories=hook_factories,
         )
         wall_done = time.time()
@@ -1680,6 +1726,7 @@ class AgentLoop:
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         pending_queue: asyncio.Queue | None = None,
         ephemeral: bool = False,
         run_extra_hooks_for_ephemeral: bool = False,
@@ -1689,6 +1736,9 @@ class AgentLoop:
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         self._refresh_provider_snapshot()
+        event_hooks = list(hooks or [])
+        if on_event is not None:
+            event_hooks.append(_EventCallbackHook(on_event))
 
         if msg.channel == "system":
             return await self._process_system_message(
@@ -1698,6 +1748,7 @@ class AgentLoop:
                 on_stream=on_stream,
                 on_stream_end=on_stream_end,
                 pending_queue=pending_queue,
+                hooks=event_hooks,
                 hook_factories=hook_factories,
             )
 
@@ -1719,7 +1770,7 @@ class AgentLoop:
             pending_queue=pending_queue,
             ephemeral=ephemeral,
             run_extra_hooks_for_ephemeral=run_extra_hooks_for_ephemeral,
-            hooks=list(hooks or []),
+            hooks=event_hooks,
             hook_factories=list(hook_factories or []),
             tools=tools,
         )
@@ -2297,6 +2348,7 @@ class AgentLoop:
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         ephemeral: bool = False,
         _run_extra_hooks_for_ephemeral: bool = False,
         hooks: list[AgentHook] | None = None,
@@ -2322,6 +2374,7 @@ class AgentLoop:
                     "on_progress": on_progress,
                     "on_stream": on_stream,
                     "on_stream_end": on_stream_end,
+                    "on_event": on_event,
                     "ephemeral": ephemeral,
                 }
                 if _run_extra_hooks_for_ephemeral:

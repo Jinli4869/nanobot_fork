@@ -1,0 +1,1032 @@
+--- a/opengui/action.py
++++ b/opengui/action.py
+@@ -210,12 +210,81 @@
+ 
+ def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
+     normalized = dict(payload)
++    _normalize_named_coordinates(normalized)
+     _normalize_compact_path_coordinates(normalized)
+     _normalize_coordinate_pair(normalized, "x", "y")
+     _normalize_coordinate_pair(normalized, "x2", "y2")
++    _normalize_endpoint_only_path_coordinates(normalized)
+     return normalized
+ 
+ 
++def _normalize_endpoint_only_path_coordinates(payload: dict[str, typing.Any]) -> None:
++    """Recover swipe/drag payloads that provide only end-point coordinates.
++
++    Some providers occasionally emit ``x2/y2`` without ``x/y`` for path actions.
++    We synthesize a conservative start point to avoid parser hard-failures.
++    """
++    raw_type = payload.get("action_type") or payload.get("action") or ""
++    action_type = _ACTION_ALIASES.get(str(raw_type).strip().lower(), str(raw_type).strip().lower())
++    if action_type not in {"swipe", "drag"}:
++        return
++    if payload.get("x2") is None or payload.get("y2") is None:
++        return
++    if payload.get("x") is not None and payload.get("y") is not None:
++        return
++
++    try:
++        end_x = float(payload["x2"])
++        end_y = float(payload["y2"])
++    except (TypeError, ValueError):
++        return
++
++    if payload.get("x") is None:
++        payload["x"] = end_x
++    if payload.get("y") is None:
++        # Default to a medium path length in the opposite vertical direction.
++        if end_y >= (_RELATIVE_GRID_MAX / 2):
++            start_y = end_y - 250
++        else:
++            start_y = end_y + 250
++        payload["y"] = max(0.0, min(float(_RELATIVE_GRID_MAX), start_y))
++
++
++def _normalize_named_coordinates(payload: dict[str, typing.Any]) -> None:
++    # General mobile-use style aliases.
++    _normalize_named_coordinate_pair(payload, "coordinate", "x", "y")
++    _normalize_named_coordinate_pair(payload, "start_coordinate", "x", "y")
++    _normalize_named_coordinate_pair(payload, "coordinate2", "x2", "y2")
++    _normalize_named_coordinate_pair(payload, "end_coordinate", "x2", "y2")
++
++    # Accept compact forms like coordinate=[x, y, x2, y2] when all canonical
++    # fields are absent.
++    compact = _coerce_coordinate_sequence(payload.get("coordinate"))
++    if compact is None or len(compact) != 4:
++        return
++    if any(payload.get(key) is not None for key in ("x", "y", "x2", "y2")):
++        return
++    payload["x"], payload["y"], payload["x2"], payload["y2"] = compact
++
++
++def _normalize_named_coordinate_pair(
++    payload: dict[str, typing.Any],
++    source_key: str,
++    primary_key: str,
++    secondary_key: str,
++) -> None:
++    source = payload.get(source_key)
++    items = _coerce_coordinate_sequence(source)
++    if items is None:
++        return
++    if len(items) != 2:
++        return
++    if payload.get(primary_key) in (None, [], ()):
++        payload[primary_key] = items[0]
++    if payload.get(secondary_key) in (None, [], ()):
++        payload[secondary_key] = items[1]
++
++
+ def _normalize_compact_path_coordinates(payload: dict[str, typing.Any]) -> None:
+     primary_items = _coerce_coordinate_sequence(payload.get("x"))
+     if primary_items is None or len(primary_items) != 4:
+@@ -244,8 +313,18 @@
+             if secondary in (None, [], ()):
+                 payload[secondary_key] = primary_items[1]
+ 
+-    if secondary_items is not None and len(secondary_items) == 1:
+-        payload[secondary_key] = secondary_items[0]
++    if secondary_items is not None:
++        if len(secondary_items) == 1:
++            payload[secondary_key] = secondary_items[0]
++        elif len(secondary_items) == 2:
++            # Some providers emit duplicated scalar coordinates as two-item
++            # lists (e.g. y=[957, 957]); collapse them to a single scalar.
++            if secondary_items[0] == secondary_items[1]:
++                payload[secondary_key] = secondary_items[0]
++            # Also accept swapped pair payloads like y=[x, y] when x is absent.
++            elif primary in (None, [], ()):
++                payload[primary_key] = secondary_items[0]
++                payload[secondary_key] = secondary_items[1]
+ 
+ 
+ def _coerce_coordinate_sequence(value: typing.Any) -> tuple[typing.Any, ...] | None:
+@@ -312,6 +391,10 @@
+         raise ActionError(f"Action {action_type!r} requires both 'x' and 'y' coordinates.")
+     if action_type in _XY2_REQUIRED and (x2 is None or y2 is None):
+         raise ActionError(f"Action {action_type!r} requires 'x2' and 'y2' end-point coordinates.")
++    if action_type in _XY2_REQUIRED and x == x2 and y == y2:
++        raise ActionError(
++            f"Action {action_type!r} start and end coordinates must differ."
++        )
+     if action_type == "hotkey" and not key:
+         raise ActionError("Action 'hotkey' requires the 'key' field.")
+     if action_type == "input_text" and text is None:
+
+--- a/opengui/agent_profiles.py
++++ b/opengui/agent_profiles.py
+@@ -91,10 +91,6 @@
+                 },
+             },
+         }
+-    """
+-    MobileWorld general_e2e Agent implementation for mobile automation.
+-    Following: https://github.com/Tongyi-MAI/MobileWorld/blob/main/src/mobile_world/agents/implementations/general_e2e_agent.py
+-    """
+     if profile == "general_e2e":
+         return {
+             "type": "function",
+@@ -123,10 +119,6 @@
+                 },
+             },
+         }
+-    """
+-    Qwen3VL Agent implementation for mobile automation.
+-    Following: https://github.com/Tongyi-MAI/MobileWorld/blob/main/src/mobile_world/agents/implementations/qwen3vl.py
+-    """
+     if profile == "qwen3vl":
+         return {
+             "type": "function",
+@@ -153,10 +145,6 @@
+                 },
+             },
+         }
+-    """
+-    MAI-UI Agent implementation for mobile automation.
+-    Following: https://github.com/Tongyi-MAI/MobileWorld/blob/main/src/mobile_world/agents/implementations/mai_ui_agent.py
+-    """
+     if profile == "mai_ui":
+         return {
+             "type": "function",
+@@ -185,10 +173,6 @@
+                 },
+             },
+         }
+-    """
+-    Gelab Agent implementation for mobile automation.
+-    Following: https://github.com/stepfun-ai/gelab-zero/blob/main/copilot_tools/parser_0920_summary.py
+-    """
+     if profile == "gelab":
+         return {
+             "type": "object",
+@@ -206,10 +190,6 @@
+                 "summary": {"type": "string"},
+             },
+         }
+-    """
+-    Seed Agent implementation from MobileWorld benchmark.
+-    Following: https://github.com/Tongyi-MAI/MobileWorld/blob/main/src/mobile_world/agents/implementations/seed_agent.py
+-    """
+     return {
+         "type": "object",
+         "name": "seed_action",
+
+--- a/opengui/backends/adb.py
++++ b/opengui/backends/adb.py
+@@ -19,6 +19,7 @@
+ import importlib.resources
+ import os
+ import re
++import struct
+ import tempfile
+ import unicodedata
+ import uuid
+@@ -90,6 +91,27 @@
+ )
+ 
+ 
++def _read_png_size(path: Path) -> tuple[int, int] | None:
++    """Return PNG image size from *path* without external dependencies."""
++    try:
++        with path.open("rb") as handle:
++            header = handle.read(24)
++    except OSError:
++        return None
++
++    if len(header) < 24:
++        return None
++    if header[:8] != b"\x89PNG\r\n\x1a\n":
++        return None
++    if header[12:16] != b"IHDR":
++        return None
++
++    width, height = struct.unpack(">II", header[16:24])
++    if width <= 0 or height <= 0:
++        return None
++    return width, height
++
++
+ class AdbError(Exception):
+     """Raised when an adb command fails."""
+ 
+@@ -325,10 +347,15 @@
+         await self._run("shell", "screencap", "-p", _DEVICE_SCREENSHOT_PATH, timeout=timeout)
+         await self._run("pull", _DEVICE_SCREENSHOT_PATH, str(screenshot_path), timeout=timeout)
+ 
+-        (width, height), fg_app = await asyncio.gather(
+-            self._query_screen_size(timeout),
+-            self._query_foreground_app(timeout),
+-        )
++        screenshot_size = _read_png_size(screenshot_path)
++        if screenshot_size is None:
++            (width, height), fg_app = await asyncio.gather(
++                self._query_screen_size(timeout),
++                self._query_foreground_app(timeout),
++            )
++        else:
++            width, height = screenshot_size
++            fg_app = await self._query_foreground_app(timeout)
+ 
+         self._screen_width = width
+         self._screen_height = height
+
+--- a/opengui/backends/hdc.py
++++ b/opengui/backends/hdc.py
+@@ -15,6 +15,7 @@
+ import asyncio
+ import math
+ import re
++import struct
+ from pathlib import Path
+ 
+ from opengui.action import Action, describe_action, resolve_coordinate
+@@ -60,6 +61,27 @@
+     "com.huawei.hmos.filemanager",
+     "com.huawei.hmos.browser",
+ ]
++
++
++def _read_png_size(path: Path) -> tuple[int, int] | None:
++    """Return PNG image size from *path* without external dependencies."""
++    try:
++        with path.open("rb") as handle:
++            header = handle.read(24)
++    except OSError:
++        return None
++
++    if len(header) < 24:
++        return None
++    if header[:8] != b"\x89PNG\r\n\x1a\n":
++        return None
++    if header[12:16] != b"IHDR":
++        return None
++
++    width, height = struct.unpack(">II", header[16:24])
++    if width <= 0 or height <= 0:
++        return None
++    return width, height
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -256,11 +278,16 @@
+ 
+         await asyncio.to_thread(_convert)
+ 
+-        # --- Screen size + foreground app in parallel ---
+-        (width, height), fg_app = await asyncio.gather(
+-            self._query_screen_size(timeout),
+-            self._query_foreground_app(timeout),
+-        )
++        screenshot_size = _read_png_size(screenshot_path)
++        if screenshot_size is None:
++            # --- Screen size + foreground app in parallel ---
++            (width, height), fg_app = await asyncio.gather(
++                self._query_screen_size(timeout),
++                self._query_foreground_app(timeout),
++            )
++        else:
++            width, height = screenshot_size
++            fg_app = await self._query_foreground_app(timeout)
+ 
+         self._screen_width = width
+         self._screen_height = height
+@@ -283,8 +310,7 @@
+             match = _RENDER_SERVICE_RE.search(output)
+             if match:
+                 w, h = int(match.group(1)), int(match.group(2))
+-                # Ensure portrait orientation (swap if landscape dump)
+-                return (min(w, h), max(w, h))
++                return w, h
+         except (HdcError, TimeoutError):
+             pass
+         return self._screen_width, self._screen_height
+
+--- a/opengui/backends/ios_wda.py
++++ b/opengui/backends/ios_wda.py
+@@ -170,6 +170,13 @@
+ 
+         # Persist screenshot as PNG.
+         screenshot_img.save(str(screenshot_path), format="PNG")
++        screenshot_size: tuple[int, int] | None = None
++        raw_size = getattr(screenshot_img, "size", None)
++        if isinstance(raw_size, (tuple, list)) and len(raw_size) >= 2:
++            shot_w = int(raw_size[0])
++            shot_h = int(raw_size[1])
++            if shot_w > 0 and shot_h > 0:
++                screenshot_size = shot_w, shot_h
+ 
+         # Unpack window dimensions (wda may return a namedtuple or dict).
+         if hasattr(window_size, "width") and hasattr(window_size, "height"):
+@@ -182,6 +189,17 @@
+         else:
+             width, height = self._screen_width, self._screen_height
+             logger.warning("Unexpected window_size format %r; using cached %dx%d", window_size, width, height)
++
++        if screenshot_size is not None:
++            shot_w, shot_h = screenshot_size
++            window_is_landscape = width > height
++            screenshot_is_landscape = shot_w > shot_h
++            if (
++                width != height
++                and shot_w != shot_h
++                and window_is_landscape != screenshot_is_landscape
++            ):
++                width, height = height, width
+ 
+         self._screen_width = width
+         self._screen_height = height
+
+--- a/opengui/cli.py
++++ b/opengui/cli.py
+@@ -155,6 +155,7 @@
+     hdc: HdcConfig = field(default_factory=HdcConfig)
+     max_steps: int = 15
+     stagnation_limit: int = 0
++    image_scale_ratio: float = 0.5
+     memory_dir: Path | None = None
+     skills_dir: Path | None = None
+     agent_profile: str | None = None
+@@ -206,10 +207,22 @@
+                 )
+             )
+ 
++        usage_obj = getattr(response, "usage", None)
++        usage: dict[str, int] = (
++            {
++                "prompt_tokens": getattr(usage_obj, "prompt_tokens", 0) or 0,
++                "completion_tokens": getattr(usage_obj, "completion_tokens", 0) or 0,
++                "total_tokens": getattr(usage_obj, "total_tokens", 0) or 0,
++            }
++            if usage_obj is not None
++            else {}
++        )
++
+         return LLMResponse(
+             content=_coerce_message_content(message.content),
+             tool_calls=parsed_tool_calls or None,
+             raw=response,
++            usage=usage,
+         )
+ 
+ 
+@@ -399,6 +412,7 @@
+         hdc=hdc,
+         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
+         stagnation_limit=_coerce_non_negative_int(raw.get("stagnation_limit"), default=0),
++        image_scale_ratio=_coerce_image_scale_ratio(raw.get("image_scale_ratio"), default=0.5),
+         memory_dir=_optional_path(raw.get("memory_dir")),
+         skills_dir=_optional_path(raw.get("skills_dir")),
+         agent_profile=_optional_string(raw, "agent_profile"),
+@@ -450,7 +464,10 @@
+         merge_llm=provider,
+         embedding_signature=config.embedding.model,
+     )
+-    state_validator = LLMStateValidator(provider)
++    state_validator = LLMStateValidator(
++        provider,
++        image_scale_ratio=config.image_scale_ratio,
++    )
+     skill_executor = SkillExecutor(
+         backend=backend,
+         state_validator=state_validator,
+@@ -458,6 +475,7 @@
+             llm=provider,
+             model=model_name,
+             agent_profile=config.agent_profile,
++            image_scale_ratio=config.image_scale_ratio,
+         ),
+         subgoal_runner=_AgentSubgoalRunner(
+             llm=provider,
+@@ -467,6 +485,7 @@
+             artifacts_root=artifacts_root,
+             agent_profile=config.agent_profile,
+             step_timeout=30.0,
++            image_scale_ratio=config.image_scale_ratio,
+         ),
+         screenshot_provider=_AgentScreenshotProvider(
+             backend=backend,
+@@ -526,6 +545,7 @@
+         installed_apps=installed_apps,
+         intervention_handler=_build_intervention_handler(backend),
+         agent_profile=args.agent_profile or config.agent_profile,
++        image_scale_ratio=config.image_scale_ratio,
+         stagnation_limit=config.stagnation_limit,
+     )
+     return await agent.run(task)
+@@ -807,6 +827,18 @@
+     except (TypeError, ValueError) as exc:
+         raise ValueError(f"Expected non-negative integer, got {value!r}") from exc
+     return parsed if parsed >= 0 else default
++
++
++def _coerce_image_scale_ratio(value: Any, *, default: float) -> float:
++    if value in (None, ""):
++        return default
++    try:
++        parsed = float(value)
++    except (TypeError, ValueError) as exc:
++        raise ValueError(f"Expected image_scale_ratio in (0, 1], got {value!r}") from exc
++    if not (0 < parsed <= 1):
++        raise ValueError(f"Expected image_scale_ratio in (0, 1], got {value!r}")
++    return parsed
+ 
+ 
+ if __name__ == "__main__":
+
+--- a/opengui/interfaces.py
++++ b/opengui/interfaces.py
+@@ -36,6 +36,8 @@
+     tool_calls: list[ToolCall] | None = None
+     raw: typing.Any = dataclasses.field(default=None, compare=False)
+     usage: dict[str, int] = dataclasses.field(default_factory=dict, compare=False)
++    ttft_s: float | None = dataclasses.field(default=None, compare=False)
++    latency_s: float | None = dataclasses.field(default=None, compare=False)
+ 
+ 
+ @dataclasses.dataclass(frozen=True)
+
+--- a/opengui/postprocessing.py
++++ b/opengui/postprocessing.py
+@@ -37,7 +37,54 @@
+ 
+ DEFAULT_EVALUATION_FILENAME = "evaluation.json"
+ 
++# Error strings (or prefixes) on the trajectory's final `result` event that
++# indicate the run was cut short by a detector or infrastructure fault rather
++# than reaching a meaningful outcome. These trajectories are excluded from
++# skill extraction to avoid polluting the library with noise.
++_ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
++    "stagnation_detected",     # opengui/agent.py — SSIM-detected repeat action/screen
++    "step_timeout",            # opengui/agent.py — per-step timeout
++    "intervention_cancelled",  # opengui/agent.py — human intervention cancelled (prefix)
++)
+ 
++
++def _load_trajectory_result(trace_path: Path) -> dict[str, Any] | None:
++    """Return the final `result` event from a trajectory JSONL, or None."""
++    import json
++
++    try:
++        with open(trace_path, "r", encoding="utf-8") as f:
++            last: dict[str, Any] | None = None
++            for line in f:
++                line = line.strip()
++                if not line:
++                    continue
++                try:
++                    event = json.loads(line)
++                except json.JSONDecodeError:
++                    continue
++                if isinstance(event, dict) and event.get("type") == "result":
++                    last = event
++            return last
++    except OSError:
++        return None
++
++
++def _is_abnormal_termination(result_event: dict[str, Any]) -> bool:
++    """True if the trajectory was cut short by a detector/infra fault."""
++    error = result_event.get("error")
++    total_steps = result_event.get("total_steps") or 0
++    # Preflight errors never execute a step; `error` is an arbitrary exception string.
++    if total_steps == 0 and error:
++        return True
++    if not isinstance(error, str):
++        return False
++    return any(
++        error == prefix or error.startswith(prefix + ":")
++        for prefix in _ABNORMAL_TERMINATION_PREFIXES
++    )
++
++
+ @dataclass
+ class EvaluationConfig:
+     """Mirrors the evaluation subset of the host config."""
+@@ -162,6 +209,28 @@
+             logger.info("Skipping skill extraction: disabled")
+             return None
+         if not trace_path.exists():
++            return None
++
++        # Skip runs cut short by a detector or infra fault — stagnation (repeat
++        # action/screen), step timeout, intervention cancel, preflight error.
++        result_event = _load_trajectory_result(trace_path)
++        if result_event is not None and _is_abnormal_termination(result_event):
++            reason = result_event.get("error")
++            logger.info(
++                "Skipping skill extraction for abnormally-terminated trajectory "
++                "(reason=%s, total_steps=%s): %s",
++                reason,
++                result_event.get("total_steps"),
++                trace_path,
++            )
++            self._write_extraction_result(trace_path, {
++                "status": "skipped_abnormal",
++                "trace": str(trace_path),
++                "is_success": is_success,
++                "platform": platform,
++                "reason": reason,
++                "total_steps": result_event.get("total_steps"),
++            })
+             return None
+ 
+         from opengui.skills.extractor import SkillExtractor
+
+--- a/opengui/prompts/system.py
++++ b/opengui/prompts/system.py
+@@ -60,6 +60,12 @@
+         "- Some actions may take time to complete, so you may need to wait and observe again.",
+         "- Use the latest screenshot as the source of truth.",
+         "- Click the center of the intended UI element unless the task clearly requires an edge.",
++        "- When opening apps from home screen, do not rely on icon color alone; prefer exact text labels or app search.",
++        "- After opening an app, verify the foreground page belongs to the target app before continuing.",
++        "- Treat user constraints as tiered constraints: key constraints (date/time/location/price cap/model) must be exact.",
++        "- For size/quantity constraints, prefer exact match; small near-matches may be used only with explicit disclosure in the final response.",
++        "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
++        "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
+         coordinate_rules,
+     ]
+ 
+
+--- a/opengui/skills/executor.py
++++ b/opengui/skills/executor.py
+@@ -190,22 +190,36 @@
+ 
+ Expected state: {valid_state}
+ 
+-Respond with ONLY a JSON object: {{"valid": true/false, "reason": "one-line"}}
++Respond with ONLY a JSON object: {{"valid": true/false}}
+ """
+ 
+ 
+ class LLMStateValidator:
+     """Validate screen state using a vision LLM."""
+ 
+-    def __init__(self, llm: LLMProvider) -> None:
++    def __init__(self, llm: LLMProvider, image_scale_ratio: float = 0.5) -> None:
+         self._llm = llm
++        self._image_scale_ratio = _normalize_image_scale_ratio(image_scale_ratio)
+         self._usage_accum: dict[str, int] = {}
++        self._ttft_samples: list[float] = []
++        self._latency_samples: list[float] = []
+ 
+     def drain_usage(self) -> dict[str, int]:
+         """Return accumulated token usage since last drain and reset the counter."""
+         usage = dict(self._usage_accum)
+         self._usage_accum.clear()
+         return usage
++
++    def drain_timings(self) -> dict[str, float]:
++        """Return mean ttft_s / chat_latency_s across samples and reset."""
++        out: dict[str, float] = {}
++        if self._ttft_samples:
++            out["ttft_s"] = sum(self._ttft_samples) / len(self._ttft_samples)
++        if self._latency_samples:
++            out["chat_latency_s"] = sum(self._latency_samples) / len(self._latency_samples)
++        self._ttft_samples.clear()
++        self._latency_samples.clear()
++        return out
+ 
+     async def validate(
+         self,
+@@ -222,7 +236,9 @@
+         prompt = _VALIDATION_PROMPT.format(valid_state=valid_state)
+ 
+         raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
+-        image_data = base64.b64encode(_scale_image_half(raw)).decode()
++        image_data = base64.b64encode(
++            _scale_image(raw, scale_ratio=self._image_scale_ratio)
++        ).decode()
+         content: list[dict[str, Any]] = [
+             {"type": "text", "text": prompt},
+             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}},
+@@ -237,6 +253,10 @@
+ 
+         for k, v in (response.usage or {}).items():
+             self._usage_accum[k] = self._usage_accum.get(k, 0) + v
++        if getattr(response, "ttft_s", None) is not None:
++            self._ttft_samples.append(response.ttft_s)
++        if getattr(response, "latency_s", None) is not None:
++            self._latency_samples.append(response.latency_s)
+         return self._parse_response(response.content)
+ 
+     @staticmethod
+@@ -269,17 +289,36 @@
+     return any(hint in lowered for hint in skip_hints)
+ 
+ 
+-def _scale_image_half(data: bytes) -> bytes:
+-    """Return *data* scaled to 1/2 width and height as PNG bytes.
++def _normalize_image_scale_ratio(scale_ratio: float | None) -> float:
++    """Normalize user-provided image scaling ratio to a safe range."""
++    if scale_ratio is None:
++        return 0.5
++    try:
++        value = float(scale_ratio)
++    except (TypeError, ValueError):
++        return 0.5
++    if value <= 0:
++        return 0.5
++    return min(1.0, value)
+ 
++
++def _scale_image(data: bytes, *, scale_ratio: float = 0.5) -> bytes:
++    """Return *data* scaled by *scale_ratio* as PNG bytes.
++
+     Falls back to the original bytes if PIL is unavailable or the image cannot
+     be decoded (e.g. non-PNG/JPEG formats the LLM provider may still accept).
+     """
++    scale_ratio = _normalize_image_scale_ratio(scale_ratio)
++    if scale_ratio >= 1.0:
++        return data
+     try:
+         from PIL import Image
+         with Image.open(io.BytesIO(data)) as img:
+             w, h = img.size
+-            scaled = img.resize((max(1, w // 2), max(1, h // 2)), Image.LANCZOS)
++            scaled = img.resize(
++                (max(1, int(w * scale_ratio)), max(1, int(h * scale_ratio))),
++                Image.LANCZOS,
++            )
+             buf = io.BytesIO()
+             scaled.save(buf, format="PNG")
+             return buf.getvalue()
+@@ -287,6 +326,11 @@
+         return data
+ 
+ 
++def _scale_image_half(data: bytes) -> bytes:
++    """Backward-compatible helper for existing call sites."""
++    return _scale_image(data, scale_ratio=0.5)
++
++
+ # ---------------------------------------------------------------------------
+ # Parameter grounding helpers
+ # ---------------------------------------------------------------------------
+@@ -681,6 +725,12 @@
+     def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
+         if self.trajectory_recorder is None:
+             return
++        timings: dict[str, float] = {}
++        for src in (self.action_grounder, self.state_validator):
++            drain = getattr(src, "drain_timings", None)
++            if callable(drain):
++                for k, v in drain().items():
++                    timings.setdefault(k, v)
+         self.trajectory_recorder.record_event(
+             "skill_step",
+             skill_id=skill.skill_id,
+@@ -700,6 +750,8 @@
+             duration_s=round(step_result.duration_s, 3) if step_result.duration_s else None,
+             validate_duration_s=round(step_result.validate_duration_s, 3) if step_result.validate_duration_s is not None else None,
+             grounding_duration_s=round(step_result.grounding_duration_s, 3) if step_result.grounding_duration_s is not None else None,
++            chat_latency_s=round(timings["chat_latency_s"], 3) if "chat_latency_s" in timings else None,
++            ttft_s=round(timings["ttft_s"], 3) if "ttft_s" in timings else None,
+         )
+ 
+     async def _validate_state(
+
+--- a/opengui/skills/reuser.py
++++ b/opengui/skills/reuser.py
+@@ -45,7 +45,7 @@
+ Can this skill fully complete, or be a valid preceding sub-sequence for, the task above?
+ If the task dosen't contain any app-specific requirement, return false to avoid false positives.
+ 
+-Reply with JSON only: {{"applicable": true/false, "reason": "one line"}}
++Reply with JSON only: {{"applicable": true/false}}
+ """
+ 
+ 
+
+--- a/opengui/trajectory/recorder.py
++++ b/opengui/trajectory/recorder.py
+@@ -130,6 +130,8 @@
+         phase: ExecutionPhase | None = None,
+         token_usage: dict[str, int] | None = None,
+         duration_s: float | None = None,
++        chat_latency_s: float | None = None,
++        ttft_s: float | None = None,
+     ) -> None:
+         """Record one agent step.
+ 
+@@ -189,6 +191,10 @@
+             event["token_usage"] = token_usage
+         if duration_s is not None:
+             event["duration_s"] = round(duration_s, 3)
++        if chat_latency_s is not None:
++            event["chat_latency_s"] = round(chat_latency_s, 3)
++        if ttft_s is not None:
++            event["ttft_s"] = round(ttft_s, 3)
+ 
+         self._write_event(event)
+         self._step_count += 1
+
+--- a/opengui/agent.py
++++ b/opengui/agent.py
+@@ -46,6 +46,22 @@
+ from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
+ 
+ logger = logging.getLogger(__name__)
++_DONE_FAILURE_HINTS: tuple[str, ...] = (
++    "fail",
++    "failed",
++    "failure",
++    "unable",
++    "cannot",
++    "can't",
++    "error",
++    "not completed",
++    "incomplete",
++    "失败",
++    "无法",
++    "不能",
++    "错误",
++    "未完成",
++)
+ 
+ 
+ # ---------------------------------------------------------------------------
+@@ -70,6 +86,8 @@
+     done: bool = False
+     step_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+     duration_s: float = 0.0
++    chat_latency_s: float | None = None
++    ttft_s: float | None = None
+ 
+ 
+ @dataclass(frozen=True)
+@@ -232,17 +250,36 @@
+ 
+     _MAX_RETRIES = 2
+ 
+-    def __init__(self, llm: LLMProvider, model: str, agent_profile: str | None = None) -> None:
++    def __init__(
++        self,
++        llm: LLMProvider,
++        model: str,
++        agent_profile: str | None = None,
++        image_scale_ratio: float = 0.5,
++    ) -> None:
+         self._llm = llm
+         self._model = model
+         self._agent_profile = canonicalize_agent_profile(agent_profile)
++        self._image_scale_ratio = image_scale_ratio
+         self._usage_accum: dict[str, int] = {}
++        self._ttft_samples: list[float] = []
++        self._latency_samples: list[float] = []
+ 
+     def drain_usage(self) -> dict[str, int]:
+         """Return accumulated token usage since last drain and reset the counter."""
+         usage = dict(self._usage_accum)
+         self._usage_accum.clear()
+         return usage
++
++    def drain_timings(self) -> dict[str, float]:
++        out: dict[str, float] = {}
++        if self._ttft_samples:
++            out["ttft_s"] = sum(self._ttft_samples) / len(self._ttft_samples)
++        if self._latency_samples:
++            out["chat_latency_s"] = sum(self._latency_samples) / len(self._latency_samples)
++        self._ttft_samples.clear()
++        self._latency_samples.clear()
++        return out
+ 
+     async def ground(
+         self,
+@@ -268,9 +305,11 @@
+             f"  target: {target}{extra_ctx}\n\n"
+             f"{self._profile_response_instruction(target_action=step.action_type)}"
+         )
+-        from opengui.skills.executor import _scale_image_half
++        from opengui.skills.executor import _scale_image
+         raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
+-        image_data = base64.b64encode(_scale_image_half(raw)).decode()
++        image_data = base64.b64encode(
++            _scale_image(raw, scale_ratio=self._image_scale_ratio)
++        ).decode()
+ 
+         messages: list[dict[str, Any]] = [{
+             "role": "user",
+@@ -295,6 +334,10 @@
+ 
+             for k, v in (response.usage or {}).items():
+                 self._usage_accum[k] = self._usage_accum.get(k, 0) + v
++            if getattr(response, "ttft_s", None) is not None:
++                self._ttft_samples.append(response.ttft_s)
++            if getattr(response, "latency_s", None) is not None:
++                self._latency_samples.append(response.latency_s)
+ 
+             try:
+                 response = normalize_profile_response(self._agent_profile, response)
+@@ -369,6 +412,7 @@
+         trajectory_recorder: TrajectoryRecorder | None = None,
+         agent_profile: str | None = None,
+         step_timeout: float = 30.0,
++        image_scale_ratio: float = 0.5,
+     ) -> None:
+         self._llm = llm
+         self._backend = backend
+@@ -379,6 +423,7 @@
+         self._step_counter = 0
+         self._agent_profile = canonicalize_agent_profile(agent_profile)
+         self._step_timeout = step_timeout
++        self._image_scale_ratio = image_scale_ratio
+ 
+     async def run_subgoal(
+         self,
+@@ -416,9 +461,11 @@
+                 f"closer to the sub-goal. {self._profile_subgoal_instruction()}"
+             )
+ 
+-            from opengui.skills.executor import _scale_image_half
++            from opengui.skills.executor import _scale_image
+             img_bytes = current_screenshot.read_bytes() if isinstance(current_screenshot, Path) else current_screenshot
+-            image_data = base64.b64encode(_scale_image_half(img_bytes)).decode()
++            image_data = base64.b64encode(
++                _scale_image(img_bytes, scale_ratio=self._image_scale_ratio)
++            ).decode()
+ 
+             messages: list[dict[str, Any]] = [{
+                 "role": "user",
+@@ -836,6 +883,7 @@
+         policy_context: str | None = None,
+         memory_store: Any = None,
+         agent_profile: str | None = None,
++        image_scale_ratio: float = 0.5,
+         stagnation_limit: int = 0,
+     ) -> None:
+         self.llm = llm
+@@ -864,6 +912,7 @@
+         self._intervention_handler = intervention_handler
+         self._memory_store = memory_store
+         self._active_retry_summaries: tuple[str, ...] = ()
++        self._image_scale_ratio = image_scale_ratio
+         try:
+             parsed_stagnation_limit = int(stagnation_limit)
+         except (TypeError, ValueError):
+@@ -1321,6 +1370,8 @@
+                 ),
+                 token_usage=result.step_usage or None,
+                 duration_s=result.duration_s or None,
++                chat_latency_s=result.chat_latency_s,
++                ttft_s=result.ttft_s,
+             )
+ 
+             if intervention_cancelled:
+@@ -1349,7 +1400,7 @@
+                 )
+ 
+             if result.done:
+-                success = result.action.status == "success"
++                success = self._resolve_done_status(result.action) == "success"
+                 return AgentResult(
+                     success=success,
+                     summary=(
+@@ -1520,6 +1571,8 @@
+         _step_start = time.monotonic()
+         retries_left = self._MAX_TOOL_RETRIES + 1
+         step_usage: dict[str, int] = {}
++        step_chat_latency_s: float = 0.0
++        step_ttft_s: float | None = None
+ 
+         while retries_left > 0:
+             retries_left -= 1
+@@ -1533,6 +1586,10 @@
+             )
+             for k, v in (response.usage or {}).items():
+                 step_usage[k] = step_usage.get(k, 0) + v
++            if response.latency_s is not None:
++                step_chat_latency_s += response.latency_s
++            if step_ttft_s is None and response.ttft_s is not None:
++                step_ttft_s = response.ttft_s
+             raw_response_snapshot = self._snapshot_failed_model_response(response)
+ 
+             try:
+@@ -1622,7 +1679,10 @@
+ 
+             # Handle terminal action (done)
+             if action.action_type == "done":
+-                tool_result = f"Task terminated with status: {action.status or 'unknown'}"
++                done_status = self._resolve_done_status(action)
++                if action.status != done_status:
++                    action = replace(action, status=done_status)
++                tool_result = f"Task terminated with status: {done_status}"
+                 return StepResult(
+                     action=action,
+                     tool_call_id=tool_call.id,
+@@ -1639,6 +1699,8 @@
+                     done=True,
+                     step_usage=step_usage,
+                     duration_s=time.monotonic() - _step_start,
++                    chat_latency_s=step_chat_latency_s or None,
++                    ttft_s=step_ttft_s,
+                 )
+ 
+             if action.action_type == "request_intervention":
+@@ -1658,6 +1720,8 @@
+                     intervention_requested=True,
+                     step_usage=step_usage,
+                     duration_s=time.monotonic() - _step_start,
++                    chat_latency_s=step_chat_latency_s or None,
++                    ttft_s=step_ttft_s,
+                 )
+ 
+             # Normalize app name to package name for Android open/close
+@@ -1710,6 +1774,8 @@
+                 },
+                 step_usage=step_usage,
+                 duration_s=time.monotonic() - _step_start,
++                chat_latency_s=step_chat_latency_s or None,
++                ttft_s=step_ttft_s,
+             )
+ 
+         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
+@@ -2209,10 +2275,23 @@
+         return action_text.strip()
+ 
+     @staticmethod
+-    def _image_block(path: Path) -> dict[str, Any]:
++    def _resolve_done_status(action: Action) -> str:
++        """Resolve terminal status for done actions with safe fallback rules."""
++        if action.status in {"success", "failure"}:
++            return action.status
++        text = (action.text or "").strip().lower()
++        if any(hint in text for hint in _DONE_FAILURE_HINTS):
++            return "failure"
++        # Missing status is common for some providers; default to success so
++        # we do not retry already-completed tasks.
++        return "success"
++
++    def _image_block(self, path: Path) -> dict[str, Any]:
+         """Create a base64 image content block for an LLM message."""
+-        from opengui.skills.executor import _scale_image_half
+-        b64 = base64.b64encode(_scale_image_half(path.read_bytes())).decode()
++        from opengui.skills.executor import _scale_image
++        b64 = base64.b64encode(
++            _scale_image(path.read_bytes(), scale_ratio=self._image_scale_ratio)
++        ).decode()
+         return {
+             "type": "image_url",
+             "image_url": {"url": f"data:image/png;base64,{b64}"},
+@@ -2515,6 +2594,14 @@
+             return None
+ 
+         if self._skill_library is None:
++            self._trajectory_recorder.record_event(
++                "skill_search",
++                task=task,
++                source="none",
++                matched=False,
++                reason="no_library",
++                threshold=self._skill_threshold,
++            )
+             return None
+         from opengui.skills.data import compute_confidence
+ 
+@@ -2522,12 +2609,44 @@
+             task, platform=self.backend.platform, top_k=1,
+         )
+         if not search_results:
++            self._trajectory_recorder.record_event(
++                "skill_search",
++                task=task,
++                source="legacy",
++                matched=False,
++                reason="no_results",
++                threshold=self._skill_threshold,
++            )
+             return None
+         skill, relevance = search_results[0]
+         confidence = compute_confidence(skill)
+         final_score = relevance
+         if final_score >= self._skill_threshold:
++            self._trajectory_recorder.record_event(
++                "skill_search",
++                task=task,
++                source="legacy",
++                matched=True,
++                skill_id=skill.skill_id,
++                skill_name=skill.name,
++                score=round(final_score, 4),
++                confidence=round(confidence, 4),
++                relevance=round(relevance, 4),
++                threshold=self._skill_threshold,
++            )
+             return (skill, final_score)
++        self._trajectory_recorder.record_event(
++            "skill_search",
++            task=task,
++            source="legacy",
++            matched=False,
++            reason="below_threshold",
++            skill_name=skill.name,
++            score=round(final_score, 4),
++            confidence=round(confidence, 4),
++            relevance=round(relevance, 4),
++            threshold=self._skill_threshold,
++        )
+         return None
+ 
+     async def _inject_skill_memory_context(

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 class ExecutionPhase(str, Enum):
@@ -49,6 +49,7 @@ class TrajectoryRecorder:
     output_dir: Path
     task: str
     platform: str = "unknown"
+    event_callback: Callable[[dict[str, Any]], None] | None = None
 
     _path: Path | None = field(default=None, init=False, repr=False)
     _step_count: int = field(default=0, init=False, repr=False)
@@ -230,3 +231,5 @@ class TrajectoryRecorder:
             raise RuntimeError("Recorder not started; call start() first")
         with open(self._path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
+        if self.event_callback is not None:
+            self.event_callback(dict(event))

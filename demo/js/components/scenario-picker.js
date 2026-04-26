@@ -80,6 +80,7 @@ export function initScenarioPicker() {
         </div>
       `;
       card.onclick = () => {
+        state.set('mode', 'static');
         state.set('currentScenario', sc.id);
         closePanel();
       };
@@ -87,7 +88,7 @@ export function initScenarioPicker() {
     });
 
     // Auto-select first scenario
-    if (platform.scenarios.length) {
+    if (platform.scenarios.length && state.get('mode') !== 'live') {
       const current = state.get('currentScenario');
       if (!current || !platform.scenarios.find(s => s.id === current)) {
         state.set('currentScenario', platform.scenarios[0].id);
