@@ -145,7 +145,14 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
 
     assert tool.name == "gui_task"
     assert tool.parameters["required"] == ["task"]
-    assert tool.parameters["properties"]["backend"]["enum"] == ["adb", "ios", "hdc", "local", "dry-run"]
+    assert tool.parameters["properties"]["backend"]["enum"] == [
+        "adb",
+        "scrcpy-adb",
+        "ios",
+        "hdc",
+        "local",
+        "dry-run",
+    ]
     definitions = registry.get_definitions()
     assert any(defn["function"]["name"] == tool.name for defn in definitions)
     assert tool.description
@@ -582,8 +589,8 @@ async def test_execute_creates_fresh_trajectory_recorder(
     tmp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from opengui.agent import AgentResult
     from nanobot.agent.tools.gui import GuiSubagentTool
+    from opengui.agent import AgentResult
 
     recorder_ids: list[int] = []
 

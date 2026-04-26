@@ -165,6 +165,10 @@
   50% { opacity: 0; }
 }
 
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 /* Screenshot crossfade */
 .screenshot-enter {
   animation: screenshotFadeIn 400ms ease forwards;

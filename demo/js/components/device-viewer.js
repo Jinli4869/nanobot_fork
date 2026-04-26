@@ -6,6 +6,8 @@ let containerEl = null;
 let frameEl = null;
 let badgeEl = null;
 let currentScreenshotSrc = null;
+let renderedActionKey = null;
+let overlayToken = 0;
 
 export function initDeviceViewer() {
   const panel = document.querySelector('#device-viewer .panel-body');
@@ -37,7 +39,7 @@ export function initDeviceViewer() {
       currentScreenshotSrc = null;
       imgEl.removeAttribute('src');
       imgEl.style.opacity = '0';
-      overlayEl.innerHTML = '';
+      clearActionOverlay();
       badgeEl.textContent = '';
       return;
     }
@@ -48,11 +50,17 @@ export function initDeviceViewer() {
   state.on('pendingActionStep', renderStep);
   state.on('playbackPhase', renderStep);
   state.on('isPlaying', renderStep);
+  state.on('liveFrameUrl', renderLiveFrame);
+  state.on('mode', (mode) => {
+    if (mode === 'live' && !state.get('liveFrameUrl')) {
+      renderLivePlaceholder();
+    }
+  });
 }
 
 function updateDeviceType() {
   const traj = state.get('trajectory');
-  if (!traj) return;
+  if (!traj?.metadata) return;
   const { screen_width, screen_height } = traj.metadata;
   const isPortrait = screen_height > screen_width;
   const isDesktop = traj.metadata.platform === 'macos' ||
@@ -64,7 +72,14 @@ function updateDeviceType() {
 
 function renderStep(stepIdx) {
   const traj = state.get('trajectory');
-  if (!traj || !traj.steps.length) return;
+  if (!traj || !traj.steps.length) {
+    const liveUrl = state.get('liveFrameUrl');
+    if (state.get('mode') === 'live') {
+      if (liveUrl) renderLiveFrame(liveUrl);
+      else renderLivePlaceholder();
+    }
+    return;
+  }
 
   const displayedStepIdx = Math.max(0, Math.min(
     state.get('displayedStep') ?? stepIdx ?? 0,
@@ -74,6 +89,11 @@ function renderStep(stepIdx) {
   const previewStepIdx = state.get('pendingActionStep');
   const isPreview = state.get('playbackPhase') === 'action-preview' && previewStepIdx != null;
   const previewStep = isPreview ? traj.steps[previewStepIdx] : null;
+
+  if (state.get('mode') === 'live' && state.get('liveFrameUrl')) {
+    renderLiveFrame(state.get('liveFrameUrl'));
+    return;
+  }
 
   badgeEl.textContent = isPreview
     ? `Preview Step ${previewStepIdx}/${traj.steps.length - 1}`
@@ -97,12 +117,80 @@ function renderStep(stepIdx) {
   }
 
   // Render action overlay
-  overlayEl.innerHTML = '';
+  clearActionOverlay();
   const shouldShowCommittedAction = !state.get('isPlaying') && state.get('currentStep') === displayedStepIdx;
   const actionStep = previewStep || (shouldShowCommittedAction ? displayedStep : null);
   if (actionStep?.action) {
-    renderActionOverlay(actionStep.action, traj.metadata);
+    renderActionOverlay(actionStep.action, traj.metadata, overlayToken);
   }
+}
+
+function renderLiveFrame(url) {
+  if (state.get('mode') !== 'live') return;
+  if (!url) {
+    renderLivePlaceholder();
+    return;
+  }
+  updateDeviceType();
+  containerEl.classList.remove('live-waiting');
+  if (url !== currentScreenshotSrc) {
+    imgEl.src = url;
+    currentScreenshotSrc = url;
+    imgEl.style.opacity = '1';
+  }
+  const traj = state.get('trajectory');
+  const stepIdx = state.get('currentStep') || 0;
+  badgeEl.textContent = traj?.steps?.length ? `Live Step ${stepIdx}` : 'Live';
+  const step = traj?.steps?.[stepIdx];
+  if (step?.action) {
+    renderLiveActionOverlay(step.action, traj.metadata, step.index ?? stepIdx);
+  } else {
+    clearActionOverlay();
+  }
+}
+
+function renderLivePlaceholder() {
+  if (state.get('mode') !== 'live') return;
+  updateDeviceType();
+  currentScreenshotSrc = null;
+  imgEl.removeAttribute('src');
+  imgEl.style.opacity = '0';
+  clearActionOverlay();
+  badgeEl.textContent = 'Waiting for live frame';
+  containerEl.classList.add('live-waiting');
+}
+
+function clearActionOverlay() {
+  overlayToken += 1;
+  renderedActionKey = null;
+  overlayEl.innerHTML = '';
+}
+
+function renderLiveActionOverlay(action, metadata, stepKey) {
+  const actionKey = getActionOverlayKey(action, metadata, stepKey);
+  if (actionKey === renderedActionKey) {
+    return;
+  }
+  overlayToken += 1;
+  renderedActionKey = actionKey;
+  overlayEl.innerHTML = '';
+  renderActionOverlay(action, metadata, overlayToken);
+}
+
+function getActionOverlayKey(action, metadata, stepKey) {
+  return JSON.stringify({
+    step: stepKey,
+    type: action.action_type,
+    x: action.x ?? null,
+    y: action.y ?? null,
+    x2: action.x2 ?? null,
+    y2: action.y2 ?? null,
+    relative: Boolean(action.relative),
+    text: action.text ?? null,
+    status: action.status ?? null,
+    width: metadata?.screen_width ?? null,
+    height: metadata?.screen_height ?? null,
+  });
 }
 
 function getPosition(action, metadata) {
@@ -129,7 +217,7 @@ function getPosition2(action, metadata) {
   return { x: fracX * 100, y: fracY * 100 };
 }
 
-function renderActionOverlay(action, metadata) {
+function renderActionOverlay(action, metadata, token) {
   const type = action.action_type;
 
   if (type === 'tap' || type === 'double_tap') {
@@ -141,6 +229,7 @@ function renderActionOverlay(action, metadata) {
     overlayEl.appendChild(ripple);
     if (type === 'double_tap') {
       setTimeout(() => {
+        if (token !== overlayToken) return;
         const r2 = document.createElement('div');
         r2.className = 'tap-ripple';
         r2.style.left = pos.x + '%';

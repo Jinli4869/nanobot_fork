@@ -7,8 +7,13 @@ let typewriterTimer = null;
 export function initModelOutput() {
   body = document.querySelector('#model-output .panel-body');
 
-  // Clear when a new trajectory loads
-  state.on('trajectory', () => {
+  // Static playback replaces the trajectory wholesale. Live mode updates the
+  // same trajectory object frequently, so clearing here would make the panel flash.
+  state.on('trajectory', (traj) => {
+    if (state.get('mode') === 'live') {
+      if (!traj?.steps?.length) clearAll();
+      return;
+    }
     clearAll();
   });
 

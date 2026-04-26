@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import os
+import re
 import time
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
@@ -17,9 +17,9 @@ from nanobot.agent.capabilities import CapabilityCatalogBuilder, PlanningContext
 from nanobot.agent.context import ContextBuilder
 from nanobot.agent.memory import MemoryConsolidator
 from nanobot.agent.planning_memory import PlanningMemoryHintExtractor
+from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
@@ -27,8 +27,8 @@ from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
-from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
+from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 
@@ -103,6 +103,8 @@ class AgentLoop:
         gui_config: "GuiConfig | None" = None,
         gui_provider: LLMProvider | None = None,
         gui_model: str | None = None,
+        gui_event_callback: Callable[[dict[str, Any]], None] | None = None,
+        gui_frame_callback: Callable[[bytes, dict[str, Any]], None] | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -123,6 +125,8 @@ class AgentLoop:
         self._gui_config = gui_config
         self._gui_provider = gui_provider
         self._gui_model = gui_model
+        self._gui_event_callback = gui_event_callback
+        self._gui_frame_callback = gui_frame_callback
 
         self.context = ContextBuilder(workspace)
         self.sessions = session_manager or SessionManager(workspace)
@@ -195,6 +199,8 @@ class AgentLoop:
                     provider=self._gui_provider or self.provider,
                     model=self._gui_model or self.model,
                     workspace=self.workspace,
+                    gui_event_callback=self._gui_event_callback,
+                    gui_frame_callback=self._gui_frame_callback,
                 )
             )
 
@@ -359,6 +365,7 @@ class AgentLoop:
         on_progress: Callable[..., Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
         *,
         channel: str = "cli",
         chat_id: str = "direct",
@@ -426,9 +433,20 @@ class AgentLoop:
                         thought = self._strip_think(response.content)
                         if thought:
                             await on_progress(thought)
+                            if on_event:
+                                await on_event({
+                                    "type": "assistant_progress",
+                                    "content": thought,
+                                })
                     tool_hint = self._tool_hint(response.tool_calls)
                     tool_hint = self._strip_think(tool_hint)
                     await on_progress(tool_hint, tool_hint=True)
+                    if on_event:
+                        await on_event({
+                            "type": "assistant_progress",
+                            "content": tool_hint,
+                            "tool_hint": True,
+                        })
 
                 tool_call_dicts = [
                     tc.to_openai_tool_call()
@@ -444,6 +462,13 @@ class AgentLoop:
                     tools_used.append(tc.name)
                     args_str = json.dumps(tc.arguments, ensure_ascii=False)
                     logger.info("Tool call: {}({})", tc.name, args_str[:200])
+                    if on_event:
+                        await on_event({
+                            "type": "tool_call",
+                            "tool": tc.name,
+                            "arguments": tc.arguments,
+                            "tool_call_id": tc.id,
+                        })
 
                 # Re-bind tool context right before execution so that
                 # concurrent sessions don't clobber each other's routing.
@@ -470,6 +495,13 @@ class AgentLoop:
                 for tool_call, result in zip(response.tool_calls, results):
                     if isinstance(result, BaseException):
                         result = f"Error: {type(result).__name__}: {result}"
+                    if on_event:
+                        await on_event({
+                            "type": "tool_result",
+                            "tool": tool_call.name,
+                            "tool_call_id": tool_call.id,
+                            "result": result,
+                        })
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
@@ -488,6 +520,8 @@ class AgentLoop:
                     thinking_blocks=response.thinking_blocks,
                 )
                 final_content = clean
+                if on_event:
+                    await on_event({"type": "assistant_final", "content": clean})
                 break
 
         if final_content is None and iteration >= self.max_iterations:
@@ -607,7 +641,11 @@ class AgentLoop:
         gui_memory_context = self._load_gui_memory_for_planner()
         # Derive the stable planner route_id from the active backend.
         # "local" maps to "gui.desktop" (not "gui.local"); "dry-run" falls back to "gui.desktop".
-        active_gui_route = f"gui.{gui_backend}" if gui_backend in ("adb", "ios", "hdc", "desktop") else "gui.desktop"
+        active_gui_route = (
+            "gui.adb"
+            if gui_backend == "scrcpy-adb"
+            else f"gui.{gui_backend}" if gui_backend in ("adb", "ios", "hdc", "desktop") else "gui.desktop"
+        )
         planning_context = PlanningContext(
             catalog=catalog,
             memory_hints=memory_hints,
@@ -741,6 +779,9 @@ class AgentLoop:
         gui_tool = self.tools.get("gui_task")
         if gui_tool is not None:
             await gui_tool._wait_for_pending_postprocessing()
+            shutdown = getattr(gui_tool, "shutdown", None)
+            if callable(shutdown):
+                await shutdown()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
@@ -769,6 +810,7 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a single inbound message and return the response."""
         gui_backend = self._gui_config.backend if self._gui_config is not None else None
@@ -793,6 +835,7 @@ class AgentLoop:
             final_content, _, all_msgs = await self._run_agent_loop(
                 messages, channel=channel, chat_id=chat_id,
                 message_id=msg.metadata.get("message_id"),
+                on_event=on_event,
             )
             self._save_turn(session, all_msgs, 1 + len(history))
             self.sessions.save(session)
@@ -870,6 +913,7 @@ class AgentLoop:
                 on_progress=on_progress or _bus_progress,
                 on_stream=on_stream,
                 on_stream_end=on_stream_end,
+                on_event=on_event,
                 channel=msg.channel, chat_id=msg.chat_id,
                 message_id=msg.metadata.get("message_id"),
             )
@@ -987,11 +1031,12 @@ class AgentLoop:
         on_progress: Callable[[str], Awaitable[None]] | None = None,
         on_stream: Callable[[str], Awaitable[None]] | None = None,
         on_stream_end: Callable[..., Awaitable[None]] | None = None,
+        on_event: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
         """Process a message directly and return the outbound payload."""
         await self._connect_mcp()
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
         return await self._process_message(
             msg, session_key=session_key, on_progress=on_progress,
-            on_stream=on_stream, on_stream_end=on_stream_end,
+            on_stream=on_stream, on_stream_end=on_stream_end, on_event=on_event,
         )

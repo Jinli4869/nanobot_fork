@@ -19,6 +19,42 @@
   border-bottom-color: var(--accent);
 }
 
+/* ── Live Controls ── */
+.live-btn {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+
+.live-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.live-btn.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.live-btn.danger {
+  border-color: rgba(207, 34, 46, 0.35);
+  color: var(--accent-red);
+}
+
+.live-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── Scenario Cards ── */
 .scenario-card {
   display: flex;
@@ -279,6 +315,12 @@
   background: #f0f0f0;
 }
 
+.screenshot-container.live-waiting {
+  width: 260px;
+  aspect-ratio: 488 / 1080;
+  background: #101418;
+}
+
 .screenshot-container img {
   max-width: 100%;
   max-height: 100%;
@@ -287,6 +329,16 @@
   display: block;
   object-fit: contain;
   transition: opacity 400ms ease;
+}
+
+.screenshot-container.live-waiting::before {
+  content: '';
+  width: 42px;
+  height: 42px;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.78);
+  border-radius: 50%;
+  animation: spin 900ms linear infinite;
 }
 
 .screenshot-container img.fading { opacity: 0; }

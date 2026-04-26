@@ -28,6 +28,39 @@
     <!-- Platform Tabs -->
     <nav id="platform-tabs"></nav>
 
+    <!-- Live Android Controls -->
+    <section id="live-controls" aria-label="Live Android demo controls">
+      <div class="live-control-group">
+        <label for="live-platform-select">Live Platform</label>
+        <select id="live-platform-select">
+          <option value="android" selected>Android</option>
+          <option value="ios">iOS</option>
+        </select>
+      </div>
+      <div class="live-control-group">
+        <label for="live-device-select">Android Device</label>
+        <select id="live-device-select"></select>
+        <button id="live-refresh" class="live-btn" type="button">Refresh</button>
+      </div>
+      <div class="live-control-group">
+        <label for="live-gui-backend">GUI Backend</label>
+        <select id="live-gui-backend">
+          <option value="adb" selected>adb</option>
+          <option value="scrcpy-adb">scrcpy-adb</option>
+        </select>
+        <span class="live-stream-label">Video: scrcpy</span>
+      </div>
+      <div class="live-task-group">
+        <label for="live-task">Live Task</label>
+        <input id="live-task" type="text" placeholder="Open Settings and check Wi-Fi status">
+      </div>
+      <div class="live-run-group">
+        <button id="live-run" class="live-btn primary" type="button">Run Live</button>
+        <button id="live-stop" class="live-btn danger" type="button">Stop</button>
+        <span id="live-status">Idle</span>
+      </div>
+    </section>
+
     <!-- Scenario Picker -->
     <div id="scenario-picker"></div>
 

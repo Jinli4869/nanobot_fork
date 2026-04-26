@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import sys
@@ -50,6 +49,8 @@ class GuiSubagentTool(Tool):
         provider: "LLMProvider",
         model: str,
         workspace: Path,
+        gui_event_callback: Any | None = None,
+        gui_frame_callback: Any | None = None,
     ) -> None:
         if gui_config is None:
             raise ValueError("GuiSubagentTool requires gui_config")
@@ -58,6 +59,8 @@ class GuiSubagentTool(Tool):
         self._provider = provider
         self._model = model
         self._workspace = Path(workspace)
+        self._gui_event_callback = gui_event_callback
+        self._gui_frame_callback = gui_frame_callback
         self._llm_adapter = NanobotLLMAdapter(
             provider, model, capture_ttft=gui_config.capture_ttft,
         )
@@ -109,7 +112,7 @@ class GuiSubagentTool(Tool):
                 },
                 "backend": {
                     "type": "string",
-                    "enum": ["adb", "ios", "hdc", "local", "dry-run"],
+                    "enum": ["adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"],
                     "description": "Optional backend override. Defaults to the configured GUI backend.",
                 },
                 "require_background_isolation": {
@@ -151,7 +154,9 @@ class GuiSubagentTool(Tool):
 
                 probe_fn = runtime_probe_isolated_background_support
             if resolve_fn is None:
-                from opengui.backends.background_runtime import resolve_run_mode as runtime_resolve_run_mode
+                from opengui.backends.background_runtime import (
+                    resolve_run_mode as runtime_resolve_run_mode,
+                )
 
                 resolve_fn = runtime_resolve_run_mode
             if log_fn is None:
@@ -193,12 +198,14 @@ class GuiSubagentTool(Tool):
                 if probe.backend_name == "windows_isolated_desktop":
                     wrapped_backend = None
                     try:
-                        isolated_backend_cls = WindowsIsolatedBackend
-                        if isolated_backend_cls is None:
+                        backend_cls = WindowsIsolatedBackend
+                        if backend_cls is None:
                             from opengui.backends.windows_isolated import (
-                                WindowsIsolatedBackend as isolated_backend_cls,  # type: ignore[assignment]
+                                WindowsIsolatedBackend as ImportedWindowsIsolatedBackend,
                             )
-                        wrapped_backend = isolated_backend_cls(
+
+                            backend_cls = ImportedWindowsIsolatedBackend
+                        wrapped_backend = backend_cls(
                             active_backend,
                             mgr,
                             run_metadata={"owner": "nanobot", "task": task, "model": self._model},
@@ -238,6 +245,7 @@ class GuiSubagentTool(Tool):
             output_dir=run_dir,
             task=task,
             platform=active_backend.platform,
+            event_callback=self._gui_event_callback,
         )
 
         skill_executor = None
@@ -685,6 +693,18 @@ class GuiSubagentTool(Tool):
 
             return AdbBackend(serial=self._gui_config.adb.serial)
 
+        if backend_name == "scrcpy-adb":
+            from opengui.backends.scrcpy_adb import ScrcpyAdbBackend
+
+            return ScrcpyAdbBackend(
+                serial=self._gui_config.adb.serial,
+                max_fps=self._gui_config.scrcpy.max_fps,
+                jpeg_quality=self._gui_config.scrcpy.jpeg_quality,
+                frame_timeout_ms=self._gui_config.scrcpy.frame_timeout_ms,
+                max_frame_age_ms=self._gui_config.scrcpy.max_frame_age_ms,
+                on_jpeg_frame=self._gui_frame_callback,
+            )
+
         if backend_name == "ios":
             from opengui.backends.ios_wda import WdaBackend
 
@@ -816,6 +836,11 @@ class GuiSubagentTool(Tool):
 
     def _build_intervention_handler(self, active_backend: Any, task: str) -> InterventionHandler:
         return _GuiToolInterventionHandler(active_backend=active_backend, task=task)
+
+    async def shutdown(self) -> None:
+        shutdown = getattr(self._backend, "shutdown", None)
+        if callable(shutdown):
+            await shutdown()
 
 
 class _GuiToolInterventionHandler:

@@ -163,6 +163,15 @@ class AdbConfig(Base):
     serial: str | None = None
 
 
+class ScrcpyConfig(Base):
+    """scrcpy frame-stream configuration for Android GUI automation."""
+
+    max_fps: int = 12
+    jpeg_quality: int = 80
+    frame_timeout_ms: int = 3000
+    max_frame_age_ms: int = 1000
+
+
 class HdcConfig(Base):
     """HDC backend configuration for HarmonyOS device automation."""
 
@@ -173,6 +182,8 @@ class IosConfig(Base):
     """WDA backend configuration for iOS device automation."""
 
     wda_url: str = "http://localhost:8100"
+    mjpeg_url: str = "http://127.0.0.1:9100"
+    mjpeg_frame_timeout_ms: int = 3000
 
 
 class GuiEvaluationConfig(Base):
@@ -187,7 +198,7 @@ class GuiEvaluationConfig(Base):
 class GuiConfig(Base):
     """GUI subagent configuration."""
 
-    backend: Literal["adb", "ios", "hdc", "local", "dry-run"] = "adb"
+    backend: Literal["adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"] = "adb"
     model: str | None = None
     provider: str | None = None
     validator_model: str | None = None
@@ -195,6 +206,7 @@ class GuiConfig(Base):
     reuser_model: str | None = None
     agent_profile: str | None = None
     adb: AdbConfig = Field(default_factory=AdbConfig)
+    scrcpy: ScrcpyConfig = Field(default_factory=ScrcpyConfig)
     ios: IosConfig = Field(default_factory=IosConfig)
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"

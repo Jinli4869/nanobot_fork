@@ -31,6 +31,7 @@ class State {
 }
 
 export const state = new State({
+  mode: 'static',
   currentPlatform: null,
   currentScenario: null,
   currentStep: 0,
@@ -46,4 +47,6 @@ export const state = new State({
   animationIndex: -1,
   visibleLogCount: 0,
   maxRenderedStep: -1,
+  liveFrameUrl: null,
+  liveStatus: 'Idle',
 });

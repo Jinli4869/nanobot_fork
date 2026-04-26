@@ -7,6 +7,7 @@ import { initAgentLog } from './components/agent-log.js';
 import { initModelOutput } from './components/model-output.js';
 import { initTimeline } from './components/timeline.js';
 import { buildAnimationQueue } from './playback-helpers.js';
+import { initLiveDemo } from './live.js';
 
 function initFullscreenMode() {
   const app = document.getElementById('app');
@@ -71,12 +72,17 @@ async function init() {
   initAgentLog();
   initModelOutput();
   initTimeline();
+  initLiveDemo();
 
   // When scenario changes, load its data
   state.on('currentScenario', async (scenarioId) => {
+    if (state.get('mode') === 'live') return;
+
     const platformId = state.get('currentPlatform');
     if (!platformId || !scenarioId) return;
 
+    state.set('mode', 'static');
+    document.getElementById('app')?.classList.remove('live-mode');
     resetPlaybackState();
 
     try {
@@ -94,6 +100,9 @@ async function init() {
 
   // When platform changes, reset scenario
   state.on('currentPlatform', () => {
+    if (state.get('mode') !== 'live') {
+      document.getElementById('app')?.classList.remove('live-mode');
+    }
     state.set('trajectory', null);
     state.set('agentLog', null);
     resetPlaybackState();

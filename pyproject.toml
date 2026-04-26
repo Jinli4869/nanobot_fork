@@ -65,6 +65,12 @@ web = [
     "fastapi>=0.110.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
 ]
+demo-live = [
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+    "Pillow>=10.0",
+    "py-scrcpy-sdk==0.1.2",
+]
 matrix = [
     "matrix-nio[e2e]>=0.25.2",
     "mistune>=3.0.0,<4.0.0",
