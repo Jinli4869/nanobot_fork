@@ -421,6 +421,15 @@ def _make_provider(config: Config):
         raise typer.Exit(1) from exc
 
 
+def _resolve_gui_runtime(config: Config):
+    """Resolve the GUI provider/model pair, inheriting main-agent settings by default."""
+    if config.gui is None:
+        return None, None
+
+    gui_model = config.gui.model or config.agents.defaults.model
+    gui_provider = _make_provider(config)
+    return gui_provider, gui_model
+
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
     """Load config and optionally override the active workspace."""
     from nanobot.config.loader import load_config, resolve_config_env_vars, set_config_path

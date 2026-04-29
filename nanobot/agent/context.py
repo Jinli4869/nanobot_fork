@@ -32,6 +32,7 @@ class ContextBuilder:
         self,
         skill_names: list[str] | None = None,
         channel: str | None = None,
+        gui_backend: str | None = None,
     ) -> str:
         """Build the system prompt from identity, bootstrap files, memory, and skills."""
         parts = [self._get_identity(channel=channel)]
@@ -44,13 +45,25 @@ class ContextBuilder:
         if memory and not self._is_template_content(self.memory.read_memory(), "memory/MEMORY.md"):
             parts.append(f"# Memory\n\n{memory}")
 
-        always_skills = self.skills.get_always_skills()
+        if gui_backend:
+            parts.append(
+                "\n".join(
+                    [
+                        "## GUI Runtime",
+                        f"- Active GUI backend: `{gui_backend}`",
+                        "- Use only skills/commands compatible with this backend.",
+                    ]
+                )
+            )
+
+        always_skills = self.skills.get_always_skills(gui_backend=gui_backend)
         if always_skills:
             always_content = self.skills.load_skills_for_context(always_skills)
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
 
         skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
+        skills_summary = self.skills.build_skills_summary(gui_backend=gui_backend)
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 
@@ -134,6 +147,7 @@ class ContextBuilder:
         history: list[dict[str, Any]],
         current_message: str,
         skill_names: list[str] | None = None,
+        gui_backend: str | None = None,
         media: list[str] | None = None,
         channel: str | None = None,
         chat_id: str | None = None,
@@ -151,7 +165,7 @@ class ContextBuilder:
         else:
             merged = [{"type": "text", "text": runtime_ctx}] + user_content
         messages = [
-            {"role": "system", "content": self.build_system_prompt(skill_names, channel=channel)},
+            {"role": "system", "content": self.build_system_prompt(skill_names, channel=channel, gui_backend=gui_backend)},
             *history,
         ]
         if messages[-1].get("role") == current_role:

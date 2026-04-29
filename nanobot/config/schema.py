@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel
 from pydantic_settings import BaseSettings
 
@@ -234,6 +234,100 @@ class MyToolConfig(Base):
     allow_set: bool = False  # let `my` modify loop state (read-only if False)
 
 
+class AdbConfig(Base):
+    """ADB backend configuration for GUI automation."""
+    serial: str | None = None
+
+
+class ScrcpyConfig(Base):
+    """scrcpy frame-stream configuration for Android GUI automation."""
+    max_fps: int = 12
+    jpeg_quality: int = 80
+    frame_timeout_ms: int = 3000
+    max_frame_age_ms: int = 1000
+
+
+class HdcConfig(Base):
+    """HDC backend configuration for HarmonyOS device automation."""
+    serial: str | None = None
+
+
+class IosConfig(Base):
+    """WDA backend configuration for iOS device automation."""
+    wda_url: str = "http://localhost:8100"
+    mjpeg_url: str = "http://127.0.0.1:9100"
+    mjpeg_frame_timeout_ms: int = 3000
+
+
+class GuiEvaluationConfig(Base):
+    """Optional post-run evaluation for GUI tasks."""
+    enabled: bool = False
+    judge_model: str = "qwen3-vl-plus"
+    api_key: str = ""
+    api_base: str | None = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+class GuiConfig(Base):
+    """GUI subagent configuration."""
+    backend: Literal["adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"] = "adb"
+    model: str | None = None
+    provider: str | None = None
+    validator_model: str | None = None
+    grounder_model: str | None = None
+    reuser_model: str | None = None
+    agent_profile: str | None = None
+    adb: AdbConfig = Field(default_factory=AdbConfig)
+    scrcpy: ScrcpyConfig = Field(default_factory=ScrcpyConfig)
+    ios: IosConfig = Field(default_factory=IosConfig)
+    hdc: HdcConfig = Field(default_factory=HdcConfig)
+    artifacts_dir: str = "gui_runs"
+    max_steps: int = 15
+    stagnation_limit: int = 0
+    skill_threshold: float = 0.6
+    embedding_model: str | None = None
+    background: bool = False
+    display_num: int | None = None
+    display_width: int = 1280
+    display_height: int = 720
+    image_scale_ratio: float = 0.5
+    capture_ttft: bool = False
+    enable_skill_extraction: bool = False
+    enable_skill_execution: bool = False
+    enable_planner: bool = True
+    enable_router: bool = True
+    evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
+
+    @field_validator("agent_profile")
+    @classmethod
+    def _validate_agent_profile(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        from opengui.agent_profiles import canonicalize_agent_profile
+        return canonicalize_agent_profile(value)
+
+    @field_validator("image_scale_ratio")
+    @classmethod
+    def _validate_image_scale_ratio(cls, value: float) -> float:
+        if not (0 < value <= 1):
+            raise ValueError("image_scale_ratio must be in (0, 1].")
+        return value
+
+    @field_validator("stagnation_limit")
+    @classmethod
+    def _validate_stagnation_limit(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("stagnation_limit must be >= 0.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_background_requires_local(self) -> "GuiConfig":
+        if self.background and self.backend != "local":
+            raise ValueError(
+                f"background mode requires backend='local', got backend={self.backend!r}"
+            )
+        return self
+
+
 class ToolsConfig(Base):
     """Tools configuration."""
 
@@ -254,6 +348,7 @@ class Config(BaseSettings):
     api: ApiConfig = Field(default_factory=ApiConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
+    gui: GuiConfig | None = None
 
     @property
     def workspace_path(self) -> Path:

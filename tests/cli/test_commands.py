@@ -2,14 +2,16 @@ import asyncio
 import json
 import re
 import shutil
+import tomllib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from click.exceptions import Exit
 from typer.testing import CliRunner
 
 from nanobot.bus.events import OutboundMessage
-from nanobot.cli.commands import _make_provider, app
+from nanobot.cli.commands import _load_runtime_config, _make_provider, app
 from nanobot.config.schema import Config
 from nanobot.cron.types import CronJob, CronPayload
 from nanobot.providers.factory import ProviderSnapshot
@@ -471,6 +473,172 @@ def test_make_provider_passes_extra_headers_to_custom_provider():
     assert kwargs["default_headers"]["x-session-affinity"] == "sticky-session"
 
 
+def test_make_provider_honors_gui_model_and_provider_override():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "dashscope",
+                    "model": "qwen3.5-plus",
+                }
+            },
+            "providers": {
+                "dashscope": {
+                    "apiKey": "dash-key",
+                },
+                "openrouter": {
+                    "apiKey": "or-key",
+                    "apiBase": "https://openrouter.ai/api/v1",
+                },
+            },
+        }
+    )
+
+    with patch("nanobot.providers.litellm_provider.LiteLLMProvider") as mock_litellm_provider:
+        _make_provider(
+            config,
+            model_override="anthropic/claude-3.7-sonnet",
+            provider_override="openrouter",
+        )
+
+    kwargs = mock_litellm_provider.call_args.kwargs
+    assert kwargs["default_model"] == "anthropic/claude-3.7-sonnet"
+    assert kwargs["provider_name"] == "openrouter"
+    assert kwargs["api_key"] == "or-key"
+    assert kwargs["api_base"] == "https://openrouter.ai/api/v1"
+
+
+def test_make_provider_fails_cleanly_when_no_provider_can_be_resolved():
+    config = Config.model_validate(
+        {
+            "agents": {
+                "defaults": {
+                    "provider": "auto",
+                    "model": "gpt-4.1",
+                }
+            }
+        }
+    )
+
+    with pytest.raises(Exit):
+        _make_provider(config)
+
+
+def test_gateway_keeps_gateway_port_default_when_tui_config_exists(monkeypatch):
+    config = Config.model_validate(
+        {
+            "gateway": {"port": 24567},
+            "tui": {"port": 29999},
+        }
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _config: object())
+    monkeypatch.setattr("nanobot.cli.commands.sync_workspace_templates", lambda _workspace: None)
+
+    class _FakeSessionManager:
+        def __init__(self, _workspace: Path):
+            pass
+
+        def list_sessions(self) -> list[dict[str, str]]:
+            return []
+
+    class _FakeCronService:
+        def __init__(self, *_args, **_kwargs):
+            self.on_job = None
+
+        def status(self) -> dict[str, int]:
+            return {"jobs": 0}
+
+        async def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeChannelManager:
+        def __init__(self, *_args, **_kwargs):
+            self.enabled_channels: list[str] = []
+
+        async def start_all(self) -> None:
+            return None
+
+        async def stop_all(self) -> None:
+            return None
+
+    class _FakeHeartbeatService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeAgentLoop:
+        def __init__(self, *_args, **_kwargs):
+            self.model = "test-model"
+            self.tools: dict[str, object] = {}
+
+        async def run(self) -> None:
+            return None
+
+        async def close_mcp(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _FakeMessageBus:
+        pass
+
+    def _skip_asyncio_run(coro):
+        coro.close()
+        return None
+
+    monkeypatch.setattr("nanobot.session.manager.SessionManager", _FakeSessionManager)
+    monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
+    monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
+    monkeypatch.setattr("nanobot.heartbeat.service.HeartbeatService", _FakeHeartbeatService)
+    monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.bus.queue.MessageBus", _FakeMessageBus)
+    monkeypatch.setattr("nanobot.cli.commands.asyncio.run", _skip_asyncio_run)
+
+    result = runner.invoke(app, ["gateway"])
+
+    assert result.exit_code == 0
+    assert "on port 24567" in _strip_ansi(result.stdout)
+
+
+def test_load_runtime_config_preserves_tui_section(tmp_path):
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "gateway": {"port": 24567},
+                "tui": {"host": "127.0.0.1", "port": 29999, "reload": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    config = _load_runtime_config(str(config_path))
+
+    assert config.gateway.port == 24567
+    assert config.tui.host == "127.0.0.1"
+    assert config.tui.port == 29999
+    assert config.tui.reload is True
+
+
+def test_pyproject_keeps_existing_cli_scripts_when_tui_script_is_added():
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    scripts = pyproject["project"]["scripts"]
+
+    assert scripts["nanobot"] == "nanobot.cli.commands:app"
+    assert scripts["opengui"] == "opengui.cli:main"
+
+
 @pytest.fixture
 def mock_agent_runtime(tmp_path):
     """Mock agent command dependencies for focused CLI tests."""
@@ -526,6 +694,10 @@ def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_
         mock_agent_runtime["config"].workspace_path
     )
     mock_agent_runtime["agent_loop"].process_direct.assert_awaited_once()
+    awaited = mock_agent_runtime["agent_loop"].process_direct.await_args
+    assert awaited.args == ("hello", "cli:direct")
+    assert callable(awaited.kwargs["on_progress"])
+    assert set(awaited.kwargs) == {"on_progress"}
     mock_agent_runtime["print_response"].assert_called_once_with(
         "mock-response", render_markdown=True, metadata={},
     )

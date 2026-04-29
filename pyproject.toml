@@ -24,6 +24,10 @@ license-files = [
 dependencies = [
     "typer>=0.20.0,<1.0.0",
     "anthropic>=0.45.0,<1.0.0",
+"litellm>=1.82.1,<2.0.0",
+    "faiss-cpu>=1.9.0",
+    "numpy>=1.26.0",
+
     "pydantic>=2.12.0,<3.0.0",
     "pydantic-settings>=2.12.0,<3.0.0",
     "websockets>=16.0,<17.0",
@@ -51,6 +55,7 @@ dependencies = [
     "json-repair>=0.57.0,<1.0.0",
     "chardet>=3.0.2,<6.0.0",
     "openai>=2.8.0",
+    "PyYAML>=6.0",
     "tiktoken>=0.12.0,<1.0.0",
     "jinja2>=3.1.0,<4.0.0",
     "dulwich>=0.22.0,<1.0.0",
@@ -77,6 +82,16 @@ msteams = [
     "PyJWT>=2.0,<3.0",
     "cryptography>=41.0",
 ]
+web = [
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+]
+demo-live = [
+    "fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+    "Pillow>=10.0",
+    "py-scrcpy-sdk==0.1.2",
+]
 
 matrix = [
     "matrix-nio[e2e]>=0.25.2; sys_platform != 'win32'",
@@ -94,6 +109,18 @@ pdf = [
 ]
 olostep = [
     "olostep>=0.1.0",
+desktop = [
+    "mss>=10.0",
+    "pyautogui>=0.9.50",
+    "pyperclip>=1.8",
+    "Pillow>=10.0",
+    "pyobjc-core==12.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz==12.1; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices==12.1; sys_platform == 'darwin'",
+]
+cjk = [
+    "jieba>=0.42.1",
+
 ]
 dev = [
     "pytest>=9.0.0,<10.0.0",
@@ -102,10 +129,26 @@ dev = [
     "pytest-cov>=6.0.0,<7.0.0",
     "ruff>=0.1.0",
     "pymupdf>=1.25.0",
+"fastapi>=0.110.0,<1.0.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+    "matrix-nio[e2e]>=0.25.2",
+    "mistune>=3.0.0,<4.0.0",
+    "nh3>=0.2.17,<1.0.0",
+    "mss>=10.0",
+    "pyautogui>=0.9.50",
+    "pyperclip>=1.8",
+    "Pillow>=10.0",
+    "pyobjc-core==12.1; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz==12.1; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices==12.1; sys_platform == 'darwin'",
+    "jieba>=0.42.1",
+
 ]
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"
+nanobot-tui = "nanobot.tui.__main__:main"
+opengui = "opengui.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -117,24 +160,33 @@ allow-direct-references = true
 [tool.hatch.build]
 include = [
     "nanobot/**/*.py",
+    "opengui/**/*.py",
+    "opengui/assets/**/*",
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
+    "nanobot/tui/web/index.html",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["nanobot"]
+packages = ["nanobot", "opengui"]
 
 [tool.hatch.build.targets.wheel.sources]
 "nanobot" = "nanobot"
+"opengui" = "opengui"
 
 [tool.hatch.build.targets.wheel.force-include]
 "bridge" = "nanobot/bridge"
+"nanobot/tui/web/dist" = "nanobot/tui/web/dist"
+"nanobot/tui/web/index.html" = "nanobot/tui/web/index.html"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
+    "opengui/",
     "bridge/",
+    "nanobot/tui/web/index.html",
+    "nanobot/tui/web/dist/",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
@@ -164,4 +216,11 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+markers = [
+    "pauses_backend_io: Phase 15 intervention pause semantics coverage",
+    "explicit_resume_confirmation: Phase 15 explicit resume gate coverage",
+    "fresh_observation_after_intervention: Phase 15 fresh observation resume coverage",
+    "scrub_sensitive_trace_fields: Phase 15 intervention trace scrubbing coverage",
+    "input_text_is_redacted: Phase 15 typed input trace scrubbing coverage",
+
 ]

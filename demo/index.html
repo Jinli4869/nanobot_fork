@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GUI-Claw Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/variables.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/animations.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <h1><span>GUI-Claw</span></h1>
+      <div class="header-actions">
+        <div class="header-subtitle">Vision-based GUI Automation</div>
+        <button id="fullscreen-toggle" class="header-btn" type="button" title="Toggle fullscreen recording mode (F)">
+          Fullscreen
+        </button>
+      </div>
+    </header>
+
+    <!-- Platform Tabs -->
+    <nav id="platform-tabs"></nav>
+
+    <!-- Live Android Controls -->
+    <section id="live-controls" aria-label="Live Android demo controls">
+      <div class="live-control-group">
+        <label for="live-platform-select">Live Platform</label>
+        <select id="live-platform-select">
+          <option value="android" selected>Android</option>
+          <option value="ios">iOS</option>
+        </select>
+      </div>
+      <div class="live-control-group">
+        <label for="live-device-select">Android Device</label>
+        <select id="live-device-select"></select>
+        <button id="live-refresh" class="live-btn" type="button">Refresh</button>
+      </div>
+      <div class="live-control-group">
+        <label for="live-gui-backend">GUI Backend</label>
+        <select id="live-gui-backend">
+          <option value="adb" selected>adb</option>
+          <option value="scrcpy-adb">scrcpy-adb</option>
+        </select>
+        <span class="live-stream-label">Video: scrcpy</span>
+      </div>
+      <div class="live-task-group">
+        <label for="live-task">Live Task</label>
+        <input id="live-task" type="text" placeholder="Open Settings and check Wi-Fi status">
+      </div>
+      <div class="live-run-group">
+        <button id="live-run" class="live-btn primary" type="button">Run Live</button>
+        <button id="live-stop" class="live-btn danger" type="button">Stop</button>
+        <span id="live-status">Idle</span>
+      </div>
+    </section>
+
+    <!-- Scenario Picker -->
+    <div id="scenario-picker"></div>
+
+    <!-- Main 3-column layout -->
+    <main id="main-content">
+      <!-- Left: Agent Log -->
+      <section id="agent-log" class="panel side-panel">
+        <div class="panel-header">Agent Log</div>
+        <div class="panel-body">
+          <div class="empty-state">
+            <div class="icon">\u{1F4CB}</div>
+            Select a scenario
+          </div>
+        </div>
+      </section>
+
+      <!-- Center: Device Viewer -->
+      <section id="device-viewer" class="panel">
+        <div class="panel-header">Device Screen</div>
+        <div class="panel-body"></div>
+      </section>
+
+      <!-- Right: Model Output -->
+      <section id="model-output" class="panel side-panel">
+        <div class="panel-header">Model Output</div>
+        <div class="panel-body">
+          <div class="empty-state">
+            <div class="icon">\u{1F916}</div>
+            Model reasoning
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Timeline -->
+    <footer id="timeline"></footer>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

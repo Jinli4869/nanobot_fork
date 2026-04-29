@@ -29,3 +29,4 @@ The skill format and metadata structure follow OpenClaw's conventions to maintai
 | `tmux` | Remote-control tmux sessions |
 | `clawhub` | Search and install skills from ClawHub registry |
 | `skill-creator` | Create new skills |
+| `claw-gui` | Android device control: ADB commands, deeplink probing, GUI automation |
