@@ -109,6 +109,7 @@ pdf = [
 ]
 olostep = [
     "olostep>=0.1.0",
+]
 desktop = [
     "mss>=10.0",
     "pyautogui>=0.9.50",
@@ -216,6 +217,7 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+]
 markers = [
     "pauses_backend_io: Phase 15 intervention pause semantics coverage",
     "explicit_resume_confirmation: Phase 15 explicit resume gate coverage",
