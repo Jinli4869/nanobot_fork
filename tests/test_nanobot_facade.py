@@ -48,6 +48,38 @@ def test_from_config_default_path():
         mock_load.assert_called_once_with(None)
 
 
+def test_from_config_passes_gui_runtime_to_agent_loop(tmp_path):
+    config_path = _write_config(
+        tmp_path,
+        {
+            "gui": {
+                "backend": "dry-run",
+                "model": "gui-model",
+                "provider": "openrouter",
+            }
+        },
+    )
+    main_provider = MagicMock()
+    gui_provider = object()
+    seen: dict[str, object] = {}
+
+    class _FakeAgentLoop:
+        def __init__(self, **kwargs) -> None:
+            seen["kwargs"] = kwargs
+            self.workspace = kwargs["workspace"]
+
+    with patch("nanobot.nanobot._make_provider", return_value=main_provider), \
+         patch("nanobot.nanobot._resolve_gui_runtime", return_value=(gui_provider, "gui-model")), \
+         patch("nanobot.nanobot.AgentLoop", _FakeAgentLoop):
+        bot = Nanobot.from_config(config_path, workspace=tmp_path)
+
+    assert bot._loop.workspace == tmp_path
+    kwargs = seen["kwargs"]
+    assert kwargs["gui_config"].backend == "dry-run"
+    assert kwargs["gui_provider"] is gui_provider
+    assert kwargs["gui_model"] == "gui-model"
+
+
 @pytest.mark.asyncio
 async def test_run_returns_result(tmp_path):
     config_path = _write_config(tmp_path)

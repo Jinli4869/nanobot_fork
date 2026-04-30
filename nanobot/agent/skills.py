@@ -27,11 +27,18 @@ class SkillsLoader:
     specific tools or perform certain tasks.
     """
 
-    def __init__(self, workspace: Path, builtin_skills_dir: Path | None = None, disabled_skills: set[str] | None = None):
+    def __init__(
+        self,
+        workspace: Path,
+        builtin_skills_dir: Path | None = None,
+        disabled_skills: set[str] | None = None,
+        gui_backend: str | None = None,
+    ):
         self.workspace = workspace
         self.workspace_skills = workspace / "skills"
         self.builtin_skills = builtin_skills_dir or BUILTIN_SKILLS_DIR
         self.disabled_skills = disabled_skills or set()
+        self.gui_backend = gui_backend
 
     def _skill_entries_from_dir(self, base: Path, source: str, *, skip_names: set[str] | None = None) -> list[dict[str, str]]:
         if not base.exists():
@@ -78,8 +85,13 @@ class SkillsLoader:
         skills.sort(key=lambda item: item["name"])
 
         # Filter by runtime GUI backend compatibility (if provided).
-        if gui_backend:
-            skills = [s for s in skills if self._check_gui_backend(self._get_skill_meta(s["name"]), gui_backend)]
+        active_gui_backend = gui_backend or self.gui_backend
+        if active_gui_backend:
+            skills = [
+                s
+                for s in skills
+                if self._check_gui_backend(self._get_skill_meta(s["name"]), active_gui_backend)
+            ]
 
         # Filter by requirements
         if filter_unavailable:
@@ -135,7 +147,10 @@ class SkillsLoader:
         Returns:
             Markdown-formatted skills summary.
         """
-        all_skills = self.list_skills(filter_unavailable=False, gui_backend=gui_backend)
+        all_skills = self.list_skills(
+            filter_unavailable=False,
+            gui_backend=gui_backend or self.gui_backend,
+        )
         if not all_skills:
             return ""
 

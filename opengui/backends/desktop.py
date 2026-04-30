@@ -345,10 +345,14 @@ class LocalDesktopBackend:
     # ------------------------------------------------------------------
 
     def _resolve_x(self, value: float, *, relative: bool) -> int:
-        return resolve_coordinate(value, self._screen_width, relative=relative) + self._monitor_left
+        return resolve_coordinate(value, self._screen_width, relative=relative) + getattr(
+            self, "_monitor_left", 0
+        )
 
     def _resolve_y(self, value: float, *, relative: bool) -> int:
-        return resolve_coordinate(value, self._screen_height, relative=relative) + self._monitor_top
+        return resolve_coordinate(value, self._screen_height, relative=relative) + getattr(
+            self, "_monitor_top", 0
+        )
 
     def _resolve_point(self, action: Action) -> tuple[int, int]:
         if action.x is None or action.y is None:

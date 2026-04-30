@@ -43,7 +43,7 @@ except ImportError as e:
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
-from nanobot.config.paths import get_data_dir, get_media_dir
+from nanobot.config.paths import get_data_dir
 from nanobot.config.schema import Base
 from nanobot.utils.helpers import safe_filename
 
@@ -682,7 +682,9 @@ class MatrixChannel(BaseChannel):
         return False
 
     def _media_dir(self) -> Path:
-        return get_media_dir("matrix")
+        path = get_data_dir() / "media" / "matrix"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     @staticmethod
     def _event_source_content(event: RoomMessage) -> dict[str, Any]:

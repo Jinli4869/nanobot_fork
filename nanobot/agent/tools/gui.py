@@ -495,8 +495,8 @@ class GuiSubagentTool(Tool):
     async def _build_memory_retriever(self) -> Any | None:
         """Build a memory retriever indexed with POLICY entries only.
 
-        Guide entries (os_guide, app_guide, icon_guide) are now consumed by the planner
-        via PlanningContext.gui_memory_context instead of being surfaced here.
+        Guide entries (os_guide, app_guide, icon_guide) are not surfaced here;
+        nanobot no longer has a planner layer that consumes them.
         """
         if self._embedding_adapter is None:
             return None

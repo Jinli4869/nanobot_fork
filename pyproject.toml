@@ -24,7 +24,7 @@ license-files = [
 dependencies = [
     "typer>=0.20.0,<1.0.0",
     "anthropic>=0.45.0,<1.0.0",
-"litellm>=1.82.1,<2.0.0",
+    "litellm>=1.82.1,<2.0.0",
     "faiss-cpu>=1.9.0",
     "numpy>=1.26.0",
 
@@ -82,10 +82,6 @@ msteams = [
     "PyJWT>=2.0,<3.0",
     "cryptography>=41.0",
 ]
-web = [
-    "fastapi>=0.110.0,<1.0.0",
-    "uvicorn[standard]>=0.30.0,<1.0.0",
-]
 demo-live = [
     "fastapi>=0.110.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
@@ -130,7 +126,7 @@ dev = [
     "pytest-cov>=6.0.0,<7.0.0",
     "ruff>=0.1.0",
     "pymupdf>=1.25.0",
-"fastapi>=0.110.0,<1.0.0",
+    "fastapi>=0.110.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
     "matrix-nio[e2e]>=0.25.2",
     "mistune>=3.0.0,<4.0.0",
@@ -148,7 +144,6 @@ dev = [
 
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"
-nanobot-tui = "nanobot.tui.__main__:main"
 opengui = "opengui.cli:main"
 
 [build-system]
@@ -166,7 +161,6 @@ include = [
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
-    "nanobot/tui/web/index.html",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -178,16 +172,12 @@ packages = ["nanobot", "opengui"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "bridge" = "nanobot/bridge"
-"nanobot/tui/web/dist" = "nanobot/tui/web/dist"
-"nanobot/tui/web/index.html" = "nanobot/tui/web/index.html"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
     "opengui/",
     "bridge/",
-    "nanobot/tui/web/index.html",
-    "nanobot/tui/web/dist/",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

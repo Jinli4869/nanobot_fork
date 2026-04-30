@@ -494,18 +494,17 @@ def test_make_provider_honors_gui_model_and_provider_override():
         }
     )
 
-    with patch("nanobot.providers.litellm_provider.LiteLLMProvider") as mock_litellm_provider:
-        _make_provider(
+    with patch("nanobot.providers.openai_compat_provider.AsyncOpenAI"):
+        provider = _make_provider(
             config,
             model_override="anthropic/claude-3.7-sonnet",
             provider_override="openrouter",
         )
 
-    kwargs = mock_litellm_provider.call_args.kwargs
-    assert kwargs["default_model"] == "anthropic/claude-3.7-sonnet"
-    assert kwargs["provider_name"] == "openrouter"
-    assert kwargs["api_key"] == "or-key"
-    assert kwargs["api_base"] == "https://openrouter.ai/api/v1"
+    assert provider.get_default_model() == "anthropic/claude-3.7-sonnet"
+    assert provider._spec.name == "openrouter"
+    assert provider.api_key == "or-key"
+    assert provider.api_base == "https://openrouter.ai/api/v1"
 
 
 def test_make_provider_fails_cleanly_when_no_provider_can_be_resolved():
@@ -524,119 +523,13 @@ def test_make_provider_fails_cleanly_when_no_provider_can_be_resolved():
         _make_provider(config)
 
 
-def test_gateway_keeps_gateway_port_default_when_tui_config_exists(monkeypatch):
-    config = Config.model_validate(
-        {
-            "gateway": {"port": 24567},
-            "tui": {"port": 29999},
-        }
-    )
-
-    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_args, **_kwargs: config)
-    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _config: object())
-    monkeypatch.setattr("nanobot.cli.commands.sync_workspace_templates", lambda _workspace: None)
-
-    class _FakeSessionManager:
-        def __init__(self, _workspace: Path):
-            pass
-
-        def list_sessions(self) -> list[dict[str, str]]:
-            return []
-
-    class _FakeCronService:
-        def __init__(self, *_args, **_kwargs):
-            self.on_job = None
-
-        def status(self) -> dict[str, int]:
-            return {"jobs": 0}
-
-        async def start(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-    class _FakeChannelManager:
-        def __init__(self, *_args, **_kwargs):
-            self.enabled_channels: list[str] = []
-
-        async def start_all(self) -> None:
-            return None
-
-        async def stop_all(self) -> None:
-            return None
-
-    class _FakeHeartbeatService:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        async def start(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-    class _FakeAgentLoop:
-        def __init__(self, *_args, **_kwargs):
-            self.model = "test-model"
-            self.tools: dict[str, object] = {}
-
-        async def run(self) -> None:
-            return None
-
-        async def close_mcp(self) -> None:
-            return None
-
-        def stop(self) -> None:
-            return None
-
-    class _FakeMessageBus:
-        pass
-
-    def _skip_asyncio_run(coro):
-        coro.close()
-        return None
-
-    monkeypatch.setattr("nanobot.session.manager.SessionManager", _FakeSessionManager)
-    monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCronService)
-    monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _FakeChannelManager)
-    monkeypatch.setattr("nanobot.heartbeat.service.HeartbeatService", _FakeHeartbeatService)
-    monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
-    monkeypatch.setattr("nanobot.bus.queue.MessageBus", _FakeMessageBus)
-    monkeypatch.setattr("nanobot.cli.commands.asyncio.run", _skip_asyncio_run)
-
-    result = runner.invoke(app, ["gateway"])
-
-    assert result.exit_code == 0
-    assert "on port 24567" in _strip_ansi(result.stdout)
-
-
-def test_load_runtime_config_preserves_tui_section(tmp_path):
-    config_path = tmp_path / "config.json"
-    config_path.write_text(
-        json.dumps(
-            {
-                "gateway": {"port": 24567},
-                "tui": {"host": "127.0.0.1", "port": 29999, "reload": True},
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    config = _load_runtime_config(str(config_path))
-
-    assert config.gateway.port == 24567
-    assert config.tui.host == "127.0.0.1"
-    assert config.tui.port == 29999
-    assert config.tui.reload is True
-
-
-def test_pyproject_keeps_existing_cli_scripts_when_tui_script_is_added():
+def test_pyproject_keeps_existing_cli_scripts_without_standalone_tui():
     pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     scripts = pyproject["project"]["scripts"]
 
     assert scripts["nanobot"] == "nanobot.cli.commands:app"
     assert scripts["opengui"] == "opengui.cli:main"
+    assert "nanobot" + "-tui" not in scripts
 
 
 @pytest.fixture
@@ -697,10 +590,30 @@ def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_
     awaited = mock_agent_runtime["agent_loop"].process_direct.await_args
     assert awaited.args == ("hello", "cli:direct")
     assert callable(awaited.kwargs["on_progress"])
-    assert set(awaited.kwargs) == {"on_progress"}
+    assert callable(awaited.kwargs["on_stream"])
+    assert callable(awaited.kwargs["on_stream_end"])
+    assert set(awaited.kwargs) == {"on_progress", "on_stream", "on_stream_end"}
     mock_agent_runtime["print_response"].assert_called_once_with(
         "mock-response", render_markdown=True, metadata={},
     )
+
+
+def test_agent_passes_gui_runtime_snapshot(mock_agent_runtime, monkeypatch):
+    gui_provider = object()
+    gui_config = Config.model_validate({"gui": {"backend": "dry-run"}}).gui
+    mock_agent_runtime["config"].gui = gui_config
+    monkeypatch.setattr(
+        "nanobot.providers.factory.build_gui_provider_snapshot",
+        lambda _config: _test_gui_provider_snapshot(gui_provider, "gui-model"),
+    )
+
+    result = runner.invoke(app, ["agent", "-m", "hello"])
+
+    assert result.exit_code == 0
+    kwargs = mock_agent_runtime["agent_loop_cls"].call_args.kwargs
+    assert kwargs["gui_config"] is gui_config
+    assert kwargs["gui_provider"] is gui_provider
+    assert kwargs["gui_model"] == "gui-model"
 
 
 def test_agent_uses_explicit_config_path(mock_agent_runtime, tmp_path: Path):
@@ -958,6 +871,15 @@ def _test_provider_snapshot(provider: object, config: Config) -> ProviderSnapsho
     )
 
 
+def _test_gui_provider_snapshot(provider: object, model: str = "gui-model") -> ProviderSnapshot:
+    return ProviderSnapshot(
+        provider=provider,
+        model=model,
+        context_window_tokens=8192,
+        signature=("gui-test",),
+    )
+
+
 def _patch_cli_command_runtime(
     monkeypatch,
     config: Config,
@@ -969,6 +891,7 @@ def _patch_cli_command_runtime(
     session_manager=None,
     cron_service=None,
     get_cron_dir=None,
+    gui_provider_snapshot=None,
 ) -> None:
     provider_factory = make_provider or (lambda _config: object())
 
@@ -994,6 +917,10 @@ def _patch_cli_command_runtime(
         "nanobot.providers.factory.load_provider_snapshot",
         lambda _config_path=None: _test_provider_snapshot(provider_factory(config), config),
     )
+    monkeypatch.setattr(
+        "nanobot.providers.factory.build_gui_provider_snapshot",
+        lambda _config: gui_provider_snapshot,
+    )
 
     if message_bus is not None:
         monkeypatch.setattr("nanobot.bus.queue.MessageBus", message_bus)
@@ -1005,7 +932,13 @@ def _patch_cli_command_runtime(
         monkeypatch.setattr("nanobot.config.paths.get_cron_dir", get_cron_dir)
 
 
-def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -> None:
+def _patch_serve_runtime(
+    monkeypatch,
+    config: Config,
+    seen: dict[str, object],
+    *,
+    gui_provider_snapshot=None,
+) -> None:
     pytest.importorskip("aiohttp")
 
     class _FakeApiApp:
@@ -1015,6 +948,7 @@ def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -
 
     class _FakeAgentLoop:
         def __init__(self, **kwargs) -> None:
+            seen["agent_loop_kwargs"] = kwargs
             seen["workspace"] = kwargs["workspace"]
 
         async def _connect_mcp(self) -> None:
@@ -1039,6 +973,7 @@ def _patch_serve_runtime(monkeypatch, config: Config, seen: dict[str, object]) -
         config,
         message_bus=lambda: object(),
         session_manager=lambda _workspace: object(),
+        gui_provider_snapshot=gui_provider_snapshot,
     )
     monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
     monkeypatch.setattr("nanobot.api.server.create_app", _fake_create_app)
@@ -1088,6 +1023,55 @@ def test_gateway_workspace_option_overrides_config(monkeypatch, tmp_path: Path) 
     assert isinstance(result.exception, _StopGatewayError)
     assert seen["workspace"] == override
     assert config.workspace_path == override
+
+
+def test_gateway_passes_gui_runtime_snapshot(monkeypatch, tmp_path: Path) -> None:
+    config_file = _write_instance_config(tmp_path)
+    config = Config.model_validate({"gui": {"backend": "dry-run"}})
+    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
+    provider = object()
+    gui_provider = object()
+    seen: dict[str, object] = {}
+
+    class _FakeAgentLoop:
+        def __init__(self, **kwargs) -> None:
+            seen["agent_loop_kwargs"] = kwargs
+            self.model = kwargs["model"]
+            self.tools = {}
+            self.dream = MagicMock()
+            self.sessions = MagicMock()
+
+        async def run(self) -> None:
+            return None
+
+        async def close_mcp(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _StopAfterAgentLoop:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise _StopGatewayError("stop")
+
+    _patch_cli_command_runtime(
+        monkeypatch,
+        config,
+        make_provider=lambda _config: provider,
+        message_bus=lambda: object(),
+        session_manager=lambda _workspace: MagicMock(),
+        gui_provider_snapshot=_test_gui_provider_snapshot(gui_provider, "gui-model"),
+    )
+    monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _StopAfterAgentLoop)
+
+    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
+
+    assert isinstance(result.exception, _StopGatewayError)
+    kwargs = seen["agent_loop_kwargs"]
+    assert kwargs["gui_config"] is config.gui
+    assert kwargs["gui_provider"] is gui_provider
+    assert kwargs["gui_model"] == "gui-model"
 
 
 def test_gateway_uses_workspace_directory_for_cron_store(monkeypatch, tmp_path: Path) -> None:
@@ -1688,6 +1672,28 @@ def test_serve_uses_api_config_defaults_and_workspace_override(
     assert seen["host"] == "127.0.0.2"
     assert seen["port"] == 18900
     assert seen["request_timeout"] == 45.0
+
+
+def test_serve_passes_gui_runtime_snapshot(monkeypatch, tmp_path: Path) -> None:
+    config_file = _write_instance_config(tmp_path)
+    config = Config.model_validate({"gui": {"backend": "dry-run"}})
+    gui_provider = object()
+    seen: dict[str, object] = {}
+
+    _patch_serve_runtime(
+        monkeypatch,
+        config,
+        seen,
+        gui_provider_snapshot=_test_gui_provider_snapshot(gui_provider, "gui-model"),
+    )
+
+    result = runner.invoke(app, ["serve", "--config", str(config_file)])
+
+    assert result.exit_code == 0
+    kwargs = seen["agent_loop_kwargs"]
+    assert kwargs["gui_config"] is config.gui
+    assert kwargs["gui_provider"] is gui_provider
+    assert kwargs["gui_model"] == "gui-model"
 
 
 def test_serve_cli_options_override_api_config(monkeypatch, tmp_path: Path) -> None:

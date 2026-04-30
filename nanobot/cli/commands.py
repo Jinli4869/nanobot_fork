@@ -407,7 +407,12 @@ def _onboard_plugins(config_path: Path) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-def _make_provider(config: Config):
+def _make_provider(
+    config: Config,
+    *,
+    model_override: str | None = None,
+    provider_override: str | None = None,
+):
     """Create the appropriate LLM provider from config.
 
     Routing is driven by ``ProviderSpec.backend`` in the registry.
@@ -415,7 +420,11 @@ def _make_provider(config: Config):
     from nanobot.providers.factory import make_provider
 
     try:
-        return make_provider(config)
+        return make_provider(
+            config,
+            model_override=model_override,
+            provider_override=provider_override,
+        )
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1) from exc
@@ -423,12 +432,17 @@ def _make_provider(config: Config):
 
 def _resolve_gui_runtime(config: Config):
     """Resolve the GUI provider/model pair, inheriting main-agent settings by default."""
-    if config.gui is None:
-        return None, None
+    from nanobot.providers.factory import build_gui_provider_snapshot
 
-    gui_model = config.gui.model or config.agents.defaults.model
-    gui_provider = _make_provider(config)
-    return gui_provider, gui_model
+    try:
+        snapshot = build_gui_provider_snapshot(config)
+    except ValueError as exc:
+        console.print(f"[red]Error: {exc}[/red]")
+        raise typer.Exit(1) from exc
+    if snapshot is None:
+        return None, None
+    return snapshot.provider, snapshot.model
+
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
     """Load config and optionally override the active workspace."""
@@ -525,6 +539,7 @@ def serve(
     sync_workspace_templates(runtime_config.workspace_path)
     bus = MessageBus()
     provider = _make_provider(runtime_config)
+    gui_provider, gui_model = _resolve_gui_runtime(runtime_config)
     session_manager = SessionManager(runtime_config.workspace_path)
     agent_loop = AgentLoop(
         bus=bus,
@@ -549,6 +564,9 @@ def serve(
         consolidation_ratio=runtime_config.agents.defaults.consolidation_ratio,
         max_messages=runtime_config.agents.defaults.max_messages,
         tools_config=runtime_config.tools,
+        gui_config=runtime_config.gui,
+        gui_provider=gui_provider,
+        gui_model=gui_model,
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -614,7 +632,11 @@ def _run_gateway(
     from nanobot.cron.service import CronService
     from nanobot.cron.types import CronJob
     from nanobot.heartbeat.service import HeartbeatService
-    from nanobot.providers.factory import build_provider_snapshot, load_provider_snapshot
+    from nanobot.providers.factory import (
+        build_gui_provider_snapshot,
+        build_provider_snapshot,
+        load_provider_snapshot,
+    )
     from nanobot.session.manager import SessionManager
 
     port = port if port is not None else config.gateway.port
@@ -624,6 +646,7 @@ def _run_gateway(
     bus = MessageBus()
     try:
         provider_snapshot = build_provider_snapshot(config)
+        gui_provider_snapshot = build_gui_provider_snapshot(config)
     except ValueError as exc:
         console.print(f"[red]Error: {exc}[/red]")
         raise typer.Exit(1) from exc
@@ -665,6 +688,9 @@ def _run_gateway(
         tools_config=config.tools,
         provider_snapshot_loader=load_provider_snapshot,
         provider_signature=provider_snapshot.signature,
+        gui_config=config.gui,
+        gui_provider=gui_provider_snapshot.provider if gui_provider_snapshot else None,
+        gui_model=gui_provider_snapshot.model if gui_provider_snapshot else None,
     )
 
     from nanobot.agent.loop import UNIFIED_SESSION_KEY
@@ -1019,6 +1045,7 @@ def agent(
 
     bus = MessageBus()
     provider = _make_provider(config)
+    gui_provider, gui_model = _resolve_gui_runtime(config)
 
     # Preserve existing single-workspace installs, but keep custom workspaces clean.
     if is_default_workspace(config.workspace_path):
@@ -1056,6 +1083,9 @@ def agent(
         consolidation_ratio=config.agents.defaults.consolidation_ratio,
         max_messages=config.agents.defaults.max_messages,
         tools_config=config.tools,
+        gui_config=config.gui,
+        gui_provider=gui_provider,
+        gui_model=gui_model,
     )
     restart_notice = consume_restart_notice_from_env()
     if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):

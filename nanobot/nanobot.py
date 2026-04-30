@@ -63,6 +63,7 @@ class Nanobot:
             )
 
         provider = _make_provider(config)
+        gui_provider, gui_model = _resolve_gui_runtime(config)
         bus = MessageBus()
         defaults = config.agents.defaults
 
@@ -86,6 +87,9 @@ class Nanobot:
             session_ttl_minutes=defaults.session_ttl_minutes,
             consolidation_ratio=defaults.consolidation_ratio,
             tools_config=config.tools,
+            gui_config=config.gui,
+            gui_provider=gui_provider,
+            gui_model=gui_model,
         )
         return cls(loop)
 
@@ -123,3 +127,13 @@ def _make_provider(config: Any) -> Any:
     from nanobot.providers.factory import make_provider
 
     return make_provider(config)
+
+
+def _resolve_gui_runtime(config: Any) -> tuple[Any | None, str | None]:
+    """Resolve the optional GUI provider/model pair for the SDK facade."""
+    from nanobot.providers.factory import build_gui_provider_snapshot
+
+    snapshot = build_gui_provider_snapshot(config)
+    if snapshot is None:
+        return None, None
+    return snapshot.provider, snapshot.model

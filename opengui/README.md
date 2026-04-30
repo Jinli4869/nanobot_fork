@@ -5,7 +5,7 @@ OpenGUI is a vision-based GUI automation engine. It takes a screenshot of the cu
 OpenGUI can be used in two ways:
 
 - **Standalone CLI** — run `opengui` directly with a YAML config file
-- **nanobot GUI subagent** — OpenGUI is embedded as a tool inside nanobot, callable through any nanobot channel (TUI, Gateway, MCP, etc.)
+- **nanobot GUI subagent** — OpenGUI is embedded as a tool inside nanobot, callable through nanobot channels, gateway, or MCP.
 
 ---
 
@@ -24,11 +24,10 @@ OpenGUI can be used in two ways:
    - [Switching backends](#switching-backends)
    - [Platform-specific examples](#platform-specific-examples)
 4. [Live Demo](#live-demo)
-5. [Planner / Router Integration](#planner--router-integration)
-6. [App List Initialization](#app-list-initialization)
-7. [Memory Store](#memory-store)
-8. [Backends](#backends)
-9. [Skills System](#skills-system)
+5. [App List Initialization](#app-list-initialization)
+6. [Memory Store](#memory-store)
+7. [Backends](#backends)
+8. [Skills System](#skills-system)
 
 ---
 
@@ -56,7 +55,7 @@ pip install facebook-wda
 For the browser-based live demo, install the demo extras:
 
 ```bash
-uv pip install -e ".[web,demo-live]"
+uv pip install -e ".[demo-live]"
 ```
 
 ---
@@ -245,24 +244,17 @@ When you use nanobot, OpenGUI runs as the `gui` subagent tool. The main agent ca
 
 nanobot ships two entry points:
 
-**Interactive TUI / Gateway:**
+**Interactive CLI / Gateway:**
 
 ```bash
-nanobot                          # start interactive TUI chat
+nanobot                          # start interactive CLI chat
 nanobot gateway                  # start API gateway only (0.0.0.0:18790)
-```
-
-**Standalone web UI backend:**
-
-```bash
-nanobot-tui                      # serves web UI at http://127.0.0.1:18791
 ```
 
 Both accept a `--config` flag:
 
 ```bash
 nanobot --config ~/my-config.json
-nanobot-tui --config ~/my-config.json
 ```
 
 Default config path: `~/.nanobot/config.json`
@@ -316,12 +308,6 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
   "gateway": {
     "host": "0.0.0.0",
     "port": 18790
-  },
-
-  "tui": {
-    "host": "127.0.0.1",
-    "port": 18791,
-    "logLevel": "info"
   },
 
   "gui": {
@@ -689,7 +675,7 @@ Static demo scenarios remain available.
 Install the optional demo dependencies:
 
 ```bash
-uv pip install -e ".[web,demo-live]"
+uv pip install -e ".[demo-live]"
 ```
 
 Start the demo server:
@@ -728,52 +714,6 @@ using a real device, then verify:
 curl http://localhost:8100/status
 curl http://127.0.0.1:9100
 ```
-
----
-
-## Planner / Router Integration
-
-When nanobot decomposes a multi-step task into a plan, it needs to know which GUI route to assign to each GUI subtask. OpenGUI exposes a **route sentinel** per backend that the planner uses to emit correctly-typed plan nodes.
-
-### Route sentinels
-
-| Backend | Route sentinel | When it is active |
-|---------|---------------|-------------------|
-| `local` or `dry-run` | `gui.desktop` | Default; local desktop control |
-| `adb` or `scrcpy-adb` | `gui.adb` | Android device via ADB-compatible control |
-| `ios` | `gui.ios` | iOS device via WebDriverAgent |
-| `hdc` | `gui.hdc` | HarmonyOS device via HDC |
-
-The active sentinel is derived from `gui.backend` in your config:
-
-```
-"backend": "adb"   →  planner emits  route_id = "gui.adb"
-"backend": "scrcpy-adb" → planner emits route_id = "gui.adb"
-"backend": "ios"   →  planner emits  route_id = "gui.ios"
-"backend": "hdc"   →  planner emits  route_id = "gui.hdc"
-"backend": "local" →  planner emits  route_id = "gui.desktop"
-```
-
-The router dispatches any of `gui.desktop`, `gui.adb`, `gui.ios`, and `gui.hdc` to the same underlying GUI subagent tool — the sentinel exists only so the planner (and human readers of plan traces) can see which physical device a subtask targets.
-
-### How the planner learns the active backend
-
-At planning time, nanobot passes the current backend as `active_gui_route` inside `PlanningContext`. The planner directive instructs the LLM:
-
-> *"The current GUI backend is 'gui.hdc'. Use route_id='gui.hdc' for ALL GUI subtasks — do not use 'gui.desktop' or other GUI route IDs."*
-
-This ensures that when you switch between an Android phone, an iPhone, and a HarmonyOS device, the planner automatically generates the correct route IDs without any manual intervention.
-
-### Capability catalog
-
-The capability catalog shown to the planner also reflects the active backend:
-
-| `gui.backend` | Catalog summary shown to planner |
-|---------------|----------------------------------|
-| `adb` | "Use the GUI subagent to operate apps on the connected Android device" |
-| `ios` | "Use the GUI subagent to operate apps on the connected iOS device" |
-| `hdc` | "Use the GUI subagent to operate apps on the connected HarmonyOS device" |
-| `local` | "Use the GUI subagent to operate apps on the local desktop" |
 
 ---
 

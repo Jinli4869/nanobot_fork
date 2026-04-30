@@ -210,6 +210,8 @@ class AgentLoop:
         provider_snapshot_loader: Callable[[], ProviderSnapshot] | None = None,
         provider_signature: tuple[object, ...] | None = None,
         gui_config: "GuiConfig | None" = None,
+        gui_provider: LLMProvider | None = None,
+        gui_model: str | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, ToolsConfig, WebToolsConfig
 
@@ -220,6 +222,8 @@ class AgentLoop:
         self.provider = provider
         self._provider_snapshot_loader = provider_snapshot_loader
         self._provider_signature = provider_signature
+        self._gui_provider = gui_provider
+        self._gui_model = gui_model
         self.workspace = workspace
         self.model = model or provider.get_default_model()
         self.max_iterations = (
@@ -291,6 +295,7 @@ class AgentLoop:
             max_completion_tokens=provider.generation.max_tokens,
             consolidation_ratio=consolidation_ratio,
         )
+        self.memory_consolidator = self.consolidator
         self.auto_compact = AutoCompact(
             sessions=self.sessions,
             consolidator=self.consolidator,
@@ -395,8 +400,8 @@ class AgentLoop:
             self.tools.register(
                 GuiSubagentTool(
                     gui_config=self._gui_config,
-                    provider=self.provider,
-                    model=self.model,
+                    provider=self._gui_provider or self.provider,
+                    model=self._gui_model or self.model,
                     workspace=self.workspace,
                 )
             )
@@ -785,7 +790,7 @@ class AgentLoop:
                     )
                     if response is not None:
                         await self.bus.publish_outbound(response)
-                    elif msg.channel == "cli":
+                    else:
                         await self.bus.publish_outbound(OutboundMessage(
                             channel=msg.channel, chat_id=msg.chat_id,
                             content="", metadata=msg.metadata or {},

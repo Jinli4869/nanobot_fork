@@ -62,8 +62,10 @@ class ContextBuilder:
             if always_content:
                 parts.append(f"# Active Skills\n\n{always_content}")
 
-        skills_summary = self.skills.build_skills_summary(exclude=set(always_skills))
-        skills_summary = self.skills.build_skills_summary(gui_backend=gui_backend)
+        skills_summary = self.skills.build_skills_summary(
+            exclude=set(always_skills),
+            gui_backend=gui_backend,
+        )
         if skills_summary:
             parts.append(render_template("agent/skills_section.md", skills_summary=skills_summary))
 

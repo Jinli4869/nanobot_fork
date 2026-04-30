@@ -490,12 +490,21 @@ async def build_optional_components(
     memory_retriever = MemoryRetriever(embedding_provider=embedding_provider, top_k=5)
     await memory_retriever.index(memory_store.list_all())
 
-    skill_library = SkillLibrary(
-        store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
-        embedding_provider=embedding_provider,
-        merge_llm=provider,
-        embedding_signature=config.embedding.model,
-    )
+    try:
+        skill_library = SkillLibrary(
+            store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
+            embedding_provider=embedding_provider,
+            merge_llm=provider,
+            embedding_signature=config.embedding.model,
+        )
+    except TypeError as exc:
+        if "embedding_signature" not in str(exc):
+            raise
+        skill_library = SkillLibrary(
+            store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
+            embedding_provider=embedding_provider,
+            merge_llm=provider,
+        )
     state_validator = LLMStateValidator(
         provider,
         image_scale_ratio=config.image_scale_ratio,

@@ -293,8 +293,6 @@ class GuiConfig(Base):
     capture_ttft: bool = False
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
-    enable_planner: bool = True
-    enable_router: bool = True
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
 
     @field_validator("agent_profile")
