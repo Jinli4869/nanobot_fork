@@ -244,7 +244,7 @@ class ScrcpyConfig(Base):
     max_fps: int = 12
     jpeg_quality: int = 80
     frame_timeout_ms: int = 3000
-    max_frame_age_ms: int = 1000
+    max_frame_age_ms: int = 5000
 
 
 class HdcConfig(Base):
@@ -269,7 +269,7 @@ class GuiEvaluationConfig(Base):
 
 class GuiConfig(Base):
     """GUI subagent configuration."""
-    backend: Literal["adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"] = "adb"
+    backend: Literal["adb", "ios", "hdc", "local", "dry-run"] = "adb"
     model: str | None = None
     provider: str | None = None
     validator_model: str | None = None

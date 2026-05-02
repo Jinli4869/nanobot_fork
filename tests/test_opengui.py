@@ -453,7 +453,7 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
 
 @pytest.mark.asyncio
 async def test_adb_backend_observe_prefers_screenshot_size(monkeypatch: pytest.MonkeyPatch) -> None:
-    backend = AdbBackend()
+    backend = AdbBackend(use_scrcpy=False)
     run_mock = AsyncMock(return_value="")
     screen_size_mock = AsyncMock(return_value=(1080, 2376))
     foreground_mock = AsyncMock(return_value="com.example.app")
@@ -477,7 +477,7 @@ async def test_adb_backend_observe_prefers_screenshot_size(monkeypatch: pytest.M
 async def test_adb_backend_observe_falls_back_when_screenshot_size_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    backend = AdbBackend()
+    backend = AdbBackend(use_scrcpy=False)
     run_mock = AsyncMock(return_value="")
     screen_size_mock = AsyncMock(return_value=(1080, 2376))
     foreground_mock = AsyncMock(return_value="com.example.app")
@@ -636,6 +636,34 @@ async def test_hdc_backend_query_screen_size_preserves_landscape_orientation(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "expected_y2"),
+    [("down", 280), ("up", 520)],
+)
+async def test_hdc_backend_scroll_vertical_direction_is_inverted(
+    monkeypatch: pytest.MonkeyPatch,
+    direction: str,
+    expected_y2: int,
+) -> None:
+    backend = HdcBackend()
+    backend._screen_width = 400
+    backend._screen_height = 800
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    action = parse_action({
+        "action_type": "scroll",
+        "direction": direction,
+        "pixels": 120,
+    })
+    await backend.execute(action)
+
+    run_mock.assert_awaited_once_with(
+        "shell", "uitest", "uiInput", "swipe", "200", "400", "200", str(expected_y2), "2000", timeout=5.0,
+    )
+
+
+@pytest.mark.asyncio
 async def test_ios_backend_observe_swaps_window_size_when_orientation_mismatch(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -715,6 +743,55 @@ async def test_ios_backend_observe_keeps_window_size_when_orientation_matches(
     assert obs.screen_height == 2376
     assert backend._screen_width == 1080
     assert backend._screen_height == 2376
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "expected_y2"),
+    [("down", 280), ("up", 520)],
+)
+async def test_ios_backend_scroll_vertical_direction_is_inverted(
+    monkeypatch: pytest.MonkeyPatch,
+    direction: str,
+    expected_y2: int,
+) -> None:
+    class _FakeSession:
+        def __init__(self) -> None:
+            self.swipe_calls: list[tuple[int, int, int, int, float]] = []
+
+        def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_s: float) -> None:
+            self.swipe_calls.append((x1, y1, x2, y2, duration_s))
+
+    class _FakeClient:
+        def __init__(self, _url: str) -> None:
+            self._session = _FakeSession()
+
+        def session(self) -> _FakeSession:
+            return self._session
+
+        def window_size(self) -> dict[str, int]:
+            return {"width": 1080, "height": 2376}
+
+        def app_current(self) -> dict[str, str]:
+            return {"bundleId": "com.example.ios"}
+
+    class _FakeWdaModule:
+        Client = _FakeClient
+
+    monkeypatch.setattr(ios_wda_module, "_import_wda", lambda: _FakeWdaModule)
+    backend = ios_wda_module.WdaBackend()
+    monkeypatch.setattr(backend, "_wda_call", AsyncMock(side_effect=lambda fn, *args: fn(*args)))
+    backend._screen_width = 400
+    backend._screen_height = 800
+
+    action = parse_action({
+        "action_type": "scroll",
+        "direction": direction,
+        "pixels": 120,
+    })
+    await backend.execute(action)
+
+    assert backend._client._session.swipe_calls == [(200, 400, 200, expected_y2, 0.3)]
 
 
 def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> None:
@@ -1391,6 +1468,34 @@ async def test_adb_backend_scrolls_horizontally_from_center(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("direction", "expected_y2"),
+    [("down", "280"), ("up", "520")],
+)
+async def test_adb_backend_scroll_vertical_direction_is_inverted(
+    monkeypatch: pytest.MonkeyPatch,
+    direction: str,
+    expected_y2: str,
+) -> None:
+    backend = AdbBackend()
+    backend._screen_width = 400
+    backend._screen_height = 800
+    run_mock = AsyncMock(return_value="")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    action = parse_action({
+        "action_type": "scroll",
+        "direction": direction,
+        "pixels": 120,
+    })
+    await backend.execute(action)
+
+    run_mock.assert_awaited_once_with(
+        "shell", "input", "swipe", "200", "400", "200", expected_y2, "300", timeout=5.0,
+    )
+
+
+@pytest.mark.asyncio
 async def test_adb_backend_input_text_prefers_yadb(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1774,6 +1879,11 @@ async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:
     assert result.steps_taken == 1
     assert result.trace_path is not None
     assert Path(result.trace_path).exists()
+    assert result.summary.startswith("Status: partial")
+    assert "Done:" in result.summary
+    assert "Remaining:" in result.summary
+    assert "Current:" in result.summary
+    assert "Resume:" in result.summary
 
 
 @pytest.mark.asyncio
@@ -1804,6 +1914,80 @@ async def test_agent_stagnation_detection_terminates_before_max_steps(tmp_path: 
     assert result.error == "stagnation_detected"
     assert result.steps_taken == 3
     assert result.steps_taken < agent.max_steps
+    assert result.summary.startswith("Status: blocked")
+    assert "Done:" in result.summary
+    assert "Remaining:" in result.summary
+    assert "Current:" in result.summary
+    assert "Resume:" in result.summary
+
+
+@pytest.mark.asyncio
+async def test_agent_success_uses_compact_state_note(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([
+            LLMResponse(
+                content="wait",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="computer_use",
+                    arguments={"action_type": "wait", "duration_ms": 1},
+                )],
+            ),
+            LLMResponse(
+                content="finish task",
+                tool_calls=[ToolCall(
+                    id="call-2",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )],
+            ),
+        ]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "completed note"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+    )
+
+    result = await agent.run("complete the task", max_retries=1)
+
+    assert result.success
+    assert result.summary.startswith("Status: completed")
+    assert "Done:" in result.summary
+    assert "Remaining: none" in result.summary
+    assert "Current:" in result.summary
+    assert "Resume: No further action needed." in result.summary
+
+
+@pytest.mark.asyncio
+async def test_agent_intervention_cancelled_returns_blocked_note(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([
+            LLMResponse(
+                content="request help",
+                tool_calls=[ToolCall(
+                    id="call-1",
+                    name="computer_use",
+                    arguments={"action_type": "request_intervention", "text": "Need human input"},
+                )],
+            ),
+        ]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "intervention note"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("pause for review", max_retries=1)
+
+    assert not result.success
+    assert result.error and result.error.startswith("intervention_cancelled")
+    assert result.summary.startswith("Status: blocked")
+    assert "Done:" in result.summary
+    assert "Remaining:" in result.summary
+    assert "Current:" in result.summary
+    assert "Resume:" in result.summary
 
 
 @pytest.mark.asyncio
@@ -1924,7 +2108,7 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
 
     assert not result.success
     assert result.error == "stagnation_detected"
-    assert llm.calls == 3
+    assert llm.calls == 4
     assert recorder.path is not None
     events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     assert sum(1 for event in events if event["type"] == "attempt_start") == 1
@@ -1967,12 +2151,22 @@ async def test_stagnation_detection_generates_termination_summary(tmp_path: Path
 
     assert not result.success
     assert result.error == "stagnation_detected"
-    assert result.summary == summary_text
+    assert result.summary.startswith("Status: blocked")
+    assert "Done:" in result.summary
+    assert "Remaining:" in result.summary
+    assert "Current:" in result.summary
+    assert "Resume:" in result.summary
     assert len(llm.calls) == 3
     summary_call = llm.calls[2]
     content = summary_call[-1]["content"]
     assert isinstance(content, list)
     assert content[0]["type"] == "text"
+    prompt_text = "\n".join(
+        block["text"]
+        for block in content
+        if block.get("type") == "text"
+    )
+    assert "Status: completed|partial|blocked" in prompt_text
 
 
 @pytest.mark.asyncio

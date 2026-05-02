@@ -75,7 +75,7 @@ test('agent log rerenders when log object changes without visible count change',
 
   const entries = [
     { type: 'inbound', channel: 'demo-live', content: 'open settings' },
-    { type: 'tool_call', tool: 'gui_task', arguments: { backend: 'scrcpy-adb' } },
+    { type: 'tool_call', tool: 'gui_task', arguments: { backend: 'adb' } },
   ];
 
   state.set('visibleLogCount', 0);

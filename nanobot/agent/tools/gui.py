@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -112,7 +113,7 @@ class GuiSubagentTool(Tool):
                 },
                 "backend": {
                     "type": "string",
-                    "enum": ["adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"],
+                    "enum": ["adb", "ios", "hdc", "local", "dry-run"],
                     "description": "Optional backend override. Defaults to the configured GUI backend.",
                 },
                 "require_background_isolation": {
@@ -142,94 +143,96 @@ class GuiSubagentTool(Tool):
         **kwargs: Any,
     ) -> str:
         active_backend = self._select_backend(backend)
+        try:
+            if self._gui_config.background:
+                probe_fn = probe_isolated_background_support
+                resolve_fn = resolve_run_mode
+                log_fn = log_mode_resolution
+                if probe_fn is None:
+                    from opengui.backends.background_runtime import (
+                        probe_isolated_background_support as runtime_probe_isolated_background_support,
+                    )
 
-        if self._gui_config.background:
-            probe_fn = probe_isolated_background_support
-            resolve_fn = resolve_run_mode
-            log_fn = log_mode_resolution
-            if probe_fn is None:
-                from opengui.backends.background_runtime import (
-                    probe_isolated_background_support as runtime_probe_isolated_background_support,
+                    probe_fn = runtime_probe_isolated_background_support
+                if resolve_fn is None:
+                    from opengui.backends.background_runtime import (
+                        resolve_run_mode as runtime_resolve_run_mode,
+                    )
+
+                    resolve_fn = runtime_resolve_run_mode
+                if log_fn is None:
+                    from opengui.backends.background_runtime import (
+                        log_mode_resolution as runtime_log_mode_resolution,
+                    )
+
+                    log_fn = runtime_log_mode_resolution
+
+                resolved_target_app_class = self._resolve_probe_target_app_class(
+                    backend,
+                    target_app_class,
+                    sys_platform=sys.platform,
                 )
-
-                probe_fn = runtime_probe_isolated_background_support
-            if resolve_fn is None:
-                from opengui.backends.background_runtime import (
-                    resolve_run_mode as runtime_resolve_run_mode,
+                probe = probe_fn(
+                    sys_platform=sys.platform,
+                    target_app_class=resolved_target_app_class,
                 )
-
-                resolve_fn = runtime_resolve_run_mode
-            if log_fn is None:
-                from opengui.backends.background_runtime import (
-                    log_mode_resolution as runtime_log_mode_resolution,
+                decision = resolve_fn(
+                    probe,
+                    require_isolation=require_background_isolation,
+                    require_acknowledgement_for_fallback=True,
                 )
+                log_fn(logger, decision, owner="nanobot", task=task)
 
-                log_fn = runtime_log_mode_resolution
+                if decision.mode == "blocked":
+                    return self._background_json_failure(decision.message)
 
-            resolved_target_app_class = self._resolve_probe_target_app_class(
-                backend,
-                target_app_class,
-                sys_platform=sys.platform,
-            )
-            probe = probe_fn(
-                sys_platform=sys.platform,
-                target_app_class=resolved_target_app_class,
-            )
-            decision = resolve_fn(
-                probe,
-                require_isolation=require_background_isolation,
-                require_acknowledgement_for_fallback=True,
-            )
-            log_fn(logger, decision, owner="nanobot", task=task)
+                if decision.mode == "fallback" and not acknowledge_background_fallback:
+                    return self._background_json_failure(
+                        f"{decision.message} Re-run with acknowledge_background_fallback=true to continue in foreground."
+                    )
 
-            if decision.mode == "blocked":
-                return self._background_json_failure(decision.message)
-
-            if decision.mode == "fallback" and not acknowledge_background_fallback:
-                return self._background_json_failure(
-                    f"{decision.message} Re-run with acknowledge_background_fallback=true to continue in foreground."
-                )
-
-            if decision.mode == "isolated":
-                try:
-                    mgr = self._build_isolated_display_manager(probe)
-                except RuntimeError as exc:
-                    return self._background_json_failure(str(exc))
-                if probe.backend_name == "windows_isolated_desktop":
-                    wrapped_backend = None
+                if decision.mode == "isolated":
                     try:
-                        backend_cls = WindowsIsolatedBackend
-                        if backend_cls is None:
-                            from opengui.backends.windows_isolated import (
-                                WindowsIsolatedBackend as ImportedWindowsIsolatedBackend,
-                            )
+                        mgr = self._build_isolated_display_manager(probe)
+                    except RuntimeError as exc:
+                        return self._background_json_failure(str(exc))
+                    if probe.backend_name == "windows_isolated_desktop":
+                        wrapped_backend = None
+                        try:
+                            backend_cls = WindowsIsolatedBackend
+                            if backend_cls is None:
+                                from opengui.backends.windows_isolated import (
+                                    WindowsIsolatedBackend as ImportedWindowsIsolatedBackend,
+                                )
 
-                            backend_cls = ImportedWindowsIsolatedBackend
-                        wrapped_backend = backend_cls(
+                                backend_cls = ImportedWindowsIsolatedBackend
+                            wrapped_backend = backend_cls(
+                                active_backend,
+                                mgr,
+                                run_metadata={"owner": "nanobot", "task": task, "model": self._model},
+                            )
+                            return await self._run_task(wrapped_backend, task, **kwargs)
+                        except RuntimeError as exc:
+                            return self._background_json_failure(str(exc))
+                        finally:
+                            if wrapped_backend is not None:
+                                await wrapped_backend.shutdown()
+                    else:
+                        from opengui.backends.background import BackgroundDesktopBackend
+
+                        wrapped_backend = BackgroundDesktopBackend(
                             active_backend,
                             mgr,
                             run_metadata={"owner": "nanobot", "task": task, "model": self._model},
                         )
-                        return await self._run_task(wrapped_backend, task, **kwargs)
-                    except RuntimeError as exc:
-                        return self._background_json_failure(str(exc))
-                    finally:
-                        if wrapped_backend is not None:
+                        try:
+                            return await self._run_task(wrapped_backend, task, **kwargs)
+                        finally:
                             await wrapped_backend.shutdown()
-                else:
-                    from opengui.backends.background import BackgroundDesktopBackend
 
-                    wrapped_backend = BackgroundDesktopBackend(
-                        active_backend,
-                        mgr,
-                        run_metadata={"owner": "nanobot", "task": task, "model": self._model},
-                    )
-                    try:
-                        return await self._run_task(wrapped_backend, task, **kwargs)
-                    finally:
-                        await wrapped_backend.shutdown()
-
-        return await self._run_task(active_backend, task, **kwargs)
+            return await self._run_task(active_backend, task, **kwargs)
+        finally:
+            await self._shutdown_android_backend(active_backend)
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
         policy_context, memory_store = self._load_policy_context_and_memory_store()
@@ -332,7 +335,6 @@ class GuiSubagentTool(Tool):
         summary = result.summary
         error = result.error
         if error and error.startswith("intervention_cancelled:"):
-            summary = f"Task cancelled during intervention after {result.steps_taken} step(s)."
             error = "intervention_cancelled"
         trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
         post_run_state = self._build_post_run_state(
@@ -470,15 +472,11 @@ class GuiSubagentTool(Tool):
         foreground_app: str | None,
         resolution: str | None,
     ) -> str:
-        if success:
-            parts = [summary.strip() or "GUI task completed successfully."]
-            if foreground_app:
-                parts.append(f"Latest visible app: {foreground_app}.")
-            if resolution:
-                parts.append(f"Screen resolution: {resolution}.")
-            return " ".join(parts)
+        note = summary.strip()
+        if note:
+            return note
 
-        parts = [summary.strip() or "GUI task did not complete successfully."]
+        parts = ["GUI task completed successfully." if success else "GUI task did not complete successfully."]
         if error:
             parts.append(f"Error: {error}.")
         if foreground_app:
@@ -691,17 +689,12 @@ class GuiSubagentTool(Tool):
         if backend_name == "adb":
             from opengui.backends.adb import AdbBackend
 
-            return AdbBackend(serial=self._gui_config.adb.serial)
-
-        if backend_name == "scrcpy-adb":
-            from opengui.backends.scrcpy_adb import ScrcpyAdbBackend
-
-            return ScrcpyAdbBackend(
+            return AdbBackend(
                 serial=self._gui_config.adb.serial,
-                max_fps=self._gui_config.scrcpy.max_fps,
-                jpeg_quality=self._gui_config.scrcpy.jpeg_quality,
-                frame_timeout_ms=self._gui_config.scrcpy.frame_timeout_ms,
-                max_frame_age_ms=self._gui_config.scrcpy.max_frame_age_ms,
+                scrcpy_max_fps=self._gui_config.scrcpy.max_fps,
+                scrcpy_jpeg_quality=self._gui_config.scrcpy.jpeg_quality,
+                scrcpy_frame_timeout_ms=self._gui_config.scrcpy.frame_timeout_ms,
+                scrcpy_max_frame_age_ms=self._gui_config.scrcpy.max_frame_age_ms,
                 on_jpeg_frame=self._gui_frame_callback,
             )
 
@@ -841,6 +834,16 @@ class GuiSubagentTool(Tool):
         shutdown = getattr(self._backend, "shutdown", None)
         if callable(shutdown):
             await shutdown()
+
+    async def _shutdown_android_backend(self, backend: Any) -> None:
+        if getattr(backend, "platform", None) != "android":
+            return
+        shutdown = getattr(backend, "shutdown", None)
+        if not callable(shutdown):
+            return
+        result = shutdown()
+        if inspect.isawaitable(result):
+            await result
 
 
 class _GuiToolInterventionHandler:

@@ -266,7 +266,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", dest="task_flag", help="Task description")
     parser.add_argument(
         "--backend",
-        choices=("adb", "scrcpy-adb", "ios", "hdc", "local", "dry-run"),
+        choices=("adb", "ios", "hdc", "local", "dry-run"),
         default="local",
         help="Execution backend",
     )
@@ -322,7 +322,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if not args.task_input and not args.task_flag:
         parser.error("task is required via positional input or --task")
-    if args.background and args.backend in ("adb", "scrcpy-adb", "ios", "hdc", "dry-run"):
+    if args.background and args.backend in ("adb", "ios", "hdc", "dry-run"):
         parser.error("--background requires --backend local (or omit --backend)")
     if args.background and args.dry_run:
         parser.error("--background is incompatible with --dry-run")
@@ -441,16 +441,13 @@ def load_config(path: Path | None = None) -> CliConfig:
 
 def build_backend(name: str, config: CliConfig) -> Any:
     if name == "adb":
-        return AdbBackend(serial=config.adb.serial, adb_path=config.adb.adb_path or "adb")
-    if name == "scrcpy-adb":
-        from opengui.backends.scrcpy_adb import ScrcpyAdbBackend
-        return ScrcpyAdbBackend(
+        return AdbBackend(
             serial=config.adb.serial,
             adb_path=config.adb.adb_path or "adb",
-            max_fps=config.scrcpy.max_fps,
-            jpeg_quality=config.scrcpy.jpeg_quality,
-            frame_timeout_ms=config.scrcpy.frame_timeout_ms,
-            max_frame_age_ms=config.scrcpy.max_frame_age_ms,
+            scrcpy_max_fps=config.scrcpy.max_fps,
+            scrcpy_jpeg_quality=config.scrcpy.jpeg_quality,
+            scrcpy_frame_timeout_ms=config.scrcpy.frame_timeout_ms,
+            scrcpy_max_frame_age_ms=config.scrcpy.max_frame_age_ms,
         )
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend
