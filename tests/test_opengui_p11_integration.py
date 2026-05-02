@@ -927,7 +927,7 @@ async def test_gui_tool_intervention_flow_returns_structured_resume_result(
         await tool._wait_for_pending_postprocessing()
 
     assert payload["success"] is True
-    assert payload["summary"] == "Task completed after 2 step(s)."
+    assert payload["summary"].startswith("Status: completed")
     assert payload["error"] is None
     assert payload["steps_taken"] == 2
     assert payload["trace_path"] is not None

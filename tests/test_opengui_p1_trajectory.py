@@ -183,8 +183,14 @@ def test_trajectory_recorder_metadata_fields(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 async def test_trajectory_summarizer_returns_string() -> None:
-    """summarize_events() returns a non-empty string matching the canned LLM response."""
-    canned = "The agent opened settings successfully."
+    """summarize_events() returns the strict GUI state note from the LLM."""
+    canned = (
+        "Status: completed\n"
+        "Done: Opened settings and finished the flow.\n"
+        "Remaining: none\n"
+        "Current: Settings screen\n"
+        "Resume: No further action needed."
+    )
     llm = _ScriptedLLM(canned)
     summarizer = TrajectorySummarizer(llm)
 
@@ -202,8 +208,8 @@ async def test_trajectory_summarizer_returns_string() -> None:
     summary = await summarizer.summarize_events(events)
 
     assert isinstance(summary, str)
-    assert len(summary) > 0
-    assert "opened settings" in summary
+    assert summary == canned
+    assert summary.startswith("Status: completed")
 
 
 async def test_trajectory_summarizer_empty_events_returns_empty_string() -> None:

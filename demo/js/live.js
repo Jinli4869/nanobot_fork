@@ -55,7 +55,7 @@ export function initLiveDemo() {
       return;
     }
 
-    for (const [value, label] of [['adb', 'adb'], ['scrcpy-adb', 'scrcpy-adb']]) {
+    for (const [value, label] of [['adb', 'adb']]) {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = label;

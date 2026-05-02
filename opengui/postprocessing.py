@@ -180,7 +180,7 @@ class PostRunProcessor:
             self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
         )
         if summary:
-            logger.info("Trajectory summary: %s", summary[:200])
+            logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
 
     # ------------------------------------------------------------------
     # Summarization

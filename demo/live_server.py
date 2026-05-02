@@ -149,14 +149,14 @@ class LiveRunRequest(BaseModel):
     task: str = Field(min_length=1)
     platform: Literal["android", "ios"] = "android"
     serial: str | None = None
-    gui_backend: Literal["adb", "scrcpy-adb", "ios"] = "adb"
+    gui_backend: Literal["adb", "ios"] = "adb"
 
     @model_validator(mode="after")
     def _validate_platform_backend(self) -> "LiveRunRequest":
         if self.platform == "ios" and self.gui_backend != "ios":
             raise ValueError("iOS live runs require gui_backend='ios'")
-        if self.platform == "android" and self.gui_backend not in {"adb", "scrcpy-adb"}:
-            raise ValueError("Android live runs require gui_backend='adb' or 'scrcpy-adb'")
+        if self.platform == "android" and self.gui_backend != "adb":
+            raise ValueError("Android live runs require gui_backend='adb'")
         return self
 
 
@@ -177,7 +177,7 @@ class LiveRun:
     task: str
     platform: Literal["android", "ios"]
     serial: str | None
-    gui_backend: Literal["adb", "scrcpy-adb", "ios"] = "adb"
+    gui_backend: Literal["adb", "ios"] = "adb"
     queue: asyncio.Queue[LiveQueueItem] = field(default_factory=asyncio.Queue)
     task_handle: asyncio.Task[Any] | None = None
     loop: asyncio.AbstractEventLoop | None = None
@@ -231,7 +231,7 @@ class LiveRunManager:
         task: str,
         platform: Literal["android", "ios"] = "android",
         serial: str | None,
-        gui_backend: Literal["adb", "scrcpy-adb", "ios"] = "adb",
+        gui_backend: Literal["adb", "ios"] = "adb",
     ) -> LiveRun:
         run = LiveRun(
             run_id=uuid4().hex,
@@ -323,7 +323,7 @@ class LiveRunManager:
         serial: str | None,
         *,
         platform: Literal["android", "ios"] = "android",
-        gui_backend: Literal["adb", "scrcpy-adb", "ios"] = "adb",
+        gui_backend: Literal["adb", "ios"] = "adb",
     ) -> Config:
         config = load_config(self._config_path)
         gui = config.gui or GuiConfig()
@@ -501,7 +501,7 @@ def create_app(
             return
 
         try:
-            from opengui.backends.scrcpy_adb import ScrcpyFrameSource
+            from opengui.backends.adb import ScrcpyFrameSource
 
             source = ScrcpyFrameSource(
                 serial=serial,
