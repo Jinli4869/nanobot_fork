@@ -192,6 +192,8 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "system settings": "com.android.settings",
     "device settings": "com.android.settings",
     "phone settings": "com.android.settings",
+    "com.google.android.settings.intelligence": "com.android.settings",
+    "com.android.settings.intelligence": "com.android.settings",
     "google mail": "com.google.android.gm",
     "google gmail": "com.google.android.gm",
     "google chrome": "com.android.chrome",

@@ -16,7 +16,7 @@ import opengui.backends.hdc as hdc_backend_module
 import opengui.backends.ios_wda as ios_wda_module
 from opengui.action import Action, ActionError, parse_action, resolve_coordinate
 from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
-from opengui.agent_profiles import normalize_profile_response
+from opengui.agent_profiles import normalize_profile_response, profile_tool_definition
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
 from opengui.backends.hdc import HdcBackend
@@ -333,6 +333,14 @@ def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
     assert '"name": "computer_use"' in prompt
     assert "# Response format" in prompt
     assert "native tool-calling mechanism" in prompt
+
+
+def test_default_profile_tool_definition_requires_summary() -> None:
+    params = profile_tool_definition("default")["function"]["parameters"]
+
+    assert params["required"] == ["action_type", "summary"]
+    assert "summary" in params["properties"]
+    assert "intent" in params["properties"]
 
 
 def test_build_system_prompt_supports_general_e2e_profile() -> None:
@@ -763,6 +771,29 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
         "x": 500,
         "y": 250,
         "relative": True,
+    }
+
+
+def test_qwen3vl_profile_preserves_action_summary() -> None:
+    response = LLMResponse(
+        content=(
+            'Thought: I found the target\n'
+            'Action: "Tap the login button"\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250],"summary":"tap login button","intent":"tap login button"}}'
+            '</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 500,
+        "y": 250,
+        "relative": True,
+        "summary": "tap login button",
     }
 
 
@@ -2367,6 +2398,58 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     )
     assert "Step 3" in current_text
     assert "Task: Open Settings" in current_text
+
+
+@pytest.mark.asyncio
+async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: Tap login button",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={
+                    "action_type": "tap",
+                    "x": 500,
+                    "y": 250,
+                    "summary": "tap login button",
+                },
+            )],
+        ),
+        LLMResponse(
+            content="Action: Finish task",
+            tool_calls=[ToolCall(
+                id="call-2",
+                name="computer_use",
+                arguments={
+                    "action_type": "done",
+                    "status": "success",
+                    "summary": "finish login flow",
+                },
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "tool summary"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        history_image_window=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Open Login")
+
+    assert result.success
+    assert result.model_summary == "finish login flow"
+    second_call = llm.calls[1]
+    history_text = "\n".join(
+        block["text"]
+        for block in second_call[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Step 1: tap login button" in history_text
 
 
 @pytest.mark.asyncio

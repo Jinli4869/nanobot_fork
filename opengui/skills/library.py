@@ -21,6 +21,7 @@ import tempfile
 import typing
 import hashlib
 import time
+import threading
 from dataclasses import dataclass, field
 from collections import OrderedDict
 from pathlib import Path
@@ -35,6 +36,8 @@ if typing.TYPE_CHECKING:
     from opengui.memory.retrieval import EmbeddingProvider, _BM25Index, _FaissIndex
 
 logger = logging.getLogger(__name__)
+_STORE_LOCKS: dict[Path, threading.RLock] = {}
+_STORE_LOCKS_GUARD = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # Name / action similarity helpers
@@ -122,6 +125,16 @@ def _lazy_bm25() -> _BM25Index:
 def _lazy_faiss() -> _FaissIndex:
     from opengui.memory.retrieval import _FaissIndex
     return _FaissIndex()
+
+
+def _store_lock(store_dir: Path) -> threading.RLock:
+    key = store_dir.expanduser().resolve()
+    with _STORE_LOCKS_GUARD:
+        lock = _STORE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _STORE_LOCKS[key] = lock
+        return lock
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +256,7 @@ class SkillLibrary:
     _ordered_ids: list[str] = field(default_factory=list, repr=False)
     _index_dirty: bool = field(default=True, repr=False)
     _loaded_mtime_ns: int = field(default=0, repr=False)
+    _store_lock: threading.RLock = field(init=False, repr=False)
 
     _VALID_SEARCH_MODES: typing.ClassVar[frozenset[str]] = frozenset(
         {"hybrid", "rrf", "hybrid_comprehensive"}
@@ -250,6 +264,7 @@ class SkillLibrary:
 
     def __post_init__(self) -> None:
         self.store_dir = Path(self.store_dir)
+        self._store_lock = _store_lock(self.store_dir)
         if self.search_mode not in self._VALID_SEARCH_MODES:
             logger.warning(
                 "Unknown search_mode %r; falling back to 'hybrid'. "
@@ -257,7 +272,8 @@ class SkillLibrary:
                 self.search_mode,
                 sorted(self._VALID_SEARCH_MODES),
             )
-        self.load_all()
+        with self._store_lock:
+            self.load_all()
 
     # -- Query embedding cache -------------------------------------------------
 
@@ -462,17 +478,44 @@ class SkillLibrary:
             except Exception as exc:
                 logger.warning("Failed to embed incoming skill %r: %s", skill.name, exc)
 
-        conflict = self._find_best_conflict(skill, incoming_emb)
-        if conflict is None:
-            self._upsert(skill, embedding=incoming_emb)
-            logger.info(
-                "Skill dedup decision=ADD  new=%s [%s] app=%s  (no conflict found)",
-                skill.name, skill.skill_id[:8], skill.app,
-            )
-            self._cleanup_superseded_prefixes(skill.platform, skill.app)
-            return "ADD", skill.skill_id
+        with self._store_lock:
+            self.load_all()
+            conflict = self._find_best_conflict(skill, incoming_emb)
+            if conflict is None:
+                self._upsert(skill, embedding=incoming_emb)
+                logger.info(
+                    "Skill dedup decision=ADD  new=%s [%s] app=%s  (no conflict found)",
+                    skill.name, skill.skill_id[:8], skill.app,
+                )
+                self._cleanup_superseded_prefixes(skill.platform, skill.app)
+                return "ADD", skill.skill_id
+            self._log_conflict(conflict, skill, incoming_emb)
+            if self.merge_llm is None:
+                decision = self._heuristic_merge_decision(conflict, skill)
+                return self._apply_merge_decision(conflict, skill, incoming_emb, decision)
 
-        # Log conflict details with similarity scores for diagnostics.
+        decision = await self._llm_merge_decision(conflict, skill)
+        with self._store_lock:
+            self.load_all()
+            conflict = self._find_best_conflict(skill, incoming_emb)
+            if conflict is None:
+                self._upsert(skill, embedding=incoming_emb)
+                logger.info(
+                    "Skill dedup decision=ADD  new=%s [%s] app=%s  "
+                    "(conflict disappeared before LLM decision applied)",
+                    skill.name, skill.skill_id[:8], skill.app,
+                )
+                self._cleanup_superseded_prefixes(skill.platform, skill.app)
+                return "ADD", skill.skill_id
+            self._log_conflict(conflict, skill, incoming_emb)
+            return self._apply_merge_decision(conflict, skill, incoming_emb, decision)
+
+    def _log_conflict(
+        self,
+        conflict: Skill,
+        skill: Skill,
+        incoming_emb: np.ndarray | None,
+    ) -> None:
         name_sim = _name_token_similarity(conflict.name, skill.name)
         action_sim = _action_similarity(
             _action_signature(conflict), _action_signature(skill),
@@ -489,8 +532,13 @@ class SkillLibrary:
             f"{emb_sim:.3f}" if emb_sim is not None else "n/a",
         )
 
-        decision = await self._decide_merge(conflict, skill)
-
+    def _apply_merge_decision(
+        self,
+        conflict: Skill,
+        skill: Skill,
+        incoming_emb: np.ndarray | None,
+        decision: str,
+    ) -> tuple[str, str | None]:
         if decision == "MERGE":
             merged = self._merge_skills(conflict, skill)
             self._upsert(merged, replace_id=conflict.skill_id, embedding=incoming_emb)
@@ -501,7 +549,7 @@ class SkillLibrary:
             )
             self._cleanup_superseded_prefixes(skill.platform, skill.app)
             return "MERGE", merged.skill_id
-        elif decision == "KEEP_NEW":
+        if decision == "KEEP_NEW":
             self._remove_internal(conflict.skill_id)
             self._upsert(skill, embedding=incoming_emb)
             logger.info(
@@ -512,7 +560,7 @@ class SkillLibrary:
             )
             self._cleanup_superseded_prefixes(skill.platform, skill.app)
             return "KEEP_NEW", skill.skill_id
-        elif decision == "KEEP_OLD":
+        if decision == "KEEP_OLD":
             logger.info(
                 "Skill dedup decision=KEEP_OLD  kept=%s [%s]  "
                 "discarded=%s [%s]",
@@ -520,20 +568,20 @@ class SkillLibrary:
                 skill.name, skill.skill_id[:8],
             )
             return "KEEP_OLD", conflict.skill_id
-        else:
-            # ADD — genuinely different
-            self._upsert(skill, embedding=incoming_emb)
-            logger.info(
-                "Skill dedup decision=ADD  new=%s [%s] app=%s  "
-                "(conflict found but decision=ADD)",
-                skill.name, skill.skill_id[:8], skill.app,
-            )
-            self._cleanup_superseded_prefixes(skill.platform, skill.app)
-            return "ADD", skill.skill_id
+        self._upsert(skill, embedding=incoming_emb)
+        logger.info(
+            "Skill dedup decision=ADD  new=%s [%s] app=%s  "
+            "(conflict found but decision=ADD)",
+            skill.name, skill.skill_id[:8], skill.app,
+        )
+        self._cleanup_superseded_prefixes(skill.platform, skill.app)
+        return "ADD", skill.skill_id
 
     def add(self, skill: Skill) -> None:
         """Direct add without dedup (for bulk loading or trusted sources)."""
-        self._upsert(self._normalize_skill(skill))
+        with self._store_lock:
+            self.load_all()
+            self._upsert(self._normalize_skill(skill))
 
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         """Replace a skill by ID with an updated version.
@@ -553,17 +601,21 @@ class SkillLibrary:
             ``True`` if the skill was found and replaced; ``False`` if the
             ``skill_id`` was not present in the library.
         """
-        if skill_id not in self._skills:
-            return False
-        updated_skill = self._normalize_skill(updated_skill)
-        # Preserve existing embedding — stat-only updates don't change description.
-        existing_emb = self._embeddings.get(skill_id)
-        self._remove_internal(skill_id)
-        self._upsert(updated_skill, embedding=existing_emb)
-        return True
+        with self._store_lock:
+            self.load_all()
+            if skill_id not in self._skills:
+                return False
+            updated_skill = self._normalize_skill(updated_skill)
+            # Preserve existing embedding — stat-only updates don't change description.
+            existing_emb = self._embeddings.get(skill_id)
+            self._remove_internal(skill_id)
+            self._upsert(updated_skill, embedding=existing_emb)
+            return True
 
     def remove(self, skill_id: str) -> bool:
-        return self._remove_internal(skill_id)
+        with self._store_lock:
+            self.load_all()
+            return self._remove_internal(skill_id)
 
     def get(self, skill_id: str) -> Skill | None:
         return self._skills.get(skill_id)

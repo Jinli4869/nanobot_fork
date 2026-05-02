@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from opengui.backends.dry_run import DryRunBackend
+from opengui.agent import GuiAgent
 from opengui.interfaces import LLMResponse
 from opengui.skills import Skill, SkillStep
 from opengui.skills.executor import ExecutionState, SkillExecutor
@@ -1143,3 +1144,27 @@ async def test_skill_reuser_low_confidence_still_uses_judge_in_order() -> None:
     assert len(judge_llm.messages) == 2
     assert "Candidate One" in judge_llm.messages[0][0]["content"]
     assert "Candidate Two" in judge_llm.messages[1][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_extract_skill_params_deterministically_parses_search_query() -> None:
+    class _DummyAgent:
+        def __init__(self) -> None:
+            self.llm = _ScriptedLLM([])
+
+        _guess_skill_param = staticmethod(GuiAgent._guess_skill_param)
+
+    task = "在 Bilibili 搜索 让子弹飞"
+    skill = Skill(
+        skill_id="param-1",
+        name="Search Videos",
+        description="Search Bilibili for a video title.",
+        app="tv.danmaku.bili",
+        platform="android",
+        steps=(SkillStep(action_type="input_text", target="search box"),),
+        parameters=("search_query",),
+    )
+
+    params = await GuiAgent._extract_skill_params(_DummyAgent(), task, skill)
+
+    assert params == {"search_query": "让子弹飞"}
