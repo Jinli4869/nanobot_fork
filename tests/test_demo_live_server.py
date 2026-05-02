@@ -86,7 +86,7 @@ async def test_live_run_manager_streams_agent_and_gui_events(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_live_run_manager_keeps_gui_backend_selectable(tmp_path: Path) -> None:
+async def test_live_run_manager_keeps_android_gui_backend_as_adb(tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
     def fake_runtime_factory(config: Config, run: Any) -> FakeRuntime:
@@ -100,7 +100,7 @@ async def test_live_run_manager_keeps_gui_backend_selectable(tmp_path: Path) -> 
     run = await manager.start_run(
         task="open settings",
         serial="emulator-5554",
-        gui_backend="scrcpy-adb",
+        gui_backend="adb",
     )
 
     while True:
@@ -108,8 +108,8 @@ async def test_live_run_manager_keeps_gui_backend_selectable(tmp_path: Path) -> 
         if item.kind == "json" and item.payload.get("type") == "run_complete":
             break
 
-    assert captured["backend"] == "scrcpy-adb"
-    assert "backend 必须是 scrcpy-adb" in captured["prompt"]
+    assert captured["backend"] == "adb"
+    assert "backend 必须是 adb" in captured["prompt"]
 
 
 @pytest.mark.asyncio

@@ -147,7 +147,6 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
     assert tool.parameters["required"] == ["task"]
     assert tool.parameters["properties"]["backend"]["enum"] == [
         "adb",
-        "scrcpy-adb",
         "ios",
         "hdc",
         "local",
@@ -406,11 +405,69 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
         "post_run_state",
     }
     assert result["success"] is True
+    assert result["summary"].startswith("Status: completed")
+    assert result["post_run_state"]["current_state"] == result["summary"]
     assert result["steps_taken"] == 2
     assert result["error"] is None
     assert Path(result["trace_path"]).is_file()
     assert traces
     assert any(path.name == "trace.jsonl" for path in traces)
+
+
+@pytest.mark.asyncio
+async def test_gui_task_returns_state_note_for_partial_run(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from opengui.agent import GuiAgent as OpenGuiAgent
+
+    original_run = OpenGuiAgent.run
+
+    async def _single_attempt_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None):
+        del max_retries
+        return await original_run(self, task, max_retries=1, app_hint=app_hint)
+
+    monkeypatch.setattr(
+        "opengui.postprocessing.PostRunProcessor._summarize_trajectory",
+        AsyncMock(return_value=""),
+    )
+    monkeypatch.setattr("opengui.agent.GuiAgent.run", _single_attempt_run)
+
+    provider = _MockNanobotProvider(
+        [
+            _nanobot_tool_response(
+                content="Action: wait briefly",
+                arguments={"action_type": "wait", "duration_ms": 1},
+                call_id="tc_wait",
+            ),
+        ]
+    )
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run", "maxSteps": 1}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+    result = json.loads(await tool.execute(task="Open Settings"))
+
+    assert set(result) == {
+        "success",
+        "summary",
+        "model_summary",
+        "trace_path",
+        "steps_taken",
+        "error",
+        "post_run_state",
+    }
+    assert result["success"] is False
+    assert result["summary"].startswith("Status: partial")
+    assert "Done:" in result["summary"]
+    assert "Remaining:" in result["summary"]
+    assert "Current:" in result["summary"]
+    assert "Resume:" in result["summary"]
+    assert result["post_run_state"]["current_state"] == result["summary"]
+    assert result["error"] == "max_steps_exceeded"
 
 @pytest.mark.asyncio
 async def test_auto_skill_extraction(tmp_workspace: Path) -> None:

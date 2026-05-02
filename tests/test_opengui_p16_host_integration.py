@@ -64,6 +64,35 @@ def test_cli_and_gui_tool_share_windows_default_app_class_contract() -> None:
     assert tool._resolve_probe_target_app_class(None, "uwp", sys_platform="win32") == "uwp"
 
 
+@pytest.mark.asyncio
+async def test_gui_task_shuts_down_android_backend_after_foreground_run() -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    gui_config = GuiConfig(backend="adb", background=False)
+    mock_provider = MagicMock()
+    mock_provider.api_key = "fake-key"
+    mock_provider.api_base = None
+    mock_provider.extra_headers = None
+    mock_backend = MagicMock()
+    mock_backend.platform = "android"
+    mock_backend.shutdown = AsyncMock()
+
+    with (
+        patch.object(GuiSubagentTool, "_build_backend", return_value=mock_backend),
+        patch.object(GuiSubagentTool, "_run_task", new=AsyncMock(return_value='{"success": true}')),
+    ):
+        tool = GuiSubagentTool(
+            gui_config=gui_config,
+            provider=mock_provider,
+            model="test-model",
+            workspace=Path("/tmp/test_workspace"),
+        )
+        result = await tool.execute("Open Settings")
+
+    assert result == '{"success": true}'
+    mock_backend.shutdown.assert_awaited_once()
+
+
 def test_cli_and_gui_tool_share_reason_codes_and_remediation_copy(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

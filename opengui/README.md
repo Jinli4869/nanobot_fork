@@ -230,7 +230,7 @@ adb:
 | macOS    | `local` | Accessibility permission required: **System Settings → Privacy & Security → Accessibility** → add your terminal |
 | Linux    | `local` | Install `xdotool` and `xclip`; use `--background` for headless CI |
 | Windows  | `local` | Use `--target-app-class` to hint the window type for background isolation |
-| Android  | `adb`   | Install [ADBKeyboard](https://github.com/senzhk/ADBKeyboard): `adb shell ime set com.android.adbkeyboard/.AdbIME` . OpenGUI also bundles `yadb` and will push it to the device automatically when Unicode input falls back to the `yadb` path. |
+| Android  | `adb`   | Screen capture uses scrcpy frames, so install the `demo-live` extra (or otherwise provide `Pillow` + `py-scrcpy-sdk`). For text input, install [ADBKeyboard](https://github.com/senzhk/ADBKeyboard): `adb shell ime set com.android.adbkeyboard/.AdbIME` . OpenGUI also bundles `yadb` and will push it to the device automatically when Unicode input falls back to the `yadb` path. |
 | iOS      | `ios`   | Requires WebDriverAgent running on device; install `pip install facebook-wda` |
 | HarmonyOS | `hdc`  | Requires HDC (Huawei Device Connector) on `$PATH`; UITest service must be running on device |
 
@@ -437,7 +437,7 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `backend` | `"adb"` \| `"scrcpy-adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
+| `backend` | `"adb"` \| `"ios"` \| `"hdc"` \| `"local"` \| `"dry-run"` | `"adb"` | Execution backend |
 | `model` | `string \| null` | `null` | GUI-only model override; inherits `agents.defaults.model` when omitted |
 | `provider` | `string \| null` | `null` | GUI-only provider override; inherits main-agent provider resolution when omitted |
 | `agentProfile` | `string \| null` | `null` | Prompt/action profile for GUI-only models; defaults to native tool-calling when omitted |
@@ -466,8 +466,7 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 Change the `backend` field in the `gui` section to switch between device and desktop control:
 
 ```json
-"gui": { "backend": "adb"        }   // Android device via ADB screenshots/actions
-"gui": { "backend": "scrcpy-adb" }   // Android scrcpy frames + ADB actions
+"gui": { "backend": "adb"        }   // Android device via scrcpy frames + ADB actions
 "gui": { "backend": "ios"        }   // iOS device via WebDriverAgent
 "gui": { "backend": "hdc"        }   // HarmonyOS device via HDC
 "gui": { "backend": "local"      }   // local desktop (macOS / Linux / Windows)
@@ -686,9 +685,8 @@ uv run python demo/live_server.py --port 18880
 
 Open `http://127.0.0.1:18880`, choose a live platform, then enter a task.
 
-- **Android**: the center screen uses a scrcpy video stream through
-  `py-scrcpy-sdk`; GUI execution uses the selected backend (`adb` by default,
-  or `scrcpy-adb` for scrcpy observations plus ADB actions).
+- **Android**: the center screen and GUI observations use a scrcpy video stream
+  through `py-scrcpy-sdk`; GUI actions use the `adb` backend.
 - **iOS**: the center screen uses WebDriverAgent MJPEG from
   `gui.ios.mjpegUrl`; GUI execution uses the `ios` backend through WDA.
 

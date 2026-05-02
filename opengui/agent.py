@@ -45,6 +45,7 @@ from opengui.skills.normalization import normalize_app_identifier
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
+from opengui.trajectory.summarizer import build_state_note, is_state_note
 
 logger = logging.getLogger(__name__)
 _DONE_FAILURE_HINTS: tuple[str, ...] = (
@@ -1115,30 +1116,31 @@ class GuiAgent:
             self._active_retry_summaries = ()
 
         if result is None:
+            status = "blocked" if last_error and any(
+                keyword in last_error.lower()
+                for keyword in ("stagnation", "intervention", "preflight")
+            ) else "partial"
             result = AgentResult(
                 success=False,
-                summary=f"Failed after {max_retries} attempt(s).",
+                summary=self._build_state_note(
+                    status=status,
+                    history=[],
+                    current_observation=None,
+                    error=last_error or f"Failed after {max_retries} attempt(s).",
+                ),
                 model_summary=last_model_summary,
                 trace_path=last_trace_path,
                 steps_taken=last_steps_taken,
                 error=last_error,
                 token_usage=total_usage,
             )
-        elif not result.success:
-            if result.error == "stagnation_detected":
-                result = dataclasses.replace(result, token_usage=total_usage)
-            else:
-                result = AgentResult(
-                    success=False,
-                    summary=f"Failed after {max_retries} attempt(s).",
-                    model_summary=last_model_summary,
-                    trace_path=last_trace_path,
-                    steps_taken=last_steps_taken,
-                    error=last_error,
-                    token_usage=total_usage,
-                )
         else:
-            result = dataclasses.replace(result, token_usage=total_usage)
+            result = dataclasses.replace(
+                result,
+                token_usage=total_usage,
+                trace_path=last_trace_path or result.trace_path,
+                error=last_error or result.error,
+            )
 
         # 6. Finish trajectory
         self._trajectory_recorder.finish(
@@ -1187,7 +1189,12 @@ class GuiAgent:
         except Exception as exc:
             return AgentResult(
                 success=False,
-                summary=f"Preflight failed: {exc}",
+                summary=self._build_state_note(
+                    status="blocked",
+                    history=[],
+                    current_observation=None,
+                    error=f"Preflight failed: {exc}",
+                ),
                 trace_path=str(run_dir),
                 error=str(exc),
             )
@@ -1244,14 +1251,24 @@ class GuiAgent:
                 })
                 return AgentResult(
                     success=False,
-                    summary=f"Step {step_index} timed out.",
+                    summary=self._build_state_note(
+                        status="partial",
+                        history=history,
+                        current_observation=obs,
+                        error="step_timeout",
+                    ),
                     model_summary=None,
                     trace_path=str(run_dir),
                     steps_taken=step_index,
                     error="step_timeout",
                     attempt_summary=self._build_attempt_summary(
                         failure_reason="step_timeout",
-                        result_summary=f"Step {step_index} timed out.",
+                        result_summary=self._build_state_note(
+                            status="partial",
+                            history=history,
+                            current_observation=obs,
+                            error="step_timeout",
+                        ),
                         action_summaries=tuple(turn.action_summary for turn in history),
                     ),
                     token_usage=total_usage,
@@ -1345,20 +1362,49 @@ class GuiAgent:
                             "done": False,
                         },
                     )
+                    summary_history = history + [
+                        HistoryTurn(
+                            step_index=step_index,
+                            observation=obs,
+                            assistant_message=self._scrub_assistant_message_for_log(
+                                result.assistant_message,
+                                result.action,
+                            ),
+                            tool_result_message={
+                                "role": "tool",
+                                "tool_call_id": result.tool_call_id,
+                                "content": self._scrub_text_for_action(
+                                    result.tool_result,
+                                    result.action,
+                                ),
+                            },
+                            action_summary=(
+                                self._scrub_text_for_action(
+                                    result.action_summary,
+                                    result.action,
+                                )
+                                or result.action_summary
+                            ),
+                        )
+                    ]
+                    summary_observation = result.next_observation or obs
 
-            # Write trace entry
-            await self._write_trace(run_dir / "trace.jsonl", self._scrub_for_artifact({
-                "event": "step",
-                "step_index": step_index,
-                "action": self._serialize_action(result.action),
-                "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
-                "screenshot_path": (
-                    result.next_observation.screenshot_path
-                    if result.next_observation else None
-                ),
-                "done": result.done,
-                "timestamp": time.time(),
-            }))
+                # Write trace entry
+                await self._write_trace(
+                    run_dir / "trace.jsonl",
+                    self._scrub_for_artifact({
+                        "event": "step",
+                        "step_index": step_index,
+                        "action": self._serialize_action(result.action),
+                        "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
+                        "screenshot_path": (
+                            result.next_observation.screenshot_path
+                            if result.next_observation else None
+                        ),
+                        "done": result.done,
+                        "timestamp": time.time(),
+                    }),
+                )
 
             # Record trajectory step
             self._trajectory_recorder.record_step(
@@ -1395,19 +1441,29 @@ class GuiAgent:
                 termination_summary = await self._generate_termination_summary(
                     task=task,
                     termination_reason=f"Task was interrupted by policy: {cancellation_note}",
-                    history=history,
+                    history=summary_history,
                     run_dir=run_dir,
                 )
                 return AgentResult(
                     success=False,
-                    summary=termination_summary or f"Task cancelled during intervention after {steps_taken} step(s).",
+                    summary=termination_summary or self._build_state_note(
+                        status="blocked",
+                        history=summary_history,
+                        current_observation=summary_observation,
+                        error="intervention_cancelled",
+                    ),
                     model_summary=result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=f"intervention_cancelled: {cancellation_note}",
                     attempt_summary=self._build_attempt_summary(
                         failure_reason=f"intervention_cancelled: {cancellation_note}",
-                        result_summary=f"Task cancelled during intervention after {steps_taken} step(s).",
+                        result_summary=self._build_state_note(
+                            status="blocked",
+                            history=summary_history,
+                            current_observation=summary_observation,
+                            error="intervention_cancelled",
+                        ),
                         model_summary=result.action_summary,
                         action_summaries=tuple(
                             list(turn.action_summary for turn in history) + [result.action_summary]
@@ -1420,11 +1476,12 @@ class GuiAgent:
                 success = self._resolve_done_status(result.action) == "success"
                 return AgentResult(
                     success=success,
-                    summary=(
-                        result.action.text
-                        if result.action.text
-                        else f"Task {'completed' if success else 'failed'} "
-                             f"after {steps_taken} step(s)."
+                    summary=self._build_state_note(
+                        status="completed" if success else "blocked",
+                        history=history,
+                        current_observation=obs,
+                        current_action_summary=result.action_summary,
+                        error=None if success else result.tool_result,
                     ),
                     model_summary=result.action_summary,
                     trace_path=str(run_dir),
@@ -1432,7 +1489,13 @@ class GuiAgent:
                     error=None if success else result.tool_result,
                     attempt_summary=None if success else self._build_attempt_summary(
                         failure_reason=result.tool_result,
-                        result_summary=f"Task failed after {steps_taken} step(s).",
+                        result_summary=self._build_state_note(
+                            status="blocked",
+                            history=history,
+                            current_observation=obs,
+                            current_action_summary=result.action_summary,
+                            error=result.tool_result,
+                        ),
                         model_summary=result.action_summary,
                         action_summaries=tuple(
                             list(turn.action_summary for turn in history) + [result.action_summary]
@@ -1506,10 +1569,11 @@ class GuiAgent:
                     )
                     return AgentResult(
                         success=False,
-                        summary=termination_summary or (
-                            "Detected unchanged screen state for "
-                            f"{stagnation_streak} consecutive step(s) in app {app_label}; "
-                            "task stopped to avoid repeating the same action loop."
+                        summary=termination_summary or self._build_state_note(
+                            status="blocked",
+                            history=history_with_current_step,
+                            current_observation=result.next_observation or obs,
+                            error="stagnation_detected",
                         ),
                         model_summary=result.action_summary,
                         trace_path=str(run_dir),
@@ -1517,8 +1581,11 @@ class GuiAgent:
                         error="stagnation_detected",
                         attempt_summary=self._build_attempt_summary(
                             failure_reason="stagnation_detected",
-                            result_summary=(
-                                "Detected unchanged screen state loop and terminated early."
+                            result_summary=self._build_state_note(
+                                status="blocked",
+                                history=history_with_current_step,
+                                current_observation=result.next_observation or obs,
+                                error="stagnation_detected",
                             ),
                             model_summary=result.action_summary,
                             action_summaries=tuple(
@@ -1559,14 +1626,24 @@ class GuiAgent:
         )
         return AgentResult(
             success=False,
-            summary=termination_summary or f"Reached max steps ({self.max_steps}) without completion.",
+            summary=termination_summary or self._build_state_note(
+                status="partial",
+                history=history,
+                current_observation=obs,
+                error="max_steps_exceeded",
+            ),
             model_summary=None,
             trace_path=str(run_dir),
             steps_taken=steps_taken,
             error="max_steps_exceeded",
             attempt_summary=self._build_attempt_summary(
                 failure_reason="max_steps_exceeded",
-                result_summary=f"Reached max steps ({self.max_steps}) without completion.",
+                result_summary=self._build_state_note(
+                    status="partial",
+                    history=history,
+                    current_observation=obs,
+                    error="max_steps_exceeded",
+                ),
                 action_summaries=tuple(turn.action_summary for turn in history),
             ),
             token_usage=total_usage,
@@ -2053,6 +2130,81 @@ class GuiAgent:
             for index, summary in enumerate(attempt_summaries, start=1)
         )
 
+    @staticmethod
+    def _build_state_note(
+        *,
+        status: str,
+        history: list[HistoryTurn],
+        current_observation: Observation | None,
+        current_action_summary: str | None = None,
+        error: str | None = None,
+    ) -> str:
+        return build_state_note(
+            status=status,
+            done=GuiAgent._summarize_progress(history, current_action_summary),
+            remaining=GuiAgent._remaining_hint(status=status, error=error),
+            current=GuiAgent._describe_observation_state(current_observation),
+            resume=GuiAgent._resume_hint(status=status, error=error),
+        )
+
+    @staticmethod
+    def _summarize_progress(history: list[HistoryTurn], current_action_summary: str | None = None) -> str:
+        summaries = [turn.action_summary.strip() for turn in history if turn.action_summary.strip()]
+        if current_action_summary and current_action_summary.strip():
+            summaries.append(current_action_summary.strip())
+        if not summaries:
+            return "No GUI actions were completed."
+        return "; ".join(summary.rstrip(".") for summary in summaries[-3:])
+
+    @staticmethod
+    def _describe_observation_state(observation: Observation | None) -> str:
+        if observation is None:
+            return "Current screen state unavailable."
+        parts: list[str] = []
+        if observation.foreground_app and observation.foreground_app.strip():
+            parts.append(observation.foreground_app.strip())
+        if isinstance(observation.screen_width, int) and isinstance(observation.screen_height, int):
+            parts.append(f"{observation.screen_width}x{observation.screen_height}")
+        if parts:
+            return " ".join(parts)
+        if observation.platform:
+            return observation.platform
+        return "Current screen state unavailable."
+
+    @staticmethod
+    def _remaining_hint(*, status: str, error: str | None) -> str:
+        error_text = (error or "").lower()
+        if status == "completed":
+            return "none"
+        if "stagnation_detected" in error_text:
+            return "Change the action sequence from the current screen."
+        if "intervention_cancelled" in error_text or "interruption" in error_text:
+            return "Wait for the intervention blocker to be resolved."
+        if "step_timeout" in error_text:
+            return "Retry the timed-out step from the current screen."
+        if "max_steps_exceeded" in error_text:
+            return "Continue the remaining task from the current screen."
+        if status == "blocked":
+            return "Resolve the blocker before retrying."
+        return "Continue from the current screen."
+
+    @staticmethod
+    def _resume_hint(*, status: str, error: str | None) -> str:
+        error_text = (error or "").lower()
+        if status == "completed":
+            return "No further action needed."
+        if "stagnation_detected" in error_text:
+            return "Resume by trying a different action on the same screen."
+        if "intervention_cancelled" in error_text or "interruption" in error_text:
+            return "Resolve the intervention blocker, then continue from the current screen."
+        if "step_timeout" in error_text:
+            return "Resume from the current screen after the timeout clears."
+        if "max_steps_exceeded" in error_text:
+            return "Resume from the current screen and finish the remaining steps."
+        if status == "blocked":
+            return "Resolve the blocker, then continue from the current screen."
+        return "Resume from the current screen."
+
     async def _generate_termination_summary(
         self,
         *,
@@ -2061,35 +2213,37 @@ class GuiAgent:
         history: list[HistoryTurn],
         run_dir: Path,
     ) -> str | None:
-        """Ask the LLM for a brief summary when the task terminates abnormally.
-
-        Takes a fresh screenshot of the current screen state and sends it along
-        with the action history to the LLM for a concise summary.
-
-        Returns ``None`` on any failure so callers can fall back to a template.
-        """
+        """Ask the LLM for a brief state note when the task terminates abnormally."""
         steps_text = "\n".join(
             f"  {i}. {turn.action_summary}" for i, turn in enumerate(history, 1)
         ) or "  (no steps completed)"
-
-        prompt_text = (
-            "You were executing a GUI automation task but it was terminated before completion.\n\n"
-            f"Task: {task}\n"
-            f"Termination reason: {termination_reason}\n"
-            f"Steps executed:\n{steps_text}\n\n"
-            "The attached screenshot shows the current screen state.\n"
-            "Based on the steps completed and the screenshot, provide a brief summary:\n"
-            "1. What progress was made and the current screen state (which app/page is showing)\n"
-            "2. Why it stopped\n"
-            "3. Any information that was retrieved or visible on screen\n"
-            "Keep it concise (2-4 sentences). Do not suggest next steps."
-        )
+        fallback_status = "blocked" if any(
+            keyword in termination_reason.lower()
+            for keyword in ("interrupted", "cancel", "loop")
+        ) else "partial"
+        observation: Observation | None = None
         try:
             # Take a fresh screenshot for the summary
             screenshot_path = run_dir / "screenshots" / "termination_summary.png"
             screenshot_path.parent.mkdir(parents=True, exist_ok=True)
             observation = await self.backend.observe(
                 screenshot_path, timeout=self.step_timeout,
+            )
+            prompt_text = (
+                "Return a compact GUI state note for the terminated task.\n\n"
+                f"Task: {task}\n"
+                f"Termination reason: {termination_reason}\n"
+                f"Steps executed:\n{steps_text}\n\n"
+                "Use exactly these 5 labels and keep each value short:\n"
+                "Status: completed|partial|blocked\n"
+                "Done: ...\n"
+                "Remaining: ...\n"
+                "Current: ...\n"
+                "Resume: ...\n\n"
+                "Rules:\n"
+                "- Do not add bullets, markdown, or extra lines.\n"
+                "- Use a clear resume hint if continuation is still possible.\n"
+                "- Use 'none' for Remaining when the task is completed."
             )
             content: list[dict[str, Any]] = [{"type": "text", "text": prompt_text}]
             if observation.screenshot_path and Path(observation.screenshot_path).exists():
@@ -2100,10 +2254,17 @@ class GuiAgent:
                 tools=None,
             )
             text = response.content.strip()
-            return text if text else None
+            if text and is_state_note(text):
+                return text
         except Exception as exc:
             logger.warning("Failed to generate termination summary: %s", exc)
-            return None
+
+        return self._build_state_note(
+            status=fallback_status,
+            history=history,
+            current_observation=observation,
+            error=termination_reason,
+        )
 
     @staticmethod
     def _build_attempt_summary(

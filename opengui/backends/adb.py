@@ -16,14 +16,20 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import importlib.resources
 import os
 import re
 import struct
 import tempfile
+import threading
+import time
 import unicodedata
 import uuid
+from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
+from typing import Any, Callable, Protocol
 
 from opengui.action import Action, describe_action, resolve_coordinate
 from opengui.observation import Observation
@@ -112,6 +118,228 @@ def _read_png_size(path: Path) -> tuple[int, int] | None:
     return width, height
 
 
+@dataclass(frozen=True)
+class ScrcpyFrameSnapshot:
+    """Metadata for the latest scrcpy frame persisted to disk."""
+
+    width: int
+    height: int
+    timestamp: float
+
+
+class ScrcpyFrameSourceProtocol(Protocol):
+    """Small protocol used by ``AdbBackend`` and tests."""
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot: ...
+
+
+def _pil_image_from_frame(frame: Any) -> Any:
+    """Normalize py-scrcpy frame objects into a PIL Image."""
+
+    try:
+        from PIL import Image
+    except ImportError as exc:  # pragma: no cover - exercised through preflight text
+        raise RuntimeError(
+            "ADB scrcpy capture requires Pillow. Install with `uv pip install -e \".[demo-live]\"`."
+        ) from exc
+
+    if isinstance(frame, Image.Image):
+        return frame
+
+    shape = getattr(frame, "shape", None)
+    if shape is not None:
+        if len(shape) >= 3 and shape[2] == 3:
+            frame = frame[..., ::-1]
+        elif len(shape) >= 3 and shape[2] == 4:
+            frame = frame[..., [2, 1, 0, 3]]
+        return Image.fromarray(frame)
+
+    raise TypeError(f"Unsupported scrcpy frame object: {type(frame).__name__}")
+
+
+def _frame_dimensions(frame: Any) -> tuple[int, int]:
+    if hasattr(frame, "size") and not hasattr(frame, "shape"):
+        width, height = frame.size
+        return int(width), int(height)
+    shape = getattr(frame, "shape", None)
+    if shape is not None and len(shape) >= 2:
+        return int(shape[1]), int(shape[0])
+    image = _pil_image_from_frame(frame)
+    width, height = image.size
+    return int(width), int(height)
+
+
+def _jpeg_bytes_from_frame(frame: Any, *, quality: int) -> bytes:
+    image = _pil_image_from_frame(frame)
+    if image.mode not in {"RGB", "L"}:
+        image = image.convert("RGB")
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=max(1, min(100, int(quality))))
+    return buf.getvalue()
+
+
+class ScrcpyFrameSource:
+    """Owns the py-scrcpy-sdk client and latest-frame buffer for ADB observe()."""
+
+    def __init__(
+        self,
+        *,
+        serial: str | None = None,
+        adb_path: str = "adb",
+        max_fps: int = 12,
+        jpeg_quality: int = 80,
+        frame_timeout_ms: int = 3000,
+        on_jpeg_frame: Callable[[bytes, dict[str, Any]], None] | None = None,
+    ) -> None:
+        self._serial = serial
+        self._adb_path = adb_path
+        self._max_fps = max_fps
+        self._jpeg_quality = jpeg_quality
+        self._frame_timeout_ms = frame_timeout_ms
+        self._on_jpeg_frame = on_jpeg_frame
+        self._client: Any | None = None
+        self._listener: Any | None = None
+        self._latest_frame: Any | None = None
+        self._latest_ts = 0.0
+        self._started = False
+        self._stopping = False
+        self._condition = threading.Condition()
+
+    def start(self) -> None:
+        if self._started:
+            return
+        try:
+            from py_scrcpy_sdk import ScrcpyClient, ScrcpyConfig
+        except ImportError as exc:
+            raise RuntimeError(
+                "ADB scrcpy capture requires py-scrcpy-sdk==0.1.2. "
+                "Install with `uv pip install -e \".[demo-live]\"`."
+            ) from exc
+
+        config_kwargs: dict[str, Any] = {
+            "serial": self._serial,
+            "adb_path": self._adb_path,
+            "frame_timeout": self._frame_timeout_ms / 1000.0,
+        }
+        if self._max_fps > 0:
+            config_kwargs["max_fps"] = self._max_fps
+        config = self._construct_config(ScrcpyConfig, config_kwargs)
+        client = ScrcpyClient(config)
+        client.start()
+        self._client = client
+        self._stopping = False
+
+        initial_frame = self._wait_until_ready(client)
+        if initial_frame is not None:
+            self._set_latest_frame(initial_frame)
+
+        listener = getattr(client, "start_frame_listener", None)
+        if callable(listener):
+            self._listener = listener(self._on_frame)
+        else:
+            threading.Thread(target=self._listen_forever, daemon=True).start()
+
+        self._started = True
+
+    @staticmethod
+    def _construct_config(config_cls: Any, values: dict[str, Any]) -> Any:
+        try:
+            signature = inspect.signature(config_cls)
+        except (TypeError, ValueError):
+            return config_cls(**values)
+        accepted = {
+            name for name, param in signature.parameters.items()
+            if param.kind in {param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY}
+        }
+        filtered = {key: value for key, value in values.items() if key in accepted}
+        return config_cls(**filtered)
+
+    @staticmethod
+    def _wait_until_ready(client: Any) -> Any | None:
+        ready = getattr(client, "wait_until_ready", None)
+        if not callable(ready):
+            get_frame = getattr(client, "get_frame", None)
+            return get_frame() if callable(get_frame) else None
+        try:
+            return ready(timeout=5)
+        except TypeError:
+            return ready()
+
+    def _listen_forever(self) -> None:
+        frames = getattr(self._client, "frames", None)
+        if not callable(frames):
+            return
+        for frame in frames():
+            if self._on_frame(frame) is False:
+                break
+
+    def _on_frame(self, frame: Any) -> bool:
+        self._set_latest_frame(frame)
+        return not self._stopping
+
+    def _set_latest_frame(self, frame: Any) -> None:
+        ts = time.time()
+        with self._condition:
+            self._latest_frame = frame
+            self._latest_ts = ts
+            self._condition.notify_all()
+        if self._on_jpeg_frame is not None:
+            try:
+                width, height = _frame_dimensions(frame)
+                self._on_jpeg_frame(
+                    _jpeg_bytes_from_frame(frame, quality=self._jpeg_quality),
+                    {"width": width, "height": height, "timestamp": ts, "source": "scrcpy"},
+                )
+            except Exception:
+                pass
+
+    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot:
+        deadline = time.time() + timeout_s
+        with self._condition:
+            while True:
+                frame = self._latest_frame
+                ts = self._latest_ts
+                now = time.time()
+                if frame is not None and (max_age_s <= 0 or now - ts <= max_age_s):
+                    break
+                remaining = deadline - now
+                if remaining <= 0:
+                    break
+                self._condition.wait(timeout=max(0.01, remaining))
+
+        if frame is None:
+            raise TimeoutError(f"scrcpy frame not available within {timeout_s:.2f}s")
+        if max_age_s > 0 and time.time() - ts > max_age_s:
+            raise TimeoutError(
+                f"latest scrcpy frame is stale ({time.time() - ts:.2f}s > {max_age_s:.2f}s)"
+            )
+
+        image = _pil_image_from_frame(frame)
+        width, height = _frame_dimensions(frame)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(path)
+        return ScrcpyFrameSnapshot(width=width, height=height, timestamp=ts)
+
+    def stop(self) -> None:
+        self._stopping = True
+        client = self._client
+        if client is not None:
+            stop = getattr(client, "stop", None)
+            if callable(stop):
+                stop()
+        with self._condition:
+            self._latest_frame = None
+            self._latest_ts = 0.0
+            self._condition.notify_all()
+        self._listener = None
+        self._client = None
+        self._started = False
+
+
 class AdbError(Exception):
     """Raised when an adb command fails."""
 
@@ -192,16 +420,50 @@ def _iter_text_input_segments(text: str) -> list[str]:
 class AdbBackend:
     """ADB backend for Android device/emulator automation.
 
+    Observations use scrcpy frames by default and ADB for all device actions.
+    The legacy ``adb shell screencap`` capture path remains available for
+    focused tests and explicit fallback wiring.
+
     Args:
         serial: Device serial (e.g. "emulator-5554"). None = default device.
         adb_path: Path to adb binary.
     """
 
-    def __init__(self, serial: str | None = None, adb_path: str = "adb") -> None:
+    def __init__(
+        self,
+        serial: str | None = None,
+        adb_path: str = "adb",
+        *,
+        scrcpy_max_fps: int = 12,
+        scrcpy_jpeg_quality: int = 80,
+        scrcpy_frame_timeout_ms: int = 3000,
+        scrcpy_max_frame_age_ms: int = 1000,
+        frame_source: ScrcpyFrameSourceProtocol | None = None,
+        on_jpeg_frame: Callable[[bytes, dict[str, Any]], None] | None = None,
+        use_scrcpy: bool = True,
+    ) -> None:
         self._serial = serial
         self._adb = adb_path
         self._screen_width = 1080
         self._screen_height = 1920
+        self._capture_width = 1080
+        self._capture_height = 1920
+        self._scrcpy_frame_timeout_ms = scrcpy_frame_timeout_ms
+        self._scrcpy_max_frame_age_ms = scrcpy_max_frame_age_ms
+        self._use_scrcpy = use_scrcpy
+        self._scrcpy_started = False
+        self._frame_source = (
+            frame_source
+            if frame_source is not None
+            else ScrcpyFrameSource(
+                serial=serial,
+                adb_path=adb_path,
+                max_fps=scrcpy_max_fps,
+                jpeg_quality=scrcpy_jpeg_quality,
+                frame_timeout_ms=scrcpy_frame_timeout_ms,
+                on_jpeg_frame=on_jpeg_frame,
+            )
+        ) if use_scrcpy else None
 
     @property
     def platform(self) -> str:
@@ -271,6 +533,7 @@ class AdbBackend:
         ]
 
         if self._serial:
+            serial_ready = False
             for line in device_lines:
                 parts = line.split("\t", 1)
                 if len(parts) == 2 and parts[0].strip() == self._serial:
@@ -279,12 +542,17 @@ class AdbBackend:
                             f"Device {self._serial!r} in state {parts[1].strip()!r}, "
                             "not 'device'. Check authorisation."
                         )
-                    return
-            raise AdbError(f"Device {self._serial!r} not found in 'adb devices'.")
+                    serial_ready = True
+                    break
+            if not serial_ready:
+                raise AdbError(f"Device {self._serial!r} not found in 'adb devices'.")
         else:
             ready = [l for l in device_lines if l.split("\t", 1)[-1].strip() == "device"]
             if not ready:
                 raise AdbError("No Android device found. Connect a device or start an emulator.")
+
+        if self._use_scrcpy:
+            await self._ensure_scrcpy_started()
 
     # ------------------------------------------------------------------
     # App discovery
@@ -342,6 +610,76 @@ class AdbBackend:
     # ------------------------------------------------------------------
 
     async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        if self._use_scrcpy:
+            return await self._observe_via_scrcpy(screenshot_path, timeout=timeout)
+        return await self._observe_via_screencap(screenshot_path, timeout=timeout)
+
+    async def _observe_via_scrcpy(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        await self._ensure_scrcpy_started()
+        if self._frame_source is None:
+            raise AdbError("ADB scrcpy capture is enabled but no frame source is configured.")
+
+        snapshot = await self._capture_scrcpy_frame(screenshot_path, timeout=timeout)
+        if snapshot is None:
+            return await self._observe_via_screencap(screenshot_path, timeout=timeout)
+        (input_width, input_height), fg_app = await asyncio.gather(
+            self._query_screen_size(timeout),
+            self._query_foreground_app(timeout),
+        )
+        self._capture_width = snapshot.width
+        self._capture_height = snapshot.height
+        self._screen_width = input_width
+        self._screen_height = input_height
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=snapshot.width,
+            screen_height=snapshot.height,
+            foreground_app=fg_app,
+            platform=self.platform,
+            extra={"capture_source": "scrcpy", "frame_timestamp": snapshot.timestamp},
+        )
+
+    async def _capture_scrcpy_frame(
+        self,
+        screenshot_path: Path,
+        *,
+        timeout: float,
+        allow_restart: bool = True,
+    ) -> ScrcpyFrameSnapshot | None:
+        if self._frame_source is None:
+            return None
+        try:
+            return await asyncio.to_thread(
+                self._frame_source.save_latest,
+                screenshot_path,
+                timeout_s=min(timeout, self._scrcpy_frame_timeout_ms / 1000.0),
+                max_age_s=self._scrcpy_max_frame_age_ms / 1000.0,
+            )
+        except TimeoutError:
+            if allow_restart:
+                try:
+                    await self._restart_scrcpy_frame_source()
+                except Exception:
+                    return None
+                try:
+                    return await asyncio.to_thread(
+                        self._frame_source.save_latest,
+                        screenshot_path,
+                        timeout_s=min(timeout, self._scrcpy_frame_timeout_ms / 1000.0),
+                        max_age_s=self._scrcpy_max_frame_age_ms / 1000.0,
+                    )
+                except TimeoutError:
+                    return None
+            return None
+
+    async def _restart_scrcpy_frame_source(self) -> None:
+        if self._frame_source is None:
+            raise AdbError("ADB scrcpy capture is enabled but no frame source is configured.")
+        await asyncio.to_thread(self._frame_source.stop)
+        self._scrcpy_started = False
+        await self._ensure_scrcpy_started()
+
+    async def _observe_via_screencap(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
 
         await self._run("shell", "screencap", "-p", _DEVICE_SCREENSHOT_PATH, timeout=timeout)
@@ -359,6 +697,8 @@ class AdbBackend:
 
         self._screen_width = width
         self._screen_height = height
+        self._capture_width = width
+        self._capture_height = height
 
         return Observation(
             screenshot_path=str(screenshot_path),
@@ -367,6 +707,22 @@ class AdbBackend:
             foreground_app=fg_app,
             platform=self.platform,
         )
+
+    async def shutdown(self) -> None:
+        if self._frame_source is not None:
+            await asyncio.to_thread(self._frame_source.stop)
+        self._scrcpy_started = False
+
+    async def _ensure_scrcpy_started(self) -> None:
+        if self._scrcpy_started:
+            return
+        if self._frame_source is None:
+            raise AdbError("ADB scrcpy capture is enabled but no frame source is configured.")
+        try:
+            await asyncio.to_thread(self._frame_source.start)
+        except Exception as exc:
+            raise AdbError(f"ADB scrcpy frame source unavailable: {exc}") from exc
+        self._scrcpy_started = True
 
     async def _query_screen_size(self, timeout: float) -> tuple[int, int]:
         try:
@@ -698,10 +1054,31 @@ class AdbBackend:
         return describe_action(action)
 
     def _resolve_x(self, value: float, *, relative: bool) -> int:
-        return resolve_coordinate(value, self._screen_width, relative=relative)
+        if relative:
+            return resolve_coordinate(value, self._screen_width, relative=True)
+        return self._resolve_capture_coordinate(
+            value,
+            capture_extent=self._capture_width,
+            input_extent=self._screen_width,
+        )
 
     def _resolve_y(self, value: float, *, relative: bool) -> int:
-        return resolve_coordinate(value, self._screen_height, relative=relative)
+        if relative:
+            return resolve_coordinate(value, self._screen_height, relative=True)
+        return self._resolve_capture_coordinate(
+            value,
+            capture_extent=self._capture_height,
+            input_extent=self._screen_height,
+        )
+
+    @staticmethod
+    def _resolve_capture_coordinate(value: float, *, capture_extent: int, input_extent: int) -> int:
+        """Map screenshot-pixel coordinates into the ADB input coordinate space."""
+        if capture_extent > 1 and capture_extent != input_extent:
+            pixel = round(value / (capture_extent - 1) * (input_extent - 1))
+        else:
+            pixel = round(value)
+        return max(0, min(pixel, input_extent - 1))
 
     def _resolve_point(self, action: Action) -> tuple[int, int]:
         if action.x is None or action.y is None:
