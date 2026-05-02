@@ -732,10 +732,12 @@ class AdbBackend:
         # For scroll, direction is stored in action.text
         direction = (action.text or "down").lower()
 
+        # Touch scrolls are inverted relative to content direction:
+        # "down" means reveal lower content, so the finger moves upward.
         if direction == "up":
-            x2, y2 = x, y - pixels
-        elif direction == "down":
             x2, y2 = x, y + pixels
+        elif direction == "down":
+            x2, y2 = x, y - pixels
         elif direction == "left":
             x2, y2 = x - pixels, y
         else:
