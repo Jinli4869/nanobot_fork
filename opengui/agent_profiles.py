@@ -31,6 +31,7 @@ _PROFILE_ALIASES: dict[str | None, str] = {
 
 _DEFAULT_SCROLL_PIXELS = 420
 _MODEL_RELATIVE_GRID_HINTS = ("qwen", "gemini")
+_SUMMARY_KEYS = ("summary", "intent")
 
 
 def canonicalize_agent_profile(profile_name: str | None) -> str:
@@ -86,8 +87,10 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
                         "duration_ms": {"type": "integer"},
                         "relative": {"type": "boolean"},
                         "status": {"type": "string", "enum": ["success", "failure"]},
+                        "summary": {"type": "string"},
+                        "intent": {"type": "string"},
                     },
-                    "required": ["action_type"],
+                    "required": ["action_type", "summary"],
                 },
             },
         }
@@ -114,6 +117,8 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
                         "text": {"type": "string"},
                         "direction": {"type": "string"},
                         "goal_status": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "intent": {"type": "string"},
                     },
                     "required": ["action_type"],
                 },
@@ -140,6 +145,8 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
                         "text": {"type": "string"},
                         "button": {"type": "string"},
                         "status": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "intent": {"type": "string"},
                     },
                     "required": ["action"],
                 },
@@ -168,6 +175,8 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
                         "text": {"type": "string"},
                         "direction": {"type": "string"},
                         "goal_status": {"type": "string"},
+                        "summary": {"type": "string"},
+                        "intent": {"type": "string"},
                     },
                     "required": ["action_type"],
                 },
@@ -188,6 +197,7 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
                 "point2": {"type": "string"},
                 "value": {"type": "string"},
                 "summary": {"type": "string"},
+                "intent": {"type": "string"},
             },
         }
     return {
@@ -202,6 +212,8 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
                     "press_home", "press_back", "wait", "finished", "call_user",
                 ],
             },
+            "summary": {"type": "string"},
+            "intent": {"type": "string"},
         },
     }
 
@@ -219,6 +231,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Output exactly one short `Action:` line in assistant text.",
                 "- Put structured arguments only in the native tool call, not in assistant text.",
                 "- Execute one action per step.",
+                "- Set the tool-call `summary` argument to one short natural-language description of what the action intends to do; do not include raw coordinates.",
                 "- If the task is complete, call `computer_use` with `action_type=\"done\"`, the appropriate status, and a `text` field containing a brief completion summary. The summary should include: (1) what was accomplished or why it failed; (2) the current screen state (which app/page is showing); (3) if the task involved retrieving information, include the key findings (e.g. prices, messages, search results). Keep the summary concise but informative — the caller depends on it to understand what happened.",
                 "- If the task reaches a sensitive, blocked, or unsafe state, call `computer_use` with `action_type=\"request_intervention\"` and a short reason instead of continuing or using `done`.",
             ),
@@ -237,6 +250,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Supported action_type values: click, double_tap, long_press, drag, scroll, input_text, open_app, navigate_back, navigate_home, keyboard_enter, wait, status, ask_user.",
                 "- Coordinates should use the 0-999 relative grid in `coordinate`, `start_coordinate`, and `end_coordinate` fields.",
                 "- Return exactly one JSON action object after `Action:`.",
+                "- Include a `summary` field when possible: one short natural-language description of what the action intends to do.",
             ),
         }
     if profile == "qwen3vl":
@@ -254,6 +268,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Supported `action` values: click, long_press, type, swipe, system_button, wait, terminate, answer, ask_user, open.",
                 "- Use `coordinate` and `coordinate2` with the 0-999 relative grid when coordinates are needed.",
                 "- Keep exactly one `<tool_call>` block per step.",
+                "- Include a `summary` field when possible: one short natural-language description of what the action intends to do.",
             ),
         }
     if profile == "mai_ui":
@@ -270,6 +285,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Supported `action_type` values: click, double_click, long_press, drag, scroll, input_text, open_app, navigate_back, navigate_home, keyboard_enter, wait, status, ask_user.",
                 "- Use 0-999 relative coordinates in `coordinate`, `start_coordinate`, and `end_coordinate`.",
                 "- Keep exactly one `<tool_call>` block per step.",
+                "- Include a `summary` field when possible: one short natural-language description of what the action intends to do.",
             ),
         }
     if profile == "gelab":
@@ -286,6 +302,7 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
                 "- Supported action values: CLICK, TYPE, LONGPRESS, SLIDE, AWAKE, WAIT, COMPLETE, INFO, ABORT.",
                 "- Coordinate points use a 0-1000 style relative grid; keep values within the visible screen.",
                 "- Emit exactly one action line per step.",
+                "- Include a `summary` field when possible: one short natural-language description of what the action intends to do.",
             ),
         }
     return {
@@ -301,8 +318,21 @@ def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str
             "- Supported functions: click, left_double, drag, scroll, type, press_home, press_back, wait, finished, call_user.",
             "- Use 0-1000 style relative coordinates in point parameters.",
             "- Emit exactly one function block inside `<tool_call>`.",
+            "- Include a `summary` field when possible: one short natural-language description of what the action intends to do.",
         ),
     }
+
+
+def _with_action_summary(payload: dict[str, Any], source: dict[str, Any]) -> dict[str, Any]:
+    for key in _SUMMARY_KEYS:
+        value = source.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            payload["summary"] = text
+            break
+    return payload
 
 
 def normalize_profile_response(profile_name: str | None, response: LLMResponse) -> LLMResponse:
@@ -348,16 +378,19 @@ def normalize_profile_response(profile_name: str | None, response: LLMResponse) 
 
 def _parse_content_action(profile_name: str, content: str) -> dict[str, Any]:
     if profile_name == "general_e2e":
-        return _normalize_general_e2e_action(_extract_action_json(content))
+        action_json = _extract_action_json(content)
+        return _with_action_summary(_normalize_general_e2e_action(action_json), action_json)
     if profile_name == "qwen3vl":
         tool_call = _extract_tool_call_json(content)
-        return _normalize_qwen3vl_action(tool_call.get("arguments", {}))
+        arguments = tool_call.get("arguments", {})
+        return _with_action_summary(_normalize_qwen3vl_action(arguments), arguments)
     if profile_name == "mai_ui":
         tool_call = _extract_mai_ui_tool_call(content)
         tool_name = tool_call.get("name", "mobile_use")
         if tool_name != "mobile_use":
             return _request_intervention_payload(f"Unsupported MAI-UI tool: {tool_name}")
-        return _normalize_general_e2e_action(tool_call.get("arguments", {}))
+        arguments = tool_call.get("arguments", {})
+        return _with_action_summary(_normalize_general_e2e_action(arguments), arguments)
     if profile_name == "gelab":
         return _normalize_gelab_action(content)
     if profile_name == "seed":
@@ -384,6 +417,7 @@ def _normalize_profile_tool_calls(profile_name: str, tool_calls: list[ToolCall])
                 arguments = _normalize_general_e2e_action(arguments)
                 name = "computer_use"
 
+        arguments = _with_action_summary(arguments, tool_call.arguments)
         normalized.append(
             ToolCall(
                 id=tool_call.id,

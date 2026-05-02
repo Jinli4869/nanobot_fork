@@ -39,6 +39,7 @@ from opengui.interfaces import (
     LLMProvider,
     LLMResponse,
     ProgressCallback,
+    ToolCall,
 )
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.observation import Observation
@@ -162,6 +163,16 @@ def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
     }
     _text = {"text": {"type": "string", "description": "Text input or app identifier."}}
     _dur = {"duration_ms": {"type": "integer", "description": "Duration in ms."}}
+    _summary = {
+        "summary": {
+            "type": "string",
+            "description": "One short natural-language description of what the action intends to do.",
+        },
+        "intent": {
+            "type": "string",
+            "description": "Alias for summary.",
+        },
+    }
 
     prop_sets: dict[str, dict] = {
         "tap":               {**_coord},
@@ -181,7 +192,7 @@ def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
         "request_intervention": {**_text},
     }
     props = prop_sets.get(action_type, {})
-    props = {"action_type": {"type": "string", "enum": [action_type]}, **props}
+    props = {"action_type": {"type": "string", "enum": [action_type]}, **props, **_summary}
     return {
         "type": "function",
         "function": {
@@ -230,8 +241,13 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
                 "duration_ms": {"type": "integer", "description": "Duration in ms."},
                 "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
                 "status": {"type": "string", "enum": ["success", "failure"], "description": "For done action."},
+                "summary": {
+                    "type": "string",
+                    "description": "One short natural-language description of what the action intends to do.",
+                },
+                "intent": {"type": "string", "description": "Alias for summary."},
             },
-            "required": ["action_type"],
+            "required": ["action_type", "summary"],
         },
     },
 }
@@ -1004,8 +1020,10 @@ class GuiAgent:
         retry_summaries: list[str] = []
         # Seed total_usage with tokens consumed during skill retrieval + execution (if any)
         skill_token_usage: dict[str, int] = {}
-        if skill_result is not None and hasattr(skill_result, "token_usage"):
-            skill_token_usage = dict(skill_result.token_usage or {})
+        if skill_result is not None:
+            raw_skill_token_usage = getattr(skill_result, "token_usage", None)
+            if isinstance(raw_skill_token_usage, dict):
+                skill_token_usage = dict(raw_skill_token_usage)
         total_usage: dict[str, int] = dict(skill_token_usage)
         for k, v in reuser_usage.items():
             total_usage[k] = total_usage.get(k, 0) + v
@@ -1640,6 +1658,7 @@ class GuiAgent:
                     f"LLM called unexpected tool '{tool_call.name}'.",
                     model_snapshot=assistant_snapshot,
                 )
+            tool_summary = self._tool_call_summary(tool_call)
 
             # Parse action
             try:
@@ -1664,7 +1683,11 @@ class GuiAgent:
                     f"GUI step {step_index}/{total_steps}: {describe_action(action)}"
                 )
 
-            action_text = self._normalize_action_text(response.content, action)
+            action_text = self._normalize_action_text(
+                response.content,
+                action,
+                tool_summary=tool_summary,
+            )
             assistant_message = self._build_assistant_message(
                 response,
                 content_override=action_text,
@@ -2258,7 +2281,15 @@ class GuiAgent:
         return snapshot
 
     @staticmethod
-    def _normalize_action_text(content: str, action: Action) -> str:
+    def _normalize_action_text(
+        content: str,
+        action: Action,
+        *,
+        tool_summary: str | None = None,
+    ) -> str:
+        summary = GuiAgent._clean_action_summary(tool_summary)
+        if summary:
+            return f"Action: {summary}"
         text = content.strip() if content else ""
         if text:
             first_line = text.splitlines()[0].strip()
@@ -2266,6 +2297,28 @@ class GuiAgent:
                 return first_line
             return f"Action: {first_line}"
         return f"Action: {describe_action(action)}"
+
+    @staticmethod
+    def _tool_call_summary(tool_call: ToolCall) -> str | None:
+        arguments = tool_call.arguments or {}
+        for key in ("summary", "intent"):
+            summary = GuiAgent._clean_action_summary(arguments.get(key))
+            if summary:
+                return summary
+        return None
+
+    @staticmethod
+    def _clean_action_summary(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = " ".join(str(value).split()).strip()
+        if not text:
+            return None
+        lowered = text.casefold()
+        if lowered.startswith("action:"):
+            text = text.split(":", 1)[1].strip()
+        text = text.strip("`\"'")
+        return text or None
 
     @staticmethod
     def _action_summary(action_text: str) -> str:
@@ -2649,12 +2702,19 @@ class GuiAgent:
         """Extract runtime parameter values from the task description via LLM.
 
         Uses the skill's declared ``parameters`` list as a schema and asks the
-        LLM to pull matching values from the task string.  Returns an empty
-        dict on any failure so callers can proceed with template fallback.
+        LLM to pull matching values from the task string.  Returns partial
+        values when some parameters can be inferred deterministically.
         """
         param_names: list[str] = list(skill.parameters)
         if not param_names:
             return {}
+        params = {
+            name: value
+            for name in param_names
+            if (value := self._guess_skill_param(task, name)) is not None
+        }
+        if len(params) == len(param_names):
+            return params
         json_template = "{" + ", ".join(f'"{p}": "value"' for p in param_names) + "}"
         prompt = (
             f"Task: {task}\n\n"
@@ -2664,20 +2724,48 @@ class GuiAgent:
             f"Return JSON only, with exactly these keys: {json_template}"
         )
         try:
-            response = await self.llm.chat([{"role": "user", "content": prompt}])
+            response = await asyncio.wait_for(
+                self.llm.chat([{"role": "user", "content": prompt}]),
+                timeout=8.0,
+            )
         except Exception as exc:
             logger.warning("Skill param extraction LLM call failed: %s", exc)
-            return {}
+            return params
         text = (response.content or "").strip()
         match = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if match:
             try:
                 obj = json.loads(match.group(0))
-                return {k: str(v) for k, v in obj.items() if k in param_names}
+                for key, value in obj.items():
+                    if key in param_names and key not in params:
+                        text_value = str(value).strip()
+                        if text_value:
+                            params[key] = text_value
+                return params
             except json.JSONDecodeError:
                 pass
         logger.warning("Could not parse skill param extraction response: %r", text[:120])
-        return {}
+        return params
+
+    @staticmethod
+    def _guess_skill_param(task: str, param_name: str) -> str | None:
+        name = param_name.strip().casefold()
+        if name not in {"search_query", "search_term", "query"}:
+            return None
+        normalized = " ".join((task or "").split())
+        if not normalized:
+            return None
+        for pattern in (
+            r"(?:搜索一下|搜一下|搜索|查找)\s*([^\s，,。.!?；;、]+)",
+            r"(?:search\s+for|search|find)\s*([^\s，,。.!?；;、]+)",
+        ):
+            match = re.search(pattern, normalized, flags=re.IGNORECASE)
+            if match is None:
+                continue
+            value = match.group(1).strip().strip('`"\'')
+            if value:
+                return value
+        return None
 
     async def _skill_maintenance(
         self, skill_match: Any | None, success: bool
