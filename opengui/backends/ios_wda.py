@@ -338,10 +338,12 @@ class WdaBackend:
         duration_s = (action.duration_ms or 300) / 1000.0
         direction = (action.text or "down").lower()
 
+        # Touch scrolls are inverted relative to content direction:
+        # "down" means reveal lower content, so the finger moves upward.
         if direction == "up":
-            x2, y2 = x, y - pixels
-        elif direction == "down":
             x2, y2 = x, y + pixels
+        elif direction == "down":
+            x2, y2 = x, y - pixels
         elif direction == "left":
             x2, y2 = x - pixels, y
         else:  # right
