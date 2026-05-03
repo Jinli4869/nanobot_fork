@@ -24,11 +24,13 @@ import pytest
 from opengui.backends.dry_run import DryRunBackend
 from opengui.agent import GuiAgent
 from opengui.interfaces import LLMResponse
+from opengui.observation import Observation
 from opengui.skills import Skill, SkillStep
 from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
 from opengui.skills.reuser import SkillReuser
+from opengui.skills.state_contract import evaluate_state_contract
 
 
 # ---------------------------------------------------------------------------
@@ -130,12 +132,49 @@ class _FakeValidator:
         return self._returns.pop(0)
 
 
+class _ObservationProvider:
+    def __init__(self, observation: Observation) -> None:
+        self._observation = observation
+
+    async def get_observation(self) -> Observation:
+        return self._observation
+
+    async def get_screenshot(self) -> Path | None:
+        return Path(self._observation.screenshot_path) if self._observation.screenshot_path else None
+
+
 class _CapturingRecorder:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
 
     def record_event(self, event: str, **payload: object) -> None:
         self.events.append((event, payload))
+
+
+class _CapturingAndroidBackend:
+    @property
+    def platform(self) -> str:
+        return "android"
+
+    def __init__(self) -> None:
+        self.actions: list[Any] = []
+
+    async def execute(self, action: Any, timeout: float = 5.0) -> str:
+        self.actions.append(action)
+        return "ok"
+
+
+class _CapturingIOSBackend:
+    @property
+    def platform(self) -> str:
+        return "ios"
+
+    def __init__(self) -> None:
+        self.actions: list[Any] = []
+
+    async def execute(self, action: Any, timeout: float = 5.0) -> str:
+        self.actions.append(action)
+        return "ok"
 
 
 class _FakeSkillLibrary:
@@ -185,6 +224,24 @@ def _make_skill(
         tags=tags,
         created_at=1_700_000_000.0,
     )
+
+
+def test_skill_step_state_contract_round_trips() -> None:
+    step = SkillStep(
+        action_type="tap",
+        target="青少年模式",
+        valid_state="Settings list is visible",
+        state_contract={
+            "app": "tv.danmaku.bili",
+            "must_exist": [{"text": "青少年模式", "clickable": True}],
+        },
+    )
+
+    payload = step.to_dict()
+    restored = SkillStep.from_dict(payload)
+
+    assert payload["state_contract"]["must_exist"][0]["text"] == "青少年模式"
+    assert restored.state_contract == step.state_contract
 
 
 # ---------------------------------------------------------------------------
@@ -874,6 +931,150 @@ async def test_executor_validate_duration_not_null_for_fixed_step() -> None:
     )
 
 
+async def test_executor_matching_state_contract_skips_llm_validator(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    step = SkillStep(
+        action_type="tap",
+        target="Profile tab",
+        valid_state="Profile tab is visible",
+        fixed=True,
+        fixed_values={"x": 500.0, "y": 900.0, "relative": True},
+        state_contract={"must_exist": [{"text": "Profile", "clickable": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-contract-pass",
+        name="Tap Profile",
+        description="Tap profile",
+        app="com.example.app",
+        platform="android",
+        steps=(step,),
+    )
+    validator = _FakeValidator(returns=[False])
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={"visible_text": ["Home", "Profile"], "clickable_text": ["Profile"]},
+    ))
+
+    executor = SkillExecutor(
+        backend=DryRunBackend(),
+        state_validator=validator,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert result.step_results[0].valid_state_check is True
+    assert result.step_results[0].validate_duration_s is None
+    assert validator._returns == [False]
+
+
+async def test_executor_resolves_legacy_ctrip_open_app_for_android_backend() -> None:
+    step = SkillStep(
+        action_type="open_app",
+        target="Launch ctrip.com",
+        valid_state="No need to verify",
+        fixed=True,
+        fixed_values={"text": "ctrip.com"},
+    )
+    skill = Skill(
+        skill_id="exec-legacy-ctrip",
+        name="Open Ctrip",
+        description="Open Ctrip from a legacy iOS-derived skill",
+        app="ctrip.com",
+        platform="android",
+        steps=(step,),
+    )
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        state_validator=None,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert backend.actions[0].action_type == "open_app"
+    assert backend.actions[0].text == "ctrip.android.view"
+
+
+async def test_executor_resolves_common_ios_open_app_for_ios_backend() -> None:
+    step = SkillStep(
+        action_type="open_app",
+        target="Launch Ctrip",
+        valid_state="No need to verify",
+        fixed=True,
+        fixed_values={"text": "Ctrip"},
+    )
+    skill = Skill(
+        skill_id="exec-ios-ctrip",
+        name="Open Ctrip",
+        description="Open Ctrip from a common-name iOS skill",
+        app="ctrip.com",
+        platform="ios",
+        steps=(step,),
+    )
+    backend = _CapturingIOSBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        state_validator=None,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert backend.actions[0].action_type == "open_app"
+    assert backend.actions[0].text == "ctrip.com"
+
+
+async def test_executor_failing_state_contract_blocks_before_llm_validator(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    step = SkillStep(
+        action_type="tap",
+        target="Profile tab",
+        valid_state="Profile tab is visible",
+        state_contract={"must_exist": [{"text": "Profile", "clickable": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-contract-fail",
+        name="Tap Profile",
+        description="Tap profile",
+        app="com.example.app",
+        platform="android",
+        steps=(step,),
+    )
+    validator = _FakeValidator(returns=[True])
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={"visible_text": ["Home", "Settings"], "clickable_text": ["Settings"]},
+    ))
+
+    executor = SkillExecutor(
+        backend=DryRunBackend(),
+        state_validator=validator,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert result.step_results[0].valid_state_check is False
+    assert result.step_results[0].validate_duration_s is None
+    assert validator._returns == [True]
+
+
 # ---------------------------------------------------------------------------
 # SkillExtractor — tests (async)
 # ---------------------------------------------------------------------------
@@ -950,6 +1151,75 @@ async def test_skill_extractor_normalizes_app_identifier() -> None:
 
     assert skill is not None
     assert skill.app == "com.android.settings"
+
+
+async def test_skill_extractor_enforces_platform_from_trace_metadata(tmp_path: Path) -> None:
+    """Trace metadata wins when the model emits the wrong platform."""
+    canned_json = json.dumps({
+        "name": "open_ctrip_ticket_page",
+        "description": "Navigate to Ctrip ticket page",
+        "app": "ctrip.android.view",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "open_app",
+                "target": "Launch Ctrip",
+                "parameters": {"text": "ctrip.android.view"},
+                "expected_state": "Ctrip is open",
+                "valid_state": "No need to verify",
+                "fixed": True,
+            },
+            {
+                "action_type": "tap",
+                "target": "Tickets icon",
+                "parameters": {"x": 260, "y": 184, "relative": True},
+                "expected_state": "Ticket page is open",
+                "valid_state": "Ctrip home page is visible",
+                "fixed": True,
+            },
+        ],
+    })
+    trace_path = tmp_path / "trace.jsonl"
+    events = [
+        {"type": "metadata", "platform": "ios", "task": "打开携程旅行"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap"},
+            "model_output": "打开携程旅行",
+            "observation": {"platform": "ios", "foreground_app": "ctrip.com"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap"},
+            "model_output": "点击门票",
+            "observation": {"platform": "ios", "foreground_app": "ctrip.com"},
+        },
+        {"type": "result", "success": True},
+    ]
+    trace_path.write_text(
+        "\n".join(json.dumps(event, ensure_ascii=False) for event in events),
+        encoding="utf-8",
+    )
+
+    llm = _ScriptedLLM([canned_json])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    skill = await extractor.extract_from_file(trace_path, is_success=True)
+
+    assert skill is not None
+    assert skill.platform == "ios"
+    assert skill.app == "ctrip.com"
+    assert skill.steps[0].parameters["text"] == "ctrip.com"
+    assert skill.steps[0].fixed_values["text"] == "ctrip.com"
+
+    prompt = llm.messages[0][0]["content"]
+    assert isinstance(prompt, str)
+    assert '"platform": "ios"' in prompt
+    assert "android|ios|macos|linux|windows" in prompt
 
 
 async def test_skill_extractor_returns_none_for_single_step() -> None:
@@ -1095,6 +1365,77 @@ async def test_skill_extractor_prompt_excludes_transient_popup_steps() -> None:
         assert "permission" in lower
         assert "dismiss" in lower
         assert "explicitly" in lower
+
+
+async def test_skill_extractor_supplements_state_contract_from_ui_tree() -> None:
+    canned_json = json.dumps({
+        "name": "open_bilibili_minor_mode",
+        "description": "Navigate to Bilibili minor mode settings",
+        "app": "tv.danmaku.bili",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "tap",
+                "target": "青少年模式",
+                "parameters": {},
+                "expected_state": "Minor mode screen is open",
+                "valid_state": "Settings list is visible",
+                "fixed": True,
+            },
+        ],
+    })
+    llm = _ScriptedLLM([canned_json])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    skill = await extractor.extract_from_steps(
+        [
+            {
+                "type": "step",
+                "action": {"action_type": "tap"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {
+                        "visible_text": ["账号资料", "青少年模式"],
+                        "clickable_text": ["青少年模式"],
+                        "ui_tree_node_count": 12,
+                    },
+                },
+            },
+            {
+                "type": "step",
+                "action": {"action_type": "wait"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {"visible_text": ["开启青少年模式"]},
+                },
+            },
+        ],
+        is_success=True,
+    )
+
+    assert skill is not None
+    assert skill.steps[0].state_contract == {
+        "app": "tv.danmaku.bili",
+        "must_exist": [{"text": "青少年模式", "clickable": True}],
+    }
+    prompt = llm.messages[0][0]["content"]
+    assert isinstance(prompt, str)
+    assert "state_contract" in prompt
+    assert "ui_tree" in prompt
+
+
+def test_state_contract_scrollable_present_works_without_full_ui_tree() -> None:
+    contract = {"must_exist": [{"scrollable": True}]}
+    assert evaluate_state_contract(
+        contract,
+        observation_extra={"ui_tree_node_count": 5, "scrollable_present": True},
+    ) is True
+    assert evaluate_state_contract(
+        contract,
+        observation_extra={"ui_tree_node_count": 5, "scrollable_present": False},
+    ) is False
 
 
 async def test_skill_reuser_auto_accept_threshold_short_circuits_judge() -> None:

@@ -18,6 +18,7 @@ import asyncio
 import base64
 import inspect
 import importlib.resources
+import logging
 import os
 import re
 import struct
@@ -26,6 +27,7 @@ import threading
 import time
 import unicodedata
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -33,6 +35,8 @@ from typing import Any, Callable, Protocol
 
 from opengui.action import Action, describe_action, resolve_coordinate
 from opengui.observation import Observation
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Keycode mapping
@@ -87,6 +91,7 @@ _FOCUSED_APP_RE = re.compile(
 )
 
 _DEVICE_SCREENSHOT_PATH = "/sdcard/__opengui_cap.png"
+_DEVICE_UI_XML_PATH = "/sdcard/window.xml"
 _ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 _YADB_PATH = "/data/local/tmp/yadb"
 _YADB_MAIN_CLASS = "com.ysbing.yadb.Main"
@@ -441,6 +446,8 @@ class AdbBackend:
         frame_source: ScrcpyFrameSourceProtocol | None = None,
         on_jpeg_frame: Callable[[bytes, dict[str, Any]], None] | None = None,
         use_scrcpy: bool = True,
+        collect_ui_tree: bool = False,
+        collect_ui_tree_nodes: bool = False,
     ) -> None:
         self._serial = serial
         self._adb = adb_path
@@ -451,6 +458,8 @@ class AdbBackend:
         self._scrcpy_frame_timeout_ms = scrcpy_frame_timeout_ms
         self._scrcpy_max_frame_age_ms = scrcpy_max_frame_age_ms
         self._use_scrcpy = use_scrcpy
+        self._collect_ui_tree = collect_ui_tree
+        self._collect_ui_tree_nodes = collect_ui_tree_nodes
         self._scrcpy_started = False
         self._frame_source = (
             frame_source
@@ -622,21 +631,27 @@ class AdbBackend:
         snapshot = await self._capture_scrcpy_frame(screenshot_path, timeout=timeout)
         if snapshot is None:
             return await self._observe_via_screencap(screenshot_path, timeout=timeout)
-        (input_width, input_height), fg_app = await asyncio.gather(
+        (input_width, input_height), fg_app, extra = await asyncio.gather(
             self._query_screen_size(timeout),
             self._query_foreground_app(timeout),
+            self._collect_ui_tree_extra(timeout),
         )
         self._capture_width = snapshot.width
         self._capture_height = snapshot.height
         self._screen_width = input_width
         self._screen_height = input_height
+        merged_extra: dict[str, Any] = {
+            "capture_source": "scrcpy",
+            "frame_timestamp": snapshot.timestamp,
+        }
+        merged_extra.update(extra)
         return Observation(
             screenshot_path=str(screenshot_path),
             screen_width=snapshot.width,
             screen_height=snapshot.height,
             foreground_app=fg_app,
             platform=self.platform,
-            extra={"capture_source": "scrcpy", "frame_timestamp": snapshot.timestamp},
+            extra=merged_extra,
         )
 
     async def _capture_scrcpy_frame(
@@ -686,27 +701,64 @@ class AdbBackend:
         await self._run("pull", _DEVICE_SCREENSHOT_PATH, str(screenshot_path), timeout=timeout)
 
         screenshot_size = _read_png_size(screenshot_path)
+        ui_tree_task = self._collect_ui_tree_extra(timeout)
         if screenshot_size is None:
-            (width, height), fg_app = await asyncio.gather(
+            (width, height), fg_app, extra = await asyncio.gather(
                 self._query_screen_size(timeout),
                 self._query_foreground_app(timeout),
+                ui_tree_task,
             )
         else:
             width, height = screenshot_size
-            fg_app = await self._query_foreground_app(timeout)
+            fg_app, extra = await asyncio.gather(
+                self._query_foreground_app(timeout),
+                ui_tree_task,
+            )
 
         self._screen_width = width
         self._screen_height = height
         self._capture_width = width
         self._capture_height = height
 
+        merged_extra: dict[str, Any] = {"capture_source": "screencap"}
+        merged_extra.update(extra)
         return Observation(
             screenshot_path=str(screenshot_path),
             screen_width=width,
             screen_height=height,
             foreground_app=fg_app,
             platform=self.platform,
+            extra=merged_extra,
         )
+
+    async def _collect_ui_tree_extra(self, timeout: float) -> dict[str, Any]:
+        if not self._collect_ui_tree:
+            return {}
+        # uiautomator dump is noticeably slower than screenshot capture on real
+        # devices; a 1s cap is too aggressive and silently drops the tree.
+        ui_timeout = max(0.2, min(timeout, 3.0))
+        try:
+            await self._run(
+                "shell",
+                "uiautomator",
+                "dump",
+                "--compressed",
+                _DEVICE_UI_XML_PATH,
+                timeout=ui_timeout,
+            )
+            xml_text = await self._run(
+                "shell",
+                "cat",
+                _DEVICE_UI_XML_PATH,
+                timeout=ui_timeout,
+            )
+            return _parse_ui_tree_xml(
+                xml_text,
+                include_nodes=self._collect_ui_tree_nodes,
+            )
+        except Exception as exc:
+            logger.debug("ADB UI-tree capture unavailable: %s", exc)
+            return {}
 
     async def shutdown(self) -> None:
         if self._frame_source is not None:
@@ -1125,3 +1177,126 @@ class AdbBackend:
             str(x), str(y), str(x2), str(y2), dur,
             timeout=timeout,
         )
+
+
+def _parse_ui_tree_xml(
+    xml_text: str,
+    *,
+    max_nodes: int = 80,
+    max_values: int = 80,
+    include_nodes: bool = False,
+) -> dict[str, Any]:
+    """Parse Android uiautomator XML into compact observation metadata."""
+    try:
+        root = ET.fromstring(xml_text.strip())
+    except ET.ParseError:
+        return {}
+
+    visible_text: list[str] = []
+    content_desc: list[str] = []
+    resource_ids: list[str] = []
+    clickable_text: list[str] = []
+    focused_text: list[str] = []
+    class_names: list[str] = []
+    ui_tree: list[dict[str, Any]] | None = [] if include_nodes else None
+    node_count = 0
+    scrollable_present = False
+
+    for element in root.iter("node"):
+        node_count += 1
+        text = _clean_ui_attr(element.get("text"))
+        desc = _clean_ui_attr(element.get("content-desc"))
+        resource_id = _clean_ui_attr(element.get("resource-id"))
+        class_name = _clean_ui_attr(element.get("class"))
+        bounds = _clean_ui_attr(element.get("bounds"))
+        clickable = element.get("clickable") == "true"
+        focused = element.get("focused") == "true"
+        scrollable = element.get("scrollable") == "true"
+        if scrollable:
+            scrollable_present = True
+
+        if text:
+            visible_text.append(text)
+        if desc:
+            content_desc.append(desc)
+        if resource_id:
+            resource_ids.append(resource_id)
+        if class_name:
+            class_names.append(class_name)
+
+        label = text or desc
+        if clickable:
+            clickable_text.extend(_iter_ui_label_texts(element))
+        if focused and label:
+            focused_text.append(label)
+
+        if ui_tree is not None and len(ui_tree) < max_nodes and (
+            text or desc or resource_id or class_name or clickable or focused or scrollable
+        ):
+            compact_node: dict[str, Any] = {}
+            if text:
+                compact_node["text"] = text
+            if desc:
+                compact_node["content_desc"] = desc
+            if resource_id:
+                compact_node["resource_id"] = resource_id
+            if class_name:
+                compact_node["class"] = class_name
+            if clickable:
+                compact_node["clickable"] = True
+            if focused:
+                compact_node["focused"] = True
+            if scrollable:
+                compact_node["scrollable"] = True
+            if bounds:
+                compact_node["bounds"] = bounds
+            ui_tree.append(compact_node)
+
+    extra: dict[str, Any] = {"ui_tree_node_count": node_count}
+    if visible_text:
+        extra["visible_text"] = _dedupe_ui_values(visible_text)[:max_values]
+    if content_desc:
+        extra["content_desc"] = _dedupe_ui_values(content_desc)[:max_values]
+    if resource_ids:
+        extra["resource_ids"] = _dedupe_ui_values(resource_ids)[:max_values]
+    if clickable_text:
+        extra["clickable_text"] = _dedupe_ui_values(clickable_text)[:max_values]
+    if focused_text:
+        extra["focused_text"] = _dedupe_ui_values(focused_text)[:max_values]
+    if class_names:
+        extra["class_names"] = _dedupe_ui_values(class_names)[:max_values]
+    if scrollable_present:
+        extra["scrollable_present"] = True
+    if ui_tree:
+        extra["ui_tree"] = ui_tree
+    return extra
+
+
+def _clean_ui_attr(value: str | None) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _iter_ui_label_texts(element: ET.Element) -> list[str]:
+    labels: list[str] = []
+    for node in element.iter("node"):
+        label = _clean_ui_attr(node.get("text")) or _clean_ui_attr(node.get("content-desc"))
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _dedupe_ui_values(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _clean_ui_attr(value)
+        if not text:
+            continue
+        marker = text.casefold()
+        if marker in seen:
+            continue
+        out.append(text)
+        seen.add(marker)
+    return out

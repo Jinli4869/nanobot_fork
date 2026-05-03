@@ -118,6 +118,10 @@ def test_trajectory_recorder_step_details_are_persisted(tmp_path: Path) -> None:
         screen_width=1080,
         screen_height=1920,
         platform="android",
+        observation_extra={
+            "visible_text": ["搜索", "我的"],
+            "ui_tree_node_count": 8,
+        },
     )
     rec.finish(success=True)
 
@@ -130,6 +134,8 @@ def test_trajectory_recorder_step_details_are_persisted(tmp_path: Path) -> None:
     assert step_event["observation"]["screen_height"] == 1920
     assert step_event["observation"]["platform"] == "android"
     assert step_event["observation"]["screenshot_path"] == "/screenshots/step_001.png"
+    assert step_event["observation"]["extra"]["visible_text"] == ["搜索", "我的"]
+    assert step_event["observation"]["extra"]["ui_tree_node_count"] == 8
     assert "prompt" not in step_event
     assert "model_response" not in step_event
     assert "execution" not in step_event

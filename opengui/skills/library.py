@@ -1452,4 +1452,26 @@ class SkillLibrary:
             parts.append(step.action_type)
             if step.valid_state and step.valid_state.lower() != "no need to verify":
                 parts.append(step.valid_state)
+            if step.state_contract:
+                parts.extend(_state_contract_text(step.state_contract))
         return " ".join(p for p in parts if p)
+
+
+def _state_contract_text(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key in ("app", "text", "content_desc", "resource_id", "class"):
+            item = value.get(key)
+            if item:
+                parts.append(str(item))
+        for key in ("must_exist", "must_not_exist"):
+            parts.extend(_state_contract_text(value.get(key)))
+        return parts
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_state_contract_text(item))
+        return parts
+    return []

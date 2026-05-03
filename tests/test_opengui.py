@@ -364,18 +364,53 @@ def test_annotate_android_apps_filters_unmapped_packages() -> None:
     assert not any("com.unknown.xyz" in entry for entry in result)
 
 
-def test_build_system_prompt_android_apps_shows_display_names_only() -> None:
+def test_app_resolution_maps_ctrip_between_android_and_ios() -> None:
+    from opengui.skills.normalization import (
+        normalize_app_identifier,
+        resolve_android_package,
+        resolve_ios_bundle,
+    )
+
+    assert resolve_android_package("ctrip.com") == "ctrip.android.view"
+    assert normalize_app_identifier("android", "ctrip.com") == "ctrip.android.view"
+    assert normalize_app_identifier("android", "携程旅行") == "ctrip.android.view"
+    assert resolve_ios_bundle("ctrip.android.view") == "ctrip.com"
+    assert normalize_app_identifier("ios", "ctrip.android.view") == "ctrip.com"
+    assert normalize_app_identifier("ios", "携程旅行") == "ctrip.com"
+
+
+def test_ios_common_app_aliases_map_to_bundles() -> None:
+    from opengui.skills.normalization import normalize_app_identifier
+
+    assert normalize_app_identifier("ios", "Apple Music") == "com.apple.Music"
+    assert normalize_app_identifier("ios", "Apple Podcasts") == "com.apple.podcasts"
+    assert normalize_app_identifier("ios", "Apple Books") == "com.apple.iBooks"
+    assert normalize_app_identifier("ios", "Apple Store") == "com.apple.MobileStore"
+
+
+def test_build_system_prompt_android_apps_shows_mappings() -> None:
     prompt = build_system_prompt(
         platform="android",
         installed_apps=["com.sankuai.meituan", "com.unknown.dropped"],
     )
 
-    assert "美团/Meituan" in prompt
-    # Package name must not appear as an app list item
+    assert "美团/Meituan: com.sankuai.meituan" in prompt
+    assert "Use these app mappings for `open_app` and `close_app` actions:" in prompt
     lines = prompt.splitlines()
     app_list_lines = [ln.strip() for ln in lines if ln.strip().startswith("- ")]
-    assert not any("com.sankuai.meituan" in ln for ln in app_list_lines)
+    assert any("com.sankuai.meituan" in ln for ln in app_list_lines)
     assert not any("com.unknown.dropped" in ln for ln in app_list_lines)
+
+
+def test_build_system_prompt_ios_apps_shows_mappings() -> None:
+    prompt = build_system_prompt(
+        platform="ios",
+        installed_apps=["com.tencent.xin", "com.apple.mobilesafari", "com.unknown.dropped"],
+    )
+
+    assert "WeChat: com.tencent.xin" in prompt
+    assert "Safari: com.apple.mobilesafari" in prompt
+    assert "Use these app mappings for `open_app` and `close_app` actions:" in prompt
 
 
 def test_build_system_prompt_android_apps_excludes_unmapped() -> None:

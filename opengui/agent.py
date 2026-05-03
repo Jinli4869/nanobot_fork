@@ -836,17 +836,21 @@ class _AgentScreenshotProvider:
         self._artifacts_root = Path(artifacts_root)
         self._counter = 0
 
-    async def get_screenshot(self) -> Path | None:
+    async def get_observation(self) -> Observation | None:
         self._counter += 1
         skill_dir = self._artifacts_root / "skill_screenshots"
         skill_dir.mkdir(parents=True, exist_ok=True)
         path = skill_dir / f"skill_{int(time.time() * 1000)}_{self._counter}.png"
         try:
-            obs = await self._backend.observe(path)
-            if obs.screenshot_path:
-                return Path(obs.screenshot_path)
+            return await self._backend.observe(path)
         except Exception as exc:
             logger.warning("ScreenshotProvider observe failed: %s", exc)
+        return None
+
+    async def get_screenshot(self) -> Path | None:
+        obs = await self.get_observation()
+        if obs is not None and obs.screenshot_path:
+            return Path(obs.screenshot_path)
         return None
 
 
@@ -1431,6 +1435,10 @@ class GuiAgent:
                     result.next_observation.platform
                     if result.next_observation else None
                 ),
+                observation_extra=(
+                    self._scrub_for_artifact(result.next_observation.extra)
+                    if result.next_observation else None
+                ),
                 token_usage=result.step_usage or None,
                 duration_s=result.duration_s or None,
                 chat_latency_s=result.chat_latency_s,
@@ -1823,17 +1831,20 @@ class GuiAgent:
                     ttft_s=step_ttft_s,
                 )
 
-            # Normalize app name to package name for Android open/close
+            # Normalize app identifiers for mobile open/close actions.
             if (
                 action.action_type in ("open_app", "close_app")
                 and action.text
-                and self.backend.platform == "android"
+                and self.backend.platform in ("android", "ios")
             ):
-                from opengui.skills.normalization import resolve_android_package
-
-                resolved = resolve_android_package(action.text)
+                resolved = normalize_app_identifier(self.backend.platform, action.text)
                 if resolved != action.text:
-                    logger.debug("Resolved app name %r -> %r", action.text, resolved)
+                    logger.debug(
+                        "Resolved %s app name %r -> %r",
+                        self.backend.platform,
+                        action.text,
+                        resolved,
+                    )
                     action = replace(action, text=resolved)
 
             # Execute action on backend

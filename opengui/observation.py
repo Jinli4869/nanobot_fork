@@ -55,10 +55,19 @@ class Observation:
             lines.append("")
             lines.append("Additional context:")
             for key, value in self.extra.items():
-                value_str = str(value)
+                value_str = _format_extra_value(key, value)
                 if "\n" in value_str:
                     indented = textwrap.indent(value_str, prefix="    ")
                     lines.append(f"  {key}:\n{indented}")
                 else:
                     lines.append(f"  {key}: {value_str}")
         return "\n".join(lines)
+
+
+def _format_extra_value(key: str, value: typing.Any) -> str:
+    if isinstance(value, list):
+        limit = 20 if key == "ui_tree" else 40
+        shown = value[:limit]
+        suffix = f" ... (+{len(value) - limit} more)" if len(value) > limit else ""
+        return f"{shown}{suffix}"
+    return str(value)

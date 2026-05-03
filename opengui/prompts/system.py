@@ -83,35 +83,27 @@ def build_system_prompt(
         if platform == "android":
             from opengui.skills.normalization import annotate_android_apps
 
-            # annotate_android_apps returns only mapped apps in "DisplayName: pkg" format.
-            # Extract just the display name portion for the prompt; package name lookup
-            # happens via resolve_android_package() at execution time.
             annotated = annotate_android_apps(installed_apps)
-            display_names = [entry.split(": ", 1)[0] for entry in annotated]
-            if display_names:
-                app_list = "\n".join(f"- {name}" for name in display_names)
+            if annotated:
+                app_list = "\n".join(f"- {entry}" for entry in annotated)
                 sections.extend([
                     "",
                     "# Installed Apps",
                     "",
-                    "The following apps are available on this device:",
+                    "Use these app mappings for `open_app` and `close_app` actions:",
                     app_list,
                 ])
         elif platform == "ios":
             from opengui.skills.normalization import annotate_ios_apps
 
-            # annotate_ios_apps returns only mapped apps in "DisplayName: bundleId" format.
-            # Extract just the display name portion for the prompt; bundle ID lookup
-            # happens via resolve_ios_bundle() at execution time.
             annotated = annotate_ios_apps(installed_apps)
-            display_names = [entry.split(": ", 1)[0] for entry in annotated]
-            if display_names:
-                app_list = "\n".join(f"- {name}" for name in display_names)
+            if annotated:
+                app_list = "\n".join(f"- {entry}" for entry in annotated)
                 sections.extend([
                     "",
                     "# Installed Apps",
                     "",
-                    "The following apps are available on this iOS device:",
+                    "Use these app mappings for `open_app` and `close_app` actions:",
                     app_list,
                 ])
         else:

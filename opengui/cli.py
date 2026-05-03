@@ -448,6 +448,7 @@ def build_backend(name: str, config: CliConfig) -> Any:
             scrcpy_jpeg_quality=config.scrcpy.jpeg_quality,
             scrcpy_frame_timeout_ms=config.scrcpy.frame_timeout_ms,
             scrcpy_max_frame_age_ms=config.scrcpy.max_frame_age_ms,
+            collect_ui_tree=True,
         )
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend

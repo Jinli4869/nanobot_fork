@@ -32,7 +32,10 @@ from typing import Any
 
 from opengui.action import Action
 from opengui.interfaces import DeviceBackend
+from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.state_contract import evaluate_state_contract
 
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
@@ -177,6 +180,15 @@ class ScreenshotProvider(typing.Protocol):
 
     async def get_screenshot(self) -> Path | bytes | None:
         """Capture and return the current screenshot."""
+        ...
+
+
+@typing.runtime_checkable
+class ObservationProvider(ScreenshotProvider, typing.Protocol):
+    """Provides a full observation with screenshot and structured metadata."""
+
+    async def get_observation(self) -> Observation | None:
+        """Capture and return the current observation."""
         ...
 
 
@@ -507,7 +519,7 @@ class SkillExecutor:
             # ------------------------------------------------------------------
             # 1. Capture current screenshot
             # ------------------------------------------------------------------
-            screenshot = await self._get_screenshot()
+            observation, screenshot = await self._get_observation_and_screenshot()
 
             # ------------------------------------------------------------------
             # 2. Valid-state check
@@ -521,7 +533,11 @@ class SkillExecutor:
                 )
                 valid, validate_usage, validate_dur = True, {}, None
             else:
-                valid, validate_usage, validate_dur = await self._validate_state(step, screenshot)
+                valid, validate_usage, validate_dur = await self._validate_state(
+                    step,
+                    screenshot,
+                    observation=observation,
+                )
             _merge_usage(total_token_usage, validate_usage)
 
             # ------------------------------------------------------------------
@@ -559,12 +575,22 @@ class SkillExecutor:
                                 )
                         else:
                             # Standard recovery: refresh screenshot and re-validate.
-                            screenshot = recovery_result.final_screenshot or screenshot
-                            revalidate_result, revalidate_usage, revalidate_dur = await self._validate_state(step, screenshot)
+                            fresh_observation, fresh_screenshot = await self._get_observation_and_screenshot()
+                            observation = fresh_observation or observation
+                            screenshot = (
+                                fresh_screenshot
+                                or recovery_result.final_screenshot
+                                or screenshot
+                            )
+                            revalidate_result, revalidate_usage, revalidate_dur = await self._validate_state(
+                                step,
+                                screenshot,
+                                observation=observation,
+                            )
                             valid = revalidate_result
                             _merge_usage(total_token_usage, revalidate_usage)
                             _merge_usage(validate_usage, revalidate_usage)
-                            validate_dur += revalidate_dur
+                            validate_dur = _merge_optional_duration(validate_dur, revalidate_dur)
                             if not valid:
                                 logger.warning(
                                     "Step %d: re-validation after recovery still failed", i
@@ -703,7 +729,7 @@ class SkillExecutor:
     ) -> tuple[Action, str, dict[str, int], float]:
         """Return ``(action, grounding_mode, token_usage, duration_s)`` for the given step."""
         if step.fixed:
-            return _build_fixed_action(step, params), "fixed", {}, 0.0
+            return self._normalize_app_action(_build_fixed_action(step, params)), "fixed", {}, 0.0
 
         if self.action_grounder is not None and screenshot is not None:
             try:
@@ -713,14 +739,33 @@ class SkillExecutor:
                 usage: dict[str, int] = {}
                 if hasattr(self.action_grounder, "drain_usage"):
                     usage = self.action_grounder.drain_usage()
-                return action, "llm", usage, duration
+                return self._normalize_app_action(action), "llm", usage, duration
             except Exception as exc:
                 logger.warning(
                     "ActionGrounder failed for step %r, falling back to template: %s",
                     step.action_type, exc,
                 )
 
-        return _build_template_action(step, params), "template", {}, 0.0
+        return self._normalize_app_action(_build_template_action(step, params)), "template", {}, 0.0
+
+    def _normalize_app_action(self, action: Action) -> Action:
+        """Resolve human/cross-platform app identifiers before backend execution."""
+        if action.action_type not in ("open_app", "close_app") or not action.text:
+            return action
+        platform = getattr(self.backend, "platform", None)
+        if platform not in ("android", "ios"):
+            return action
+
+        resolved = normalize_app_identifier(platform, action.text)
+        if resolved == action.text:
+            return action
+        logger.debug(
+            "Resolved %s app %r -> %r for skill execution",
+            platform,
+            action.text,
+            resolved,
+        )
+        return dataclasses.replace(action, text=resolved)
 
     def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
         if self.trajectory_recorder is None:
@@ -742,6 +787,7 @@ class SkillExecutor:
             grounding_mode=step_result.grounding_mode,
             backend_result=step_result.backend_result,
             valid_state=step.valid_state,
+            state_contract=step.state_contract,
             valid_state_check=step_result.valid_state_check,
             recovery_attempted=step_result.recovery_attempted,
             recovery_success=bool(step_result.recovery_result and step_result.recovery_result.success),
@@ -758,6 +804,8 @@ class SkillExecutor:
         self,
         step: SkillStep,
         screenshot: Path | bytes | None,
+        *,
+        observation: Observation | None = None,
     ) -> tuple[bool, dict[str, int], float | None]:
         """Validate per-step valid_state. Returns ``(valid, token_usage, duration_s)``.
 
@@ -772,6 +820,19 @@ class SkillExecutor:
         """
         if _should_skip_validation(step.valid_state):
             return True, {}, None
+
+        contract_result = evaluate_state_contract(
+            step.state_contract,
+            observation=observation,
+        )
+        if contract_result is not None:
+            logger.debug(
+                "State contract %s for step %s",
+                "passed" if contract_result else "failed",
+                step.action_type,
+            )
+            return contract_result, {}, None
+
         if self.state_validator is None:
             logger.debug("No state validator; allowing step %s", step.action_type)
             return True, {}, None
@@ -789,6 +850,20 @@ class SkillExecutor:
         if hasattr(self.state_validator, "drain_usage"):
             usage = self.state_validator.drain_usage()
         return result, usage, duration
+
+    async def _get_observation_and_screenshot(self) -> tuple[Observation | None, Path | bytes | None]:
+        """Capture current observation when the provider supports it."""
+        if self.screenshot_provider is not None:
+            get_observation = getattr(self.screenshot_provider, "get_observation", None)
+            if callable(get_observation):
+                try:
+                    observation = await get_observation()
+                    if observation is not None and observation.screenshot_path:
+                        return observation, Path(observation.screenshot_path)
+                    return observation, None
+                except Exception as exc:
+                    logger.warning("ObservationProvider failed: %s", exc)
+        return None, await self._get_screenshot()
 
     async def _get_screenshot(self) -> Path | bytes | None:
         """Capture the current screenshot via the ScreenshotProvider."""
@@ -813,3 +888,11 @@ def _merge_usage(target: dict[str, int], source: dict[str, int]) -> None:
     """Merge *source* token counts into *target* in-place, summing each key."""
     for k, v in source.items():
         target[k] = target.get(k, 0) + v
+
+
+def _merge_optional_duration(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left + right
