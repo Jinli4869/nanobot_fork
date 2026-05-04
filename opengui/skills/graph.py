@@ -624,7 +624,24 @@ class SkillGraphStore:
                 self._embeddings.pop(loser_id, None)
                 self._nodes.pop(loser_id, None)
 
-            counts["edges"] += rewrite_edges(alias_map)
+            exact_edge_rewrites = rewrite_edges(alias_map)
+            counts["edges"] += exact_edge_rewrites
+            for deleted_node_id, canonical_node_id in alias_map.items():
+                canonical = self._nodes.get(canonical_node_id)
+                if canonical is None:
+                    continue
+                self._append_compaction_record(
+                    {
+                        "platform": canonical.platform,
+                        "app": canonical.app,
+                        "canonical_node_id": canonical.node_id,
+                        "deleted_node_id": deleted_node_id,
+                        "merge_kind": "exact_merge",
+                        "edge_rewrites": exact_edge_rewrites,
+                        "reason": "fingerprint_match",
+                        "evidence": [],
+                    }
+                )
 
         evidence_records = self._load_transition_evidence()
         hard_alias_map: dict[str, str] = {}
@@ -669,8 +686,10 @@ class SkillGraphStore:
                 self._embeddings.pop(loser_id, None)
                 self._nodes.pop(loser_id, None)
 
-            counts["edges"] += rewrite_edges(hard_alias_map)
+            hard_edge_rewrites = rewrite_edges(hard_alias_map)
+            counts["edges"] += hard_edge_rewrites
             for record in hard_alias_audit_records:
+                record["edge_rewrites"] = hard_edge_rewrites
                 self._append_compaction_record(record)
 
         counts["exact_merges"] = counts["nodes"] - counts["hard_aliases"]

@@ -1227,6 +1227,69 @@ def test_compact_canonical_graph_preserves_ambiguous_auxiliary_candidate(tmp_pat
     assert not (store_dir / "skill_graph_compaction_log.jsonl").exists()
 
 
+def test_compact_canonical_graph_is_idempotent(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    survivor = store.upsert_node(
+        GraphNode(
+            node_id="node-home-a",
+            app="com.example.app",
+            platform="android",
+            description="Home screen duplicate with more context",
+            state_contract=_contract("Home", clickable=True),
+            stats=NodeStats(reach_count=8, contract_match_count=5, contract_miss_count=2),
+            skill_ids=("skill-a",),
+            retrieval_profile={"page_summary": "Landing page"},
+            fingerprint="fp-home",
+        ).normalized()
+    )
+    loser = GraphNode(
+        node_id="node-home-b",
+        app="com.example.app",
+        platform="android",
+        description="Home screen",
+        state_contract=_contract("Home", clickable=True),
+        stats=NodeStats(reach_count=3, contract_match_count=1, contract_miss_count=1),
+        skill_ids=("skill-b",),
+        retrieval_profile={"page_title": "Home"},
+        fingerprint="fp-home",
+    ).normalized()
+    store._nodes[loser.node_id] = loser
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Settings screen",
+            state_contract=_contract("Settings", clickable=True),
+            fingerprint="fp-settings",
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-from-loser",
+            app="com.example.app",
+            platform="android",
+            source_node_id=loser.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Settings",
+            precondition=loser.state_contract,
+            stats=EdgeStats(attempt_count=4, success_count=2),
+        )
+    )
+    store._mark_index_dirty(platform="android", app="com.example.app")
+
+    first = store.compact_canonical_graph()
+    second = store.compact_canonical_graph()
+
+    assert first["nodes"] == 1
+    assert first["edges"] == 1
+    assert first["exact_merges"] == 1
+    assert second == {"nodes": 0, "edges": 0, "exact_merges": 0, "hard_aliases": 0, "candidate_aliases": 0}
+    assert store.get_node(loser.node_id) is None
+    assert store.get_node(survivor.node_id) is not None
+
+
 def test_canonicality_report_blocks_unanchored_state_nodes(tmp_path: Path) -> None:
     store = SkillGraphStore(store_dir=tmp_path / "graph")
     legacy = GraphNode(
