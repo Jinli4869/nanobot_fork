@@ -97,6 +97,28 @@ def _contract(
     }) or {}
 
 
+def _resource_contract(
+    resource_id: str,
+    *,
+    app: str = "com.example.app",
+    clickable: bool = True,
+    mask_rules: list[str] | None = None,
+) -> dict[str, object]:
+    selector: dict[str, object] = {"resource_id": resource_id}
+    if clickable:
+        selector["clickable"] = True
+    return normalize_state_contract({
+        "anchor": {"app_package": app},
+        "signature": {
+            "required": [
+                {"selector": selector, "state": ["visible"] + (["clickable"] if clickable else [])}
+            ],
+            "forbidden": [],
+        },
+        "mask_rules": mask_rules if mask_rules is not None else ["counter", "temporary_recommendation"],
+    }) or {}
+
+
 def _skill(
     skill_id: str,
     *,
@@ -276,6 +298,12 @@ def _xiaoheihe_trajectory() -> dict[str, object]:
 def _xiaoheihe_extra() -> dict[str, object]:
     trajectory = _xiaoheihe_trajectory()
     return trajectory["agent_phase"][0]["observation"]["extra"]  # type: ignore[index]
+
+
+def _write_transition_evidence(store_dir: Path, record: dict[str, object]) -> None:
+    path = store_dir / "skill_graph_transition_evidence.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def test_infer_state_contract_uses_real_xiaoheihe_label_for_exact_target() -> None:
@@ -962,6 +990,241 @@ def test_sanitize_canonical_graph_merges_duplicate_edges_during_node_compaction(
     assert active_edges[0].target_node_id == target.node_id
     assert store.get_edge(survivor_edge.edge_id) is not None
     assert store.get_edge(loser_edge.edge_id) is None
+
+
+def test_compact_canonical_graph_hard_aliases_verified_auxiliary_node(tmp_path: Path) -> None:
+    store_dir = tmp_path / "graph"
+    store = SkillGraphStore(store_dir=store_dir)
+    canonical = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_resource_contract("com.example:id/home"),
+            stats=NodeStats(reach_count=4, contract_match_count=3, contract_miss_count=1),
+            skill_ids=("skill-home",),
+            retrieval_profile={
+                "foreground_app": "com.example.app",
+                "page_title": "Home",
+                "visible_text": ["Home"],
+                "clickable_text": ["Home"],
+                "resource_ids": ["com.example:id/home"],
+                "stable_controls": [
+                    {
+                        "text": "Home",
+                        "resource_id": "com.example:id/home",
+                        "clickable": True,
+                    }
+                ],
+            },
+            fingerprint="fp-home",
+        )
+    )
+    alias = store.upsert_node(
+        GraphNode(
+            node_id="node-home-aux",
+            app="com.example.app",
+            platform="android",
+            description="Home shell",
+            kind=NODE_KIND_AUXILIARY,
+            stats=NodeStats(reach_count=2, contract_match_count=1, contract_miss_count=1),
+            skill_ids=("skill-alias",),
+            retrieval_profile={
+                "foreground_app": "com.example.app",
+                "page_title": "Home",
+                "visible_text": ["Home"],
+                "clickable_text": ["Home"],
+                "resource_ids": ["com.example:id/home"],
+                "stable_controls": [
+                    {
+                        "text": "Home",
+                        "resource_id": "com.example:id/home",
+                        "clickable": True,
+                    }
+                ],
+            },
+            fingerprint="fp-home-aux",
+        )
+    )
+    source = store.upsert_node(
+        GraphNode(
+            node_id="node-source",
+            app="com.example.app",
+            platform="android",
+            description="Source screen",
+            state_contract=_contract("Source", clickable=True),
+            fingerprint="fp-source",
+        )
+    )
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Target screen",
+            state_contract=_contract("Target", clickable=True),
+            fingerprint="fp-target",
+        )
+    )
+    first_edge = store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-source-alias",
+            app="com.example.app",
+            platform="android",
+            source_node_id=source.node_id,
+            target_node_id=alias.node_id,
+            action_type="tap",
+            target="Home",
+            precondition=source.state_contract,
+        )
+    )
+    second_edge = store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-alias-target",
+            app="com.example.app",
+            platform="android",
+            source_node_id=alias.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Target",
+            precondition=alias.state_contract,
+        )
+    )
+    _write_transition_evidence(
+        store_dir,
+        {
+            "timestamp": time.time(),
+            "platform": "android",
+            "app": "com.example.app",
+            "source_node_id": alias.node_id,
+            "action_type": "tap",
+            "edge_kind": "action",
+            "target_node_id": canonical.node_id,
+            "reason": "verified_same_page",
+            "candidate_node_ids": [canonical.node_id],
+            "anchor": {"app_package": "com.example.app", "activity_class": "MainActivity"},
+            "selector_signature": {
+                "resource_ids": ["com.example:id/home"],
+                "content_descs": ["Home"],
+                "texts": ["Home"],
+            },
+        },
+    )
+
+    report = store.compact_canonical_graph()
+
+    assert report["nodes"] == 1
+    assert report["edges"] == 2
+    assert report["exact_merges"] == 0
+    assert report["hard_aliases"] == 1
+    assert report["candidate_aliases"] == 0
+    merged = store.get_node(canonical.node_id)
+    assert merged is not None
+    assert store.get_node(alias.node_id) is None
+    assert merged.stats.reach_count == 6
+    assert merged.skill_ids == ("skill-home", "skill-alias")
+    assert merged.retrieval_profile == {
+        "foreground_app": "com.example.app",
+        "page_title": "Home",
+        "visible_text": ["Home"],
+        "clickable_text": ["Home"],
+        "resource_ids": ["com.example:id/home"],
+        "stable_controls": [
+            {
+                "text": "Home",
+                "resource_id": "com.example:id/home",
+            }
+        ],
+    }
+    rewritten_source = store.get_edge(first_edge.edge_id)
+    rewritten_target = store.get_edge(second_edge.edge_id)
+    assert rewritten_source is not None
+    assert rewritten_source.target_node_id == canonical.node_id
+    assert rewritten_target is not None
+    assert rewritten_target.source_node_id == canonical.node_id
+    audit_path = store_dir / "skill_graph_compaction_log.jsonl"
+    audit_record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert audit_record["merge_kind"] == "hard_alias"
+    assert audit_record["reason"] == "verified_same_page"
+    assert audit_record["canonical_node_id"] == canonical.node_id
+    assert audit_record["alias_node_id"] == alias.node_id
+
+
+def test_compact_canonical_graph_preserves_ambiguous_auxiliary_candidate(tmp_path: Path) -> None:
+    store_dir = tmp_path / "graph"
+    store = SkillGraphStore(store_dir=store_dir)
+    canonical = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_resource_contract("com.example:id/home"),
+            fingerprint="fp-home",
+        )
+    )
+    alias = store.upsert_node(
+        GraphNode(
+            node_id="node-home-aux",
+            app="com.example.app",
+            platform="android",
+            description="Home shell",
+            kind=NODE_KIND_AUXILIARY,
+            retrieval_profile={
+                "foreground_app": "com.example.app",
+                "page_title": "Home",
+                "visible_text": ["Home"],
+                "clickable_text": ["Home"],
+                "resource_ids": ["com.example:id/home"],
+                "stable_controls": [
+                    {
+                        "text": "Home",
+                        "resource_id": "com.example:id/home",
+                        "clickable": True,
+                    }
+                ],
+            },
+            fingerprint="fp-home-aux",
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-home-alias",
+            app="com.example.app",
+            platform="android",
+            source_node_id=alias.node_id,
+            target_node_id=canonical.node_id,
+            action_type="tap",
+            target="Home",
+            precondition=None,
+        )
+    )
+    _write_transition_evidence(
+        store_dir,
+        {
+            "timestamp": time.time(),
+            "platform": "android",
+            "app": "com.example.app",
+            "source_node_id": alias.node_id,
+            "action_type": "tap",
+            "edge_kind": "action",
+            "target_node_id": canonical.node_id,
+            "reason": "ambiguous_candidate",
+            "candidate_node_ids": [canonical.node_id],
+        },
+    )
+
+    report = store.compact_canonical_graph()
+
+    assert report["nodes"] == 0
+    assert report["edges"] == 0
+    assert report["exact_merges"] == 0
+    assert report["hard_aliases"] == 0
+    assert report["candidate_aliases"] == 1
+    assert store.get_node(alias.node_id) is not None
+    assert store.get_node(canonical.node_id) is not None
+    assert not (store_dir / "skill_graph_compaction_log.jsonl").exists()
 
 
 def test_canonicality_report_blocks_unanchored_state_nodes(tmp_path: Path) -> None:

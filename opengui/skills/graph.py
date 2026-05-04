@@ -46,6 +46,7 @@ GRAPH_FILENAME = "skill_graph.json"
 GRAPH_EMBEDDINGS_FILENAME = "skill_graph_embeddings.npy"
 REFRESH_QUEUE_FILENAME = "skill_graph_refresh_queue.jsonl"
 TRANSITION_EVIDENCE_FILENAME = "skill_graph_transition_evidence.jsonl"
+COMPACTION_LOG_FILENAME = "skill_graph_compaction_log.jsonl"
 GRAPH_VERSION = 1
 
 NODE_STATUS_ACTIVE = "active"
@@ -548,7 +549,7 @@ class SkillGraphStore:
 
     def compact_canonical_graph(self, save: bool = True) -> dict[str, int]:
         """Merge exact duplicate active state nodes into a single survivor."""
-        counts = {"nodes": 0, "edges": 0}
+        counts = {"nodes": 0, "edges": 0, "exact_merges": 0, "hard_aliases": 0, "candidate_aliases": 0}
         groups: dict[tuple[str, str, str, str], list[GraphNode]] = {}
         for node in self._nodes.values():
             if (
@@ -564,6 +565,44 @@ class SkillGraphStore:
         survivor_updates: dict[str, GraphNode] = {}
         touched_apps: set[tuple[str, str]] = set()
 
+        def rewrite_edges(node_aliases: dict[str, str]) -> int:
+            rewritten_edges = 0
+            for edge in list(self._edges.values()):
+                source_node_id = node_aliases.get(edge.source_node_id, edge.source_node_id)
+                target_node_id = node_aliases.get(edge.target_node_id, edge.target_node_id)
+                if source_node_id == target_node_id:
+                    self._edges.pop(edge.edge_id, None)
+                    rewritten_edges += 1
+                    continue
+                source = self._nodes.get(source_node_id)
+                precondition = source.state_contract if source and source.state_contract else edge.precondition
+                existing_equivalent = None
+                for candidate in self.list_edges(platform=edge.platform, app=edge.app, status=EDGE_STATUS_ACTIVE):
+                    if (
+                        candidate.source_node_id == source_node_id
+                        and candidate.target_node_id == target_node_id
+                        and candidate.action_type == edge.action_type
+                        and candidate.target == edge.target
+                    ):
+                        existing_equivalent = candidate
+                        break
+                rewritten = replace(
+                    edge,
+                    source_node_id=source_node_id,
+                    target_node_id=target_node_id,
+                    precondition=precondition,
+                )
+                if existing_equivalent is not None and existing_equivalent.edge_id != edge.edge_id:
+                    self._edges[existing_equivalent.edge_id] = _merge_edges(existing_equivalent, rewritten)
+                    self._edges.pop(edge.edge_id, None)
+                    rewritten_edges += 1
+                    continue
+                if source_node_id == edge.source_node_id and target_node_id == edge.target_node_id:
+                    continue
+                self._edges[edge.edge_id] = rewritten
+                rewritten_edges += 1
+            return rewritten_edges
+
         for nodes in groups.values():
             if len(nodes) < 2:
                 continue
@@ -577,50 +616,64 @@ class SkillGraphStore:
                 counts["nodes"] += 1
             survivor_updates[survivor.node_id] = merged
 
-        if not alias_map:
-            return counts
+        if alias_map:
+            for node_id, updated in survivor_updates.items():
+                self._nodes[node_id] = updated
 
-        for node_id, updated in survivor_updates.items():
-            self._nodes[node_id] = updated
+            for loser_id in alias_map:
+                self._embeddings.pop(loser_id, None)
+                self._nodes.pop(loser_id, None)
 
-        for loser_id in alias_map:
-            self._embeddings.pop(loser_id, None)
-            self._nodes.pop(loser_id, None)
+            counts["edges"] += rewrite_edges(alias_map)
 
-        for edge in list(self._edges.values()):
-            source_node_id = alias_map.get(edge.source_node_id, edge.source_node_id)
-            target_node_id = alias_map.get(edge.target_node_id, edge.target_node_id)
-            if source_node_id == target_node_id:
-                self._edges.pop(edge.edge_id, None)
-                counts["edges"] += 1
+        evidence_records = self._load_transition_evidence()
+        hard_alias_map: dict[str, str] = {}
+        hard_alias_updates: dict[str, GraphNode] = {}
+        hard_alias_audit_records: list[dict[str, Any]] = []
+        for node in list(self._nodes.values()):
+            if node.kind != NODE_KIND_AUXILIARY or node.status != NODE_STATUS_ACTIVE:
                 continue
-            source = self._nodes.get(source_node_id)
-            precondition = source.state_contract if source and source.state_contract else edge.precondition
-            existing_equivalent = None
-            for candidate in self.list_edges(platform=edge.platform, app=edge.app, status=EDGE_STATUS_ACTIVE):
-                if (
-                    candidate.source_node_id == source_node_id
-                    and candidate.target_node_id == target_node_id
-                    and candidate.action_type == edge.action_type
-                    and candidate.target == edge.target
-                ):
-                    existing_equivalent = candidate
-                    break
-            rewritten = replace(
-                edge,
-                source_node_id=source_node_id,
-                target_node_id=target_node_id,
-                precondition=precondition,
+            decision = self._best_hard_alias_target(node, evidence_records)
+            target = decision["target"]
+            if target is None:
+                continue
+            if not decision["verified"]:
+                counts["candidate_aliases"] += 1
+                continue
+            current_target = hard_alias_updates.get(target.node_id) or self._nodes.get(target.node_id)
+            if current_target is None:
+                continue
+            hard_alias_updates[target.node_id] = _merge_nodes_for_hard_alias(current_target, node)
+            hard_alias_map[node.node_id] = target.node_id
+            touched_apps.add((target.platform, target.app))
+            counts["nodes"] += 1
+            counts["hard_aliases"] += 1
+            hard_alias_audit_records.append(
+                {
+                    "platform": target.platform,
+                    "app": target.app,
+                    "canonical_node_id": target.node_id,
+                    "alias_node_id": node.node_id,
+                    "deleted_node_id": node.node_id,
+                    "merge_kind": "hard_alias",
+                    "reason": decision["reason"],
+                    "evidence": decision["evidence"],
+                }
             )
-            if existing_equivalent is not None and existing_equivalent.edge_id != edge.edge_id:
-                self._edges[existing_equivalent.edge_id] = _merge_edges(existing_equivalent, rewritten)
-                self._edges.pop(edge.edge_id, None)
-                counts["edges"] += 1
-                continue
-            if source_node_id == edge.source_node_id and target_node_id == edge.target_node_id:
-                continue
-            self._edges[edge.edge_id] = rewritten
-            counts["edges"] += 1
+
+        if hard_alias_map:
+            for node_id, updated in hard_alias_updates.items():
+                self._nodes[node_id] = updated
+
+            for loser_id in hard_alias_map:
+                self._embeddings.pop(loser_id, None)
+                self._nodes.pop(loser_id, None)
+
+            counts["edges"] += rewrite_edges(hard_alias_map)
+            for record in hard_alias_audit_records:
+                self._append_compaction_record(record)
+
+        counts["exact_merges"] = counts["nodes"] - counts["hard_aliases"]
 
         for platform, app in touched_apps:
             self._mark_index_dirty(platform=platform, app=app)
@@ -889,6 +942,61 @@ class SkillGraphStore:
             if contract is not None:
                 return contract
         return None
+
+    def _best_hard_alias_target(
+        self,
+        candidate: GraphNode,
+        evidence: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "target": None,
+            "verified": False,
+            "reason": "no_contract_equivalence",
+            "evidence": None,
+        }
+        contracts = _alias_contract_candidates(
+            candidate.retrieval_profile,
+            app=candidate.app,
+            platform=candidate.platform,
+        )
+        if not contracts:
+            return result
+
+        ranked: list[tuple[float, float, GraphNode, dict[str, Any] | None]] = []
+        for canonical in self.list_nodes(
+            platform=candidate.platform,
+            app=candidate.app,
+            status=NODE_STATUS_ACTIVE,
+            kind=NODE_KIND_STATE,
+        ):
+            if canonical.node_id == candidate.node_id:
+                continue
+            best_overlap = 0.0
+            for contract in contracts:
+                best_overlap = max(best_overlap, state_contract_overlap(contract, canonical.state_contract))
+            if best_overlap < 0.85:
+                continue
+            evidence_match = _matching_hard_alias_evidence(
+                evidence,
+                candidate=candidate,
+                canonical=canonical,
+            )
+            score = _profile_similarity(candidate.retrieval_profile, canonical.retrieval_profile)
+            ranked.append((best_overlap, score, canonical, evidence_match))
+
+        if not ranked:
+            return result
+
+        ranked.sort(key=lambda item: (-item[0], -item[1], item[2].node_id))
+        best_verified, _best_score, best_node, best_evidence = ranked[0]
+        result["target"] = best_node
+        if best_verified and best_evidence is not None:
+            result["verified"] = True
+            result["reason"] = "verified_same_page"
+            result["evidence"] = best_evidence
+        else:
+            result["reason"] = "trace_evidence_missing_or_ambiguous"
+        return result
 
     def list_nodes(
         self,
@@ -1536,6 +1644,48 @@ class SkillGraphStore:
         path = self.store_dir / TRANSITION_EVIDENCE_FILENAME
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _load_transition_evidence(self) -> list[dict[str, Any]]:
+        path = self.store_dir / TRANSITION_EVIDENCE_FILENAME
+        if not path.is_file():
+            return []
+        records: list[dict[str, Any]] = []
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(record, dict):
+                        records.append(record)
+        except OSError:
+            return []
+        return records
+
+    def _append_compaction_record(self, payload: dict[str, Any]) -> None:
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "timestamp": time.time(),
+            "platform": payload.get("platform"),
+            "app": payload.get("app"),
+            "canonical_node_id": payload.get("canonical_node_id"),
+            "alias_node_id": payload.get("alias_node_id"),
+            "deleted_node_id": payload.get("deleted_node_id"),
+            "merge_kind": payload.get("merge_kind"),
+            "edge_rewrites": int(payload.get("edge_rewrites") or 0),
+            "reason": str(payload.get("reason") or "unknown"),
+            "evidence": payload.get("evidence") if payload.get("evidence") is not None else [],
+        }
+        path = self.store_dir / COMPACTION_LOG_FILENAME
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _append_compaction_audit_record(self, payload: dict[str, Any]) -> None:
+        self._append_compaction_record(payload)
 
     def _find_exact_node(self, node: GraphNode) -> GraphNode | None:
         for existing in self._nodes.values():
@@ -2320,6 +2470,232 @@ def _state_contract_from_retrieval_profile(
     })
 
 
+def _alias_contract_candidates(
+    profile: dict[str, Any] | None,
+    *,
+    app: str,
+    platform: str,
+) -> list[dict[str, Any]]:
+    normalized = _normalize_retrieval_profile(profile)
+    if not normalized:
+        return []
+    labels: list[tuple[str, bool]] = []
+    for key in ("page_title", "page_summary"):
+        label = _normalize_profile_text(normalized.get(key))
+        if label and not _looks_like_abstract_target(label):
+            labels.append((label, False))
+    for key in ("visible_text", "content_desc"):
+        values = normalized.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            label = _normalize_profile_text(value)
+            if label:
+                labels.append((label, False))
+    values = normalized.get("clickable_text")
+    if isinstance(values, list):
+        for value in values:
+            label = _normalize_profile_text(value)
+            if label:
+                labels.append((label, True))
+    controls = normalized.get("stable_controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                continue
+            clickable = bool(control.get("clickable"))
+            for key in ("text", "content_desc"):
+                label = _normalize_profile_text(control.get(key))
+                if label:
+                    labels.append((label, clickable))
+    contracts: list[dict[str, Any]] = []
+    seen_fingerprints: set[str] = set()
+    for label, require_clickable in labels:
+        attempts = (True, False) if require_clickable else (False,)
+        for clickable in attempts:
+            contract = _state_contract_from_retrieval_profile(
+                normalized,
+                app=app,
+                platform=platform,
+                target=label,
+                require_clickable=clickable,
+            )
+            if contract is None:
+                continue
+            fingerprint = state_contract_fingerprint(contract)
+            if not fingerprint or fingerprint in seen_fingerprints:
+                continue
+            seen_fingerprints.add(fingerprint)
+            contracts.append(contract)
+    return contracts
+
+
+def _transition_evidence_links_nodes(
+    record: dict[str, Any],
+    *,
+    candidate: GraphNode,
+    canonical: GraphNode,
+) -> bool:
+    if record.get("platform") != candidate.platform:
+        return False
+    record_app = record.get("app")
+    if not record_app or normalize_app_identifier(candidate.platform, str(record_app)) != candidate.app:
+        return False
+    source_node_id = str(record.get("source_node_id") or "")
+    target_node_id = str(record.get("target_node_id") or "")
+    candidate_ids = {str(node_id) for node_id in record.get("candidate_node_ids") or [] if str(node_id)}
+    candidate_ids.add(source_node_id)
+    candidate_ids.add(target_node_id)
+    if candidate.node_id not in candidate_ids:
+        return False
+    return canonical.node_id in candidate_ids
+
+
+def _evidence_selector_signature(record: dict[str, Any]) -> SelectorSignature | None:
+    resource_ids: set[str] = set()
+    content_descs: set[str] = set()
+    texts: set[str] = set()
+
+    signature = record.get("selector_signature")
+    if isinstance(signature, dict):
+        for key, bucket in (
+            ("resource_ids", resource_ids),
+            ("content_descs", content_descs),
+            ("texts", texts),
+        ):
+            values = signature.get(key)
+            if isinstance(values, list):
+                for value in values:
+                    text = _clean_index_string(value)
+                    if text:
+                        bucket.add(text)
+        if resource_ids or content_descs or texts:
+            return SelectorSignature(
+                resource_ids=frozenset(resource_ids),
+                content_descs=frozenset(content_descs),
+                texts=frozenset(texts),
+            )
+
+    stable_controls = record.get("stable_controls")
+    if isinstance(stable_controls, list):
+        for control in stable_controls:
+            if not isinstance(control, dict):
+                continue
+            resource_id = _clean_index_string(control.get("resource_id"))
+            content_desc = _clean_index_string(control.get("content_desc"))
+            text = _clean_index_string(control.get("text"))
+            if resource_id:
+                resource_ids.add(resource_id)
+            if content_desc:
+                content_descs.add(content_desc)
+            if text:
+                texts.add(text)
+    if resource_ids or content_descs or texts:
+        return SelectorSignature(
+            resource_ids=frozenset(resource_ids),
+            content_descs=frozenset(content_descs),
+            texts=frozenset(texts),
+        )
+    return None
+
+
+def _transition_evidence_supports_same_page(
+    record: dict[str, Any],
+    *,
+    canonical: GraphNode,
+) -> bool:
+    anchor = record.get("anchor")
+    if not isinstance(anchor, dict):
+        return False
+    app_package = _clean_index_string(anchor.get("app_package"))
+    if not app_package or normalize_app_identifier(canonical.platform, app_package) != canonical.app:
+        return False
+    signature = _evidence_selector_signature(record)
+    if signature is None:
+        return False
+    if not signature.resource_ids and not signature.content_descs:
+        return False
+    canonical_signature = _selector_signature(canonical.state_contract)
+    if not canonical_signature.resource_ids and not canonical_signature.content_descs:
+        return False
+    if signature.resource_ids & canonical_signature.resource_ids:
+        return True
+    if signature.content_descs & canonical_signature.content_descs:
+        return True
+    return False
+
+
+def _matching_hard_alias_evidence(
+    evidence: list[dict[str, Any]],
+    *,
+    candidate: GraphNode,
+    canonical: GraphNode,
+) -> dict[str, Any] | None:
+    if candidate.platform != canonical.platform or candidate.app != canonical.app:
+        return None
+    if candidate.kind != NODE_KIND_AUXILIARY or candidate.status != NODE_STATUS_ACTIVE:
+        return None
+    if canonical.kind != NODE_KIND_STATE or canonical.status != NODE_STATUS_ACTIVE:
+        return None
+    if not _is_canonical_state_contract(canonical.state_contract):
+        return None
+
+    candidate_contracts = _alias_contract_candidates(
+        candidate.retrieval_profile,
+        app=candidate.app,
+        platform=candidate.platform,
+    )
+    if not candidate_contracts:
+        return None
+    best_overlap = 0.0
+    for contract in candidate_contracts:
+        best_overlap = max(best_overlap, state_contract_overlap(contract, canonical.state_contract))
+    if best_overlap < 0.85:
+        return None
+    for record in evidence:
+        if not _transition_evidence_links_nodes(record, candidate=candidate, canonical=canonical):
+            continue
+        if not _transition_evidence_supports_same_page(record, canonical=canonical):
+            continue
+        evidence_signature = _evidence_selector_signature(record)
+        return {
+            "platform": record.get("platform"),
+            "app": record.get("app"),
+            "source_node_id": record.get("source_node_id"),
+            "target_node_id": record.get("target_node_id"),
+            "edge_kind": record.get("edge_kind"),
+            "reason": record.get("reason"),
+            "candidate_node_ids": list(record.get("candidate_node_ids") or []),
+            "anchor": record.get("anchor"),
+            "selector_signature": (
+                {
+                    "resource_ids": sorted(evidence_signature.resource_ids),
+                    "content_descs": sorted(evidence_signature.content_descs),
+                    "texts": sorted(evidence_signature.texts),
+                }
+                if evidence_signature is not None
+                else None
+            ),
+        }
+    return None
+
+
+def _hard_alias_score(
+    candidate: GraphNode,
+    canonical: GraphNode,
+    evidence: list[dict[str, Any]],
+) -> float:
+    return 1.0 if _matching_hard_alias_evidence(evidence, candidate=candidate, canonical=canonical) else 0.0
+
+
+def _is_verified_hard_alias(
+    candidate: GraphNode,
+    canonical: GraphNode,
+    evidence: list[dict[str, Any]],
+) -> bool:
+    return _hard_alias_score(candidate, canonical, evidence) >= 0.8
+
+
 def _profile_selector_for_label(
     profile: dict[str, Any],
     label: str | None,
@@ -2738,6 +3114,38 @@ def _merge_nodes_for_exact_compaction(existing: GraphNode, incoming: GraphNode) 
         dismiss_action=existing.dismiss_action or incoming.dismiss_action,
         resume_policy=existing.resume_policy or incoming.resume_policy,
         retrieval_profile=_merge_retrieval_profiles(existing.retrieval_profile, incoming.retrieval_profile),
+    )
+
+
+def _merge_nodes_for_hard_alias(canonical: GraphNode, alias: GraphNode) -> GraphNode:
+    return GraphNode(
+        node_id=canonical.node_id,
+        app=canonical.app,
+        platform=canonical.platform,
+        description=canonical.description or alias.description,
+        state_contract=canonical.state_contract,
+        version=canonical.version,
+        status=canonical.status,
+        superseded_by=canonical.superseded_by,
+        stats=NodeStats(
+            reach_count=canonical.stats.reach_count + alias.stats.reach_count,
+            contract_match_count=canonical.stats.contract_match_count + alias.stats.contract_match_count,
+            contract_miss_count=canonical.stats.contract_miss_count + alias.stats.contract_miss_count,
+            last_seen_at=max(
+                [value for value in (canonical.stats.last_seen_at, alias.stats.last_seen_at) if value is not None],
+                default=None,
+            ),
+            last_verified_at=max(
+                [value for value in (canonical.stats.last_verified_at, alias.stats.last_verified_at) if value is not None],
+                default=None,
+            ),
+        ),
+        kind=canonical.kind,
+        skill_ids=tuple(_dedupe_strings(canonical.skill_ids + alias.skill_ids)),
+        fingerprint=canonical.fingerprint or alias.fingerprint,
+        dismiss_action=canonical.dismiss_action or alias.dismiss_action,
+        resume_policy=canonical.resume_policy or alias.resume_policy,
+        retrieval_profile=_merge_retrieval_profiles(canonical.retrieval_profile, alias.retrieval_profile),
     )
 
 
