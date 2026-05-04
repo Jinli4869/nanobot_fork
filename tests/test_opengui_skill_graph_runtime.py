@@ -11,7 +11,7 @@ import pytest
 
 from opengui.action import Action
 from opengui.observation import Observation
-from opengui.skills.graph import EdgeStats, GraphEdge, GraphNode, GraphSessionCursor, NodeStats, SkillGraphStore
+from opengui.skills.graph import EdgeStats, GraphEdge, GraphNode, GraphSessionCursor, NodeStats, SkillGraphStore, StateIdentifier
 from opengui.skills.graph_runtime import GraphRuntimeExecutor
 from opengui.skills.state_contract import normalize_state_contract
 
@@ -823,6 +823,68 @@ async def test_entry_alignment_scan_count_limited_to_current_app_bucket(tmp_path
     assert identified.current_node.node_id == home.node_id
     assert store.index_stats()["stable_anchor_scan_count"] == 1
     assert embedder.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_state_identifier_resolves_survivor_after_duplicate_compaction(
+    tmp_path: Path,
+) -> None:
+    store = SkillGraphStore(
+        store_dir=tmp_path / "graph",
+        embedding_provider=_StableEmbedder(),
+        embedding_signature="sig-v1",
+    )
+    survivor = store.upsert_node(
+        GraphNode(
+            node_id="node-home-survivor",
+            app="com.example.app",
+            platform="android",
+            description="Home screen is visible",
+            state_contract=_contract("Home", clickable=True),
+            stats=NodeStats(reach_count=5, contract_match_count=5),
+            fingerprint="fp-home",
+        )
+    )
+    loser = GraphNode(
+        node_id="node-home-loser",
+        app="com.example.app",
+        platform="android",
+        description="Home screen is visible",
+        state_contract=_contract("Home", clickable=True),
+        stats=NodeStats(reach_count=1, contract_match_count=0, contract_miss_count=4),
+        fingerprint="fp-home",
+    )
+    store._nodes[loser.node_id] = loser.normalized()
+
+    store.compact_canonical_graph()
+
+    identifier = StateIdentifier(store)
+    observation = Observation(
+        screenshot_path=str(tmp_path / "screen.png"),
+        screen_width=1000,
+        screen_height=2000,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={
+            "visible_text": ["Home"],
+            "clickable_text": ["Home"],
+            "resource_ids": ["com.example:id/home"],
+            "ui_tree_node_count": 2,
+        },
+    )
+
+    identified = await identifier.identify(
+        observation,
+        foreground_app="com.example.app",
+        platform="android",
+        app="com.example.app",
+    )
+
+    assert identified.status == "matched"
+    assert identified.current_node is not None
+    assert identified.current_node.node_id == survivor.node_id
+    assert store.resolve_active_node(loser.node_id) is None
+    assert store.index_stats()["stable_anchor_scan_count"] == 1
 
 
 @pytest.mark.asyncio

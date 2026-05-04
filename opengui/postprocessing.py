@@ -504,6 +504,16 @@ class PostRunProcessor:
                     continuation_anchor_id=continuation_anchor_id,
                     node_profiles=node_profiles,
                 )
+                compacted = graph.compact_canonical_graph()
+                if compacted.get("nodes") or compacted.get("edges"):
+                    logger.info(
+                        "Compacted skill graph after sync: nodes=%s edges=%s exact=%s hard_aliases=%s candidates=%s",
+                        compacted.get("nodes", 0),
+                        compacted.get("edges", 0),
+                        compacted.get("exact_merges", 0),
+                        compacted.get("hard_aliases", 0),
+                        compacted.get("candidate_aliases", 0),
+                    )
                 logger.info(
                     "Synced skill graph for skill=%s app=%s platform=%s",
                     getattr(skill, "skill_id", ""),

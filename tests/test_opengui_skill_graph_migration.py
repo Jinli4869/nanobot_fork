@@ -9,6 +9,7 @@ import pytest
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.graph import (
     EDGE_STATUS_ACTIVE,
+    GraphEdge,
     GraphNode,
     NODE_KIND_AUXILIARY,
     NODE_KIND_STATE,
@@ -603,3 +604,124 @@ async def test_postrun_graph_sync_persists_retrieval_profiles_without_touching_s
         node.get("retrieval_profile", {}).get("stable_controls")
         for node in graph_payload["nodes"]
     )
+
+
+@pytest.mark.asyncio
+async def test_postrun_graph_sync_compacts_duplicate_nodes_after_ingest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                },
+            },
+            {"type": "result", "status": "succeeded"},
+        ],
+    )
+
+    graph_dir = tmp_path / "store"
+    graph = SkillGraphStore(store_dir=graph_dir)
+    survivor = GraphNode(
+        node_id="node-home-survivor",
+        app="com.example.app",
+        platform="android",
+        description="Home screen is visible",
+        state_contract=_contract("Home"),
+        status=NODE_STATUS_ACTIVE,
+        kind=NODE_KIND_STATE,
+        stats=NodeStats(reach_count=5, contract_match_count=5),
+        fingerprint="fp-home",
+    ).normalized()
+    loser = GraphNode(
+        node_id="node-home-loser",
+        app="com.example.app",
+        platform="android",
+        description="Home screen is visible",
+        state_contract=_contract("Home"),
+        status=NODE_STATUS_ACTIVE,
+        kind=NODE_KIND_STATE,
+        stats=NodeStats(reach_count=1, contract_match_count=0, contract_miss_count=4),
+        fingerprint="fp-home",
+    ).normalized()
+    target = GraphNode(
+        node_id="node-orders",
+        app="com.example.app",
+        platform="android",
+        description="Orders page is visible",
+        state_contract=_contract("Orders"),
+        status=NODE_STATUS_ACTIVE,
+        kind=NODE_KIND_STATE,
+        fingerprint="fp-orders",
+    ).normalized()
+    graph._nodes[survivor.node_id] = survivor
+    graph._nodes[loser.node_id] = loser
+    graph._nodes[target.node_id] = target
+    graph.upsert_edge(
+        GraphEdge(
+            edge_id="edge-home-orders",
+            app="com.example.app",
+            platform="android",
+            source_node_id=loser.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Orders",
+            precondition=loser.state_contract,
+        )
+    )
+    graph.save()
+
+    expected_skill = _skill("branch", "Orders", contract_text="Orders")
+
+    class FakeSkillExtractor:
+        def __init__(self, *, llm: object) -> None:
+            self.total_usage = {}
+
+        async def extract_from_file(self, trace_path: Path, is_success: bool) -> Skill | None:
+            return expected_skill
+
+    class FakeSkillLibrary:
+        def __init__(self, **kwargs: object) -> None:
+            self._skill = expected_skill
+
+        async def add_or_merge(self, skill: Skill) -> tuple[str, str]:
+            return ("added", skill.skill_id)
+
+        def get(self, skill_id: str) -> Skill | None:
+            return self._skill if skill_id == self._skill.skill_id else None
+
+    def fake_graph_store(*args: object, **kwargs: object) -> SkillGraphStore:
+        return graph
+
+    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor", FakeSkillExtractor)
+    monkeypatch.setattr("opengui.skills.library.SkillLibrary", FakeSkillLibrary)
+    monkeypatch.setattr("opengui.skills.graph.SkillGraphStore", fake_graph_store)
+
+    processor = PostRunProcessor(
+        llm=object(),
+        skill_store_root=graph_dir,
+        enable_skill_extraction=True,
+    )
+
+    await processor._extract_skill(trace_path, is_success=True, platform="android")
+
+    graph_payload = json.loads((graph_dir / "skill_graph.json").read_text(encoding="utf-8"))
+    node_ids = [node.get("node_id") for node in graph_payload["nodes"]]
+    assert survivor.node_id in node_ids
+    assert loser.node_id not in node_ids
+    assert node_ids.count(survivor.node_id) == 1
+    log_payload = (graph_dir / "skill_graph_compaction_log.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert log_payload
+    record = json.loads(log_payload[-1])
+    assert record["merge_kind"] == "exact_merge"
+    assert record["deleted_node_id"] == loser.node_id
+    assert record["canonical_node_id"] == survivor.node_id
+    assert record["edge_rewrites"] >= 1
