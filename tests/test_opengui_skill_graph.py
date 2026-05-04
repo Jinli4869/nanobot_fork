@@ -772,17 +772,16 @@ def test_sanitize_canonical_graph_disables_same_node_state_edges(tmp_path: Path)
 
 def test_canonicality_report_blocks_unanchored_state_nodes(tmp_path: Path) -> None:
     store = SkillGraphStore(store_dir=tmp_path / "graph")
-    store.upsert_node(
-        GraphNode(
-            node_id="legacy-root",
-            app="com.max.xiaoheihe",
-            platform="android",
-            description="Launch / root placeholder",
-            state_contract=None,
-            kind=NODE_KIND_STATE,
-            fingerprint="legacy-root",
-        )
-    )
+    legacy = GraphNode(
+        node_id="legacy-root",
+        app="com.max.xiaoheihe",
+        platform="android",
+        description="Launch / root placeholder",
+        state_contract=None,
+        kind=NODE_KIND_STATE,
+        fingerprint="legacy-root",
+    ).normalized()
+    store._nodes[legacy.node_id] = legacy
 
     report = store.canonicality_report(platform="android", app="com.max.xiaoheihe")
 
@@ -795,24 +794,23 @@ def test_canonicality_report_blocks_unanchored_state_nodes(tmp_path: Path) -> No
 
 def test_canonicality_report_blocks_selectorless_state_contracts(tmp_path: Path) -> None:
     store = SkillGraphStore(store_dir=tmp_path / "graph")
-    store.upsert_node(
-        GraphNode(
-            node_id="selectorless",
-            app="com.example.app",
-            platform="android",
-            description="Selectorless placeholder",
-            state_contract=normalize_state_contract({
-                "anchor": {"app_package": "com.example.app"},
-                "signature": {
-                    "required": [{"state": ["visible"]}],
-                    "forbidden": [],
-                },
-                "mask_rules": [],
-            }),
-            kind=NODE_KIND_STATE,
-            fingerprint="selectorless",
-        )
-    )
+    legacy = GraphNode(
+        node_id="selectorless",
+        app="com.example.app",
+        platform="android",
+        description="Selectorless placeholder",
+        state_contract=normalize_state_contract({
+            "anchor": {"app_package": "com.example.app"},
+            "signature": {
+                "required": [{"state": ["visible"]}],
+                "forbidden": [],
+            },
+            "mask_rules": [],
+        }),
+        kind=NODE_KIND_STATE,
+        fingerprint="selectorless",
+    ).normalized()
+    store._nodes[legacy.node_id] = legacy
 
     report = store.canonicality_report(platform="android", app="com.example.app")
 
@@ -821,6 +819,58 @@ def test_canonicality_report_blocks_selectorless_state_contracts(tmp_path: Path)
     assert report.anchored_state_nodes == 0
     assert report.unanchored_state_nodes == 1
     assert "unanchored_state_nodes" in report.blocking_reasons
+
+
+def test_upsert_node_downgrades_noncanonical_state_placeholders(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    node = store.upsert_node(
+        GraphNode(
+            node_id="legacy-root",
+            app="com.example.app",
+            platform="android",
+            description="Legacy unanchored state",
+            state_contract=None,
+            kind=NODE_KIND_STATE,
+            fingerprint="legacy-root",
+        )
+    )
+
+    assert node.kind == NODE_KIND_AUXILIARY
+    assert node.state_contract is None
+    assert store.get_node(node.node_id).kind == NODE_KIND_AUXILIARY
+    assert not store.list_nodes(kind=NODE_KIND_STATE)
+
+
+def test_upsert_node_preserves_existing_canonical_state_when_placeholder_reappears(
+    tmp_path: Path,
+) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    existing = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_contract("Home", clickable=True),
+            fingerprint="fp-home",
+        )
+    )
+    updated = store.upsert_node(
+        GraphNode(
+            node_id=existing.node_id,
+            app="com.example.app",
+            platform="android",
+            description="Placeholder copy",
+            state_contract=None,
+            kind=NODE_KIND_STATE,
+            fingerprint="fp-home",
+        )
+    )
+
+    assert updated.node_id == existing.node_id
+    assert updated.kind == NODE_KIND_STATE
+    assert updated.state_contract == existing.state_contract
+    assert store.get_node(existing.node_id).kind == NODE_KIND_STATE
 
 
 def test_runtime_index_excludes_active_same_node_edges(tmp_path: Path) -> None:
@@ -1142,6 +1192,7 @@ def test_sanitize_canonical_graph_keeps_index_consistent(tmp_path: Path, save: b
             fingerprint="fp-state-shell",
         )
     )
+    assert source_state.kind == NODE_KIND_AUXILIARY
     edge = store.upsert_edge(
         GraphEdge(
             edge_id="edge-launch-home",
@@ -1156,7 +1207,7 @@ def test_sanitize_canonical_graph_keeps_index_consistent(tmp_path: Path, save: b
 
     counts = store.sanitize_canonical_graph(save=save)
 
-    assert counts == {"nodes": 1, "edges": 1}
+    assert counts == {"nodes": 0, "edges": 1}
     assert store.get_node(source_state.node_id).kind == NODE_KIND_AUXILIARY
     assert [node.node_id for node in store.stable_anchor_candidates(platform="android", app="com.example.app")] == [
         state.node_id,

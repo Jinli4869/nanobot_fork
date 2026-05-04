@@ -62,6 +62,7 @@ class GuiSubagentTool(Tool):
         self._workspace = Path(workspace)
         self._gui_event_callback = gui_event_callback
         self._gui_frame_callback = gui_frame_callback
+        self._graph_session_cursor: Any | None = None
         self._llm_adapter = NanobotLLMAdapter(
             provider, model, capture_ttft=gui_config.capture_ttft,
         )
@@ -89,6 +90,13 @@ class GuiSubagentTool(Tool):
                 api_base=gui_config.evaluation.api_base,
             ),
         )
+
+    def _get_graph_session_cursor(self) -> Any:
+        if self._graph_session_cursor is None:
+            from opengui.skills.graph import GraphSessionCursor
+
+            self._graph_session_cursor = GraphSessionCursor()
+        return self._graph_session_cursor
 
     @property
     def name(self) -> str:
@@ -329,6 +337,7 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
+            graph_session_cursor=self._get_graph_session_cursor(),
         )
 
         result = await agent.run(task=task)

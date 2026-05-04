@@ -30,7 +30,7 @@ from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
 from opengui.skills.reuser import SkillReuser
-from opengui.skills.state_contract import evaluate_state_contract
+from opengui.skills.state_contract import evaluate_state_contract, infer_state_contract, normalize_state_contract
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +64,9 @@ class _CountingEmbedder(_FakeEmbedder):
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         self.calls += 1
-        if len(texts) <= 1:
+        # A one-document index rebuild is still an index call; query texts are
+        # lower/short and do not include the stored app marker from _skill_text().
+        if len(texts) <= 1 and "com.example.app" not in texts[0]:
             self.query_calls += 1
         else:
             self.index_calls += 1
@@ -1416,14 +1418,251 @@ async def test_skill_extractor_supplements_state_contract_from_ui_tree() -> None
     )
 
     assert skill is not None
-    assert skill.steps[0].state_contract == {
+    assert skill.steps[0].state_contract == normalize_state_contract({
         "app": "tv.danmaku.bili",
         "must_exist": [{"text": "青少年模式", "clickable": True}],
-    }
+    })
     prompt = llm.messages[0][0]["content"]
     assert isinstance(prompt, str)
     assert "state_contract" in prompt
     assert "ui_tree" in prompt
+
+
+async def test_skill_extractor_ignores_llm_invented_state_contract_identity() -> None:
+    canned_json = json.dumps({
+        "name": "open_bilibili_minor_mode",
+        "description": "Navigate to Bilibili minor mode settings",
+        "app": "wrong.package",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "tap",
+                "target": "青少年模式",
+                "parameters": {},
+                "expected_state": "Minor mode screen is open",
+                "valid_state": "Settings list is visible",
+                "state_contract": {
+                    "anchor": {"app_package": "wrong.package"},
+                    "signature": {
+                        "required": [
+                            {"selector": {"text": "Invented"}, "state": ["visible"]}
+                        ],
+                        "forbidden": [],
+                    },
+                    "mask_rules": [],
+                },
+                "fixed": True,
+            },
+        ],
+    })
+    llm = _ScriptedLLM([canned_json])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    skill = await extractor.extract_from_steps(
+        [
+            {
+                "type": "step",
+                "action": {"action_type": "tap"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {
+                        "visible_text": ["账号资料", "青少年模式"],
+                        "clickable_text": ["青少年模式"],
+                        "ui_tree_node_count": 12,
+                    },
+                },
+            },
+            {
+                "type": "step",
+                "action": {"action_type": "wait"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {
+                        "visible_text": ["开启青少年模式"],
+                        "clickable_text": ["开启青少年模式"],
+                        "ui_tree_node_count": 12,
+                    },
+                },
+            },
+        ],
+        is_success=True,
+    )
+
+    assert skill is not None
+    assert skill.steps[0].state_contract == normalize_state_contract({
+        "app": "tv.danmaku.bili",
+        "must_exist": [{"text": "青少年模式", "clickable": True}],
+    })
+
+
+async def test_skill_extractor_preserves_selector_grounding_over_llm_identity() -> None:
+    canned_json = json.dumps({
+        "name": "open_settings_entry",
+        "description": "Open the settings entry",
+        "app": "wrong.package",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "tap",
+                "target": "tv.danmaku.bili:id/open_settings",
+                "parameters": {},
+                "expected_state": "Settings screen opens",
+                "valid_state": "Settings entry is visible",
+                "state_contract": {
+                    "anchor": {"app_package": "wrong.package"},
+                    "signature": {
+                        "required": [
+                            {"selector": {"content_desc": "Open settings"}, "state": ["visible"]}
+                        ],
+                        "forbidden": [],
+                    },
+                    "mask_rules": [],
+                },
+                "fixed": True,
+            },
+        ],
+    })
+    llm = _ScriptedLLM([canned_json])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    skill = await extractor.extract_from_steps(
+        [
+            {
+                "type": "step",
+                "action": {"action_type": "tap"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {
+                        "visible_text": ["Open settings"],
+                        "content_desc": ["Open settings"],
+                        "resource_ids": ["tv.danmaku.bili:id/open_settings"],
+                        "clickable_text": ["Open settings"],
+                        "ui_tree_node_count": 12,
+                    },
+                },
+            },
+            {
+                "type": "step",
+                "action": {"action_type": "wait"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {"visible_text": ["Settings screen"]},
+                },
+            },
+        ],
+        is_success=True,
+    )
+
+    assert skill is not None
+    assert skill.steps[0].state_contract == normalize_state_contract({
+        "app": "tv.danmaku.bili",
+        "must_exist": [
+            {
+                "selector": {
+                    "resource_id": "tv.danmaku.bili:id/open_settings",
+                    "content_desc": "Open settings",
+                },
+                "state": ["visible", "clickable"],
+            }
+        ],
+    })
+
+
+def test_infer_state_contract_uses_direct_ui_tree_selector_metadata() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "黑盒商城",
+            "valid_state": "Black Box Mall page is visible",
+        },
+        trajectory={
+            "ui_tree": {
+                "resource_ids": ["com.max.xiaoheihe:id/mall_entry"],
+                "content_desc": ["黑盒商城"],
+                "visible_text": ["黑盒商城"],
+                "clickable_text": ["黑盒商城"],
+            }
+        },
+        app="com.max.xiaoheihe",
+    )
+
+    assert contract is not None
+    assert contract["anchor"]["app_package"] == "com.max.xiaoheihe"
+    selector = contract["signature"]["required"][0]["selector"]
+    assert selector["resource_id"] == "com.max.xiaoheihe:id/mall_entry"
+    assert selector["content_desc"] == "黑盒商城"
+
+
+async def test_skill_extractor_omits_state_contract_when_ui_tree_is_uncertain() -> None:
+    canned_json = json.dumps({
+        "name": "open_unknown_entry",
+        "description": "Try to open an uncertain entry",
+        "app": "wrong.package",
+        "platform": "android",
+        "parameters": [],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "tap",
+                "target": "Missing target",
+                "parameters": {},
+                "expected_state": "Unknown screen",
+                "valid_state": "Something visible",
+                "state_contract": {
+                    "anchor": {"app_package": "wrong.package"},
+                    "signature": {
+                        "required": [
+                            {"selector": {"text": "Invented"}, "state": ["visible"]}
+                        ],
+                        "forbidden": [],
+                    },
+                    "mask_rules": [],
+                },
+                "fixed": True,
+            },
+        ],
+    })
+    llm = _ScriptedLLM([canned_json])
+    extractor = SkillExtractor(llm=llm, include_screenshots=False)
+
+    skill = await extractor.extract_from_steps(
+        [
+            {
+                "type": "step",
+                "action": {"action_type": "tap"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {
+                        "visible_text": ["Something else"],
+                        "clickable_text": [],
+                        "resource_ids": [],
+                        "ui_tree_node_count": 3,
+                    },
+                },
+            },
+            {
+                "type": "step",
+                "action": {"action_type": "wait"},
+                "observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "extra": {
+                        "visible_text": ["Something else"],
+                        "clickable_text": [],
+                        "resource_ids": [],
+                        "ui_tree_node_count": 3,
+                    },
+                },
+            },
+        ],
+        is_success=True,
+    )
+
+    assert skill is not None
+    assert skill.steps[0].state_contract is None
 
 
 def test_state_contract_scrollable_present_works_without_full_ui_tree() -> None:

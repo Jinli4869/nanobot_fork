@@ -912,6 +912,22 @@ class SkillGraphStore:
 
     def upsert_node(self, node: GraphNode, *, save: bool = True) -> GraphNode:
         node = node.normalized()
+        if node.kind == NODE_KIND_STATE and not _is_canonical_state_contract(node.state_contract):
+            existing = self._nodes.get(node.node_id)
+            if (
+                existing is not None
+                and existing.kind == NODE_KIND_STATE
+                and _is_canonical_state_contract(existing.state_contract)
+            ):
+                merged = _merge_nodes(existing, _coerce_noncanonical_state_node(node))
+                self._nodes[merged.node_id] = merged
+                if node.node_id != merged.node_id:
+                    self._embeddings.pop(node.node_id, None)
+                self._mark_index_dirty(platform=merged.platform, app=merged.app)
+                if save:
+                    self.save()
+                return merged
+            node = _coerce_noncanonical_state_node(node)
 
         exact = self._find_exact_node(node)
         if exact is not None:
@@ -1945,6 +1961,14 @@ class PathCompiler:
 
 def _is_active_state_node(node: GraphNode) -> bool:
     return node.kind == NODE_KIND_STATE and node.status == NODE_STATUS_ACTIVE
+
+
+def _coerce_noncanonical_state_node(node: GraphNode) -> GraphNode:
+    if node.kind != NODE_KIND_STATE:
+        return node
+    if _is_canonical_state_contract(node.state_contract):
+        return node
+    return replace(node, state_contract=None, kind=NODE_KIND_AUXILIARY)
 
 
 def _is_canonical_state_contract(contract: dict[str, Any] | None) -> bool:

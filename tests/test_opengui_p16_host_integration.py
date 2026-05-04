@@ -64,6 +64,15 @@ def test_cli_and_gui_tool_share_windows_default_app_class_contract() -> None:
     assert tool._resolve_probe_target_app_class(None, "uwp", sys_platform="win32") == "uwp"
 
 
+def test_gui_tool_reuses_one_in_memory_graph_session_cursor() -> None:
+    tool = _make_gui_tool(background=False)
+
+    first = tool._get_graph_session_cursor()
+    second = tool._get_graph_session_cursor()
+
+    assert first is second
+
+
 @pytest.mark.asyncio
 async def test_gui_task_shuts_down_android_backend_after_foreground_run() -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
@@ -91,6 +100,39 @@ async def test_gui_task_shuts_down_android_backend_after_foreground_run() -> Non
 
     assert result == '{"success": true}'
     mock_backend.shutdown.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_gui_task_reuses_graph_session_cursor_across_execute_calls() -> None:
+    from opengui.agent import AgentResult
+
+    tool = _make_gui_tool(background=False)
+    tool._postprocessor.schedule = MagicMock()
+
+    captured_cursors: list[Any] = []
+
+    def fake_init(self: Any, *args: Any, **kwargs: Any) -> None:
+        captured_cursors.append(kwargs["graph_session_cursor"])
+
+    run_result = AgentResult(
+        success=True,
+        summary="done",
+        model_summary=None,
+        trace_path=None,
+        steps_taken=1,
+        error=None,
+    )
+
+    with (
+        patch("nanobot.agent.tools.gui.GuiAgent.__init__", new=fake_init),
+        patch("opengui.agent.GuiAgent.run", new=AsyncMock(return_value=run_result)),
+    ):
+        await tool.execute("Open Settings")
+        await tool.execute("Open Settings again")
+
+    assert len(captured_cursors) == 2
+    assert captured_cursors[0] is captured_cursors[1]
+    assert captured_cursors[0] is tool._get_graph_session_cursor()
 
 
 def test_cli_and_gui_tool_share_reason_codes_and_remediation_copy(

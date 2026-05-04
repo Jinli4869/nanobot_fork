@@ -31,7 +31,6 @@ from opengui.skills.data import Skill, SkillStep
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.state_contract import (
     infer_state_contract,
-    merge_state_contracts,
     normalize_state_contract,
 )
 
@@ -102,7 +101,9 @@ omit the open_app step entirely.
 1. Identify the high-level goal and break it into atomic steps.
 2. For each step, provide:
    - ``action_type``: the action (tap, input_text, swipe, scroll, etc.)
-   - ``target``: UI element description (use ``{{{{param}}}}`` for user-variable values)
+   - ``target``: the exact visible UI label, content-desc, resource-id, or stable
+     selector from the page evidence (use ``{{{{param}}}}`` only for
+     user-variable values)
    - ``parameters``: dict of action parameters (x, y, text, etc.)
    - ``expected_state``: what the screen should look like AFTER this step succeeds
    - ``valid_state``: what MUST be true on screen BEFORE executing this step
@@ -129,11 +130,18 @@ omit the open_app step entirely.
   "steps": [
     {{
       "action_type": "tap|input_text|swipe|...",
-      "target": "description, may contain {{{{param}}}}",
+      "target": "visible label/content-desc/resource-id/selector, may contain {{{{param}}}}",
       "parameters": {{}},
       "expected_state": "state after step",
       "valid_state": "required state before step",
-      "state_contract": {{"app": "app_package_or_name", "must_exist": [{{"text": "visible label", "clickable": true}}]}},
+      "state_contract": {{
+        "anchor": {{"app_package": "app_package_or_name"}},
+        "signature": {{
+          "required": [{{"selector": {{"text": "visible label"}}, "state": ["visible", "clickable"]}}],
+          "forbidden": []
+        }},
+        "mask_rules": []
+      }},
       "fixed": true
     }}
   ]
@@ -164,15 +172,32 @@ in ``parameters``.
 - For input_text: "text input field is visible and focused"
 - For scroll/swipe: "content area is scrollable and visible"
 - Be specific about which UI element should be visible.
+- Keep semantic intent in ``description``, ``valid_state``, and
+  ``expected_state``. Do NOT put abstract English intent phrases such as
+  "Me tab in bottom navigation" or "My Orders button" in ``target`` unless
+  that exact phrase is visible in the UI evidence. Use the actual visible
+  label/content-desc/resource-id instead, for example ``黑盒商城`` or
+  ``我的订单``.
 
 ## state_contract guidelines
-- Use ``state_contract`` only for stable pre-execution checks that can be
-  verified from observation UI-tree metadata.
-- Supported top-level keys are ``app``, ``must_exist``, and ``must_not_exist``.
-- Supported selector keys are ``text``, ``content_desc``, ``resource_id``,
-  ``class``, ``clickable``, ``focused``, and ``scrollable``.
-- Prefer ``text`` or ``content_desc`` plus ``clickable`` for tap targets, and
-  ``focused`` for text input fields.
+- Use ``state_contract`` only when the UI-tree metadata directly supports a
+  stable pre-execution check.
+- If the structured metadata is incomplete or uncertain, omit
+  ``state_contract``; the runtime will derive canonical identity from the
+  UI-tree and contract rules.
+- Use the canonical shape with exactly ``anchor``, ``signature``, and
+  ``mask_rules``. The system computes ``fingerprint`` after parsing; do not
+  invent it.
+- ``anchor.app_package`` should be the observed package/bundle. Include
+  ``activity_class`` or ``fragment_class`` only when present in metadata.
+- ``signature.required`` and ``signature.forbidden`` contain elements shaped
+  as ``{{"selector": {{"resource_id|content_desc|text|class|xpath": "..."}},
+  "state": ["visible|clickable|enabled|focused|scrollable"]}}``.
+- Prefer ``resource_id`` and ``content_desc`` over ``text``. Use ``text`` or
+  ``xpath`` only as fallback when they are visible in the trajectory metadata.
+- ``mask_rules`` should name dynamic content to ignore, such as
+  ``badge_count``, ``timestamp``, ``counter``, ``personalized_text``, or
+  ``temporary_recommendation``.
 - Do not invent resource IDs or labels that are not visible in the trajectory
   or screenshot/UI-tree evidence.
 
@@ -233,6 +258,11 @@ Cancel, Ignore, Later, Got it).
 - Prefer ONE parameterized step over multiple mechanical sub-steps.
 - The corrective action should describe WHAT went wrong, not replay the \
 failed mechanical steps.
+- Step ``target`` values must be grounded to actual page evidence: use the
+  visible UI label, content-desc, resource-id, or stable selector. Keep
+  semantic intent in ``description``, ``valid_state``, and ``expected_state``;
+  do not use abstract labels such as "Me tab in bottom navigation" as
+  ``target`` unless that exact text is visible.
 - When in doubt, **leave it out**. Fewer steps = more reusable.
 
 # App-opening collapse rule
@@ -282,11 +312,18 @@ Return ONLY a JSON object (no markdown fences):
   "steps": [
     {{
       "action_type": "tap|input_text|...",
-      "target": "description",
+      "target": "visible label/content-desc/resource-id/selector",
       "parameters": {{}},
       "expected_state": "state after step",
       "valid_state": "required state before step",
-      "state_contract": {{"app": "app_package_or_name", "must_exist": [{{"text": "visible label", "clickable": true}}]}},
+      "state_contract": {{
+        "anchor": {{"app_package": "app_package_or_name"}},
+        "signature": {{
+          "required": [{{"selector": {{"text": "visible label"}}, "state": ["visible", "clickable"]}}],
+          "forbidden": []
+        }},
+        "mask_rules": []
+      }},
       "fixed": true
     }}
   ]
@@ -299,9 +336,10 @@ dynamic or user-variable steps use ``fixed: false`` with ``{{{{param}}}}`` \
 placeholders and no coordinates.
 
 ## state_contract guidelines
-Use the same narrow contract shape as successful extraction. Add contracts
+Use the same canonical contract shape as successful extraction. Add contracts
 only for reliable prefix states or the corrective step when trajectory UI-tree
-metadata supports the selector. Do not create popup-specific contracts unless
+metadata supports the selector. If the structured metadata is incomplete,
+leave ``state_contract`` empty. Do not create popup-specific contracts unless
 the original task explicitly requires that popup or permission.
 
 ## platform guidelines
@@ -581,8 +619,8 @@ class SkillExtractor:
                 # executor can bypass grounding; parameters are kept as-is for
                 # documentation and template-fallback purposes.
                 fixed_values = dict(parameters) if fixed else {}
-                state_contract = merge_state_contracts(
-                    normalize_state_contract(s.get("state_contract")),
+                state_contract = _merge_step_contract(
+                    s.get("state_contract"),
                     infer_state_contract(s, trajectory=trajectory, app=app),
                 )
                 steps.append(SkillStep(
@@ -744,6 +782,19 @@ def _build_full_trajectory(
         trajectory["agent_phase"] = agent_phase
 
     return trajectory, screenshot_events
+
+
+def _merge_step_contract(
+    llm_contract: dict[str, Any] | None,
+    inferred_contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    inferred = normalize_state_contract(inferred_contract)
+    if inferred is None:
+        return None
+    signature = inferred.get("signature", {})
+    if signature.get("required") or signature.get("forbidden"):
+        return inferred
+    return None
 
 
 _SUPPORTED_PLATFORMS = frozenset({"android", "ios", "macos", "linux", "windows"})
@@ -908,6 +959,8 @@ def _compact_observation_for_extraction(observation: Any) -> dict[str, Any] | No
             "resource_ids",
             "clickable_text",
             "focused_text",
+            "enabled_text",
+            "enabled_present",
             "class_names",
             "scrollable_present",
             "ui_tree_node_count",

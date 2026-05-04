@@ -27,6 +27,7 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -36,6 +37,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_FILENAME = "evaluation.json"
+_GRAPH_SYNC_LOCKS: dict[Path, asyncio.Lock] = {}
 
 # Error strings (or prefixes) on the trajectory's final `result` event that
 # indicate the run was cut short by a detector or infrastructure fault rather
@@ -70,6 +72,42 @@ def _load_trajectory_result(trace_path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _load_latest_graph_terminal_node_id(trace_path: Path) -> str | None:
+    """Return the most recent successfully reached graph runtime terminal id."""
+    import json
+
+    def _clean_terminal_id(value: Any) -> str | None:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    latest_terminal_node_id: str | None = None
+    try:
+        with open(trace_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                if event.get("type") != "graph_runtime_result":
+                    continue
+                if event.get("state") != "succeeded":
+                    continue
+                if event.get("prefix_only") is not True:
+                    continue
+                terminal_node_id = _clean_terminal_id(event.get("prefix_terminal_node_id"))
+                if terminal_node_id is not None:
+                    latest_terminal_node_id = terminal_node_id
+    except OSError:
+        return None
+    return latest_terminal_node_id
+
+
 def _is_abnormal_termination(result_event: dict[str, Any]) -> bool:
     """True if the trajectory was cut short by a detector/infra fault."""
     error = result_event.get("error")
@@ -83,6 +121,188 @@ def _is_abnormal_termination(result_event: dict[str, Any]) -> bool:
         error == prefix or error.startswith(prefix + ":")
         for prefix in _ABNORMAL_TERMINATION_PREFIXES
     )
+
+
+def _load_jsonl_events(trace_path: Path) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        with open(trace_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    events.append(event)
+    except OSError:
+        return []
+    return events
+
+
+def _derive_graph_node_profiles(trace_path: Path, *, step_count: int) -> dict[int | str, dict[str, Any]]:
+    events = _load_jsonl_events(trace_path)
+    step_profiles: dict[int, dict[str, Any]] = {}
+    latest_profile: dict[str, Any] | None = None
+    ordered_step_index = 0
+    for event in events:
+        observation = event.get("observation")
+        if not isinstance(observation, dict):
+            continue
+        profile = _build_retrieval_profile(observation)
+        if not profile:
+            continue
+        latest_profile = profile
+        step_index = event.get("step_index")
+        if isinstance(step_index, int) and step_index >= 0:
+            step_profiles.setdefault(step_index, profile)
+            continue
+        if ordered_step_index < step_count:
+            step_profiles.setdefault(ordered_step_index, profile)
+            ordered_step_index += 1
+    profiles: dict[int | str, dict[str, Any]] = {
+        index: profile
+        for index, profile in step_profiles.items()
+    }
+    if latest_profile is not None:
+        profiles["terminal"] = latest_profile
+    return profiles
+
+
+def _build_retrieval_profile(observation: dict[str, Any]) -> dict[str, Any]:
+    profile: dict[str, Any] = {}
+    for key in ("foreground_app", "app", "platform"):
+        value = observation.get(key)
+        if value:
+            profile[key] = value
+    title = _first_text_value(observation, ("page_title", "title", "toolbar_title"))
+    extra = observation.get("extra")
+    if title is None and isinstance(extra, dict):
+        title = _first_text_value(extra, ("page_title", "title", "toolbar_title"))
+    if title:
+        profile["page_title"] = title
+    if isinstance(extra, dict):
+        for key in ("visible_text", "clickable_text", "content_desc", "resource_ids"):
+            values = _dedupe_bounded_strings(extra.get(key), limit=40)
+            if values:
+                profile[key] = values
+        stable_controls = _extract_stable_controls(extra.get("ui_tree"))
+        if stable_controls:
+            profile["stable_controls"] = stable_controls
+    if _is_sparse_retrieval_profile(profile):
+        summary = _short_page_summary(profile)
+        if summary:
+            profile["page_summary"] = summary
+    return profile
+
+
+def _first_text_value(observation: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        value = observation.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _dedupe_bounded_strings(value: Any, *, limit: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _extract_stable_controls(ui_tree: Any) -> list[dict[str, Any]]:
+    if not isinstance(ui_tree, list):
+        return []
+    controls: list[dict[str, Any]] = []
+    seen: set[tuple[str | None, str | None, str | None]] = set()
+    for node in ui_tree:
+        if not isinstance(node, dict):
+            continue
+        text = _clean_text(node.get("text"))
+        content_desc = _clean_text(node.get("content_desc"))
+        resource_id = _clean_text(node.get("resource_id"))
+        if not any((text, content_desc, resource_id)):
+            continue
+        if not (node.get("clickable") or resource_id or content_desc):
+            continue
+        key = (text, content_desc, resource_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        control: dict[str, Any] = {}
+        if text:
+            control["text"] = text
+        if content_desc:
+            control["content_desc"] = content_desc
+        if resource_id:
+            control["resource_id"] = resource_id
+        bounds = node.get("bounds")
+        if isinstance(bounds, str) and bounds.strip():
+            control["bounds"] = bounds.strip()
+        controls.append(control)
+        if len(controls) >= 12:
+            break
+    return controls
+
+
+def _clean_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    return None
+
+
+def _is_sparse_retrieval_profile(profile: dict[str, Any]) -> bool:
+    if len(profile.get("visible_text", [])) >= 3:
+        return False
+    if len(profile.get("clickable_text", [])) >= 3:
+        return False
+    if len(profile.get("content_desc", [])) >= 3:
+        return False
+    if len(profile.get("resource_ids", [])) >= 3:
+        return False
+    return not profile.get("stable_controls")
+
+
+def _short_page_summary(profile: dict[str, Any]) -> str | None:
+    title = profile.get("page_title")
+    visible = profile.get("visible_text", [])
+    clickable = profile.get("clickable_text", [])
+    controls = profile.get("stable_controls", [])
+    parts: list[str] = []
+    if isinstance(title, str) and title:
+        parts.append(title)
+    if isinstance(visible, list) and visible:
+        parts.append("visible=" + ", ".join(str(v) for v in visible[:3]))
+    if isinstance(clickable, list) and clickable:
+        parts.append("clickable=" + ", ".join(str(v) for v in clickable[:3]))
+    if isinstance(controls, list) and controls:
+        control_labels = []
+        for control in controls[:3]:
+            if not isinstance(control, dict):
+                continue
+            label = control.get("text") or control.get("content_desc") or control.get("resource_id")
+            if label:
+                control_labels.append(str(label))
+        if control_labels:
+            parts.append("controls=" + ", ".join(control_labels))
+    if not parts:
+        return None
+    return " | ".join(parts)[:220]
 
 
 @dataclass
@@ -261,6 +481,14 @@ class PostRunProcessor:
             )
             decision, skill_id = await library.add_or_merge(skill)
             final_id = skill_id or skill.skill_id
+            canonical_skill = library.get(final_id) or skill
+            continuation_anchor_id = _load_latest_graph_terminal_node_id(trace_path)
+            node_profiles = _derive_graph_node_profiles(trace_path, step_count=len(canonical_skill.steps))
+            graph_synced = await self._sync_skill_graph(
+                canonical_skill,
+                continuation_anchor_id=continuation_anchor_id,
+                node_profiles=node_profiles,
+            )
             logger.info(
                 "Extracted skill %s from %s via %s",
                 final_id,
@@ -281,6 +509,7 @@ class PostRunProcessor:
                     "step_count": len(skill.steps),
                 },
                 "result_skill_id": final_id,
+                "graph_synced": graph_synced,
             })
             return final_id
         except Exception:
@@ -292,6 +521,44 @@ class PostRunProcessor:
                 "platform": platform,
             })
             return None
+
+    async def _sync_skill_graph(
+        self,
+        skill: Any,
+        *,
+        continuation_anchor_id: str | None = None,
+        node_profiles: dict[int | str, dict[str, Any] | None] | None = None,
+    ) -> bool:
+        if self._skill_store_root is None:
+            return False
+        try:
+            from opengui.skills.graph import SkillGraphStore
+
+            lock = _GRAPH_SYNC_LOCKS.setdefault(
+                self._skill_store_root.expanduser().resolve(strict=False),
+                asyncio.Lock(),
+            )
+            async with lock:
+                graph = SkillGraphStore(
+                    store_dir=self._skill_store_root,
+                    embedding_provider=self._embedding_provider,
+                    embedding_signature=self._embedding_signature,
+                )
+                await graph.ingest_skill(
+                    skill,
+                    continuation_anchor_id=continuation_anchor_id,
+                    node_profiles=node_profiles,
+                )
+                logger.info(
+                    "Synced skill graph for skill=%s app=%s platform=%s",
+                    getattr(skill, "skill_id", ""),
+                    getattr(skill, "app", ""),
+                    getattr(skill, "platform", ""),
+                )
+                return True
+        except Exception:
+            logger.warning("Skill graph sync failed", exc_info=True)
+            return False
 
     # ------------------------------------------------------------------
     # Evaluation

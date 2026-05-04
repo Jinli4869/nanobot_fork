@@ -77,6 +77,45 @@ class AlwaysStaleFrameSource:
         raise TimeoutError("latest scrcpy frame is stale (8.00s > 5.00s)")
 
 
+class ErrorThenFreshFrameSource:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.save_calls = 0
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot:
+        self.save_calls += 1
+        if self.save_calls == 1:
+            raise self.exc
+        Image.new("RGB", (320, 640), color=(70, 80, 90)).save(path)
+        return ScrcpyFrameSnapshot(width=320, height=640, timestamp=time.time())
+
+
+class AlwaysErrorFrameSource:
+    def __init__(self, exc_factory: type[Exception]) -> None:
+        self.exc_factory = exc_factory
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.save_calls = 0
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot:
+        self.save_calls += 1
+        raise self.exc_factory("scrcpy reader failed")
+
+
 @pytest.mark.asyncio
 async def test_adb_observe_uses_scrcpy_frame_and_reports_metadata(
     monkeypatch: pytest.MonkeyPatch,
@@ -146,6 +185,26 @@ async def test_adb_observe_restarts_scrcpy_after_stale_frame(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [RuntimeError("scrcpy reader failed"), OSError("Bad file descriptor")])
+async def test_adb_observe_restarts_scrcpy_after_scrcpy_reader_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    exc: Exception,
+) -> None:
+    frame_source = ErrorThenFreshFrameSource(exc)
+    backend = AdbBackend(frame_source=frame_source)
+    monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="com.example.app"))
+    monkeypatch.setattr(backend, "_query_screen_size", AsyncMock(return_value=(1080, 2376)))
+
+    observation = await backend.observe(tmp_path / "screen.png")
+
+    assert observation.extra["capture_source"] == "scrcpy"
+    assert frame_source.start_calls == 2
+    assert frame_source.stop_calls == 1
+    assert frame_source.save_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_adb_observe_falls_back_to_screencap_after_scrcpy_restart_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -169,6 +228,49 @@ async def test_adb_observe_falls_back_to_screencap_after_scrcpy_restart_failure(
     assert frame_source.stop_calls == 1
     assert frame_source.save_calls == 2
     fallback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc_factory", [RuntimeError, OSError])
+async def test_adb_observe_falls_back_to_screencap_after_scrcpy_reader_error_persists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    exc_factory: type[Exception],
+) -> None:
+    frame_source = AlwaysErrorFrameSource(exc_factory)
+    backend = AdbBackend(frame_source=frame_source)
+    fallback_observation = Observation(
+        screenshot_path=str(tmp_path / "fallback.png"),
+        screen_width=1080,
+        screen_height=2376,
+        foreground_app="com.example.app",
+        platform="android",
+    )
+    fallback = AsyncMock(return_value=fallback_observation)
+    monkeypatch.setattr(backend, "_observe_via_screencap", fallback)
+
+    observation = await backend.observe(tmp_path / "screen.png")
+
+    assert observation is fallback_observation
+    assert frame_source.start_calls == 2
+    assert frame_source.stop_calls == 1
+    assert frame_source.save_calls == 2
+    fallback.assert_awaited_once()
+
+
+def test_scrcpy_frame_source_records_listener_error_and_save_latest_fails_fast(tmp_path: Path) -> None:
+    class BrokenClient:
+        def frames(self):
+            raise OSError("Bad file descriptor")
+
+    source = ScrcpyFrameSource()
+    source._client = BrokenClient()
+
+    source._listen_forever()
+
+    with pytest.raises(RuntimeError, match="scrcpy frame reader failed") as exc_info:
+        source.save_latest(tmp_path / "screen.png", timeout_s=1.0, max_age_s=0.5)
+    assert isinstance(exc_info.value.__cause__, OSError)
 
 
 @pytest.mark.asyncio

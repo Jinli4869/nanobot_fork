@@ -210,6 +210,7 @@ class ScrcpyFrameSource:
         self._listener: Any | None = None
         self._latest_frame: Any | None = None
         self._latest_ts = 0.0
+        self._reader_error: Exception | None = None
         self._started = False
         self._stopping = False
         self._condition = threading.Condition()
@@ -237,6 +238,8 @@ class ScrcpyFrameSource:
         client.start()
         self._client = client
         self._stopping = False
+        with self._condition:
+            self._reader_error = None
 
         initial_frame = self._wait_until_ready(client)
         if initial_frame is not None:
@@ -278,9 +281,15 @@ class ScrcpyFrameSource:
         frames = getattr(self._client, "frames", None)
         if not callable(frames):
             return
-        for frame in frames():
-            if self._on_frame(frame) is False:
-                break
+        try:
+            for frame in frames():
+                if self._on_frame(frame) is False:
+                    break
+        except Exception as exc:
+            with self._condition:
+                if not self._stopping:
+                    self._reader_error = exc
+                self._condition.notify_all()
 
     def _on_frame(self, frame: Any) -> bool:
         self._set_latest_frame(frame)
@@ -291,6 +300,7 @@ class ScrcpyFrameSource:
         with self._condition:
             self._latest_frame = frame
             self._latest_ts = ts
+            self._reader_error = None
             self._condition.notify_all()
         if self._on_jpeg_frame is not None:
             try:
@@ -308,14 +318,21 @@ class ScrcpyFrameSource:
             while True:
                 frame = self._latest_frame
                 ts = self._latest_ts
+                reader_error = self._reader_error
                 now = time.time()
                 if frame is not None and (max_age_s <= 0 or now - ts <= max_age_s):
                     break
+                if reader_error is not None:
+                    raise RuntimeError("scrcpy frame reader failed") from reader_error
                 remaining = deadline - now
                 if remaining <= 0:
                     break
                 self._condition.wait(timeout=max(0.01, remaining))
 
+        if reader_error is not None and (
+            frame is None or (max_age_s > 0 and time.time() - ts > max_age_s)
+        ):
+            raise RuntimeError("scrcpy frame reader failed") from reader_error
         if frame is None:
             raise TimeoutError(f"scrcpy frame not available within {timeout_s:.2f}s")
         if max_age_s > 0 and time.time() - ts > max_age_s:
@@ -339,6 +356,7 @@ class ScrcpyFrameSource:
         with self._condition:
             self._latest_frame = None
             self._latest_ts = 0.0
+            self._reader_error = None
             self._condition.notify_all()
         self._listener = None
         self._client = None
@@ -663,28 +681,28 @@ class AdbBackend:
     ) -> ScrcpyFrameSnapshot | None:
         if self._frame_source is None:
             return None
-        try:
+
+        async def _capture_once() -> ScrcpyFrameSnapshot:
             return await asyncio.to_thread(
                 self._frame_source.save_latest,
                 screenshot_path,
                 timeout_s=min(timeout, self._scrcpy_frame_timeout_ms / 1000.0),
                 max_age_s=self._scrcpy_max_frame_age_ms / 1000.0,
             )
-        except TimeoutError:
-            if allow_restart:
-                try:
-                    await self._restart_scrcpy_frame_source()
-                except Exception:
-                    return None
-                try:
-                    return await asyncio.to_thread(
-                        self._frame_source.save_latest,
-                        screenshot_path,
-                        timeout_s=min(timeout, self._scrcpy_frame_timeout_ms / 1000.0),
-                        max_age_s=self._scrcpy_max_frame_age_ms / 1000.0,
-                    )
-                except TimeoutError:
-                    return None
+
+        try:
+            return await _capture_once()
+        except (TimeoutError, RuntimeError, OSError):
+            if not allow_restart:
+                return None
+
+        try:
+            await self._restart_scrcpy_frame_source()
+        except Exception:
+            return None
+        try:
+            return await _capture_once()
+        except (TimeoutError, RuntimeError, OSError):
             return None
 
     async def _restart_scrcpy_frame_source(self) -> None:
@@ -1197,10 +1215,12 @@ def _parse_ui_tree_xml(
     resource_ids: list[str] = []
     clickable_text: list[str] = []
     focused_text: list[str] = []
+    enabled_text: list[str] = []
     class_names: list[str] = []
     ui_tree: list[dict[str, Any]] | None = [] if include_nodes else None
     node_count = 0
     scrollable_present = False
+    enabled_present = False
 
     for element in root.iter("node"):
         node_count += 1
@@ -1211,7 +1231,10 @@ def _parse_ui_tree_xml(
         bounds = _clean_ui_attr(element.get("bounds"))
         clickable = element.get("clickable") == "true"
         focused = element.get("focused") == "true"
+        enabled = element.get("enabled") == "true"
         scrollable = element.get("scrollable") == "true"
+        if enabled:
+            enabled_present = True
         if scrollable:
             scrollable_present = True
 
@@ -1229,9 +1252,11 @@ def _parse_ui_tree_xml(
             clickable_text.extend(_iter_ui_label_texts(element))
         if focused and label:
             focused_text.append(label)
+        if enabled and label:
+            enabled_text.append(label)
 
         if ui_tree is not None and len(ui_tree) < max_nodes and (
-            text or desc or resource_id or class_name or clickable or focused or scrollable
+            text or desc or resource_id or class_name or clickable or focused or enabled or scrollable
         ):
             compact_node: dict[str, Any] = {}
             if text:
@@ -1246,6 +1271,8 @@ def _parse_ui_tree_xml(
                 compact_node["clickable"] = True
             if focused:
                 compact_node["focused"] = True
+            if enabled:
+                compact_node["enabled"] = True
             if scrollable:
                 compact_node["scrollable"] = True
             if bounds:
@@ -1263,8 +1290,12 @@ def _parse_ui_tree_xml(
         extra["clickable_text"] = _dedupe_ui_values(clickable_text)[:max_values]
     if focused_text:
         extra["focused_text"] = _dedupe_ui_values(focused_text)[:max_values]
+    if enabled_text:
+        extra["enabled_text"] = _dedupe_ui_values(enabled_text)[:max_values]
     if class_names:
         extra["class_names"] = _dedupe_ui_values(class_names)[:max_values]
+    if enabled_present:
+        extra["enabled_present"] = True
     if scrollable_present:
         extra["scrollable_present"] = True
     if ui_tree:

@@ -906,6 +906,7 @@ class GuiAgent:
         agent_profile: str | None = None,
         image_scale_ratio: float = 0.5,
         stagnation_limit: int = 0,
+        graph_session_cursor: Any = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -931,6 +932,7 @@ class GuiAgent:
         self._installed_apps = installed_apps
         self._intervention_handler = intervention_handler
         self._memory_store = memory_store
+        self._graph_session_cursor = graph_session_cursor
         self._active_retry_summaries: tuple[str, ...] = ()
         self._image_scale_ratio = image_scale_ratio
         try:
@@ -962,9 +964,25 @@ class GuiAgent:
         # 2. Retrieve memory context (once)
         memory_context = await self._retrieve_memory(task)
 
+        skill_context: str | None = None
+        graph_result = await self._try_graph_runtime(task, app_hint=app_hint)
+        graph_executed = False
+        if graph_result is not None:
+            graph_summary = getattr(graph_result, "execution_summary", None)
+            if isinstance(graph_summary, str) and graph_summary.strip():
+                skill_context = graph_summary
+            graph_state = getattr(graph_result, "state", None)
+            graph_executed = bool(
+                graph_state is not None
+                and graph_state.value == "succeeded"
+                and not getattr(graph_result, "prefix_only", False)
+            )
+
         # 3. Search skill library (once); LLM-gated when SkillReuser is available.
         reuser_usage: dict[str, int] = {}
-        if self._skill_reuser is not None and self._skill_library is not None:
+        if graph_executed:
+            skill_match = None
+        elif self._skill_reuser is not None and self._skill_library is not None:
             skill_match = await self._skill_reuser.find(
                 task,
                 self._skill_library,
@@ -986,7 +1004,6 @@ class GuiAgent:
             memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
 
         # 4. If skill matched, attempt skill execution first.
-        skill_context: str | None = None
         skill_result: Any | None = None
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
@@ -2799,6 +2816,98 @@ class GuiAgent:
             hits=hits,
             context=context,
         )
+
+    async def _try_graph_runtime(
+        self,
+        task: str,
+        *,
+        app_hint: str | None,
+    ) -> Any | None:
+        if self._skill_library is None:
+            return None
+        store_dir = getattr(self._skill_library, "store_dir", None)
+        if store_dir is None:
+            return None
+        try:
+            from opengui.skills.graph import SkillGraphStore
+            from opengui.skills.graph import infer_app_hint_from_task
+            from opengui.skills.graph_runtime import GraphRuntimeExecutor
+        except Exception:
+            logger.debug("Graph runtime unavailable", exc_info=True)
+            return None
+
+        try:
+            graph = SkillGraphStore(
+                store_dir=Path(store_dir),
+                embedding_provider=getattr(self._skill_library, "embedding_provider", None),
+                embedding_signature=getattr(self._skill_library, "embedding_signature", None),
+            )
+            if graph.count_nodes == 0:
+                return None
+            effective_app_hint = app_hint
+            if effective_app_hint is None:
+                graph_apps = {
+                    node.app
+                    for node in graph.list_nodes(platform=self.backend.platform)
+                    if getattr(node, "app", None)
+                }
+                effective_app_hint = infer_app_hint_from_task(
+                    task,
+                    platform=self.backend.platform,
+                    candidate_apps=graph_apps,
+                )
+
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.SKILL,
+                reason="Skill graph runtime attempt",
+            )
+            runtime = GraphRuntimeExecutor(
+                store=graph,
+                backend=self.backend,
+                artifacts_root=self.artifacts_root,
+                trajectory_recorder=self._trajectory_recorder,
+                timeout=self.step_timeout,
+                session_cursor=self._graph_session_cursor,
+            )
+            result = await runtime.execute(
+                task,
+                platform=self.backend.platform,
+                app_hint=effective_app_hint,
+            )
+        except Exception as exc:
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.AGENT,
+                reason="Skill graph runtime failed, falling back",
+            )
+            self._trajectory_recorder.record_event(
+                "graph_runtime_result",
+                state="failed",
+                error=str(exc),
+                exception_type=type(exc).__name__,
+            )
+            logger.debug("Graph runtime setup/execution failed", exc_info=True)
+            return None
+        if result.state.value == "succeeded":
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.AGENT,
+                reason="Skill graph runtime complete, agent confirms",
+            )
+        else:
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.AGENT,
+                reason="Skill graph runtime failed, falling back",
+            )
+        self._trajectory_recorder.record_event(
+            "graph_runtime_result",
+            state=result.state.value,
+            error=result.error,
+            summary=result.execution_summary,
+            goal_status=getattr(result.goal_resolution, "status", None),
+            path_status=getattr(result.path, "status", None),
+            prefix_only=getattr(result, "prefix_only", False),
+            prefix_terminal_node_id=getattr(result, "prefix_terminal_node_id", None),
+        )
+        return result
 
     async def _search_skill(self, task: str) -> Any | None:
         """Search the skill library and return the top match when above threshold."""
