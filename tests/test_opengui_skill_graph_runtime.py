@@ -187,6 +187,99 @@ class _ProfileOnlyBackend(_Backend):
         )
 
 
+class _NavigationProbeBackend(_Backend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mode = "forward"
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        self.observe_count += 1
+        if self.observe_count == 1:
+            extra = {
+                "visible_text": ["Home"],
+                "clickable_text": ["Home"],
+                "resource_ids": ["com.example:id/home"],
+                "ui_tree_node_count": 2,
+            }
+        elif self.observe_count == 2:
+            extra = {
+                "visible_text": ["Middle"],
+                "clickable_text": ["Middle"],
+                "resource_ids": ["com.example:id/middle"],
+                "ui_tree_node_count": 2,
+            }
+        elif self.observe_count == 3:
+            extra = {
+                "visible_text": ["Target"],
+                "clickable_text": ["Target"],
+                "resource_ids": ["com.example:id/target"],
+                "ui_tree_node_count": 2,
+            }
+        elif self.mode == "probe":
+            extra = {
+                "visible_text": ["Middle"],
+                "clickable_text": ["Middle"],
+                "resource_ids": ["com.example:id/middle"],
+                "ui_tree_node_count": 2,
+            }
+        else:
+            extra = {
+                "visible_text": ["Target"],
+                "clickable_text": ["Target"],
+                "resource_ids": ["com.example:id/target"],
+                "ui_tree_node_count": 2,
+            }
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1000,
+            screen_height=2000,
+            foreground_app="com.example.app",
+            platform="android",
+            extra=extra,
+        )
+
+    async def execute(self, action: Action, timeout: float = 5.0) -> str:
+        self.actions.append(action)
+        if action.action_type == "back":
+            self.mode = "probe"
+        elif action.action_type == "tap" and self.mode == "probe":
+            self.mode = "restored"
+        return "ok"
+
+
+class _UnknownReturnBackend(_Backend):
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        self.observe_count += 1
+        if self.observe_count == 1:
+            extra = {
+                "visible_text": ["Home"],
+                "clickable_text": ["Home"],
+                "resource_ids": ["com.example:id/home"],
+                "ui_tree_node_count": 2,
+            }
+        elif self.observe_count == 2:
+            extra = {
+                "visible_text": ["Target"],
+                "clickable_text": ["Target"],
+                "resource_ids": ["com.example:id/target"],
+                "ui_tree_node_count": 2,
+            }
+        else:
+            extra = {
+                "visible_text": ["Unexpected"],
+                "clickable_text": [],
+                "ui_tree_node_count": 1,
+            }
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1000,
+            screen_height=2000,
+            foreground_app="com.example.app",
+            platform="android",
+            extra=extra,
+        )
+
+
 class _LaunchThenHomeBackend(_Backend):
     def __init__(self) -> None:
         super().__init__()
@@ -893,7 +986,7 @@ async def test_graph_runtime_launches_target_app_before_entry_alignment(tmp_path
     )
 
     assert result.state.value == "succeeded"
-    assert [action.action_type for action in backend.actions] == ["open_app", "tap"]
+    assert [action.action_type for action in backend.actions] == ["open_app", "tap", "back"]
     assert backend.actions[0].text == "com.max.xiaoheihe"
     assert result.path is not None
     assert [path_edge.edge_id for path_edge in result.path.edges] == [edge.edge_id]
@@ -1296,7 +1389,7 @@ async def test_graph_runtime_dismisses_interrupt_before_path(tmp_path: Path) -> 
     result = await runtime.execute("open orders page", platform="android", app_hint="com.example.app")
 
     assert result.state.value == "succeeded"
-    assert [action.action_type for action in backend.actions] == ["tap", "tap"]
+    assert [action.action_type for action in backend.actions] == ["tap", "tap", "back"]
     assert backend.actions[0].x == 100.0
     assert backend.actions[1].x == 500.0
 
@@ -1432,3 +1525,153 @@ async def test_graph_runtime_enqueues_profile_only_refresh_trigger(tmp_path: Pat
     record = json.loads(queue_path.read_text(encoding="utf-8").splitlines()[0])
     assert record["reason"] == "profile_only_match"
     assert record["candidate_node_ids"] == ["node-mall-profile"]
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_records_navigation_back_and_restores_terminal(tmp_path: Path) -> None:
+    store = SkillGraphStore(
+        store_dir=tmp_path / "graph",
+        embedding_provider=_StableEmbedder(),
+        embedding_signature="sig-v1",
+    )
+    home = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_contract("Home", clickable=True),
+            fingerprint="fp-home",
+        )
+    )
+    middle = store.upsert_node(
+        GraphNode(
+            node_id="node-middle",
+            app="com.example.app",
+            platform="android",
+            description="Middle page",
+            state_contract=_contract("Middle", clickable=True),
+            fingerprint="fp-middle",
+        )
+    )
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Target page",
+            state_contract=_contract("Target", clickable=True),
+            fingerprint="fp-target",
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-home-middle",
+            app="com.example.app",
+            platform="android",
+            source_node_id=home.node_id,
+            target_node_id=middle.node_id,
+            action_type="tap",
+            target="Middle",
+            parameters={"x": 100.0, "y": 100.0, "relative": True},
+            precondition=home.state_contract,
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-middle-target",
+            app="com.example.app",
+            platform="android",
+            source_node_id=middle.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Target",
+            parameters={"x": 500.0, "y": 500.0, "relative": True},
+            precondition=middle.state_contract,
+        )
+    )
+
+    backend = _NavigationProbeBackend()
+    recorder = _EventRecorder()
+    runtime = GraphRuntimeExecutor(
+        store=store,
+        backend=backend,
+        artifacts_root=tmp_path / "runs",
+        trajectory_recorder=recorder,
+    )
+
+    result = await runtime.execute("open target page", platform="android", app_hint="com.example.app")
+
+    assert result.state.value == "succeeded"
+    assert [action.action_type for action in backend.actions] == ["tap", "tap", "back", "tap"]
+    nav_edges = [edge for edge in store.list_edges(platform="android", app="com.example.app") if edge.kind == "navigation_back"]
+    assert len(nav_edges) == 1
+    assert nav_edges[0].source_node_id == target.node_id
+    assert nav_edges[0].target_node_id == middle.node_id
+    assert nav_edges[0].stats.success_count == 1
+    assert any(event["type"] == "graph_navigation_probe" for event in recorder.events)
+    assert any(event["type"] == "graph_navigation_restore" for event in recorder.events)
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_records_unknown_navigation_transition_without_fake_target(tmp_path: Path) -> None:
+    store = SkillGraphStore(
+        store_dir=tmp_path / "graph",
+        embedding_provider=_StableEmbedder(),
+        embedding_signature="sig-v1",
+    )
+    home = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_contract("Home", clickable=True),
+            fingerprint="fp-home",
+        )
+    )
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Target page",
+            state_contract=_contract("Target", clickable=True),
+            fingerprint="fp-target",
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-home-target",
+            app="com.example.app",
+            platform="android",
+            source_node_id=home.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Target",
+            parameters={"x": 500.0, "y": 500.0, "relative": True},
+            precondition=home.state_contract,
+        )
+    )
+
+    backend = _UnknownReturnBackend()
+    recorder = _EventRecorder()
+    runtime = GraphRuntimeExecutor(
+        store=store,
+        backend=backend,
+        artifacts_root=tmp_path / "runs",
+        trajectory_recorder=recorder,
+    )
+
+    result = await runtime.execute("open target page", platform="android", app_hint="com.example.app")
+
+    assert result.state.value == "succeeded"
+    assert [action.action_type for action in backend.actions] == ["tap", "back"]
+    evidence_path = tmp_path / "graph" / "skill_graph_transition_evidence.jsonl"
+    assert evidence_path.is_file()
+    record = json.loads(evidence_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert record["reason"] == "navigation_target_unknown"
+    assert record["edge_kind"] == "navigation_back"
+    assert record["source_node_id"] == target.node_id
+    assert all(edge.kind == "action" for edge in store.list_edges(platform="android", app="com.example.app"))
+    assert any(event["type"] == "graph_transition_evidence" for event in recorder.events)

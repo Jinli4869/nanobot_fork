@@ -23,6 +23,7 @@ from opengui.skills.graph import (
     GraphEdge,
     GraphNode,
     GraphSessionCursor,
+    NODE_KIND_STATE,
     PathCompilation,
     PathCompiler,
     SkillGraphStore,
@@ -229,7 +230,48 @@ class GraphRuntimeExecutor:
                 )
 
         if terminal is not None:
-            self.session_cursor.set(terminal)
+            final_observation = current_observation
+            can_probe = (
+                terminal.kind == NODE_KIND_STATE
+                and terminal.state_contract is not None
+                and len(path.nodes) >= 2
+                and not any(
+                    item.action is not None and item.action.action_type == "request_intervention"
+                    for item in step_results
+                )
+            )
+            if can_probe:
+                final_observation, restored = await self._probe_and_restore_terminal(
+                    terminal=terminal,
+                    path=path,
+                )
+                if not restored:
+                    post_probe = await self._identify_current(
+                        final_observation,
+                        platform=final_observation.platform or self.backend.platform,
+                        app_hint=final_observation.foreground_app,
+                    )
+                    if post_probe.status == "matched" and post_probe.current_node is not None:
+                        self.session_cursor.set(post_probe.current_node)
+                    else:
+                        self.session_cursor.clear("navigation_probe_restore_failed")
+                else:
+                    self.session_cursor.set(terminal)
+            else:
+                self.store.append_transition_evidence(
+                    {
+                        "platform": current_observation.platform or self.backend.platform or terminal.platform,
+                        "app": current_observation.foreground_app or terminal.app,
+                        "source_node_id": terminal.node_id,
+                        "action_type": "back",
+                        "edge_kind": "navigation_back",
+                        "target_node_id": None,
+                        "reason": "probe_skipped",
+                        "candidate_node_ids": [],
+                    }
+                )
+                self._record("graph_navigation_probe", status="skipped", reason="probe_skipped")
+                self.session_cursor.set(terminal)
         return GraphRuntimeResult(
             state=ExecutionState.SUCCEEDED,
             goal_resolution=resolution,
@@ -362,6 +404,15 @@ class GraphRuntimeExecutor:
                 return step_result, next_observation
             latency_ms = (time.monotonic() - started) * 1000.0
             self.store.record_edge_attempt(edge.edge_id, success=True, latency_ms=latency_ms)
+            source_node = self.store.get_node(edge.source_node_id)
+            navigation_kind = self._navigation_transition_kind(action, edge_target=edge.target)
+            if navigation_kind is not None and source_node is not None:
+                await self._capture_navigation_transition(
+                    action=action,
+                    source_node=source_node,
+                    observation_after=next_observation,
+                    edge_target=edge.target,
+                )
             step_result = GraphStepResult(
                 edge_id=edge.edge_id,
                 action=action,
@@ -390,6 +441,111 @@ class GraphRuntimeExecutor:
         if edge.action_type in {"open_app", "close_app", "input_text"} and "text" not in payload:
             payload["text"] = edge.target
         return parse_action(payload)
+
+    def _navigation_transition_kind(self, action: Action, *, edge_target: str | None = None) -> str | None:
+        if action.action_type == "back":
+            return "navigation_back"
+        if action.action_type == "home":
+            return "navigation_home"
+        if action.action_type != "tap":
+            return None
+        label = self._navigation_label(edge_target or action.text)
+        if label in {"首页", "主页", "home", "main"}:
+            return "navigation_reset"
+        return None
+
+    @staticmethod
+    def _navigation_label(value: str | None) -> str:
+        return " ".join((value or "").strip().split()).lower()
+
+    async def _capture_navigation_transition(
+        self,
+        *,
+        action: Action,
+        source_node: GraphNode | None,
+        observation_after: Observation,
+        edge_target: str | None = None,
+        identified: StateIdentificationResult | None = None,
+        valid_target_node_ids: set[str] | None = None,
+    ) -> StateIdentificationResult | None:
+        if source_node is None or source_node.kind != NODE_KIND_STATE or source_node.state_contract is None:
+            return identified
+        navigation_kind = self._navigation_transition_kind(action, edge_target=edge_target)
+        if navigation_kind is None:
+            return identified
+        started = time.monotonic()
+        target = identified or await self._identify_current(
+            observation_after,
+            platform=observation_after.platform or self.backend.platform,
+            app_hint=observation_after.foreground_app,
+        )
+        target_node = target.current_node if target.status == "matched" else None
+        if (
+            target_node is not None
+            and target_node.node_id != source_node.node_id
+            and (
+                valid_target_node_ids is None
+                or target_node.node_id in valid_target_node_ids
+            )
+        ):
+            edge_id = f"nav:{source_node.node_id}:{target_node.node_id}:{action.action_type}:{navigation_kind}"
+            self.store.upsert_edge(
+                GraphEdge(
+                    edge_id=edge_id,
+                    app=source_node.app,
+                    platform=source_node.platform,
+                    source_node_id=source_node.node_id,
+                    target_node_id=target_node.node_id,
+                    action_type=action.action_type,
+                    target=edge_target or action.text or action.action_type,
+                    precondition=source_node.state_contract,
+                    kind=navigation_kind,
+                ),
+                save=False,
+            )
+            self.store.record_edge_attempt(
+                edge_id,
+                success=True,
+                latency_ms=(time.monotonic() - started) * 1000.0,
+            )
+            self._record(
+                "graph_navigation_transition",
+                action=action.action_type,
+                source_node_id=source_node.node_id,
+                target_node_id=target_node.node_id,
+                kind=navigation_kind,
+                matched=True,
+            )
+            return target
+
+        reason = "navigation_target_unknown"
+        target_node_id = None
+        if target_node is not None:
+            target_node_id = target_node.node_id
+            if target_node.node_id == source_node.node_id:
+                reason = "navigation_target_same"
+            elif valid_target_node_ids is not None and target_node.node_id not in valid_target_node_ids:
+                reason = "probe_restore_unavailable"
+        self.store.append_transition_evidence(
+            {
+                "platform": observation_after.platform or self.backend.platform,
+                "app": observation_after.foreground_app,
+                "source_node_id": source_node.node_id,
+                "action_type": action.action_type,
+                "edge_kind": navigation_kind,
+                "target_node_id": target_node_id,
+                "reason": reason,
+                "candidate_node_ids": [candidate.node.node_id for candidate in target.candidates],
+            }
+        )
+        self._record(
+            "graph_transition_evidence",
+            action=action.action_type,
+            source_node_id=source_node.node_id,
+            candidate_count=len(target.candidates),
+            reason=reason,
+        )
+        return target
 
     async def _launch_target_app(self, app: str, *, platform: str | None) -> Observation:
         self._record("graph_app_launch", app=app, platform=platform)
@@ -542,6 +698,153 @@ class GraphRuntimeExecutor:
         await self.backend.execute(action, timeout=self.timeout)
         await asyncio.sleep(0.5)
         return await self._observe(f"graph_interrupt_{getattr(node, 'node_id', 'unknown')}")
+
+    async def _probe_and_restore_terminal(
+        self,
+        *,
+        terminal: GraphNode,
+        path: PathCompilation,
+    ) -> tuple[Observation, bool]:
+        probe_action = parse_action({"action_type": "back"})
+        await self.backend.execute(probe_action, timeout=self.timeout)
+        await asyncio.sleep(0.5)
+        probed = await self._observe("graph_navigation_probe")
+        identified = await self._identify_current(
+            probed,
+            platform=probed.platform or self.backend.platform,
+            app_hint=probed.foreground_app,
+        )
+        self._record(
+            "graph_navigation_probe",
+            status=identified.status,
+            candidate_count=len(identified.candidates),
+            current_node_id=identified.current_node.node_id if identified.current_node else None,
+        )
+        if identified.status != "matched" or identified.current_node is None:
+            self.store.append_transition_evidence(
+                {
+                    "platform": probed.platform or self.backend.platform,
+                    "app": probed.foreground_app,
+                    "source_node_id": terminal.node_id,
+                    "action_type": "back",
+                    "edge_kind": "navigation_back",
+                    "target_node_id": None,
+                    "reason": "navigation_target_unknown",
+                    "candidate_node_ids": [candidate.node.node_id for candidate in identified.candidates],
+                }
+            )
+            self._record(
+                "graph_transition_evidence",
+                action="back",
+                source_node_id=terminal.node_id,
+                candidate_count=len(identified.candidates),
+                reason="navigation_target_unknown",
+            )
+            return probed, False
+
+        path_node_ids = {node.node_id for node in path.nodes}
+        if identified.current_node.node_id not in path_node_ids:
+            self.store.append_transition_evidence(
+                {
+                    "platform": probed.platform or self.backend.platform,
+                    "app": probed.foreground_app,
+                    "source_node_id": terminal.node_id,
+                    "action_type": "back",
+                    "edge_kind": "navigation_back",
+                    "target_node_id": identified.current_node.node_id,
+                    "reason": "probe_restore_unavailable",
+                    "candidate_node_ids": [candidate.node.node_id for candidate in identified.candidates],
+                }
+            )
+            self._record(
+                "graph_transition_evidence",
+                action="back",
+                source_node_id=terminal.node_id,
+                candidate_count=len(identified.candidates),
+                reason="probe_restore_unavailable",
+            )
+            self._record(
+                "graph_navigation_restore",
+                status="skipped",
+                reason="probe_restore_unavailable",
+                current_node_id=identified.current_node.node_id,
+            )
+            return probed, False
+
+        await self._capture_navigation_transition(
+            action=probe_action,
+            source_node=terminal,
+            observation_after=probed,
+            identified=identified,
+            valid_target_node_ids=path_node_ids,
+        )
+        restore_path = self.path_compiler.compile(identified.current_node.node_id, terminal.node_id)
+        if restore_path.status != "ok":
+            self.store.append_transition_evidence(
+                {
+                    "platform": probed.platform or self.backend.platform,
+                    "app": probed.foreground_app,
+                    "source_node_id": terminal.node_id,
+                    "action_type": "back",
+                    "edge_kind": "navigation_back",
+                    "target_node_id": identified.current_node.node_id,
+                    "reason": "restore_failed",
+                    "candidate_node_ids": [candidate.node.node_id for candidate in identified.candidates],
+                }
+            )
+            self._record(
+                "graph_transition_evidence",
+                action="back",
+                source_node_id=terminal.node_id,
+                candidate_count=len(identified.candidates),
+                reason="restore_failed",
+            )
+            self._record(
+                "graph_navigation_restore",
+                status="failed",
+                reason="restore_failed",
+                current_node_id=identified.current_node.node_id,
+            )
+            return probed, False
+
+        restored = probed
+        for edge in restore_path.edges:
+            step_result, restored = await self._execute_edge(edge, restored)
+            if step_result.state != ExecutionState.SUCCEEDED:
+                self.store.append_transition_evidence(
+                    {
+                        "platform": restored.platform or self.backend.platform,
+                        "app": restored.foreground_app,
+                        "source_node_id": terminal.node_id,
+                        "action_type": "back",
+                        "edge_kind": "navigation_back",
+                        "target_node_id": identified.current_node.node_id,
+                        "reason": "restore_failed",
+                        "candidate_node_ids": [candidate.node.node_id for candidate in identified.candidates],
+                    }
+                )
+                self._record(
+                    "graph_transition_evidence",
+                    action="back",
+                    source_node_id=terminal.node_id,
+                    candidate_count=len(identified.candidates),
+                    reason="restore_failed",
+                )
+                self._record(
+                    "graph_navigation_restore",
+                    status="failed",
+                    reason="restore_failed",
+                    current_node_id=identified.current_node.node_id,
+                    failed_edge_id=edge.edge_id,
+                )
+                return restored, False
+        self._record(
+            "graph_navigation_restore",
+            status="restored",
+            terminal_node_id=terminal.node_id,
+            restored_from_node_id=identified.current_node.node_id,
+        )
+        return restored, True
 
     async def _recover_unknown(
         self,
