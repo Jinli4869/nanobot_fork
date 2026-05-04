@@ -1340,7 +1340,7 @@ def test_sanitize_canonical_graph_promotes_deprecated_edges_to_active_version(tm
             description="The profile page is visible with the '黑盒商城' button present.",
             state_contract=_contract("黑盒商城", app="com.max.xiaoheihe", clickable=True),
             status=NODE_STATUS_DEPRECATED,
-            superseded_by="node-mall",
+            superseded_by=active_profile.node_id,
             fingerprint="fp-profile-legacy",
             retrieval_profile={
                 "visible_text": [
@@ -1376,14 +1376,14 @@ def test_sanitize_canonical_graph_promotes_deprecated_edges_to_active_version(tm
             },
         )
     )
-    mall = store.upsert_node(
+    cart = store.upsert_node(
         GraphNode(
-            node_id="node-mall",
+            node_id="node-cart",
             app="com.max.xiaoheihe",
             platform="android",
-            description="The Heihei Mall page is loaded.",
-            state_contract=_contract("黑盒商城", app="com.max.xiaoheihe", clickable=True),
-            fingerprint="fp-mall",
+            description="The cart page is loaded.",
+            state_contract=_contract("Cart", app="com.max.xiaoheihe", clickable=True),
+            fingerprint="fp-cart",
         )
     )
     edge = store.upsert_edge(
@@ -1392,9 +1392,9 @@ def test_sanitize_canonical_graph_promotes_deprecated_edges_to_active_version(tm
             app="com.max.xiaoheihe",
             platform="android",
             source_node_id=legacy_profile.node_id,
-            target_node_id=mall.node_id,
+            target_node_id=cart.node_id,
             action_type="tap",
-            target="黑盒商城",
+            target="Cart",
             precondition=legacy_profile.state_contract,
         )
     )
@@ -1404,13 +1404,13 @@ def test_sanitize_canonical_graph_promotes_deprecated_edges_to_active_version(tm
     copied_edges = [
         item
         for item in store.outgoing_edges(active_profile.node_id)
-        if item.target_node_id == mall.node_id and item.action_type == "tap"
+        if item.target_node_id == cart.node_id and item.action_type == "tap"
     ]
-    assert copied_edges, "expected the active version to inherit the deprecated mall edge"
+    assert copied_edges, "expected the explicit successor to inherit the deprecated cart edge"
     assert store.get_edge(edge.edge_id).status == EDGE_STATUS_ACTIVE
 
 
-def test_sanitize_canonical_graph_persists_promoted_deprecated_edge_stats(tmp_path: Path) -> None:
+def test_sanitize_canonical_graph_persists_promoted_explicit_successor_edge_stats(tmp_path: Path) -> None:
     store_dir = tmp_path / "graph"
     store = SkillGraphStore(store_dir=store_dir)
     profile = {
@@ -1436,6 +1436,7 @@ def test_sanitize_canonical_graph_persists_promoted_deprecated_edge_stats(tmp_pa
             description="Legacy profile page is visible",
             state_contract=_contract("Mall", clickable=True),
             status=NODE_STATUS_DEPRECATED,
+            superseded_by=active_profile.node_id,
             fingerprint="fp-profile-legacy",
             retrieval_profile=profile,
         )

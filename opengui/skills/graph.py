@@ -718,12 +718,31 @@ class SkillGraphStore:
         )
 
     def _best_active_version_for_deprecated(self, node: GraphNode) -> GraphNode | None:
+        def candidate_score(candidate: GraphNode) -> float:
+            contract_score = state_contract_overlap(node.state_contract, candidate.state_contract)
+            profile_score = _profile_similarity(node.retrieval_profile, candidate.retrieval_profile)
+            description_score = _token_similarity(node.description, candidate.description)
+            return max(contract_score, profile_score, description_score)
+
+        if node.superseded_by:
+            successor = self._nodes.get(node.superseded_by)
+            if (
+                successor is not None
+                and successor.node_id != node.node_id
+                and successor.platform == node.platform
+                and successor.app == node.app
+                and successor.kind == NODE_KIND_STATE
+                and successor.status == NODE_STATUS_ACTIVE
+                and _is_canonical_state_contract(successor.state_contract)
+                and candidate_score(successor) >= 0.25
+            ):
+                return successor
+
         best_node: GraphNode | None = None
         best_score = 0.0
         for candidate in self._nodes.values():
             if (
                 candidate.node_id == node.node_id
-                or (node.superseded_by and candidate.node_id == node.superseded_by)
                 or candidate.platform != node.platform
                 or candidate.app != node.app
                 or candidate.kind != NODE_KIND_STATE
@@ -731,10 +750,7 @@ class SkillGraphStore:
                 or not _is_canonical_state_contract(candidate.state_contract)
             ):
                 continue
-            contract_score = state_contract_overlap(node.state_contract, candidate.state_contract)
-            profile_score = _profile_similarity(node.retrieval_profile, candidate.retrieval_profile)
-            description_score = _token_similarity(node.description, candidate.description)
-            score = max(contract_score, profile_score, description_score)
+            score = candidate_score(candidate)
             if score > best_score:
                 best_score = score
                 best_node = candidate
