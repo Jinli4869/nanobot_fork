@@ -1348,6 +1348,8 @@ class SkillGraphStore:
                 continue
             if edge.status != EDGE_STATUS_ACTIVE:
                 continue
+            if edge.source_node_id == edge.target_node_id:
+                continue
             source = self._nodes.get(edge.source_node_id)
             target = self._nodes.get(edge.target_node_id)
             if source is None or target is None:
@@ -1941,7 +1943,20 @@ def _is_canonical_state_contract(contract: dict[str, Any] | None) -> bool:
     if not isinstance(signature, dict):
         return False
     required = signature.get("required")
-    return bool(isinstance(required, list) and required)
+    if not isinstance(required, list):
+        return False
+    for element in required:
+        if not isinstance(element, dict):
+            continue
+        selector = element.get("selector")
+        if not isinstance(selector, dict):
+            continue
+        if any(
+            _clean_index_string(selector.get(key))
+            for key in ("resource_id", "content_desc", "text", "class", "xpath")
+        ):
+            return True
+    return False
 
 
 def _prefix_relevance_score(intent: str, node: GraphNode) -> float:

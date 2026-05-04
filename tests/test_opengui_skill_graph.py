@@ -793,6 +793,66 @@ def test_canonicality_report_blocks_unanchored_state_nodes(tmp_path: Path) -> No
     assert "unanchored_state_nodes" in report.blocking_reasons
 
 
+def test_canonicality_report_blocks_selectorless_state_contracts(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    store.upsert_node(
+        GraphNode(
+            node_id="selectorless",
+            app="com.example.app",
+            platform="android",
+            description="Selectorless placeholder",
+            state_contract=normalize_state_contract({
+                "anchor": {"app_package": "com.example.app"},
+                "signature": {
+                    "required": [{"state": ["visible"]}],
+                    "forbidden": [],
+                },
+                "mask_rules": [],
+            }),
+            kind=NODE_KIND_STATE,
+            fingerprint="selectorless",
+        )
+    )
+
+    report = store.canonicality_report(platform="android", app="com.example.app")
+
+    assert report.ready_for_graph_only is False
+    assert report.active_state_nodes == 1
+    assert report.anchored_state_nodes == 0
+    assert report.unanchored_state_nodes == 1
+    assert "unanchored_state_nodes" in report.blocking_reasons
+
+
+def test_runtime_index_excludes_active_same_node_edges(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    node = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_contract("Home", clickable=True),
+            fingerprint="fp-home",
+        )
+    )
+    edge = store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-self-active",
+            app="com.example.app",
+            platform="android",
+            source_node_id=node.node_id,
+            target_node_id=node.node_id,
+            action_type="tap",
+            target="Refresh",
+            precondition=node.state_contract,
+            status=EDGE_STATUS_ACTIVE,
+        )
+    )
+
+    assert edge.status == EDGE_STATUS_ACTIVE
+    assert edge not in store.outgoing_edges(node.node_id)
+
+
 def test_auxiliary_node_persists_retrieval_profile_across_save_load(tmp_path: Path) -> None:
     store_dir = tmp_path / "graph"
     store = SkillGraphStore(store_dir=store_dir)
