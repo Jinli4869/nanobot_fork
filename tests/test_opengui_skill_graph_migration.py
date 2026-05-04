@@ -16,7 +16,7 @@ from opengui.skills.graph import (
     NodeStats,
     SkillGraphStore,
 )
-from opengui.postprocessing import PostRunProcessor
+from opengui.postprocessing import PostRunProcessor, _build_retrieval_profile
 from opengui.skills.state_contract import normalize_state_contract
 
 
@@ -74,6 +74,64 @@ def _unanchored_launch_skill() -> Skill:
 
 def _write_trace(trace_path: Path, events: list[dict[str, object]]) -> None:
     trace_path.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+
+
+def test_retrieval_profile_discards_dynamic_feed_content() -> None:
+    profile = _build_retrieval_profile({
+        "app": "com.max.xiaoheihe",
+        "foreground_app": "com.max.xiaoheihe",
+        "platform": "android",
+        "extra": {
+            "visible_text": [
+                "首页",
+                "热点",
+                "我",
+                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                "12分钟前",
+                "999评论",
+            ],
+            "clickable_text": [
+                "首页",
+                "热点",
+                "我",
+                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+            ],
+            "resource_ids": [
+                "com.max.xiaoheihe:id/nav_home",
+                "com.max.xiaoheihe:id/nav_me",
+                "com.max.xiaoheihe:id/tv_post_title",
+                "com.max.xiaoheihe:id/tv_comment_count",
+            ],
+            "ui_tree": [
+                {
+                    "text": "首页",
+                    "resource_id": "com.max.xiaoheihe:id/nav_home",
+                    "clickable": True,
+                },
+                {
+                    "text": "我",
+                    "resource_id": "com.max.xiaoheihe:id/nav_me",
+                    "clickable": True,
+                },
+                {
+                    "text": "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                    "resource_id": "com.max.xiaoheihe:id/tv_post_title",
+                    "clickable": True,
+                },
+            ],
+        },
+    })
+
+    assert "首页" in profile["visible_text"]
+    assert "我" in profile["clickable_text"]
+    assert "这篇帖子详细聊聊今天版本更新后的新配队和强度变化" not in profile.get("visible_text", [])
+    assert "12分钟前" not in profile.get("visible_text", [])
+    assert "999评论" not in profile.get("visible_text", [])
+    assert "com.max.xiaoheihe:id/tv_post_title" not in profile.get("resource_ids", [])
+    assert all(
+        control.get("resource_id") != "com.max.xiaoheihe:id/tv_post_title"
+        for control in profile.get("stable_controls", [])
+    )
 
 
 @pytest.mark.asyncio

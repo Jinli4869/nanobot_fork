@@ -495,6 +495,57 @@ def test_infer_state_contract_bridges_semantic_target_to_context_grounded_label(
     assert "My Orders button" not in selector.values()
 
 
+def test_infer_state_contract_rejects_dynamic_feed_title_selector() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+            "parameters": {},
+            "valid_state": "the feed item is visible",
+            "expected_state": "the post detail page opens",
+        },
+        trajectory={
+            "agent_phase": [
+                {
+                    "observation": {
+                        "extra": {
+                            "visible_text": [
+                                "首页",
+                                "热点",
+                                "我",
+                                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                                "12分钟前",
+                            ],
+                            "clickable_text": [
+                                "首页",
+                                "热点",
+                                "我",
+                                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                            ],
+                            "resource_ids": [
+                                "com.max.xiaoheihe:id/nav_home",
+                                "com.max.xiaoheihe:id/nav_me",
+                                "com.max.xiaoheihe:id/tv_post_title",
+                            ],
+                            "ui_tree": [
+                                {
+                                    "text": "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                                    "resource_id": "com.max.xiaoheihe:id/tv_post_title",
+                                    "clickable": True,
+                                }
+                            ],
+                            "ui_tree_node_count": 4,
+                        }
+                    }
+                }
+            ]
+        },
+        app="com.max.xiaoheihe",
+    )
+
+    assert contract is None
+
+
 def test_infer_state_contract_does_not_promote_abstract_target_without_grounding() -> None:
     contract = infer_state_contract(
         {

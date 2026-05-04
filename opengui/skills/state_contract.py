@@ -28,6 +28,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from opengui.skills.static_selector_filter import (
+    filter_static_resource_ids,
+    filter_static_texts,
+    selector_is_static,
+    static_selector_from_node,
+)
+
 
 _SELECTOR_KEYS = frozenset({
     "text",
@@ -726,6 +733,7 @@ def _find_selector_for_target(
 def _vote_for_selectors(selector_groups: Any) -> dict[str, Any] | None:
     votes: dict[tuple[tuple[str, Any], ...], tuple[int, dict[str, Any]]] = {}
     for selectors in selector_groups:
+        selectors = [selector for selector in selectors if selector_is_static(selector)]
         group_keys = {_selector_identity_key(selector) for selector in selectors}
         if len(group_keys) > 1:
             continue
@@ -752,10 +760,10 @@ def _candidate_selectors(
     node_candidates = _node_selectors_for_target(target_norm, extra)
     if node_candidates:
         return node_candidates
-    clickable_text = _string_list(extra.get("clickable_text"))
-    visible_text = _string_list(extra.get("visible_text"))
-    content_desc = _string_list(extra.get("content_desc"))
-    resource_ids = _string_list(extra.get("resource_ids"))
+    clickable_text = filter_static_texts(extra.get("clickable_text"), limit=80)
+    visible_text = filter_static_texts(extra.get("visible_text"), limit=80)
+    content_desc = filter_static_texts(extra.get("content_desc"), limit=80)
+    resource_ids = filter_static_resource_ids(extra.get("resource_ids"), limit=80)
 
     resource_match = _exact_target_match(target_norm, resource_ids)
     if resource_match:
@@ -860,10 +868,10 @@ def _structured_selector_labels(
             return selectors
 
     clickable = action_type in {"tap", "long_press", "double_tap"}
-    clickable_text = _string_list(extra.get("clickable_text"))
-    for value in _string_list(extra.get("resource_ids")):
+    clickable_text = filter_static_texts(extra.get("clickable_text"), limit=80)
+    for value in filter_static_resource_ids(extra.get("resource_ids"), limit=80):
         selectors.append(({"resource_id": value}, [value]))
-    for value in _string_list(extra.get("content_desc")):
+    for value in filter_static_texts(extra.get("content_desc"), limit=80):
         selector = {"content_desc": value}
         if clickable and value in clickable_text:
             selector["clickable"] = True
@@ -871,28 +879,13 @@ def _structured_selector_labels(
     if clickable:
         for value in clickable_text:
             selectors.append(({"text": value, "clickable": True}, [value]))
-    for value in _string_list(extra.get("visible_text")):
+    for value in filter_static_texts(extra.get("visible_text"), limit=80):
         selectors.append(({"text": value}, [value]))
     return selectors
 
 
 def _selector_from_node(node: dict[str, Any]) -> dict[str, Any]:
-    selector: dict[str, Any] = {}
-    resource_id = _clean_string(node.get("resource_id"))
-    content_desc = _clean_string(node.get("content_desc"))
-    text = _clean_string(node.get("text"))
-    xpath = _clean_string(node.get("xpath"))
-    if resource_id:
-        selector["resource_id"] = resource_id
-    if content_desc:
-        selector["content_desc"] = content_desc
-    if not selector and text:
-        selector["text"] = text
-    if not selector and xpath:
-        selector["xpath"] = xpath
-    if selector and node.get("clickable"):
-        selector["clickable"] = True
-    return selector
+    return static_selector_from_node(node) or {}
 
 
 def _node_labels(node: dict[str, Any]) -> list[str]:
@@ -994,17 +987,7 @@ def _node_selectors_for_target(target_norm: str, extra: dict[str, Any]) -> list[
         xpath = _clean_string(node.get("xpath"))
         if not any(_normalize_text(value) == target_norm for value in (text, content_desc, resource_id, xpath)):
             continue
-        selector: dict[str, Any] = {}
-        if resource_id:
-            selector["resource_id"] = resource_id
-        if content_desc:
-            selector["content_desc"] = content_desc
-        if not selector and text:
-            selector["text"] = text
-        if not selector and xpath:
-            selector["xpath"] = xpath
-        if selector and node.get("clickable"):
-            selector["clickable"] = True
+        selector = static_selector_from_node(node)
         if selector:
             selectors.append(selector)
     return selectors

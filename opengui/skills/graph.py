@@ -33,6 +33,12 @@ from opengui.skills.state_contract import (
     state_contract_fingerprint,
     state_contract_overlap,
 )
+from opengui.skills.static_selector_filter import (
+    filter_static_controls,
+    filter_static_resource_ids,
+    filter_static_texts,
+    selector_is_static,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2010,7 +2016,7 @@ def _is_canonical_state_contract(contract: dict[str, Any] | None) -> bool:
         selector = element.get("selector")
         if not isinstance(selector, dict):
             continue
-        if any(
+        if selector_is_static(selector) and any(
             _clean_index_string(selector.get(key))
             for key in ("resource_id", "content_desc", "text", "class", "xpath")
         ):
@@ -2254,9 +2260,9 @@ def _profile_selector_for_label(
         if text:
             return {"text": text}
 
-    visible = set(_normalize_profile_text_list(profile.get("visible_text"), limit=80))
-    clickable = set(_normalize_profile_text_list(profile.get("clickable_text"), limit=80))
-    content_desc = set(_normalize_profile_text_list(profile.get("content_desc"), limit=80))
+    visible = set(filter_static_texts(profile.get("visible_text"), limit=80))
+    clickable = set(filter_static_texts(profile.get("clickable_text"), limit=80))
+    content_desc = set(filter_static_texts(profile.get("content_desc"), limit=80))
     if label_norm in content_desc and (not require_clickable or label_norm in clickable):
         return {"content_desc": label_norm}
     if label_norm in visible and (not require_clickable or label_norm in clickable):
@@ -2304,65 +2310,23 @@ def _normalize_retrieval_profile(profile: dict[str, Any] | None) -> dict[str, An
         value = profile.get(key)
         if isinstance(value, str) and value.strip():
             normalized[key] = value.strip()
-    for key in ("visible_text", "clickable_text", "content_desc", "resource_ids"):
-        values = _normalize_profile_text_list(profile.get(key), limit=40)
+    for key in ("visible_text", "clickable_text", "content_desc"):
+        values = filter_static_texts(profile.get(key), limit=40)
         if values:
             normalized[key] = values
+    values = filter_static_resource_ids(profile.get("resource_ids"), limit=40)
+    if values:
+        normalized["resource_ids"] = values
     stable_controls = _normalize_stable_controls(profile.get("stable_controls"))
     if stable_controls:
         normalized["stable_controls"] = stable_controls
     return normalized or None
 
 
-def _normalize_profile_text_list(value: Any, *, limit: int) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        text = item.strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        out.append(text)
-        if len(out) >= limit:
-            break
-    return out
-
-
 def _normalize_stable_controls(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
-    controls: list[dict[str, Any]] = []
-    seen: set[tuple[str | None, str | None, str | None]] = set()
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        control: dict[str, Any] = {}
-        text = _normalize_profile_text(item.get("text"))
-        content_desc = _normalize_profile_text(item.get("content_desc"))
-        resource_id = _normalize_profile_text(item.get("resource_id"))
-        if text:
-            control["text"] = text
-        if content_desc:
-            control["content_desc"] = content_desc
-        if resource_id:
-            control["resource_id"] = resource_id
-        bounds = item.get("bounds")
-        if isinstance(bounds, str) and bounds.strip():
-            control["bounds"] = bounds.strip()
-        key = (control.get("text"), control.get("content_desc"), control.get("resource_id"))
-        if key in seen:
-            continue
-        if not any(key):
-            continue
-        seen.add(key)
-        controls.append(control)
-        if len(controls) >= 12:
-            break
-    return controls
+    return filter_static_controls(value, limit=12)
 
 
 def _normalize_profile_text(value: Any) -> str | None:
@@ -2415,24 +2379,7 @@ def _merge_stable_controls(existing: Any, incoming: Any) -> list[dict[str, Any]]
     merged: list[dict[str, Any]] = []
     seen: set[tuple[str | None, str | None, str | None]] = set()
     for source in (existing, incoming):
-        if not isinstance(source, list):
-            continue
-        for item in source:
-            if not isinstance(item, dict):
-                continue
-            control: dict[str, Any] = {}
-            text = _normalize_profile_text(item.get("text"))
-            content_desc = _normalize_profile_text(item.get("content_desc"))
-            resource_id = _normalize_profile_text(item.get("resource_id"))
-            if text:
-                control["text"] = text
-            if content_desc:
-                control["content_desc"] = content_desc
-            if resource_id:
-                control["resource_id"] = resource_id
-            bounds = item.get("bounds")
-            if isinstance(bounds, str) and bounds.strip():
-                control["bounds"] = bounds.strip()
+        for control in filter_static_controls(source, limit=12):
             key = (control.get("text"), control.get("content_desc"), control.get("resource_id"))
             if key in seen or not any(key):
                 continue
@@ -2526,15 +2473,14 @@ def _observation_profile_query_text(
         value = extra.get(key)
         if isinstance(value, str) and value.strip():
             parts.append(value.strip())
-    for key in ("visible_text", "clickable_text", "content_desc", "resource_ids"):
-        parts.extend(_normalize_profile_text_list(extra.get(key), limit=40))
+    for key in ("visible_text", "clickable_text", "content_desc"):
+        parts.extend(filter_static_texts(extra.get(key), limit=40))
+    parts.extend(filter_static_resource_ids(extra.get("resource_ids"), limit=40))
     ui_tree = extra.get("ui_tree")
     if isinstance(ui_tree, list):
-        for node in ui_tree:
-            if not isinstance(node, dict):
-                continue
+        for control in filter_static_controls(ui_tree, limit=40):
             for key in ("text", "content_desc", "resource_id"):
-                value = node.get(key)
+                value = control.get(key)
                 if isinstance(value, str) and value.strip():
                     parts.append(value.strip())
     return " ".join(_dedupe_strings(parts))

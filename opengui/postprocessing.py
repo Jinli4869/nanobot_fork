@@ -34,6 +34,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from opengui.skills.static_selector_filter import (
+    filter_static_controls,
+    filter_static_resource_ids,
+    filter_static_texts,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_FILENAME = "evaluation.json"
@@ -184,10 +190,13 @@ def _build_retrieval_profile(observation: dict[str, Any]) -> dict[str, Any]:
     if title:
         profile["page_title"] = title
     if isinstance(extra, dict):
-        for key in ("visible_text", "clickable_text", "content_desc", "resource_ids"):
-            values = _dedupe_bounded_strings(extra.get(key), limit=40)
+        for key in ("visible_text", "clickable_text", "content_desc"):
+            values = filter_static_texts(extra.get(key), limit=40)
             if values:
                 profile[key] = values
+        values = filter_static_resource_ids(extra.get("resource_ids"), limit=40)
+        if values:
+            profile["resource_ids"] = values
         stable_controls = _extract_stable_controls(extra.get("ui_tree"))
         if stable_controls:
             profile["stable_controls"] = stable_controls
@@ -206,64 +215,10 @@ def _first_text_value(observation: dict[str, Any], keys: tuple[str, ...]) -> str
     return None
 
 
-def _dedupe_bounded_strings(value: Any, *, limit: int) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    out: list[str] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, str):
-            continue
-        text = item.strip()
-        if not text or text in seen:
-            continue
-        seen.add(text)
-        out.append(text)
-        if len(out) >= limit:
-            break
-    return out
-
-
 def _extract_stable_controls(ui_tree: Any) -> list[dict[str, Any]]:
     if not isinstance(ui_tree, list):
         return []
-    controls: list[dict[str, Any]] = []
-    seen: set[tuple[str | None, str | None, str | None]] = set()
-    for node in ui_tree:
-        if not isinstance(node, dict):
-            continue
-        text = _clean_text(node.get("text"))
-        content_desc = _clean_text(node.get("content_desc"))
-        resource_id = _clean_text(node.get("resource_id"))
-        if not any((text, content_desc, resource_id)):
-            continue
-        if not (node.get("clickable") or resource_id or content_desc):
-            continue
-        key = (text, content_desc, resource_id)
-        if key in seen:
-            continue
-        seen.add(key)
-        control: dict[str, Any] = {}
-        if text:
-            control["text"] = text
-        if content_desc:
-            control["content_desc"] = content_desc
-        if resource_id:
-            control["resource_id"] = resource_id
-        bounds = node.get("bounds")
-        if isinstance(bounds, str) and bounds.strip():
-            control["bounds"] = bounds.strip()
-        controls.append(control)
-        if len(controls) >= 12:
-            break
-    return controls
-
-
-def _clean_text(value: Any) -> str | None:
-    if isinstance(value, str):
-        text = value.strip()
-        return text or None
-    return None
+    return filter_static_controls(ui_tree, limit=12)
 
 
 def _is_sparse_retrieval_profile(profile: dict[str, Any]) -> bool:
