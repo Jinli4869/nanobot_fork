@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 GRAPH_FILENAME = "skill_graph.json"
 GRAPH_EMBEDDINGS_FILENAME = "skill_graph_embeddings.npy"
 REFRESH_QUEUE_FILENAME = "skill_graph_refresh_queue.jsonl"
+TRANSITION_EVIDENCE_FILENAME = "skill_graph_transition_evidence.jsonl"
 GRAPH_VERSION = 1
 
 NODE_STATUS_ACTIVE = "active"
@@ -1425,6 +1426,23 @@ class SkillGraphStore:
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
+    def append_transition_evidence(self, payload: dict[str, Any]) -> None:
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+        record = {
+            "timestamp": time.time(),
+            "platform": payload.get("platform"),
+            "app": payload.get("app"),
+            "source_node_id": payload.get("source_node_id"),
+            "action_type": payload.get("action_type"),
+            "edge_kind": payload.get("edge_kind"),
+            "target_node_id": payload.get("target_node_id"),
+            "reason": str(payload.get("reason") or "unknown"),
+            "candidate_node_ids": list(payload.get("candidate_node_ids") or []),
+        }
+        path = self.store_dir / TRANSITION_EVIDENCE_FILENAME
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+
     def _find_exact_node(self, node: GraphNode) -> GraphNode | None:
         for existing in self._nodes.values():
             if existing.platform != node.platform or existing.app != node.app:
@@ -1946,6 +1964,8 @@ class PathCompiler:
         node = self.store.get_node(node_id)
         include_auxiliary_source = bool(node is not None and node.kind == NODE_KIND_AUXILIARY)
         for edge in self.store.outgoing_edges(node_id, include_auxiliary_source=include_auxiliary_source):
+            if edge.kind != "action":
+                continue
             if edge.source_node_id == edge.target_node_id:
                 continue
             target = self.store.get_node(edge.target_node_id)

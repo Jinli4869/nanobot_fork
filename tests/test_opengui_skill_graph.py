@@ -2431,6 +2431,103 @@ def test_skill_graph_store_appends_refresh_trigger(tmp_path: Path) -> None:
     assert record["allowed_outputs"] == ["patch_contract", "spawn_version", "add_edge"]
 
 
+def test_path_compiler_ignores_navigation_edges(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    home = store.upsert_node(
+        GraphNode(
+            node_id="node-home",
+            app="com.example.app",
+            platform="android",
+            description="Home screen",
+            state_contract=_contract("Home", clickable=True),
+            fingerprint="fp-home",
+        )
+    )
+    middle = store.upsert_node(
+        GraphNode(
+            node_id="node-middle",
+            app="com.example.app",
+            platform="android",
+            description="Middle page",
+            state_contract=_contract("Middle", clickable=True),
+            fingerprint="fp-middle",
+        )
+    )
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Target page",
+            state_contract=_contract("Target", clickable=True),
+            fingerprint="fp-target",
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-home-middle",
+            app="com.example.app",
+            platform="android",
+            source_node_id=home.node_id,
+            target_node_id=middle.node_id,
+            action_type="tap",
+            target="Middle",
+            precondition=home.state_contract,
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-middle-target",
+            app="com.example.app",
+            platform="android",
+            source_node_id=middle.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Target",
+            precondition=middle.state_contract,
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-home-target-nav",
+            app="com.example.app",
+            platform="android",
+            source_node_id=home.node_id,
+            target_node_id=target.node_id,
+            action_type="back",
+            target="Back",
+            kind="navigation_back",
+            precondition=home.state_contract,
+        )
+    )
+
+    path = PathCompiler(store).compile(home.node_id, target.node_id)
+
+    assert [edge.edge_id for edge in path.edges] == ["edge-home-middle", "edge-middle-target"]
+
+
+def test_append_transition_evidence_writes_jsonl(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    store.append_transition_evidence(
+        {
+            "platform": "android",
+            "app": "com.example.app",
+            "source_node_id": "node-home",
+            "action_type": "back",
+            "edge_kind": "navigation_back",
+            "target_node_id": None,
+            "reason": "navigation_target_unknown",
+            "candidate_node_ids": [],
+        }
+    )
+
+    path = tmp_path / "graph" / "skill_graph_transition_evidence.jsonl"
+    record = json.loads(path.read_text(encoding="utf-8").strip().splitlines()[-1])
+
+    assert record["reason"] == "navigation_target_unknown"
+    assert record["edge_kind"] == "navigation_back"
+
+
 @pytest.mark.asyncio
 async def test_skill_reuser_ignores_graph_store_without_flat_candidates(tmp_path: Path) -> None:
     store_dir = tmp_path / "skills"
