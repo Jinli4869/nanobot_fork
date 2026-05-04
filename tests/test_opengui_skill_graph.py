@@ -1410,6 +1410,97 @@ def test_sanitize_canonical_graph_promotes_deprecated_edges_to_active_version(tm
     assert store.get_edge(edge.edge_id).status == EDGE_STATUS_ACTIVE
 
 
+def test_sanitize_canonical_graph_persists_promoted_deprecated_edge_stats(tmp_path: Path) -> None:
+    store_dir = tmp_path / "graph"
+    store = SkillGraphStore(store_dir=store_dir)
+    profile = {
+        "visible_text": ["Profile", "Mall", "Orders"],
+        "clickable_text": ["Profile", "Mall", "Orders"],
+    }
+    active_profile = store.upsert_node(
+        GraphNode(
+            node_id="node-profile-active",
+            app="com.example.app",
+            platform="android",
+            description="Profile page is visible",
+            state_contract=_contract("Orders", clickable=True),
+            fingerprint="fp-profile-active",
+            retrieval_profile=profile,
+        )
+    )
+    legacy_profile = store.upsert_node(
+        GraphNode(
+            node_id="node-profile-legacy",
+            app="com.example.app",
+            platform="android",
+            description="Legacy profile page is visible",
+            state_contract=_contract("Mall", clickable=True),
+            status=NODE_STATUS_DEPRECATED,
+            fingerprint="fp-profile-legacy",
+            retrieval_profile=profile,
+        )
+    )
+    cart = store.upsert_node(
+        GraphNode(
+            node_id="node-cart",
+            app="com.example.app",
+            platform="android",
+            description="Cart page is loaded",
+            state_contract=_contract("Cart", clickable=True, resource_id="com.example:id/cart"),
+            fingerprint="fp-cart",
+        )
+    )
+    stats = EdgeStats(
+        attempt_count=7,
+        success_count=5,
+        last_attempt_at=1234.5,
+        last_success_at=1235.5,
+        avg_latency_ms=456.7,
+        failure_reason_counts={"stale_state": 2},
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-legacy-mall",
+            app="com.example.app",
+            platform="android",
+            source_node_id=legacy_profile.node_id,
+            target_node_id=cart.node_id,
+            action_type="tap",
+            target="Mall",
+            precondition=legacy_profile.state_contract,
+            stats=stats,
+        )
+    )
+
+    counts = store.sanitize_canonical_graph()
+
+    assert counts == {"nodes": 0, "edges": 0}
+    payload = json.loads((store_dir / "skill_graph.json").read_text(encoding="utf-8"))
+    persisted_promoted_edges = [
+        edge
+        for edge in payload["edges"]
+        if edge["source_node_id"] == active_profile.node_id
+        and edge["target_node_id"] == cart.node_id
+        and edge["action_type"] == "tap"
+    ]
+    assert persisted_promoted_edges
+
+    reloaded = SkillGraphStore(store_dir=store_dir)
+    reloaded_edges = [
+        edge
+        for edge in reloaded.outgoing_edges(active_profile.node_id)
+        if edge.target_node_id == cart.node_id and edge.action_type == "tap"
+    ]
+    assert reloaded_edges
+    reloaded_stats = reloaded_edges[0].stats
+    assert reloaded_stats.attempt_count == 7
+    assert reloaded_stats.success_count == 5
+    assert reloaded_stats.last_attempt_at == 1234.5
+    assert reloaded_stats.last_success_at == 1235.5
+    assert reloaded_stats.avg_latency_ms == 456.7
+    assert reloaded_stats.failure_reason_counts == {"stale_state": 2}
+
+
 def test_path_compiler_rejects_zero_length_auxiliary_path(tmp_path: Path) -> None:
     store = SkillGraphStore(store_dir=tmp_path / "graph")
     auxiliary = store.upsert_node(

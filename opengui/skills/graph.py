@@ -651,7 +651,7 @@ class SkillGraphStore:
                 self._edges[edge.edge_id] = replace(edge, status=EDGE_STATUS_DISABLED)
                 counts["edges"] += 1
 
-        if save and (counts["nodes"] or counts["edges"]):
+        if save and (counts["nodes"] or counts["edges"] or deprecated_promotions):
             self.save()
         if counts["nodes"] or counts["edges"] or deprecated_promotions:
             self._mark_index_dirty()
