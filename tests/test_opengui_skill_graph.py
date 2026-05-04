@@ -821,6 +821,149 @@ def test_sanitize_canonical_graph_disables_same_node_state_edges(tmp_path: Path)
     assert store.get_edge(loop.edge_id).status == EDGE_STATUS_DISABLED
 
 
+def test_sanitize_canonical_graph_merges_duplicate_active_state_nodes(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    survivor = GraphNode(
+        node_id="node-b",
+        app="com.example.app",
+        platform="android",
+        description="Home screen duplicate with more context",
+        state_contract=_contract("Home", clickable=True),
+        stats=NodeStats(reach_count=8, contract_match_count=5, contract_miss_count=2),
+        skill_ids=("skill-b",),
+        retrieval_profile={"page_summary": "Landing page"},
+        fingerprint="fp-home",
+    ).normalized()
+    loser = GraphNode(
+        node_id="node-a",
+        app="com.example.app",
+        platform="android",
+        description="Home screen",
+        state_contract=_contract("Home", clickable=True),
+        stats=NodeStats(reach_count=3, contract_match_count=1, contract_miss_count=1),
+        skill_ids=("skill-a",),
+        retrieval_profile={"page_title": "Home"},
+        fingerprint="fp-home",
+    ).normalized()
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Settings screen",
+            state_contract=_contract("Settings", clickable=True),
+            fingerprint="fp-settings",
+        )
+    )
+    store._nodes[survivor.node_id] = survivor
+    store._nodes[loser.node_id] = loser
+    edge = store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-from-loser",
+            app="com.example.app",
+            platform="android",
+            source_node_id=loser.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Settings",
+            precondition=loser.state_contract,
+            stats=EdgeStats(attempt_count=4, success_count=2),
+        )
+    )
+
+    counts = store.sanitize_canonical_graph()
+
+    assert counts["nodes"] == 1
+    assert counts["edges"] == 1
+    assert store.get_node(survivor.node_id) is not None
+    assert store.get_node(loser.node_id) is None
+    assert store.get_node(survivor.node_id).skill_ids == ("skill-b", "skill-a")
+    assert store.get_node(survivor.node_id).stats.reach_count == 11
+    assert store.get_node(survivor.node_id).retrieval_profile == {
+        "page_summary": "Landing page",
+        "page_title": "Home",
+    }
+    rewritten = store.get_edge(edge.edge_id)
+    assert rewritten is not None
+    assert rewritten.source_node_id == survivor.node_id
+    assert rewritten.target_node_id == target.node_id
+
+
+def test_sanitize_canonical_graph_merges_duplicate_edges_during_node_compaction(tmp_path: Path) -> None:
+    store = SkillGraphStore(store_dir=tmp_path / "graph")
+    survivor = GraphNode(
+        node_id="node-b",
+        app="com.example.app",
+        platform="android",
+        description="Home screen duplicate with more context",
+        state_contract=_contract("Home", clickable=True),
+        stats=NodeStats(reach_count=8, contract_match_count=5, contract_miss_count=2),
+        skill_ids=("skill-b",),
+        retrieval_profile={"page_summary": "Landing page"},
+        fingerprint="fp-home",
+    ).normalized()
+    loser = GraphNode(
+        node_id="node-a",
+        app="com.example.app",
+        platform="android",
+        description="Home screen",
+        state_contract=_contract("Home", clickable=True),
+        stats=NodeStats(reach_count=3, contract_match_count=1, contract_miss_count=1),
+        skill_ids=("skill-a",),
+        retrieval_profile={"page_title": "Home"},
+        fingerprint="fp-home",
+    ).normalized()
+    target = store.upsert_node(
+        GraphNode(
+            node_id="node-target",
+            app="com.example.app",
+            platform="android",
+            description="Settings screen",
+            state_contract=_contract("Settings", clickable=True),
+            fingerprint="fp-settings",
+        )
+    )
+    store._nodes[survivor.node_id] = survivor
+    store._nodes[loser.node_id] = loser
+    survivor_edge = store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-from-survivor",
+            app="com.example.app",
+            platform="android",
+            source_node_id=survivor.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Settings",
+            precondition=survivor.state_contract,
+            stats=EdgeStats(attempt_count=6, success_count=4),
+        )
+    )
+    loser_edge = store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-from-loser",
+            app="com.example.app",
+            platform="android",
+            source_node_id=loser.node_id,
+            target_node_id=target.node_id,
+            action_type="tap",
+            target="Settings",
+            precondition=loser.state_contract,
+            stats=EdgeStats(attempt_count=4, success_count=2),
+        )
+    )
+
+    counts = store.sanitize_canonical_graph()
+
+    assert counts["nodes"] == 1
+    assert counts["edges"] == 1
+    active_edges = store.list_edges(platform="android", app="com.example.app", status=EDGE_STATUS_ACTIVE)
+    assert len(active_edges) == 1
+    assert active_edges[0].source_node_id == survivor.node_id
+    assert active_edges[0].target_node_id == target.node_id
+    assert store.get_edge(survivor_edge.edge_id) is not None
+    assert store.get_edge(loser_edge.edge_id) is None
+
+
 def test_canonicality_report_blocks_unanchored_state_nodes(tmp_path: Path) -> None:
     store = SkillGraphStore(store_dir=tmp_path / "graph")
     legacy = GraphNode(

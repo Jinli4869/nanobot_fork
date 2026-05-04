@@ -546,6 +546,90 @@ class SkillGraphStore:
             raise
         self._save_embeddings()
 
+    def compact_canonical_graph(self, save: bool = True) -> dict[str, int]:
+        """Merge exact duplicate active state nodes into a single survivor."""
+        counts = {"nodes": 0, "edges": 0}
+        groups: dict[tuple[str, str, str, str], list[GraphNode]] = {}
+        for node in self._nodes.values():
+            if (
+                node.kind != NODE_KIND_STATE
+                or node.status != NODE_STATUS_ACTIVE
+                or not node.fingerprint
+                or not _is_canonical_state_contract(node.state_contract)
+            ):
+                continue
+            groups.setdefault((node.platform, node.app, node.kind, node.fingerprint), []).append(node)
+
+        alias_map: dict[str, str] = {}
+        survivor_updates: dict[str, GraphNode] = {}
+        touched_apps: set[tuple[str, str]] = set()
+
+        for nodes in groups.values():
+            if len(nodes) < 2:
+                continue
+            ranked = sorted(nodes, key=_exact_merge_rank_key)
+            survivor = ranked[0]
+            merged = survivor
+            for loser in ranked[1:]:
+                merged = _merge_nodes_for_exact_compaction(merged, loser)
+                alias_map[loser.node_id] = survivor.node_id
+                touched_apps.add((survivor.platform, survivor.app))
+                counts["nodes"] += 1
+            survivor_updates[survivor.node_id] = merged
+
+        if not alias_map:
+            return counts
+
+        for node_id, updated in survivor_updates.items():
+            self._nodes[node_id] = updated
+
+        for loser_id in alias_map:
+            self._embeddings.pop(loser_id, None)
+            self._nodes.pop(loser_id, None)
+
+        for edge in list(self._edges.values()):
+            source_node_id = alias_map.get(edge.source_node_id, edge.source_node_id)
+            target_node_id = alias_map.get(edge.target_node_id, edge.target_node_id)
+            if source_node_id == target_node_id:
+                self._edges.pop(edge.edge_id, None)
+                counts["edges"] += 1
+                continue
+            source = self._nodes.get(source_node_id)
+            precondition = source.state_contract if source and source.state_contract else edge.precondition
+            existing_equivalent = None
+            for candidate in self.list_edges(platform=edge.platform, app=edge.app, status=EDGE_STATUS_ACTIVE):
+                if (
+                    candidate.source_node_id == source_node_id
+                    and candidate.target_node_id == target_node_id
+                    and candidate.action_type == edge.action_type
+                    and candidate.target == edge.target
+                ):
+                    existing_equivalent = candidate
+                    break
+            rewritten = replace(
+                edge,
+                source_node_id=source_node_id,
+                target_node_id=target_node_id,
+                precondition=precondition,
+            )
+            if existing_equivalent is not None and existing_equivalent.edge_id != edge.edge_id:
+                self._edges[existing_equivalent.edge_id] = _merge_edges(existing_equivalent, rewritten)
+                self._edges.pop(edge.edge_id, None)
+                counts["edges"] += 1
+                continue
+            if source_node_id == edge.source_node_id and target_node_id == edge.target_node_id:
+                continue
+            self._edges[edge.edge_id] = rewritten
+            counts["edges"] += 1
+
+        for platform, app in touched_apps:
+            self._mark_index_dirty(platform=platform, app=app)
+        if save and (counts["nodes"] or counts["edges"]):
+            self.save()
+        if counts["nodes"] or counts["edges"]:
+            self._mark_index_dirty()
+        return counts
+
     def sanitize_canonical_graph(self, save: bool = True) -> dict[str, int]:
         """Move non-contract artifacts out of canonical state pathing."""
         counts = {"nodes": 0, "edges": 0}
@@ -626,6 +710,10 @@ class SkillGraphStore:
                     kind=NODE_KIND_AUXILIARY,
                 )
                 counts["nodes"] += 1
+
+        compacted = self.compact_canonical_graph(save=False)
+        counts["nodes"] += compacted["nodes"]
+        counts["edges"] += compacted["edges"]
 
         for edge in list(self._edges.values()):
             source = self._nodes.get(edge.source_node_id)
@@ -2604,6 +2692,48 @@ def _merge_nodes(existing: GraphNode, incoming: GraphNode) -> GraphNode:
         stats=stats,
         kind=existing.kind,
         skill_ids=skill_ids,
+        fingerprint=existing.fingerprint or incoming.fingerprint,
+        dismiss_action=existing.dismiss_action or incoming.dismiss_action,
+        resume_policy=existing.resume_policy or incoming.resume_policy,
+        retrieval_profile=_merge_retrieval_profiles(existing.retrieval_profile, incoming.retrieval_profile),
+    )
+
+
+def _exact_merge_rank_key(node: GraphNode) -> tuple[float, float, float, str]:
+    last_verified = node.stats.last_verified_at if node.stats.last_verified_at is not None else float("-inf")
+    return (
+        -node.stats.contract_match_rate,
+        -float(node.stats.reach_count),
+        -float(last_verified),
+        node.node_id,
+    )
+
+
+def _merge_nodes_for_exact_compaction(existing: GraphNode, incoming: GraphNode) -> GraphNode:
+    return GraphNode(
+        node_id=existing.node_id,
+        app=existing.app,
+        platform=existing.platform,
+        description=existing.description if len(existing.description) >= len(incoming.description) else incoming.description,
+        state_contract=existing.state_contract or incoming.state_contract,
+        version=existing.version,
+        status=existing.status,
+        superseded_by=existing.superseded_by,
+        stats=NodeStats(
+            reach_count=existing.stats.reach_count + incoming.stats.reach_count,
+            contract_match_count=existing.stats.contract_match_count + incoming.stats.contract_match_count,
+            contract_miss_count=existing.stats.contract_miss_count + incoming.stats.contract_miss_count,
+            last_seen_at=max(
+                [value for value in (existing.stats.last_seen_at, incoming.stats.last_seen_at) if value is not None],
+                default=None,
+            ),
+            last_verified_at=max(
+                [value for value in (existing.stats.last_verified_at, incoming.stats.last_verified_at) if value is not None],
+                default=None,
+            ),
+        ),
+        kind=existing.kind,
+        skill_ids=tuple(_dedupe_strings(existing.skill_ids + incoming.skill_ids)),
         fingerprint=existing.fingerprint or incoming.fingerprint,
         dismiss_action=existing.dismiss_action or incoming.dismiss_action,
         resume_policy=existing.resume_policy or incoming.resume_policy,
