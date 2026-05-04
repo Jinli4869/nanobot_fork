@@ -734,7 +734,6 @@ class SkillGraphStore:
                 and successor.kind == NODE_KIND_STATE
                 and successor.status == NODE_STATUS_ACTIVE
                 and _is_canonical_state_contract(successor.state_contract)
-                and candidate_score(successor) >= 0.25
             ):
                 return successor
 

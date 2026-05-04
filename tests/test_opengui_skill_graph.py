@@ -1410,19 +1410,19 @@ def test_sanitize_canonical_graph_promotes_deprecated_edges_to_active_version(tm
     assert store.get_edge(edge.edge_id).status == EDGE_STATUS_ACTIVE
 
 
-def test_sanitize_canonical_graph_persists_promoted_explicit_successor_edge_stats(tmp_path: Path) -> None:
+def test_sanitize_canonical_graph_persists_low_similarity_explicit_successor_edge_stats(tmp_path: Path) -> None:
     store_dir = tmp_path / "graph"
     store = SkillGraphStore(store_dir=store_dir)
     profile = {
-        "visible_text": ["Profile", "Mall", "Orders"],
-        "clickable_text": ["Profile", "Mall", "Orders"],
+        "visible_text": ["Inbox", "Messages", "Archive"],
+        "clickable_text": ["Inbox", "Messages", "Archive"],
     }
     active_profile = store.upsert_node(
         GraphNode(
             node_id="node-profile-active",
             app="com.example.app",
             platform="android",
-            description="Profile page is visible",
+            description="Orders dashboard is visible",
             state_contract=_contract("Orders", clickable=True),
             fingerprint="fp-profile-active",
             retrieval_profile=profile,
@@ -1433,8 +1433,8 @@ def test_sanitize_canonical_graph_persists_promoted_explicit_successor_edge_stat
             node_id="node-profile-legacy",
             app="com.example.app",
             platform="android",
-            description="Legacy profile page is visible",
-            state_contract=_contract("Mall", clickable=True),
+            description="Legacy inbox page is visible",
+            state_contract=_contract("Archive", clickable=True),
             status=NODE_STATUS_DEPRECATED,
             superseded_by=active_profile.node_id,
             fingerprint="fp-profile-legacy",
@@ -1467,7 +1467,7 @@ def test_sanitize_canonical_graph_persists_promoted_explicit_successor_edge_stat
             source_node_id=legacy_profile.node_id,
             target_node_id=cart.node_id,
             action_type="tap",
-            target="Mall",
+            target="Cart",
             precondition=legacy_profile.state_contract,
             stats=stats,
         )
