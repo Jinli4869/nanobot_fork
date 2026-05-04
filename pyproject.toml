@@ -216,3 +216,8 @@ markers = [
     "input_text_is_redacted: Phase 15 typed input trace scrubbing coverage",
 
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.7",
+]
