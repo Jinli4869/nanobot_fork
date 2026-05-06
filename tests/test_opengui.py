@@ -2580,18 +2580,11 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     assert "Please generate the next move according to the UI screenshot, instruction and previous actions." in history_text
     assert "Instruction: Open Settings" in history_text
     assert "Previous actions:\nStep 1: wait briefly" in history_text
+    assert "Step 2: wait again" in history_text
 
-    assert third_call[2]["content"] == "Action: wait again"
-    assert third_call[3]["content"] == "[dry-run] wait 1 ms"
-
-    current_user = third_call[4]
-    current_text = "\n".join(
-        block["text"]
-        for block in current_user["content"]
-        if block.get("type") == "text"
-    )
-    assert "Step 3" in current_text
-    assert "Task: Open Settings" in current_text
+    assert len(third_call) == 2
+    assert "Step 3" in history_text
+    assert "Task: Open Settings" in history_text
 
 
 @pytest.mark.asyncio
