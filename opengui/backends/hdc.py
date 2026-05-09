@@ -269,10 +269,10 @@ class HdcBackend:
         )
 
         # --- Convert JPEG → PNG (non-blocking, PIL in thread) ---
-        Image = _import_pil_image()
+        image_module = _import_pil_image()
 
         def _convert() -> None:
-            with Image.open(str(jpeg_path)) as img:
+            with image_module.open(str(jpeg_path)) as img:
                 img.save(str(screenshot_path), format="PNG")
             jpeg_path.unlink(missing_ok=True)
 

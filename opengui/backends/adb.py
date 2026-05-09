@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import inspect
 import importlib.resources
+import inspect
 import os
 import re
 import struct
@@ -354,12 +354,12 @@ def _escape_shell_text(text: str) -> str:
     # Android's `input text` command treats `%s` as a space placeholder.
     # We are not invoking a shell here, so `\ ` would be passed literally and
     # can cause whitespace truncation on device-side parsing.
-    _SPECIAL = frozenset(r'\`$"!&|<>(){}[];#~*?^')
+    special_chars = frozenset(r'\`$"!&|<>(){}[];#~*?^')
     escaped: list[str] = []
     for ch in text:
         if ch == " ":
             escaped.append("%s")
-        elif ch in _SPECIAL:
+        elif ch in special_chars:
             escaped.append("\\" + ch)
         else:
             escaped.append(ch)
@@ -547,7 +547,7 @@ class AdbBackend:
             if not serial_ready:
                 raise AdbError(f"Device {self._serial!r} not found in 'adb devices'.")
         else:
-            ready = [l for l in device_lines if l.split("\t", 1)[-1].strip() == "device"]
+            ready = [line for line in device_lines if line.split("\t", 1)[-1].strip() == "device"]
             if not ready:
                 raise AdbError("No Android device found. Connect a device or start an emulator.")
 
@@ -565,7 +565,7 @@ class AdbBackend:
         small set of commonly-used system packages so the LLM can resolve
         human-readable names like "Settings" to ``com.android.settings``.
         """
-        _COMMON_SYSTEM_PACKAGES = [
+        common_system_packages = [
             "com.android.settings",
             "com.android.contacts",
             "com.android.dialer",
@@ -590,7 +590,7 @@ class AdbBackend:
         try:
             output = await self._run("shell", "pm", "list", "packages", "-3", timeout=10.0)
         except (AdbError, TimeoutError):
-            return list(_COMMON_SYSTEM_PACKAGES)
+            return list(common_system_packages)
 
         packages: list[str] = []
         for line in output.splitlines():
@@ -599,7 +599,7 @@ class AdbBackend:
                 packages.append(line[len("package:"):])
         # Merge common system packages (deduplicated, order preserved)
         seen = set(packages)
-        for pkg in _COMMON_SYSTEM_PACKAGES:
+        for pkg in common_system_packages:
             if pkg not in seen:
                 packages.append(pkg)
                 seen.add(pkg)
