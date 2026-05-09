@@ -16,13 +16,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 from opengui.action import Action, describe_action, resolve_coordinate
 from opengui.observation import Observation
-
-if TYPE_CHECKING:
-    import wda as _wda_module
 
 logger = logging.getLogger(__name__)
 
