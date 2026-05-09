@@ -179,6 +179,43 @@ def test_parse_action_maps_stringified_coordinate_alias_pair() -> None:
     assert action.y == 503.0
 
 
+def test_relative_observation_prompt_normalizes_ui_tree_bounds_without_screen_resolution() -> None:
+    observation = Observation(
+        screenshot_path=None,
+        screen_width=488,
+        screen_height=1080,
+        foreground_app="com.example",
+        platform="android",
+        extra={
+            "capture_source": "scrcpy",
+            "ui_tree": [
+                {"class": "android.widget.FrameLayout", "bounds": "[0,0][1080,2376]"},
+                {
+                    "text": "我的订单",
+                    "class": "android.widget.TextView",
+                    "bounds": "[258,723][390,768]",
+                },
+            ],
+        },
+    )
+
+    text = observation.to_user_text(
+        "open orders",
+        step_index=4,
+        coordinate_instruction="Use relative coordinates in [0, 999] for both x and y, and set relative=true.",
+    )
+
+    assert "Screen:" not in text
+    assert "488 x 1080" not in text
+    assert "Platform: android" in text
+    assert "'bounds':" not in text
+    assert '"bounds":' not in text
+    assert "relative_bounds" in text
+    assert "[0,0][999,999]" in text
+    assert "[239,304][361,323]" in text
+    assert "[258,723][390,768]" not in text
+
+
 def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
     action = parse_action({
         "action_type": "swipe",
