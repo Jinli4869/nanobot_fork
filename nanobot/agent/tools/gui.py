@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -410,6 +410,7 @@ class GuiSubagentTool(Tool):
             return {}
 
         latest_step: dict[str, Any] = {}
+        latest_observed_step: dict[str, Any] = {}
         try:
             with open(trace_path, encoding="utf-8") as handle:
                 for raw_line in handle:
@@ -420,11 +421,37 @@ class GuiSubagentTool(Tool):
                         event = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(event, dict) and event.get("type") == "step":
+                    if isinstance(event, dict) and (event.get("type") == "step" or event.get("event") == "step"):
                         latest_step = event
+                        if GuiSubagentTool._step_has_observation_evidence(event):
+                            latest_observed_step = event
         except OSError:
             logger.warning("Could not read GUI trace for post-run state: %s", trace_path, exc_info=True)
+        if latest_step and latest_observed_step and latest_step is not latest_observed_step:
+            merged = dict(latest_step)
+            if not merged.get("screenshot_path"):
+                screenshot_path = latest_observed_step.get("screenshot_path")
+                if not screenshot_path:
+                    observation = GuiSubagentTool._extract_latest_observation(latest_observed_step)
+                    screenshot_path = observation.get("screenshot_path")
+                if screenshot_path:
+                    merged["screenshot_path"] = screenshot_path
+            if not merged.get("observation"):
+                observation = GuiSubagentTool._extract_latest_observation(latest_observed_step)
+                if observation:
+                    merged["observation"] = observation
+            latest_step = merged
         return latest_step
+
+    @staticmethod
+    def _step_has_observation_evidence(step_event: dict[str, Any]) -> bool:
+        if step_event.get("screenshot_path") or isinstance(step_event.get("observation"), dict):
+            return True
+        execution = step_event.get("execution")
+        if isinstance(execution, dict) and isinstance(execution.get("next_observation"), dict):
+            return True
+        prompt = step_event.get("prompt")
+        return isinstance(prompt, dict) and isinstance(prompt.get("current_observation"), dict)
 
     @staticmethod
     def _extract_latest_observation(step_event: dict[str, Any]) -> dict[str, Any]:

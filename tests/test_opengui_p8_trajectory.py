@@ -237,7 +237,7 @@ async def test_gui_tool_returns_post_run_state_from_latest_trace_step(
     assert post_run_state["last_action"]["action_type"] == "done"
     assert post_run_state["screen_resolution"] == "1080x1920"
     assert post_run_state["last_foreground_app"] == "DryRun"
-    assert "Latest visible app: DryRun." in post_run_state["current_state"]
+    assert "Current: DryRun" in post_run_state["current_state"]
 
 
 @pytest.mark.asyncio
@@ -332,8 +332,6 @@ async def test_summarizer_skipped_when_no_trace(
     # and we need to ensure the recorder itself returns None for its path.
     # Patch recorder.path to be None via monkeypatching the recorder class.
     from opengui.trajectory import recorder as rec_module
-
-    original_path_property = rec_module.TrajectoryRecorder.path.fget  # type: ignore[attr-defined]
 
     monkeypatch.setattr(
         rec_module.TrajectoryRecorder,
