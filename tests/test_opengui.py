@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import copy
-import json
-import tomllib
 import asyncio
 import base64
+import copy
 import io
+import json
+import tomllib
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -335,12 +335,12 @@ def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
     assert "native tool-calling mechanism" in prompt
 
 
-def test_default_profile_tool_definition_requires_summary() -> None:
+def test_default_profile_tool_definition_requires_intent_and_summary() -> None:
     params = profile_tool_definition("default")["function"]["parameters"]
 
-    assert params["required"] == ["action_type", "summary"]
-    assert "summary" in params["properties"]
-    assert "intent" in params["properties"]
+    assert params["required"] == ["action_type", "intent", "summary"]
+    assert "purpose of the selected next action" in params["properties"]["intent"]["description"]
+    assert "current task progress" in params["properties"]["summary"]["description"]
 
 
 def test_build_system_prompt_supports_general_e2e_profile() -> None:
@@ -2577,9 +2577,9 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
         for block in history_user["content"]
         if block.get("type") == "text"
     )
-    assert "Please generate the next move according to the UI screenshot, instruction and previous actions." in history_text
+    assert "Please generate the next move according to the UI screenshot, instruction and recent progress context." in history_text
     assert "Instruction: Open Settings" in history_text
-    assert "Previous actions:\nStep 1: wait briefly" in history_text
+    assert "Recent intents:\nStep 1: wait briefly" in history_text
     assert "Step 2: wait again" in history_text
 
     assert len(third_call) == 2
@@ -2599,7 +2599,8 @@ async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path:
                     "action_type": "tap",
                     "x": 500,
                     "y": 250,
-                    "summary": "tap login button",
+                    "intent": "tap login button",
+                    "summary": "login page is open; login button is visible",
                 },
             )],
         ),
@@ -2611,7 +2612,8 @@ async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path:
                 arguments={
                     "action_type": "done",
                     "status": "success",
-                    "summary": "finish login flow",
+                    "intent": "finish login flow",
+                    "summary": "login flow is complete",
                 },
             )],
         ),
@@ -2629,14 +2631,99 @@ async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path:
     result = await agent.run("Open Login")
 
     assert result.success
-    assert result.model_summary == "finish login flow"
+    assert result.model_summary == "login flow is complete"
     second_call = llm.calls[1]
     history_text = "\n".join(
         block["text"]
         for block in second_call[1]["content"]
         if block.get("type") == "text"
     )
-    assert "Step 1: tap login button" in history_text
+    assert "Recent intents:\nStep 1: tap login button" in history_text
+    assert "Latest state summary: login page is open; login button is visible" in history_text
+
+    trace_path = next((tmp_path / "runs").glob("*/trace.jsonl"))
+    step_events = [
+        json.loads(line)
+        for line in trace_path.read_text(encoding="utf-8").splitlines()
+        if '"event": "step"' in line
+    ]
+    assert step_events[0]["action_intent"] == "tap login button"
+    assert step_events[0]["state_summary"] == "login page is open; login button is visible"
+    assert step_events[1]["model_output"]["action_intent"] == "finish login flow"
+    assert step_events[1]["model_output"]["state_summary"] == "login flow is complete"
+
+    mobileworld_trace_path = trace_path.with_name("traj.json")
+    mobileworld_trace = json.loads(mobileworld_trace_path.read_text(encoding="utf-8"))
+    traj = mobileworld_trace["0"]["traj"]
+    assert traj[0]["task_goal"] == "Open Login"
+    assert traj[0]["step"] == 1
+    assert traj[0]["prediction"] == "Action: tap login button"
+    assert traj[0]["action"]["action_type"] == "tap"
+    assert traj[0]["intent"] == "tap login button"
+    assert traj[0]["summary"] == "login page is open; login button is visible"
+    assert traj[0]["tool_call"]["name"] == "computer_use"
+    assert traj[0]["tool_call"]["arguments"]["intent"] == "tap login button"
+    assert traj[0]["screenshot"].startswith("screenshots/")
+    assert traj[0]["marked_screenshot"].startswith("marked_screenshots/")
+    assert (trace_path.parent / traj[0]["marked_screenshot"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_agent_prompt_uses_last_eight_intents_and_latest_summary(tmp_path: Path) -> None:
+    responses = [
+        LLMResponse(
+            content=f"Action: Step {index}",
+            tool_calls=[ToolCall(
+                id=f"call-{index}",
+                name="computer_use",
+                arguments={
+                    "action_type": "wait",
+                    "duration_ms": 1,
+                    "intent": f"intent {index}",
+                    "summary": f"summary {index}",
+                },
+            )],
+        )
+        for index in range(1, 10)
+    ]
+    responses.append(LLMResponse(
+        content="Action: Finish task",
+        tool_calls=[ToolCall(
+            id="call-10",
+            name="computer_use",
+            arguments={
+                "action_type": "done",
+                "status": "success",
+                "intent": "finish task",
+                "summary": "task complete",
+            },
+        )],
+    ))
+    llm = _RecordingLLM(responses)
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "intent window"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=10,
+        history_image_window=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Open Settings")
+
+    assert result.success
+    tenth_call = llm.calls[9]
+    prompt_text = "\n".join(
+        block["text"]
+        for block in tenth_call[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Recent intents:" in prompt_text
+    assert "Step 1: intent 1" not in prompt_text
+    for index in range(2, 10):
+        assert f"Step {index}: intent {index}" in prompt_text
+    assert "Latest state summary: summary 9" in prompt_text
 
 
 @pytest.mark.asyncio
