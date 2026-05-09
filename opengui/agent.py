@@ -28,9 +28,9 @@ from opengui.agent_profiles import (
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
     normalize_profile_response,
-    prompt_contract_for_profile,
     profile_tool_definition,
     profile_uses_native_tools,
+    prompt_contract_for_profile,
 )
 from opengui.interfaces import (
     DeviceBackend,
@@ -41,9 +41,9 @@ from opengui.interfaces import (
     ProgressCallback,
     ToolCall,
 )
-from opengui.skills.normalization import normalize_app_identifier
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
+from opengui.skills.normalization import normalize_app_identifier
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from opengui.trajectory.summarizer import build_state_note, is_state_note
 
@@ -79,6 +79,8 @@ class StepResult:
     tool_result: str
     assistant_message: dict[str, Any]
     action_summary: str
+    action_intent: str | None = None
+    state_summary: str | None = None
     next_observation: Observation | None = None
     action_debug: dict[str, Any] | None = None
     prompt_snapshot: dict[str, Any] | None = None
@@ -101,6 +103,8 @@ class HistoryTurn:
     assistant_message: dict[str, Any]
     tool_result_message: dict[str, Any]
     action_summary: str
+    action_intent: str | None = None
+    state_summary: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,13 +169,13 @@ def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
     _text = {"text": {"type": "string", "description": "Text input or app identifier."}}
     _dur = {"duration_ms": {"type": "integer", "description": "Duration in ms."}}
     _summary = {
-        "summary": {
-            "type": "string",
-            "description": "One short natural-language description of what the action intends to do.",
-        },
         "intent": {
             "type": "string",
-            "description": "Alias for summary.",
+            "description": "The purpose of the selected next action.",
+        },
+        "summary": {
+            "type": "string",
+            "description": "The current task progress and visible UI state.",
         },
     }
 
@@ -242,13 +246,16 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
                 "duration_ms": {"type": "integer", "description": "Duration in ms."},
                 "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
                 "status": {"type": "string", "enum": ["success", "failure"], "description": "For done action."},
+                "intent": {
+                    "type": "string",
+                    "description": "The purpose of the selected next action.",
+                },
                 "summary": {
                     "type": "string",
-                    "description": "One short natural-language description of what the action intends to do.",
+                    "description": "The current task progress and visible UI state.",
                 },
-                "intent": {"type": "string", "description": "Alias for summary."},
             },
-            "required": ["action_type", "summary"],
+            "required": ["action_type", "intent", "summary"],
         },
     },
 }
@@ -449,7 +456,7 @@ class _AgentSubgoalRunner:
         *,
         max_steps: int = 3,
     ) -> "Any":  # SubgoalResult
-        from opengui.action import parse_action, ActionError
+        from opengui.action import ActionError, parse_action
         from opengui.skills.executor import SubgoalResult, _should_skip_validation
 
         summaries: list[str] = []
@@ -892,6 +899,7 @@ class GuiAgent:
         step_timeout: float = 30.0,
         history_image_window: int = 4,
         include_date_context: bool = True,
+        history_text_window: int = 8,
         progress_callback: ProgressCallback | None = None,
         memory_retriever: Any = None,
         skill_library: Any = None,
@@ -916,6 +924,7 @@ class GuiAgent:
         self.max_steps = max_steps
         self.step_timeout = step_timeout
         self.history_image_window = max(1, history_image_window)
+        self.history_text_window = max(1, history_text_window)
         self.include_date_context = include_date_context
         self.progress_callback = progress_callback
         self._trajectory_recorder = trajectory_recorder
@@ -1406,26 +1415,53 @@ class GuiAgent:
                                 )
                                 or result.action_summary
                             ),
+                            action_intent=(
+                                self._scrub_text_for_action(
+                                    result.action_intent,
+                                    result.action,
+                                )
+                                or result.action_intent
+                            ),
+                            state_summary=(
+                                self._scrub_text_for_action(
+                                    result.state_summary,
+                                    result.action,
+                                )
+                                or result.state_summary
+                            ),
                         )
                     ]
                     summary_observation = result.next_observation or obs
 
-                # Write trace entry
-                await self._write_trace(
-                    run_dir / "trace.jsonl",
-                    self._scrub_for_artifact({
-                        "event": "step",
-                        "step_index": step_index,
-                        "action": self._serialize_action(result.action),
-                        "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
-                        "screenshot_path": (
-                            result.next_observation.screenshot_path
-                            if result.next_observation else None
-                        ),
-                        "done": result.done,
-                        "timestamp": time.time(),
-                    }),
-                )
+            # Write trace entry
+            await self._write_trace(
+                run_dir / "trace.jsonl",
+                self._scrub_for_artifact({
+                    "event": "step",
+                    "step_index": step_index,
+                    "prompt": result.prompt_snapshot,
+                    "model_output": result.model_snapshot,
+                    "execution": result.execution_snapshot,
+                    "action": self._serialize_action(result.action),
+                    "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
+                    "action_intent": self._scrub_text_for_artifact_action(result.action_intent, result.action),
+                    "state_summary": self._scrub_text_for_artifact_action(result.state_summary, result.action),
+                    "screenshot_path": (
+                        result.next_observation.screenshot_path
+                        if result.next_observation else None
+                    ),
+                    "done": result.done,
+                    "timestamp": time.time(),
+                }),
+            )
+            self._write_mobileworld_traj(
+                run_dir=run_dir,
+                task=task,
+                step_index=step_index,
+                result=result,
+                current_observation=obs,
+                total_usage=total_usage,
+            )
 
             # Record trajectory step
             self._trajectory_recorder.record_step(
@@ -1477,7 +1513,7 @@ class GuiAgent:
                         current_observation=summary_observation,
                         error="intervention_cancelled",
                     ),
-                    model_summary=result.action_summary,
+                    model_summary=result.state_summary or result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=f"intervention_cancelled: {cancellation_note}",
@@ -1489,7 +1525,7 @@ class GuiAgent:
                             current_observation=summary_observation,
                             error="intervention_cancelled",
                         ),
-                        model_summary=result.action_summary,
+                        model_summary=result.state_summary or result.action_summary,
                         action_summaries=tuple(
                             list(turn.action_summary for turn in history) + [result.action_summary]
                         ),
@@ -1505,10 +1541,10 @@ class GuiAgent:
                         status="completed" if success else "blocked",
                         history=history,
                         current_observation=obs,
-                        current_action_summary=result.action_summary,
+                        current_action_summary=result.state_summary or result.action_summary,
                         error=None if success else result.tool_result,
                     ),
-                    model_summary=result.action_summary,
+                    model_summary=result.state_summary or result.action_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=None if success else result.tool_result,
@@ -1518,10 +1554,10 @@ class GuiAgent:
                             status="blocked",
                             history=history,
                             current_observation=obs,
-                            current_action_summary=result.action_summary,
+                            current_action_summary=result.state_summary or result.action_summary,
                             error=result.tool_result,
                         ),
-                        model_summary=result.action_summary,
+                        model_summary=result.state_summary or result.action_summary,
                         action_summaries=tuple(
                             list(turn.action_summary for turn in history) + [result.action_summary]
                         ),
@@ -1572,6 +1608,20 @@ class GuiAgent:
                                 )
                                 or result.action_summary
                             ),
+                            action_intent=(
+                                self._scrub_text_for_action(
+                                    result.action_intent,
+                                    result.action,
+                                )
+                                or result.action_intent
+                            ),
+                            state_summary=(
+                                self._scrub_text_for_action(
+                                    result.state_summary,
+                                    result.action,
+                                )
+                                or result.state_summary
+                            ),
                         )
                     ]
                     termination_summary = await self._generate_termination_summary(
@@ -1600,7 +1650,7 @@ class GuiAgent:
                             current_observation=result.next_observation or obs,
                             error="stagnation_detected",
                         ),
-                        model_summary=result.action_summary,
+                        model_summary=result.state_summary or result.action_summary,
                         trace_path=str(run_dir),
                         steps_taken=steps_taken,
                         error="stagnation_detected",
@@ -1612,7 +1662,7 @@ class GuiAgent:
                                 current_observation=result.next_observation or obs,
                                 error="stagnation_detected",
                             ),
-                            model_summary=result.action_summary,
+                            model_summary=result.state_summary or result.action_summary,
                             action_summaries=tuple(
                                 list(turn.action_summary for turn in history) + [result.action_summary]
                             ),
@@ -1636,6 +1686,14 @@ class GuiAgent:
                     action_summary=(
                         self._scrub_text_for_action(result.action_summary, result.action)
                         or result.action_summary
+                    ),
+                    action_intent=(
+                        self._scrub_text_for_action(result.action_intent, result.action)
+                        or result.action_intent
+                    ),
+                    state_summary=(
+                        self._scrub_text_for_action(result.state_summary, result.action)
+                        or result.state_summary
                     ),
                 )
             )
@@ -1760,7 +1818,7 @@ class GuiAgent:
                     f"LLM called unexpected tool '{tool_call.name}'.",
                     model_snapshot=assistant_snapshot,
                 )
-            tool_summary = self._tool_call_summary(tool_call)
+            action_intent, state_summary = self._tool_call_semantics(tool_call)
 
             # Parse action
             try:
@@ -1788,8 +1846,9 @@ class GuiAgent:
             action_text = self._normalize_action_text(
                 response.content,
                 action,
-                tool_summary=tool_summary,
+                tool_summary=action_intent or state_summary,
             )
+            action_summary = action_intent or self._action_summary(action_text)
             assistant_message = self._build_assistant_message(
                 response,
                 content_override=action_text,
@@ -1799,6 +1858,8 @@ class GuiAgent:
                 action=action,
                 assistant_message=assistant_message,
                 action_text=action_text,
+                action_intent=action_summary,
+                state_summary=state_summary,
             )
 
             # Handle terminal action (done)
@@ -1812,7 +1873,9 @@ class GuiAgent:
                     tool_call_id=tool_call.id,
                     tool_result=tool_result,
                     assistant_message=assistant_message,
-                    action_summary=self._action_summary(action_text),
+                    action_summary=action_summary,
+                    action_intent=action_summary,
+                    state_summary=state_summary,
                     prompt_snapshot=prompt_snapshot,
                     model_snapshot=model_snapshot,
                     execution_snapshot={
@@ -1833,7 +1896,9 @@ class GuiAgent:
                     tool_call_id=tool_call.id,
                     tool_result="intervention_requested",
                     assistant_message=assistant_message,
-                    action_summary=self._action_summary(action_text),
+                    action_summary=action_summary,
+                    action_intent=action_summary,
+                    state_summary=state_summary,
                     prompt_snapshot=prompt_snapshot,
                     model_snapshot=model_snapshot,
                     execution_snapshot={
@@ -1890,7 +1955,9 @@ class GuiAgent:
                 tool_call_id=tool_call.id,
                 tool_result=result_text,
                 assistant_message=assistant_message,
-                action_summary=self._action_summary(action_text),
+                action_summary=action_summary,
+                action_intent=action_summary,
+                state_summary=state_summary,
                 next_observation=next_observation,
                 prompt_snapshot=prompt_snapshot,
                 model_snapshot=model_snapshot,
@@ -2096,9 +2163,13 @@ class GuiAgent:
         skill_context: str | None = None,
     ) -> str:
         """Build the text prompt that frames the current step."""
-        previous_actions = self._format_previous_actions(history)
+        recent_intents = self._format_recent_intents(
+            history,
+            window=self.history_text_window,
+        )
+        latest_summary = self._latest_state_summary(history)
         lines = [
-            "Please generate the next move according to the UI screenshot, instruction and previous actions.",
+            "Please generate the next move according to the UI screenshot, instruction and recent progress context.",
             "",
         ]
 
@@ -2124,9 +2195,14 @@ class GuiAgent:
 
         lines.extend([
             "",
-            "Previous actions:",
-            previous_actions,
+            "Recent intents:",
+            recent_intents,
         ])
+        if latest_summary:
+            lines.extend([
+                "",
+                f"Latest state summary: {latest_summary}",
+            ])
 
         if skill_context:
             lines.extend([
@@ -2141,13 +2217,21 @@ class GuiAgent:
         return "\n".join(lines)
 
     @staticmethod
-    def _format_previous_actions(history: list[HistoryTurn]) -> str:
+    def _format_recent_intents(history: list[HistoryTurn], *, window: int = 8) -> str:
         if not history:
             return "None"
+        recent_history = history[-max(1, window):]
         return "\n".join(
-            f"Step {turn.step_index}: {turn.action_summary}"
-            for turn in history
+            f"Step {turn.step_index}: {turn.action_intent or turn.action_summary}"
+            for turn in recent_history
         )
+
+    @staticmethod
+    def _latest_state_summary(history: list[HistoryTurn]) -> str | None:
+        for turn in reversed(history):
+            if turn.state_summary and turn.state_summary.strip():
+                return turn.state_summary.strip()
+        return None
 
     @staticmethod
     def _format_retry_attempt_summaries(attempt_summaries: tuple[str, ...]) -> str:
@@ -2177,7 +2261,11 @@ class GuiAgent:
 
     @staticmethod
     def _summarize_progress(history: list[HistoryTurn], current_action_summary: str | None = None) -> str:
-        summaries = [turn.action_summary.strip() for turn in history if turn.action_summary.strip()]
+        summaries = [
+            (turn.state_summary or turn.action_summary).strip()
+            for turn in history
+            if (turn.state_summary or turn.action_summary).strip()
+        ]
         if current_action_summary and current_action_summary.strip():
             summaries.append(current_action_summary.strip())
         if not summaries:
@@ -2416,6 +2504,8 @@ class GuiAgent:
                 {
                     "step_index": turn.step_index,
                     "action_summary": turn.action_summary,
+                    "action_intent": turn.action_intent,
+                    "state_summary": turn.state_summary,
                     "observation": self._serialize_observation(turn.observation),
                     "tool_result": turn.tool_result_message.get("content"),
                 }
@@ -2431,6 +2521,8 @@ class GuiAgent:
         action: Action,
         assistant_message: dict[str, Any],
         action_text: str,
+        action_intent: str | None = None,
+        state_summary: str | None = None,
     ) -> dict[str, Any]:
         return {
             "raw_content": self._scrub_text_for_artifact_action(response.content, action),
@@ -2446,6 +2538,8 @@ class GuiAgent:
             "parsed_action": self._scrub_for_artifact(self._serialize_action(action)),
             "action_text": self._scrub_text_for_artifact_action(action_text, action),
             "action_summary": self._scrub_text_for_artifact_action(self._action_summary(action_text), action),
+            "action_intent": self._scrub_text_for_artifact_action(action_intent, action),
+            "state_summary": self._scrub_text_for_artifact_action(state_summary, action),
         }
 
     def _snapshot_failed_model_response(
@@ -2489,12 +2583,15 @@ class GuiAgent:
 
     @staticmethod
     def _tool_call_summary(tool_call: ToolCall) -> str | None:
+        intent, summary = GuiAgent._tool_call_semantics(tool_call)
+        return intent or summary
+
+    @staticmethod
+    def _tool_call_semantics(tool_call: ToolCall) -> tuple[str | None, str | None]:
         arguments = tool_call.arguments or {}
-        for key in ("summary", "intent"):
-            summary = GuiAgent._clean_action_summary(arguments.get(key))
-            if summary:
-                return summary
-        return None
+        intent = GuiAgent._clean_action_summary(arguments.get("intent"))
+        summary = GuiAgent._clean_action_summary(arguments.get("summary"))
+        return intent, summary
 
     @staticmethod
     def _clean_action_summary(value: Any) -> str | None:
@@ -2697,6 +2794,109 @@ class GuiAgent:
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
 
+    @classmethod
+    def _write_mobileworld_traj(
+        cls,
+        *,
+        run_dir: Path,
+        task: str,
+        step_index: int,
+        result: StepResult,
+        current_observation: Observation,
+        total_usage: dict[str, int],
+    ) -> None:
+        """Write an inspectable MobileWorld-style trajectory snapshot."""
+        traj_path = run_dir / "traj.json"
+        task_id = "0"
+        if traj_path.exists():
+            try:
+                log_data = json.loads(traj_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                log_data = {}
+        else:
+            log_data = {}
+
+        task_log = log_data.setdefault(task_id, {"tools": None, "traj": []})
+        marked_screenshot = cls._write_marked_screenshot(
+            run_dir=run_dir,
+            step_index=step_index,
+            action=result.action,
+            screenshot_path=current_observation.screenshot_path,
+        )
+        step_payload = {
+            "task_goal": task,
+            "step": step_index,
+            "prediction": result.model_snapshot.get("action_text") or result.action_summary,
+            "action": cls._scrub_for_artifact(cls._serialize_action(result.action)),
+            "intent": cls._scrub_text_for_artifact_action(result.action_intent, result.action),
+            "summary": cls._scrub_text_for_artifact_action(result.state_summary, result.action),
+            "action_summary": cls._scrub_text_for_artifact_action(result.action_summary, result.action),
+            "tool_call": _first_tool_call(result.model_snapshot),
+            "tool_result": cls._scrub_text_for_artifact_action(result.tool_result, result.action),
+            "done": result.done,
+            "screenshot": _relative_path(current_observation.screenshot_path, run_dir),
+            "next_screenshot": _relative_path(
+                result.next_observation.screenshot_path
+                if result.next_observation else None,
+                run_dir,
+            ),
+            "marked_screenshot": marked_screenshot,
+            "observation": cls._serialize_observation(current_observation),
+            "next_observation": (
+                cls._serialize_observation(result.next_observation)
+                if result.next_observation else None
+            ),
+            "duration_s": round(result.duration_s, 3),
+            "token_usage": result.step_usage or None,
+        }
+        task_log["traj"].append(cls._scrub_for_artifact(step_payload))
+        task_log["token_usage"] = dict(total_usage)
+
+        traj_path.write_text(
+            json.dumps(log_data, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _write_marked_screenshot(
+        *,
+        run_dir: Path,
+        step_index: int,
+        action: Action,
+        screenshot_path: str | None,
+    ) -> str | None:
+        if action.action_type not in {"tap", "double_tap", "long_press", "drag", "swipe"}:
+            return None
+        if not screenshot_path or action.x is None or action.y is None:
+            return None
+        source = Path(screenshot_path)
+        if not source.exists():
+            return None
+        marked_dir = run_dir / "marked_screenshots"
+        marked_dir.mkdir(parents=True, exist_ok=True)
+        target = marked_dir / f"marked-step_{step_index:03d}.png"
+        try:
+            from PIL import Image, ImageDraw
+
+            with Image.open(source) as image:
+                image = image.convert("RGB")
+                width, height = image.size
+                draw = ImageDraw.Draw(image)
+                x1, y1 = _image_point(action.x, action.y, width, height, relative=action.relative)
+                radius = max(4, min(width, height) // 50)
+                if action.action_type in {"drag", "swipe"} and action.x2 is not None and action.y2 is not None:
+                    x2, y2 = _image_point(action.x2, action.y2, width, height, relative=action.relative)
+                    draw.line((x1, y1, x2, y2), fill="blue", width=max(2, radius // 2))
+                    draw.ellipse((x1 - radius, y1 - radius, x1 + radius, y1 + radius), fill="green")
+                    draw.ellipse((x2 - radius, y2 - radius, x2 + radius, y2 + radius), fill="red")
+                else:
+                    draw.ellipse((x1 - radius, y1 - radius, x1 + radius, y1 + radius), fill="red")
+                image.save(target)
+        except Exception as exc:
+            logger.debug("Could not write marked screenshot %s: %s", target, exc)
+            return None
+        return target.relative_to(run_dir).as_posix()
+
     async def _log_attempt_event(
         self,
         run_dir: Path,
@@ -2829,14 +3029,16 @@ class GuiAgent:
         if store_dir is None:
             return None
         try:
-            from opengui.skills.graph import SkillGraphStore
-            from opengui.skills.graph import infer_app_hint_from_task
+            from opengui.skills.graph import SkillGraphStore, infer_app_hint_from_task
             from opengui.skills.graph_runtime import GraphRuntimeExecutor
         except Exception:
             logger.debug("Graph runtime unavailable", exc_info=True)
             return None
 
         try:
+            sync_graph_cache = getattr(self._skill_library, "sync_graph_cache", None)
+            if callable(sync_graph_cache):
+                await sync_graph_cache()
             graph = SkillGraphStore(
                 store_dir=Path(store_dir),
                 embedding_provider=getattr(self._skill_library, "embedding_provider", None),
@@ -3056,7 +3258,6 @@ class GuiAgent:
             return
         if hasattr(skill_match, "layer"):
             return
-        from dataclasses import replace
         from opengui.skills.data import compute_confidence
 
         skill, _ = skill_match
@@ -3081,3 +3282,46 @@ class GuiAgent:
             self._skill_library.remove(skill.skill_id)
         else:
             self._skill_library.update(skill.skill_id, updated)
+
+
+def _first_tool_call(model_snapshot: dict[str, Any]) -> dict[str, Any] | None:
+    tool_calls = model_snapshot.get("tool_calls")
+    if isinstance(tool_calls, list) and tool_calls:
+        first = tool_calls[0]
+        if isinstance(first, dict):
+            return first
+    return None
+
+
+def _relative_path(path: str | None, root: Path) -> str | None:
+    if not path:
+        return None
+    target = Path(path)
+    try:
+        return target.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _image_point(
+    x: float,
+    y: float,
+    width: int,
+    height: int,
+    *,
+    relative: bool,
+) -> tuple[int, int]:
+    return (
+        _image_coordinate(x, width, relative=relative),
+        _image_coordinate(y, height, relative=relative),
+    )
+
+
+def _image_coordinate(value: float, extent: int, *, relative: bool) -> int:
+    if extent <= 1:
+        return 0
+    if relative:
+        pixel = round(float(value) / 999 * (extent - 1))
+    else:
+        pixel = round(float(value))
+    return max(0, min(pixel, extent - 1))
