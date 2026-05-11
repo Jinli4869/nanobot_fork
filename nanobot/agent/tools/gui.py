@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import logging
 import sys
 from collections.abc import Awaitable, Callable
@@ -706,6 +706,7 @@ class GuiSubagentTool(Tool):
                 scrcpy_max_frame_age_ms=self._gui_config.scrcpy.max_frame_age_ms,
                 on_jpeg_frame=self._gui_frame_callback,
                 collect_ui_tree=True,
+                collect_ui_tree_nodes=True,
             )
 
         if backend_name == "ios":
@@ -781,9 +782,9 @@ class GuiSubagentTool(Tool):
         embedding_signature: str | None = None,
     ) -> Any:
         if platform not in self._skill_libraries:
-            from opengui.skills.library import SkillLibrary
+            from opengui.skills.code_first import CodeSkillLibrary
 
-            self._skill_libraries[platform] = SkillLibrary(
+            self._skill_libraries[platform] = CodeSkillLibrary(
                 store_dir=get_gui_skill_store_root(self._workspace),
                 embedding_provider=self._embedding_adapter,
                 merge_llm=self._llm_adapter,

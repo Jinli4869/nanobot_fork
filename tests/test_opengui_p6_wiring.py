@@ -19,7 +19,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. GuiConfig camelCase alias for embedding_model
 # ---------------------------------------------------------------------------
@@ -111,6 +110,7 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
 
     from nanobot.agent.tools.gui import GuiSubagentTool
     from nanobot.config.schema import Config
+    from opengui.skills.code_first import CodeSkillLibrary
 
     # Build a fake litellm.aembedding response: two embeddings of dimension 2.
     fake_embedding_data = [
@@ -139,6 +139,7 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
 
     # The SkillLibrary for "dry-run" must have the adapter wired in.
     assert "dry-run" in tool._skill_libraries
+    assert isinstance(tool._skill_libraries["dry-run"], CodeSkillLibrary)
     assert tool._skill_libraries["dry-run"].embedding_provider is tool._embedding_adapter
 
     # The adapter must produce the correct numpy array.
@@ -357,10 +358,9 @@ async def test_gui_tool_passes_memory_store_to_gui_agent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from opengui.agent import AgentResult
-
     from nanobot.agent.tools.gui import GuiSubagentTool
     from nanobot.config.schema import Config
+    from opengui.agent import AgentResult
 
     provider = _FakeProvider()
     config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})

@@ -21,8 +21,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from opengui.backends.dry_run import DryRunBackend
 from opengui.agent import GuiAgent
+from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse
 from opengui.observation import Observation
 from opengui.skills import Skill, SkillStep
@@ -30,8 +30,11 @@ from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
 from opengui.skills.reuser import SkillReuser
-from opengui.skills.state_contract import evaluate_state_contract, infer_state_contract, normalize_state_contract
-
+from opengui.skills.state_contract import (
+    evaluate_state_contract,
+    infer_state_contract,
+    normalize_state_contract,
+)
 
 # ---------------------------------------------------------------------------
 # Shared test helpers
@@ -164,6 +167,16 @@ class _CapturingAndroidBackend:
     async def execute(self, action: Any, timeout: float = 5.0) -> str:
         self.actions.append(action)
         return "ok"
+
+
+class _FailingGrounder:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def ground(self, step: SkillStep, screenshot: Path | bytes, params: dict[str, str]) -> Any:
+        del step, screenshot, params
+        self.calls += 1
+        raise AssertionError("deterministic action should not use visual grounder")
 
 
 class _CapturingIOSBackend:
@@ -836,6 +849,48 @@ async def test_executor_records_skill_failure_events(tmp_path: Path) -> None:
     assert recorder.events[2][0] == "skill_execution_result"
     assert recorder.events[2][1]["state"] == "failed"
     assert "valid_state not reached" in str(recorder.events[2][1]["error"])
+
+
+async def test_executor_uses_template_for_parameterized_input_text(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    step = SkillStep(
+        action_type="input_text",
+        target="com.example:id/search",
+        parameters={"text": "{{query}}", "auto_enter": True},
+    )
+    skill = Skill(
+        skill_id="exec-template-input",
+        name="Search",
+        description="Search with a parameterized query",
+        app="com.example.app",
+        platform="android",
+        steps=(step,),
+        parameters=("query",),
+    )
+    backend = _CapturingAndroidBackend()
+    grounder = _FailingGrounder()
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+    ))
+
+    executor = SkillExecutor(
+        backend=backend,
+        action_grounder=grounder,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill, params={"query": "杭州西湖文化广场"})
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert grounder.calls == 0
+    assert backend.actions[0].action_type == "input_text"
+    assert backend.actions[0].text == "杭州西湖文化广场"
+    assert result.step_results[0].grounding_mode == "template"
 
 
 async def test_executor_fixed_step_validates_state() -> None:
@@ -1748,3 +1803,45 @@ async def test_extract_skill_params_deterministically_parses_search_query() -> N
     params = await GuiAgent._extract_skill_params(_DummyAgent(), task, skill)
 
     assert params == {"search_query": "让子弹飞"}
+
+
+@pytest.mark.asyncio
+async def test_extract_skill_params_deterministically_parses_city_location() -> None:
+    class _DummyAgent:
+        def __init__(self) -> None:
+            self.llm = _ScriptedLLM([])
+
+        _guess_skill_param = staticmethod(GuiAgent._guess_skill_param)
+
+    skill = Skill(
+        skill_id="param-city",
+        name="Search Hotel",
+        description="Search hotels by city or location.",
+        app="ctrip.android.view",
+        platform="android",
+        steps=(SkillStep(action_type="input_text", target="search box"),),
+        parameters=("city",),
+    )
+
+    params = await GuiAgent._extract_skill_params(
+        _DummyAgent(),
+        "在携程酒店里搜索一下杭州西湖文化广场周边的酒店",
+        skill,
+    )
+
+    assert params == {"city": "杭州西湖文化广场"}
+    assert GuiAgent._guess_skill_param(
+        "携程上找一下从5月27号到5月29号，去南京夫子庙附近住，要连锁品牌的经济型酒店",
+        "city",
+    ) == "南京夫子庙"
+
+
+@pytest.mark.parametrize(
+    ("task", "expected"),
+    [
+        ("去知乎搜索“MacBook Pro测评”，找到一篇文章", "MacBook Pro测评"),
+        ("B站找一下罗翔的账号，然后进入他的视频列表", "罗翔"),
+    ],
+)
+def test_guess_skill_param_handles_quotes_and_accounts(task: str, expected: str) -> None:
+    assert GuiAgent._guess_skill_param(task, "query") == expected

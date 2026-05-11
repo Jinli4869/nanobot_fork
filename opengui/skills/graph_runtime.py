@@ -7,29 +7,30 @@ Runtime executor for graph-compiled GUI skills.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from opengui.action import Action, parse_action
 from opengui.interfaces import DeviceBackend
 from opengui.observation import Observation
 from opengui.skills.executor import ExecutionState
-from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.graph import (
+    NODE_KIND_STATE,
     GoalNodeResolver,
     GraphCandidate,
     GraphEdge,
     GraphNode,
     GraphSessionCursor,
-    NODE_KIND_STATE,
     PathCompilation,
     PathCompiler,
     SkillGraphStore,
     StateIdentificationResult,
     StateIdentifier,
 )
+from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.state_contract import evaluate_state_contract
 
 if TYPE_CHECKING:
@@ -47,6 +48,9 @@ def _same_runtime_app(platform: str | None, left: str | None, right: str | None)
     left_norm = _normalize_runtime_app(platform, left)
     right_norm = _normalize_runtime_app(platform, right)
     return bool(left_norm and right_norm and left_norm == right_norm)
+
+
+_PLACEHOLDER_RE = re.compile(r"\{\{([A-Za-z_]\w*)\}\}")
 
 
 @dataclass(frozen=True)
@@ -211,10 +215,24 @@ class GraphRuntimeExecutor:
             edge_count=len(path.edges),
         )
 
+        placeholder_names = _path_placeholder_names(path)
+        runtime_params = _infer_runtime_params(task, placeholder_names)
+        missing_params = sorted(name for name in placeholder_names if name not in runtime_params)
+        if placeholder_names:
+            self._record(
+                "graph_runtime_parameters",
+                parameters=sorted(runtime_params),
+                missing=missing_params,
+            )
+
         step_results: list[GraphStepResult] = []
         current_observation = observation
         for edge in path.edges:
-            step_result, current_observation = await self._execute_edge(edge, current_observation)
+            step_result, current_observation = await self._execute_edge(
+                edge,
+                current_observation,
+                params=runtime_params,
+            )
             step_results.append(step_result)
             if step_result.state != ExecutionState.SUCCEEDED:
                 return GraphRuntimeResult(
@@ -235,6 +253,7 @@ class GraphRuntimeExecutor:
                 terminal.kind == NODE_KIND_STATE
                 and terminal.state_contract is not None
                 and len(path.nodes) >= 2
+                and (not prefix_only or self.trajectory_recorder is None)
                 and not any(
                     item.action is not None and item.action.action_type == "request_intervention"
                     for item in step_results
@@ -337,6 +356,8 @@ class GraphRuntimeExecutor:
         self,
         edge: GraphEdge,
         observation: Observation,
+        *,
+        params: dict[str, str] | None = None,
     ) -> tuple[GraphStepResult, Observation]:
         started = time.monotonic()
         precondition = evaluate_state_contract(
@@ -363,8 +384,8 @@ class GraphRuntimeExecutor:
             platform=observation.platform or self.backend.platform,
             app_hint=observation.foreground_app,
         )
-        action = self._action_from_edge(edge)
         try:
+            action = self._action_from_edge(edge, params=params or {})
             backend_result = await self.backend.execute(action, timeout=self.timeout)
             if action.action_type not in {"wait", "done", "request_intervention"}:
                 await asyncio.sleep(0.5)
@@ -424,6 +445,11 @@ class GraphRuntimeExecutor:
             return step_result, next_observation
         except Exception as exc:
             self.store.record_edge_attempt(edge.edge_id, success=False, failure_reason="action_error")
+            action = None
+            try:
+                action = self._action_from_edge(edge, params=params or {})
+            except Exception:
+                pass
             step_result = GraphStepResult(
                 edge_id=edge.edge_id,
                 action=action,
@@ -436,10 +462,15 @@ class GraphRuntimeExecutor:
             self._record_graph_step(edge, step_result)
             return step_result, observation
 
-    def _action_from_edge(self, edge: GraphEdge) -> Action:
-        payload: dict[str, Any] = {"action_type": edge.action_type, **dict(edge.parameters or {})}
+    def _action_from_edge(self, edge: GraphEdge, *, params: dict[str, str] | None = None) -> Action:
+        runtime_params = params or {}
+        target = _ground_template_value(edge.target, runtime_params)
+        parameters = _ground_template_value(dict(edge.parameters or {}), runtime_params)
+        if not isinstance(parameters, dict):
+            parameters = {}
+        payload: dict[str, Any] = {"action_type": edge.action_type, **parameters}
         if edge.action_type in {"open_app", "close_app", "input_text"} and "text" not in payload:
-            payload["text"] = edge.target
+            payload["text"] = target
         return parse_action(payload)
 
     def _navigation_transition_kind(self, action: Action, *, edge_target: str | None = None) -> str | None:
@@ -921,3 +952,94 @@ class GraphRuntimeExecutor:
         ]
         prefix = "Graph prefix executed" if prefix_only else "Graph path executed"
         return prefix + ": " + "; ".join(parts)
+
+
+def _path_placeholder_names(path: PathCompilation) -> set[str]:
+    names: set[str] = set()
+    for edge in path.edges:
+        names.update(_placeholder_names(edge.target))
+        names.update(_placeholder_names(edge.parameters))
+    return names
+
+
+def _placeholder_names(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return set(_PLACEHOLDER_RE.findall(value))
+    if isinstance(value, dict):
+        names: set[str] = set()
+        for item in value.values():
+            names.update(_placeholder_names(item))
+        return names
+    if isinstance(value, (list, tuple)):
+        names: set[str] = set()
+        for item in value:
+            names.update(_placeholder_names(item))
+        return names
+    return set()
+
+
+def _ground_template_value(value: Any, params: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        grounded = value
+        for key, replacement in params.items():
+            grounded = grounded.replace(f"{{{{{key}}}}}", replacement)
+        missing = sorted(set(_PLACEHOLDER_RE.findall(grounded)))
+        if missing:
+            raise ValueError(f"unresolved graph parameters: {', '.join(missing)}")
+        return grounded
+    if isinstance(value, dict):
+        return {key: _ground_template_value(item, params) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_ground_template_value(item, params) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_ground_template_value(item, params) for item in value)
+    return value
+
+
+def _infer_runtime_params(task: str, names: set[str]) -> dict[str, str]:
+    normalized = " ".join((task or "").split())
+    if not normalized:
+        return {}
+    params: dict[str, str] = {}
+    for name in names:
+        value = _guess_runtime_param(normalized, name)
+        if value:
+            params[name] = value
+    return params
+
+
+def _guess_runtime_param(task: str, name: str) -> str | None:
+    param = name.strip().casefold()
+    if param in {"query", "keyword", "search_query", "search_term"}:
+        quoted = re.search(r"[“\"']([^”\"']{1,80})[”\"']", task)
+        if quoted is not None:
+            return _clean_inferred_param(quoted.group(1))
+        account = re.search(r"(?:找一下|找|搜索|搜)\s*([^，,。.!?；;、]{1,30}?)(?:的账号|账号)", task)
+        if account is not None:
+            return _clean_inferred_param(account.group(1))
+        for pattern in (
+            r"(?:搜索一下|搜一下|搜索|查找|搜)\s*([^\s，,。.!?；;、]+)",
+            r"(?:search\s+for|search|find)\s*([^\s，,。.!?；;、]+)",
+        ):
+            match = re.search(pattern, task, flags=re.IGNORECASE)
+            if match is not None:
+                return _clean_inferred_param(match.group(1))
+    if param in {"city", "location", "destination", "place", "area"}:
+        for pattern in (
+            r"(?:搜索一下|搜一下|搜索|查找|找一下)\s*([^，,。.!?；;、]{2,30}?)(?:周边|附近|的酒店|酒店|民宿)",
+            r"(?:去|到)\s*([^，,。.!?；;、]{2,16}?)(?:附近|周边|住|的|，|,|要)",
+            r"住在\s*([^，,。.!?；;、]{2,16}?)(?:附近|周边|，|,|要)",
+        ):
+            for match in re.finditer(pattern, task, flags=re.IGNORECASE):
+                value = _clean_inferred_param(match.group(1))
+                if value and not _looks_like_date_param(value):
+                    return value
+    return None
+
+
+def _clean_inferred_param(value: str) -> str:
+    return value.strip().strip('`"\'“”‘’').strip()
+
+
+def _looks_like_date_param(value: str) -> bool:
+    return bool(re.search(r"\d+\s*(?:月|号|日|/|-)", value))

@@ -865,6 +865,15 @@ class _AgentScreenshotProvider:
 # GuiAgent
 # ---------------------------------------------------------------------------
 
+
+def _clean_inferred_param(value: str) -> str:
+    return value.strip().strip('`"\'“”‘’').strip()
+
+
+def _looks_like_date_param(value: str) -> bool:
+    return bool(re.search(r"\d+\s*(?:月|号|日|/|-)", value))
+
+
 class GuiAgent:
     """Standalone GUI automation agent with vision-action loop.
 
@@ -1942,13 +1951,12 @@ class GuiAgent:
             # Observe next state
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
             next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
-            try:
-                next_observation = await self.backend.observe(
-                    next_screenshot, timeout=self.step_timeout,
-                )
-            except Exception as exc:
-                next_observation = None
-                result_text += f" (observation failed: {exc})"
+            next_observation, observe_error = await self._observe_after_action(
+                next_screenshot,
+                timeout=self.step_timeout,
+            )
+            if observe_error:
+                result_text += f" (observation failed: {observe_error})"
 
             return StepResult(
                 action=action,
@@ -1994,6 +2002,22 @@ class GuiAgent:
         if action.action_type in self._NO_SETTLE_ACTIONS:
             return 0.0
         return self._POST_ACTION_SETTLE_SECONDS
+
+    async def _observe_after_action(
+        self,
+        screenshot_path: Path,
+        *,
+        timeout: float,
+    ) -> tuple[Observation | None, str | None]:
+        last_error: str | None = None
+        for attempt in range(3):
+            try:
+                return await self.backend.observe(screenshot_path, timeout=timeout), None
+            except Exception as exc:
+                last_error = str(exc)
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (attempt + 1))
+        return None, last_error
 
     def _build_screen_fingerprint(self, observation: Observation) -> _ScreenFingerprint | None:
         screenshot = observation.screenshot_path
@@ -3029,8 +3053,13 @@ class GuiAgent:
         if store_dir is None:
             return None
         try:
-            from opengui.skills.graph import SkillGraphStore, infer_app_hint_from_task
+            from opengui.skills.graph import (
+                SkillGraphStore,
+                infer_app_hint_from_task,
+                infer_explicit_app_hint_from_task,
+            )
             from opengui.skills.graph_runtime import GraphRuntimeExecutor
+            from opengui.skills.normalization import normalize_app_identifier
         except Exception:
             logger.debug("Graph runtime unavailable", exc_info=True)
             return None
@@ -3047,17 +3076,44 @@ class GuiAgent:
             if graph.count_nodes == 0:
                 return None
             effective_app_hint = app_hint
+            graph_apps = {
+                normalize_app_identifier(self.backend.platform, node.app)
+                for node in graph.list_nodes(platform=self.backend.platform)
+                if getattr(node, "app", None)
+            }
+            graph_apps.discard("unknown")
             if effective_app_hint is None:
-                graph_apps = {
-                    node.app
-                    for node in graph.list_nodes(platform=self.backend.platform)
-                    if getattr(node, "app", None)
-                }
-                effective_app_hint = infer_app_hint_from_task(
+                explicit_app_hint = infer_explicit_app_hint_from_task(
                     task,
                     platform=self.backend.platform,
-                    candidate_apps=graph_apps,
                 )
+                if explicit_app_hint is not None:
+                    if explicit_app_hint not in graph_apps:
+                        self._trajectory_recorder.record_event(
+                            "graph_runtime_skipped",
+                            reason="requested_app_not_in_graph",
+                            requested_app=explicit_app_hint,
+                            graph_app_count=len(graph_apps),
+                        )
+                        return None
+                    effective_app_hint = explicit_app_hint
+                else:
+                    effective_app_hint = infer_app_hint_from_task(
+                        task,
+                        platform=self.backend.platform,
+                        candidate_apps=graph_apps,
+                    )
+            elif graph_apps:
+                normalized_hint = normalize_app_identifier(self.backend.platform, effective_app_hint)
+                if normalized_hint != "unknown" and normalized_hint not in graph_apps:
+                    self._trajectory_recorder.record_event(
+                        "graph_runtime_skipped",
+                        reason="requested_app_not_in_graph",
+                        requested_app=normalized_hint,
+                        graph_app_count=len(graph_apps),
+                    )
+                    return None
+                effective_app_hint = normalized_hint if normalized_hint != "unknown" else effective_app_hint
 
             self._trajectory_recorder.set_phase(
                 ExecutionPhase.SKILL,
@@ -3233,11 +3289,30 @@ class GuiAgent:
     @staticmethod
     def _guess_skill_param(task: str, param_name: str) -> str | None:
         name = param_name.strip().casefold()
-        if name not in {"search_query", "search_term", "query"}:
-            return None
         normalized = " ".join((task or "").split())
         if not normalized:
             return None
+        quoted = re.search(r"[“\"']([^”\"']{1,80})[”\"']", normalized)
+        if quoted is not None and name in {"search_query", "search_term", "query", "keyword"}:
+            return quoted.group(1).strip()
+        if name in {"city", "location", "destination", "place", "area"}:
+            for pattern in (
+                r"(?:搜索一下|搜一下|搜索|查找|找一下)\s*([^，,。.!?；;、]{2,30}?)(?:周边|附近|的酒店|酒店|民宿)",
+                r"(?:去|到)\s*([^，,。.!?；;、]{2,16}?)(?:附近|周边|住|的|，|,|要)",
+                r"住在\s*([^，,。.!?；;、]{2,16}?)(?:附近|周边|，|,|要)",
+            ):
+                for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
+                    value = _clean_inferred_param(match.group(1))
+                    if value and not _looks_like_date_param(value):
+                        return value
+            return None
+        if name not in {"search_query", "search_term", "query", "keyword"}:
+            return None
+        account = re.search(r"(?:找一下|找|搜索|搜)\s*([^，,。.!?；;、]{1,30}?)(?:的账号|账号)", normalized)
+        if account is not None:
+            value = _clean_inferred_param(account.group(1))
+            if value:
+                return value
         for pattern in (
             r"(?:搜索一下|搜一下|搜索|查找)\s*([^\s，,。.!?；;、]+)",
             r"(?:search\s+for|search|find)\s*([^\s，,。.!?；;、]+)",
@@ -3245,7 +3320,7 @@ class GuiAgent:
             match = re.search(pattern, normalized, flags=re.IGNORECASE)
             if match is None:
                 continue
-            value = match.group(1).strip().strip('`"\'')
+            value = _clean_inferred_param(match.group(1))
             if value:
                 return value
         return None

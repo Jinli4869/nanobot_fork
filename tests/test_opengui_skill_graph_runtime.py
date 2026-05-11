@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import re
 import time
 from pathlib import Path
@@ -11,9 +11,48 @@ import pytest
 
 from opengui.action import Action
 from opengui.observation import Observation
-from opengui.skills.graph import EdgeStats, GraphEdge, GraphNode, GraphSessionCursor, NodeStats, SkillGraphStore, StateIdentifier
+from opengui.skills.graph import (
+    EdgeStats,
+    GraphEdge,
+    GraphNode,
+    GraphSessionCursor,
+    NodeStats,
+    SkillGraphStore,
+    StateIdentifier,
+    infer_explicit_app_hint_from_task,
+)
 from opengui.skills.graph_runtime import GraphRuntimeExecutor
 from opengui.skills.state_contract import normalize_state_contract
+
+
+def test_infer_explicit_app_hint_from_task_without_existing_graph_bucket() -> None:
+    assert (
+        infer_explicit_app_hint_from_task(
+            "请在知乎搜索强化学习，停留在搜索结果页",
+            platform="android",
+        )
+        == "com.zhihu.android"
+    )
+
+
+def test_infer_explicit_app_hint_from_task_handles_bilibili_short_alias() -> None:
+    assert (
+        infer_explicit_app_hint_from_task(
+            "去B站搜“AI绘画教程”，然后按最多播放排序查看。",
+            platform="android",
+        )
+        == "tv.danmaku.bili"
+    )
+
+
+def test_infer_explicit_app_hint_from_task_ignores_unknown_slug_fragments() -> None:
+    assert (
+        infer_explicit_app_hint_from_task(
+            "去不存在的App搜AI绘画教程",
+            platform="android",
+        )
+        is None
+    )
 
 
 class _StableEmbedder:
@@ -975,7 +1014,13 @@ async def test_graph_runtime_executes_fixed_edge(tmp_path: Path) -> None:
 
     result = await runtime.execute("open orders page", platform="android", app_hint="com.example.app")
 
-    assert result.state.value == "succeeded"
+    assert result.state.value == "succeeded", (
+        result.error,
+        result.state_identification.status if result.state_identification else None,
+        result.goal_resolution.status if result.goal_resolution else None,
+        result.path.status if result.path else None,
+        result.path.reason if result.path else None,
+    )
     assert result.path is not None
     assert [item.edge_id for item in result.path.edges] == ["edge-orders"]
     assert backend.actions and backend.actions[0].action_type == "tap"
@@ -1047,11 +1092,167 @@ async def test_graph_runtime_launches_target_app_before_entry_alignment(tmp_path
         app_hint="com.max.xiaoheihe",
     )
 
-    assert result.state.value == "succeeded"
+    assert result.state.value == "succeeded", (
+        result.error,
+        result.state_identification.status if result.state_identification else None,
+        result.goal_resolution.status if result.goal_resolution else None,
+        result.path.status if result.path else None,
+        result.path.reason if result.path else None,
+    )
     assert [action.action_type for action in backend.actions] == ["open_app", "tap", "back"]
     assert backend.actions[0].text == "com.max.xiaoheihe"
     assert result.path is not None
     assert [path_edge.edge_id for path_edge in result.path.edges] == [edge.edge_id]
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_substitutes_parameterized_edge_text(tmp_path: Path) -> None:
+    store = SkillGraphStore(
+        store_dir=tmp_path / "graph",
+        embedding_provider=_StableEmbedder(),
+        embedding_signature="sig-v1",
+    )
+    home = store.upsert_node(
+        GraphNode(
+            node_id="node-bili-home",
+            app="tv.danmaku.bili",
+            platform="android",
+            description="Bilibili home search bar",
+            state_contract=normalize_state_contract({
+                "anchor": {"app_package": "tv.danmaku.bili"},
+                "signature": {
+                    "required": [
+                        {
+                            "selector": {"resource_id": "tv.danmaku.bili:id/expand_search"},
+                            "state": ["visible"],
+                        }
+                    ],
+                    "forbidden": [],
+                },
+            }),
+            fingerprint="fp-bili-home",
+        )
+    )
+    query = store.upsert_node(
+        GraphNode(
+            node_id="node-bili-query",
+            app="tv.danmaku.bili",
+            platform="android",
+            description="Bilibili search query input",
+            state_contract=normalize_state_contract({
+                "anchor": {"app_package": "tv.danmaku.bili"},
+                "signature": {
+                    "required": [
+                        {
+                            "selector": {"resource_id": "tv.danmaku.bili:id/search_src_text"},
+                            "state": ["visible"],
+                        }
+                    ],
+                    "forbidden": [],
+                },
+            }),
+            fingerprint="fp-bili-query",
+        )
+    )
+    results = store.upsert_node(
+        GraphNode(
+            node_id="node-bili-results",
+            app="tv.danmaku.bili",
+            platform="android",
+            description="Bilibili search results page",
+            state_contract=normalize_state_contract({
+                "anchor": {"app_package": "tv.danmaku.bili"},
+                "signature": {
+                    "required": [
+                        {"selector": {"resource_id": "tv.danmaku.bili:id/search_fake_text"}, "state": ["visible"]},
+                        {"selector": {"resource_id": "tv.danmaku.bili:id/search_close_btn"}, "state": ["visible"]},
+                    ],
+                    "forbidden": [],
+                },
+            }),
+            fingerprint="fp-bili-results",
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-bili-open-search",
+            app="tv.danmaku.bili",
+            platform="android",
+            source_node_id=home.node_id,
+            target_node_id=query.node_id,
+            action_type="tap",
+            target="Search bar",
+            parameters={"x": 459.0, "y": 76.0, "relative": True},
+            precondition=home.state_contract,
+        )
+    )
+    store.upsert_edge(
+        GraphEdge(
+            edge_id="edge-bili-input-query",
+            app="tv.danmaku.bili",
+            platform="android",
+            source_node_id=query.node_id,
+            target_node_id=results.node_id,
+            action_type="input_text",
+            target="Search query",
+            parameters={"text": "{{query}}", "auto_enter": True},
+            precondition=query.state_contract,
+        )
+    )
+
+    class _BiliSearchBackend(_Backend):
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            self.observe_count += 1
+            if self.observe_count == 1:
+                extra = {
+                    "resource_ids": ["tv.danmaku.bili:id/expand_search"],
+                    "ui_tree_node_count": 1,
+                }
+            elif self.observe_count == 2:
+                extra = {
+                    "resource_ids": ["tv.danmaku.bili:id/search_src_text"],
+                    "ui_tree_node_count": 1,
+                }
+            else:
+                extra = {
+                    "resource_ids": [
+                        "tv.danmaku.bili:id/search_fake_text",
+                        "tv.danmaku.bili:id/search_close_btn",
+                    ],
+                    "ui_tree_node_count": 2,
+                }
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=1000,
+                screen_height=2000,
+                foreground_app="tv.danmaku.bili",
+                platform="android",
+                extra=extra,
+            )
+
+    backend = _BiliSearchBackend()
+    runtime = GraphRuntimeExecutor(
+        store=store,
+        backend=backend,
+        artifacts_root=tmp_path / "runs",
+    )
+
+    result = await runtime.execute(
+        "去B站搜“AI绘画教程”，然后按最多播放排序查看。",
+        platform="android",
+        app_hint="tv.danmaku.bili",
+    )
+
+    assert result.state.value == "succeeded", (
+        result.error,
+        result.state_identification.status if result.state_identification else None,
+        result.goal_resolution.status if result.goal_resolution else None,
+        result.path.status if result.path else None,
+        result.path.reason if result.path else None,
+    )
+    input_actions = [action for action in backend.actions if action.action_type == "input_text"]
+    assert input_actions
+    assert input_actions[0].text == "AI绘画教程"
 
 
 @pytest.mark.asyncio

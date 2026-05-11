@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import copy
-import json
-import tomllib
 import asyncio
 import base64
+import copy
 import io
+import json
+import tomllib
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -1287,6 +1287,63 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
     assert result.success
     assert len(llm.calls) == 2
     assert "Action:" in llm.calls[0][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_agent_retries_post_action_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(delay: float) -> None:
+        sleep_calls.append(delay)
+
+    class _FlakyObserveBackend(_SkillTestBackend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.observe_count = 0
+
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            self.observe_count += 1
+            if self.observe_count in {2, 3}:
+                raise RuntimeError("temporary observe failure")
+            return await super().observe(screenshot_path, timeout=timeout)
+
+    monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
+    backend = _FlakyObserveBackend()
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="tap",
+            tool_calls=[ToolCall(
+                id="tc-0",
+                name="computer_use",
+                arguments={"action_type": "tap", "x": 10, "y": 20},
+            )],
+        ),
+        LLMResponse(
+            content="done",
+            tool_calls=[ToolCall(
+                id="tc-1",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        backend,
+        trajectory_recorder=_make_recorder(tmp_path, "observe retry"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+    )
+
+    result = await agent.run("tap then finish", max_retries=1)
+
+    assert result.success is True
+    assert backend.observe_count == 4
+    assert sleep_calls == [0.5, 0.5, 1.0]
 
 
 @pytest.mark.asyncio

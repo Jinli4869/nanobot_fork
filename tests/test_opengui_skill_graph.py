@@ -9,18 +9,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.graph import (
     EDGE_STATUS_ACTIVE,
     EDGE_STATUS_DISABLED,
+    NODE_KIND_AUXILIARY,
+    NODE_KIND_STATE,
     NODE_STATUS_DEPRECATED,
     EdgeStats,
     GoalNodeResolver,
     GraphEdge,
     GraphNode,
-    NODE_KIND_AUXILIARY,
-    NODE_KIND_STATE,
     NodeStats,
     PathCompiler,
     SkillGraphStore,
@@ -2296,7 +2295,7 @@ async def test_goal_node_resolver_reports_unresolvable_when_superseded_chain_bre
         embedding_provider=_StableEmbedder(),
         embedding_signature="sig-v1",
     )
-    node = store.upsert_node(
+    store.upsert_node(
         GraphNode(
             node_id="node-old",
             app="com.example.app",

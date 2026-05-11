@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _STRUCTURAL_TEXTS = {
     "home",
     "profile",
@@ -67,6 +66,11 @@ _SAFE_TITLE_RESOURCE_RE = re.compile(
     r"(^|_)(toolbar|appbar|actionbar|titlebar|page)_?title($|_)",
     re.IGNORECASE,
 )
+_SAFE_RESULT_RESOURCE_RE = re.compile(
+    r"(^|_)((search|hotel|order|orders)_?)?results?_(list|recycler|container|view)($|_)"
+    r"|(^|_)(list|recycler|container|view)_results?($|_)",
+    re.IGNORECASE,
+)
 
 _TIME_RE = re.compile(
     r"(\b\d{1,2}:\d{2}\b|\b\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}|"
@@ -75,6 +79,7 @@ _TIME_RE = re.compile(
 )
 _PRICE_OR_METRIC_RE = re.compile(r"([￥¥$]\s*\d|\d+\s*[%折]|[+-]?\d+(?:\.\d+)?\s*(MB|GB|KB))", re.IGNORECASE)
 _SENTENCE_PUNCT_RE = re.compile(r"[，。；：、,.!?！？]")
+_GENERIC_MEDIA_TEXTS = {"ad", "ads", "advertisement", "image", "图片", "图像", "广告", "广告素材"}
 
 
 def filter_static_texts(value: Any, *, limit: int = 40) -> list[str]:
@@ -200,7 +205,7 @@ def is_static_resource_id(value: Any) -> bool:
     if not resource_id:
         return False
     name = _resource_name(resource_id)
-    if _SAFE_TITLE_RESOURCE_RE.search(name):
+    if _SAFE_TITLE_RESOURCE_RE.search(name) or _SAFE_RESULT_RESOURCE_RE.search(name):
         return True
     if _DYNAMIC_RESOURCE_RE.search(name):
         return False
@@ -212,7 +217,7 @@ def is_dynamic_resource_id(value: Any) -> bool:
     if not resource_id:
         return False
     name = _resource_name(resource_id)
-    if _SAFE_TITLE_RESOURCE_RE.search(name):
+    if _SAFE_TITLE_RESOURCE_RE.search(name) or _SAFE_RESULT_RESOURCE_RE.search(name):
         return False
     return bool(_DYNAMIC_RESOURCE_RE.search(name))
 
@@ -233,6 +238,8 @@ def is_static_text(value: Any) -> bool:
 def is_dynamic_text(value: Any) -> bool:
     text = _clean_text(value)
     if not text:
+        return True
+    if text.strip().casefold() in _GENERIC_MEDIA_TEXTS or "广告" in text:
         return True
     if _TIME_RE.search(text) or _PRICE_OR_METRIC_RE.search(text):
         return True

@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_EVALUATION_FILENAME = "evaluation.json"
 _GRAPH_SYNC_LOCKS: dict[Path, asyncio.Lock] = {}
+_CODE_SKILL_LOCKS: dict[Path, asyncio.Lock] = {}
 
 # Error strings (or prefixes) on the trajectory's final `result` event that
 # indicate the run was cut short by a detector or infrastructure fault rather
@@ -114,6 +115,70 @@ def _load_latest_graph_terminal_node_id(trace_path: Path) -> str | None:
     return latest_terminal_node_id
 
 
+def _load_completed_reuse(trace_path: Path) -> dict[str, Any] | None:
+    """Return reuse metadata when a full reused skill already completed the task."""
+    prefix_reuse_seen = False
+    full_reuse: dict[str, Any] | None = None
+    agent_work_after_full_reuse = False
+    try:
+        with open(trace_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(event, dict):
+                    continue
+                event_type = event.get("type")
+                if event_type == "step" and full_reuse is not None:
+                    action = event.get("action")
+                    action_type = action.get("action_type") if isinstance(action, dict) else None
+                    if action_type != "done":
+                        agent_work_after_full_reuse = True
+                    continue
+                if (
+                    event_type == "graph_prefix_result"
+                    and event.get("prefix_only") is True
+                    and int(event.get("edge_count") or 0) > 0
+                ):
+                    prefix_reuse_seen = True
+                    continue
+                if (
+                    event_type == "graph_runtime_result"
+                    and event.get("state") == "succeeded"
+                    and event.get("prefix_only") is True
+                ):
+                    prefix_reuse_seen = True
+                    continue
+                if (
+                    event_type == "graph_runtime_result"
+                    and event.get("state") == "succeeded"
+                    and event.get("prefix_only") is not True
+                ):
+                    full_reuse = {
+                        "reuse_source": "graph",
+                        "skill_id": event.get("skill_id"),
+                        "terminal_node_id": event.get("prefix_terminal_node_id"),
+                    }
+                    agent_work_after_full_reuse = False
+                    continue
+                if event_type == "skill_execution_result" and event.get("state") == "succeeded":
+                    full_reuse = {
+                        "reuse_source": "skill",
+                        "skill_id": event.get("skill_id"),
+                        "skill_name": event.get("skill_name"),
+                    }
+                    agent_work_after_full_reuse = False
+    except OSError:
+        return None
+    if prefix_reuse_seen or agent_work_after_full_reuse:
+        return None
+    return full_reuse
+
+
 def _is_abnormal_termination(result_event: dict[str, Any]) -> bool:
     """True if the trajectory was cut short by a detector/infra fault."""
     error = result_event.get("error")
@@ -122,6 +187,13 @@ def _is_abnormal_termination(result_event: dict[str, Any]) -> bool:
     if total_steps == 0 and error:
         return True
     if not isinstance(error, str):
+        return False
+    if total_steps > 0 and (
+        error == "stagnation_detected"
+        or error.startswith("stagnation_detected:")
+        or error == "step_timeout"
+        or error.startswith("step_timeout:")
+    ):
         return False
     return any(
         error == prefix or error.startswith(prefix + ":")
@@ -349,10 +421,20 @@ class PostRunProcessor:
         platform: str,
         task: str,
     ) -> None:
-        summary, _, _ = await asyncio.gather(
+        summary, evaluation_result = await asyncio.gather(
             self._summarize_trajectory(trace_path),
-            self._extract_skill(trace_path, is_success, platform),
             self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
+        )
+        effective_success = is_success
+        if isinstance(evaluation_result, dict) and evaluation_result.get("success") is False:
+            effective_success = False
+        await self._extract_skill(
+            trace_path,
+            effective_success,
+            platform,
+            task=task,
+            evaluation_result=evaluation_result,
+            agent_success=is_success,
         )
         if summary:
             logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
@@ -378,7 +460,14 @@ class PostRunProcessor:
     # ------------------------------------------------------------------
 
     async def _extract_skill(
-        self, trace_path: Path, is_success: bool, platform: str,
+        self,
+        trace_path: Path,
+        is_success: bool,
+        platform: str,
+        *,
+        task: str | None = None,
+        evaluation_result: dict[str, Any] | None = None,
+        agent_success: bool | None = None,
     ) -> str | None:
         if not self._enable_skill_extraction:
             logger.info("Skipping skill extraction: disabled")
@@ -408,14 +497,44 @@ class PostRunProcessor:
             })
             return None
 
-        from opengui.skills.extractor import SkillExtractor
-        from opengui.skills.library import SkillLibrary
+        completed_reuse = _load_completed_reuse(trace_path) if (is_success or agent_success) else None
+        if completed_reuse is not None:
+            logger.info(
+                "Skipping skill extraction for completed reused %s path: %s",
+                completed_reuse.get("reuse_source"),
+                trace_path,
+            )
+            self._write_extraction_result(trace_path, {
+                "status": "skipped_reused_skill_complete",
+                "trace": str(trace_path),
+                "is_success": is_success,
+                "agent_success": agent_success,
+                "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
+                "platform": platform,
+                **completed_reuse,
+            })
+            return None
+
+        from opengui.skills.code_first import (
+            CodeSkillExtractor,
+            CodeSkillLibrary,
+            CodeSkillRepository,
+            canonicalize_code_actions_from_trace,
+            repair_code_contracts_from_trace,
+        )
+        from opengui.skills.code_graph_projection import project_graph_code_from_trace
 
         try:
-            extractor = SkillExtractor(llm=self._llm)
-            skill = await extractor.extract_from_file(trace_path, is_success=is_success)
+            extractor = CodeSkillExtractor(llm=self._llm)
+            extraction = await extractor.extract_from_file(
+                trace_path,
+                is_success=is_success,
+                platform=platform,
+                task=task,
+                evaluation_result=evaluation_result,
+            )
             self._write_extraction_usage(trace_path, extractor.total_usage)
-            if skill is None:
+            if extraction is None:
                 logger.info(
                     "No skill candidate extracted from %s",
                     trace_path,
@@ -427,44 +546,112 @@ class PostRunProcessor:
                     "platform": platform,
                 })
                 return None
+            if not extraction.python_code:
+                self._write_extraction_result(trace_path, {
+                    "status": "code_compile_error",
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "agent_success": agent_success,
+                    "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
+                    "platform": platform,
+                    "attempts": [{"errors": list((extraction.attempts[0] if extraction.attempts else {}).get("violations") or ["empty python_code"])}],
+                    "updated_functions": [],
+                    "compiled_skill_ids": [],
+                    "graph_synced": False,
+                    "code_graph_synced": False,
+                })
+                return None
 
-            library = SkillLibrary(
-                store_dir=self._skill_store_root,
-                embedding_provider=self._embedding_provider,
-                merge_llm=self._merge_llm,
-                embedding_signature=self._embedding_signature,
+            canonicalized = canonicalize_code_actions_from_trace(extraction.python_code, trace_path)
+            if (
+                canonicalized.report.get("quality") != "unvalidated"
+                and int(canonicalized.report.get("reusable_action_count") or 0) < 1
+            ):
+                self._write_extraction_result(trace_path, {
+                    "status": "no_candidate",
+                    "reason": "no_trace_aligned_reusable_actions",
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "agent_success": agent_success,
+                    "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
+                    "platform": platform,
+                    "attempts": list(extraction.attempts),
+                    "updated_functions": [],
+                    "compiled_skill_ids": [],
+                    "graph_synced": False,
+                    "code_graph_synced": False,
+                    "action_sequence": canonicalized.report,
+                })
+                return None
+            repaired = repair_code_contracts_from_trace(canonicalized.source, trace_path)
+            projection = project_graph_code_from_trace(repaired.source, trace_path)
+            store_root = self._skill_store_root or trace_path.parent
+            repository = CodeSkillRepository(store_root)
+            code_lock = _CODE_SKILL_LOCKS.setdefault(
+                store_root.expanduser().resolve(strict=False),
+                asyncio.Lock(),
             )
-            decision, skill_id = await library.add_or_merge(skill)
-            final_id = skill_id or skill.skill_id
-            canonical_skill = library.get(final_id) or skill
-            continuation_anchor_id = _load_latest_graph_terminal_node_id(trace_path)
-            node_profiles = _derive_graph_node_profiles(trace_path, step_count=len(canonical_skill.steps))
-            graph_synced = await self._sync_skill_graph(
-                canonical_skill,
-                continuation_anchor_id=continuation_anchor_id,
-                node_profiles=node_profiles,
-            )
-            logger.info(
-                "Extracted skill %s from %s via %s",
-                final_id,
-                trace_path,
-                decision,
-            )
+            async with code_lock:
+                update = repository.add_code(
+                    projection.source,
+                    description_hint=task,
+                )
+                if update.errors:
+                    self._write_extraction_result(trace_path, {
+                        "status": "code_compile_error",
+                        "trace": str(trace_path),
+                        "is_success": is_success,
+                        "agent_success": agent_success,
+                        "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
+                        "platform": platform,
+                        "attempts": [{"errors": list(update.errors)}],
+                        "updated_functions": list(update.updated_functions),
+                        "compiled_skill_ids": [],
+                        "graph_synced": False,
+                        "code_graph_synced": False,
+                        "action_sequence": canonicalized.report,
+                        "contract_quality": repaired.report,
+                        "graph_projection": projection.to_dict(),
+                    })
+                    return None
 
+                code_library = CodeSkillLibrary(
+                    store_dir=store_root,
+                    embedding_provider=self._embedding_provider,
+                    merge_llm=self._merge_llm,
+                    embedding_signature=self._embedding_signature,
+                    legacy_fallback=False,
+                )
+                code_graph_synced = await code_library.sync_graph_cache()
+                graph_synced = code_graph_synced
+                if not code_graph_synced and update.skills:
+                    graph_synced = await self._sync_code_skills_graph(update.skills)
+
+            compiled_skill_ids = [skill.skill_id for skill in update.skills]
+            updated_function_names = set(update.updated_functions)
+            final_id = next(
+                (
+                    skill.skill_id
+                    for skill in update.skills
+                    if getattr(skill, "name", None) in updated_function_names
+                ),
+                compiled_skill_ids[0] if compiled_skill_ids else None,
+            )
             self._write_extraction_result(trace_path, {
-                "status": "processed",
-                "decision": decision,
+                "status": "processed_code",
                 "trace": str(trace_path),
                 "is_success": is_success,
+                "agent_success": agent_success,
+                "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                 "platform": platform,
-                "extracted_skill": {
-                    "skill_id": skill.skill_id,
-                    "name": skill.name,
-                    "app": skill.app,
-                    "step_count": len(skill.steps),
-                },
-                "result_skill_id": final_id,
+                "updated_functions": list(update.updated_functions),
+                "compiled_skill_ids": compiled_skill_ids,
                 "graph_synced": graph_synced,
+                "code_graph_synced": code_graph_synced,
+                "attempts": list(extraction.attempts),
+                "action_sequence": canonicalized.report,
+                "contract_quality": repaired.report,
+                "graph_projection": projection.to_dict(),
             })
             return final_id
         except Exception:
@@ -476,6 +663,24 @@ class PostRunProcessor:
                 "platform": platform,
             })
             return None
+
+    async def _sync_code_skills_graph(self, skills: tuple[Any, ...]) -> bool:
+        if self._skill_store_root is None:
+            return False
+        try:
+            from opengui.skills.graph import SkillGraphStore
+
+            graph = SkillGraphStore(
+                store_dir=self._skill_store_root,
+                embedding_provider=self._embedding_provider,
+                embedding_signature=self._embedding_signature,
+            )
+            for skill in skills:
+                await graph.ingest_skill(skill)
+            return bool(skills)
+        except Exception:
+            logger.warning("Code skill graph fallback sync failed", exc_info=True)
+            return False
 
     async def _sync_skill_graph(
         self,

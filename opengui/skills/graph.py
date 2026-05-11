@@ -109,6 +109,45 @@ def infer_app_hint_from_task(
     return best[1] if best is not None else None
 
 
+def infer_explicit_app_hint_from_task(task: str, *, platform: str) -> str | None:
+    """Infer an explicitly mentioned app even when no graph bucket exists yet."""
+    platform_norm = (platform or "unknown").strip().lower()
+    text = " ".join((task or "").strip().split())
+    if not text:
+        return None
+
+    lowered = text.lower()
+    normalized_full = _explicit_app_hint_fragment(lowered, platform=platform_norm)
+    if normalized_full is not None:
+        return normalized_full
+
+    compact = text.replace(" ", "")
+    max_span = min(18, len(compact))
+    best: tuple[int, str] | None = None
+    for start in range(len(compact)):
+        for end in range(start + 2, min(len(compact), start + max_span) + 1):
+            fragment = compact[start:end].strip(" ，。,.!！?？:：;；\"'“”‘’()（）[]【】")
+            if len(fragment) < 2:
+                continue
+            normalized = _explicit_app_hint_fragment(fragment, platform=platform_norm)
+            if normalized is None:
+                continue
+            span = end - start
+            if best is None or span > best[0]:
+                best = (span, normalized)
+    return best[1] if best is not None else None
+
+
+def _explicit_app_hint_fragment(fragment: str, *, platform: str) -> str | None:
+    normalized = normalize_app_identifier(platform, fragment)
+    if normalized == "unknown":
+        return None
+    # ``normalize_app_identifier`` intentionally slugs unknown free text so it
+    # can still bucket legacy data. Explicit task app hints must be stricter:
+    # only real package / bundle identifiers or known aliases should count.
+    return normalized if "." in normalized else None
+
+
 @dataclass
 class NodeStats:
     reach_count: int = 0
@@ -203,6 +242,7 @@ class GraphNode:
     dismiss_action: dict[str, Any] | None = None
     resume_policy: str | None = None
     retrieval_profile: dict[str, Any] | None = None
+    source_ref: dict[str, Any] | None = None
 
     def normalized(self) -> "GraphNode":
         platform = (self.platform or "unknown").strip().lower()
@@ -228,6 +268,7 @@ class GraphNode:
             dismiss_action=self.dismiss_action,
             resume_policy=self.resume_policy,
             retrieval_profile=_normalize_retrieval_profile(self.retrieval_profile),
+            source_ref=self.source_ref if isinstance(self.source_ref, dict) else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -247,6 +288,7 @@ class GraphNode:
             "dismiss_action": self.dismiss_action,
             "resume_policy": self.resume_policy,
             "retrieval_profile": self.retrieval_profile,
+            "source_ref": self.source_ref,
         }
 
     @classmethod
@@ -267,6 +309,7 @@ class GraphNode:
             dismiss_action=data.get("dismiss_action") if isinstance(data.get("dismiss_action"), dict) else None,
             resume_policy=data.get("resume_policy"),
             retrieval_profile=data.get("retrieval_profile") if isinstance(data.get("retrieval_profile"), dict) else None,
+            source_ref=data.get("source_ref") if isinstance(data.get("source_ref"), dict) else None,
         ).normalized()
 
 
@@ -285,6 +328,7 @@ class GraphEdge:
     stats: EdgeStats = field(default_factory=EdgeStats)
     skill_id: str | None = None
     kind: str = "action"
+    source_ref: dict[str, Any] | None = None
 
     def normalized(self) -> "GraphEdge":
         platform = (self.platform or "unknown").strip().lower()
@@ -314,6 +358,7 @@ class GraphEdge:
             stats=self.stats,
             skill_id=self.skill_id,
             kind=self.kind or "action",
+            source_ref=self.source_ref if isinstance(self.source_ref, dict) else None,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -331,6 +376,7 @@ class GraphEdge:
             "stats": self.stats.to_dict(),
             "skill_id": self.skill_id,
             "kind": self.kind,
+            "source_ref": self.source_ref,
         }
 
     @classmethod
@@ -349,6 +395,7 @@ class GraphEdge:
             stats=EdgeStats.from_dict(data.get("stats")),
             skill_id=data.get("skill_id"),
             kind=str(data.get("kind") or "action"),
+            source_ref=data.get("source_ref") if isinstance(data.get("source_ref"), dict) else None,
         ).normalized()
 
 
@@ -1180,6 +1227,7 @@ class SkillGraphStore:
                 dismiss_action=node.dismiss_action,
                 resume_policy=node.resume_policy,
                 retrieval_profile=node.retrieval_profile,
+                source_ref=node.source_ref,
             )
             self._nodes[version_base.node_id] = GraphNode(
                 node_id=version_base.node_id,
@@ -1197,6 +1245,7 @@ class SkillGraphStore:
                 dismiss_action=version_base.dismiss_action,
                 resume_policy=version_base.resume_policy,
                 retrieval_profile=version_base.retrieval_profile,
+                source_ref=version_base.source_ref,
             )
 
         self._nodes[node.node_id] = node
@@ -1725,8 +1774,12 @@ class SkillGraphStore:
     def _find_version_base(self, node: GraphNode) -> GraphNode | None:
         if node.kind != NODE_KIND_STATE or not _is_canonical_state_contract(node.state_contract):
             return None
+        if _is_code_declared_node(node):
+            return None
         best: tuple[float, GraphNode] | None = None
         for existing in self._nodes.values():
+            if _is_code_declared_node(existing):
+                continue
             if existing.platform != node.platform or existing.app != node.app:
                 continue
             if existing.kind != node.kind or existing.status != NODE_STATUS_ACTIVE:
@@ -2244,6 +2297,17 @@ class PathCompiler:
 
 def _is_active_state_node(node: GraphNode) -> bool:
     return node.kind == NODE_KIND_STATE and node.status == NODE_STATUS_ACTIVE
+
+
+def _is_code_declared_node(node: GraphNode) -> bool:
+    if node.node_id.startswith("code:"):
+        return True
+    source_ref = node.source_ref
+    return (
+        isinstance(source_ref, dict)
+        and source_ref.get("path") == "skill_graph_code.py"
+        and source_ref.get("kind") == "state"
+    )
 
 
 def _coerce_noncanonical_state_node(node: GraphNode) -> GraphNode:

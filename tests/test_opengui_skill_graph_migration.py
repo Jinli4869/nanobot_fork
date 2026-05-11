@@ -6,18 +6,23 @@ from pathlib import Path
 
 import pytest
 
+from opengui.interfaces import LLMResponse
+from opengui.postprocessing import (
+    PostRunProcessor,
+    _build_retrieval_profile,
+    _load_latest_graph_terminal_node_id,
+)
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.graph import (
     EDGE_STATUS_ACTIVE,
-    GraphEdge,
-    GraphNode,
     NODE_KIND_AUXILIARY,
     NODE_KIND_STATE,
     NODE_STATUS_ACTIVE,
+    GraphEdge,
+    GraphNode,
     NodeStats,
     SkillGraphStore,
 )
-from opengui.postprocessing import PostRunProcessor, _build_retrieval_profile
 from opengui.skills.state_contract import normalize_state_contract
 
 
@@ -75,6 +80,33 @@ def _unanchored_launch_skill() -> Skill:
 
 def _write_trace(trace_path: Path, events: list[dict[str, object]]) -> None:
     trace_path.write_text("\n".join(json.dumps(event) for event in events) + "\n", encoding="utf-8")
+
+
+def _code_response(name: str = "open_orders") -> str:
+    source = f'''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android", tags=["orders"], description="Open orders page.")
+async def {name}(device):
+    await action(
+        "tap",
+        target="Orders",
+        state_contract=C(app="com.example.app", required=[R(text="Home", visible=True)]),
+    )
+'''
+    return json.dumps({
+        "step_by_step_reasoning": "learn a reusable orders prefix",
+        "python_code": source,
+    })
+
+
+class _CodeLLM:
+    def __init__(self, response: str | None = None) -> None:
+        self.response = response or _code_response()
+
+    async def chat(self, messages: list[dict[str, object]]) -> LLMResponse:
+        del messages
+        return LLMResponse(content=self.response)
 
 
 def test_retrieval_profile_discards_dynamic_feed_content() -> None:
@@ -296,10 +328,8 @@ async def test_ingest_skill_ignores_incompatible_continuation_anchor(tmp_path: P
     assert edges[0].source_node_id != incompatible_anchor.node_id
 
 
-@pytest.mark.asyncio
-async def test_postrun_graph_sync_passes_latest_successful_terminal_anchor(
+def test_load_latest_graph_terminal_node_id_uses_latest_successful_prefix(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
@@ -332,56 +362,11 @@ async def test_postrun_graph_sync_passes_latest_successful_terminal_anchor(
         ],
     )
 
-    expected_skill = _skill("branch", "Orders", contract_text="Orders")
-
-    class FakeSkillExtractor:
-        def __init__(self, *, llm: object) -> None:
-            self.total_usage = {}
-
-        async def extract_from_file(self, trace_path: Path, is_success: bool) -> Skill | None:
-            return expected_skill
-
-    class FakeSkillLibrary:
-        def __init__(self, **kwargs: object) -> None:
-            self._skill = expected_skill
-
-        async def add_or_merge(self, skill: Skill) -> tuple[str, str]:
-            return ("added", skill.skill_id)
-
-        def get(self, skill_id: str) -> Skill | None:
-            return self._skill if skill_id == self._skill.skill_id else None
-
-    captured: list[str | None] = []
-
-    async def fake_sync(
-        self: PostRunProcessor,
-        skill: object,
-        *,
-        continuation_anchor_id: str | None = None,
-        node_profiles: dict[int | str, dict[str, object] | None] | None = None,
-    ) -> bool:
-        captured.append(continuation_anchor_id)
-        return True
-
-    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor", FakeSkillExtractor)
-    monkeypatch.setattr("opengui.skills.library.SkillLibrary", FakeSkillLibrary)
-    monkeypatch.setattr(PostRunProcessor, "_sync_skill_graph", fake_sync)
-
-    processor = PostRunProcessor(
-        llm=object(),
-        skill_store_root=tmp_path / "skills",
-        enable_skill_extraction=True,
-    )
-
-    await processor._extract_skill(trace_path, is_success=True, platform="android")
-
-    assert captured == ["node-runtime"]
+    assert _load_latest_graph_terminal_node_id(trace_path) == "node-runtime"
 
 
-@pytest.mark.asyncio
-async def test_postrun_graph_sync_ignores_prefix_when_runtime_fails(
+def test_load_latest_graph_terminal_node_id_ignores_failed_runtime_prefix(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
@@ -402,50 +387,7 @@ async def test_postrun_graph_sync_ignores_prefix_when_runtime_fails(
         ],
     )
 
-    expected_skill = _skill("branch", "Orders", contract_text="Orders")
-
-    class FakeSkillExtractor:
-        def __init__(self, *, llm: object) -> None:
-            self.total_usage = {}
-
-        async def extract_from_file(self, trace_path: Path, is_success: bool) -> Skill | None:
-            return expected_skill
-
-    class FakeSkillLibrary:
-        def __init__(self, **kwargs: object) -> None:
-            self._skill = expected_skill
-
-        async def add_or_merge(self, skill: Skill) -> tuple[str, str]:
-            return ("added", skill.skill_id)
-
-        def get(self, skill_id: str) -> Skill | None:
-            return self._skill if skill_id == self._skill.skill_id else None
-
-    captured: list[str | None] = []
-
-    async def fake_sync(
-        self: PostRunProcessor,
-        skill: object,
-        *,
-        continuation_anchor_id: str | None = None,
-        node_profiles: dict[int | str, dict[str, object] | None] | None = None,
-    ) -> bool:
-        captured.append(continuation_anchor_id)
-        return True
-
-    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor", FakeSkillExtractor)
-    monkeypatch.setattr("opengui.skills.library.SkillLibrary", FakeSkillLibrary)
-    monkeypatch.setattr(PostRunProcessor, "_sync_skill_graph", fake_sync)
-
-    processor = PostRunProcessor(
-        llm=object(),
-        skill_store_root=tmp_path / "skills",
-        enable_skill_extraction=True,
-    )
-
-    await processor._extract_skill(trace_path, is_success=True, platform="android")
-
-    assert captured == [None]
+    assert _load_latest_graph_terminal_node_id(trace_path) is None
 
 
 @pytest.mark.asyncio
@@ -459,6 +401,17 @@ async def test_postrun_graph_sync_serializes_concurrent_updates(
         trace_path_a,
         [
             {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "target": "Orders"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {"visible_text": ["Home", "Orders"], "clickable_text": ["Orders"]},
+                },
+            },
+            {
                 "type": "graph_runtime_result",
                 "state": "succeeded",
                 "prefix_only": True,
@@ -471,6 +424,17 @@ async def test_postrun_graph_sync_serializes_concurrent_updates(
         trace_path_b,
         [
             {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "target": "Orders"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {"visible_text": ["Home", "Orders"], "clickable_text": ["Orders"]},
+                },
+            },
+            {
                 "type": "graph_runtime_result",
                 "state": "succeeded",
                 "prefix_only": True,
@@ -480,52 +444,27 @@ async def test_postrun_graph_sync_serializes_concurrent_updates(
         ],
     )
 
-    expected_skill = _skill("branch", "Orders", contract_text="Orders")
     seen_overlap = 0
     active = 0
     active_lock = asyncio.Lock()
 
-    class FakeSkillExtractor:
-        def __init__(self, *, llm: object) -> None:
-            self.total_usage = {}
+    async def fake_sync_graph_cache(self: object) -> bool:
+        nonlocal seen_overlap, active
+        async with active_lock:
+            active += 1
+            seen_overlap = max(seen_overlap, active)
+        await asyncio.sleep(0.05)
+        async with active_lock:
+            active -= 1
+        return True
 
-        async def extract_from_file(self, trace_path: Path, is_success: bool) -> Skill | None:
-            return expected_skill
-
-    class FakeSkillLibrary:
-        def __init__(self, **kwargs: object) -> None:
-            self._skill = expected_skill
-
-        async def add_or_merge(self, skill: Skill) -> tuple[str, str]:
-            return ("added", skill.skill_id)
-
-        def get(self, skill_id: str) -> Skill | None:
-            return self._skill if skill_id == self._skill.skill_id else None
-
-    class FakeGraphStore:
-        def __init__(self, **kwargs: object) -> None:
-            pass
-
-        async def ingest_skill(
-            self,
-            skill: Skill,
-            continuation_anchor_id: str | None = None,
-            node_profiles: dict[int | str, dict[str, object] | None] | None = None,
-        ) -> None:
-            nonlocal seen_overlap, active
-            async with active_lock:
-                active += 1
-                seen_overlap = max(seen_overlap, active)
-            await asyncio.sleep(0.05)
-            async with active_lock:
-                active -= 1
-
-    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor", FakeSkillExtractor)
-    monkeypatch.setattr("opengui.skills.library.SkillLibrary", FakeSkillLibrary)
-    monkeypatch.setattr("opengui.skills.graph.SkillGraphStore", FakeGraphStore)
+    monkeypatch.setattr(
+        "opengui.skills.code_first.CodeSkillLibrary.sync_graph_cache",
+        fake_sync_graph_cache,
+    )
 
     processor = PostRunProcessor(
-        llm=object(),
+        llm=_CodeLLM(),
         skill_store_root=tmp_path / "skills",
         enable_skill_extraction=True,
     )
@@ -539,9 +478,8 @@ async def test_postrun_graph_sync_serializes_concurrent_updates(
 
 
 @pytest.mark.asyncio
-async def test_postrun_graph_sync_persists_retrieval_profiles_without_touching_skill_json(
+async def test_postrun_code_first_writes_code_graph_without_touching_skill_json(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
@@ -550,6 +488,7 @@ async def test_postrun_graph_sync_persists_retrieval_profiles_without_touching_s
             {
                 "type": "step",
                 "step_index": 0,
+                "action": {"action_type": "wait"},
                 "observation": {
                     "app": "com.example.app",
                     "foreground_app": "com.example.app",
@@ -571,63 +510,47 @@ async def test_postrun_graph_sync_persists_retrieval_profiles_without_touching_s
                     },
                 },
             },
-            {"type": "result", "status": "succeeded"},
-        ],
-    )
-
-    expected_skill = _skill("branch", "Orders", contract_text="Orders")
-
-    class FakeSkillExtractor:
-        def __init__(self, *, llm: object) -> None:
-            self.total_usage = {}
-
-        async def extract_from_file(self, trace_path: Path, is_success: bool) -> Skill | None:
-            return expected_skill
-
-    processor = PostRunProcessor(
-        llm=object(),
-        skill_store_root=tmp_path / "store",
-        enable_skill_extraction=True,
-    )
-
-    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor", FakeSkillExtractor)
-
-    await processor._extract_skill(trace_path, is_success=True, platform="android")
-
-    skills_payload = json.loads((tmp_path / "store" / "android" / "skills.json").read_text(encoding="utf-8"))
-    stored_skill = skills_payload["apps"]["com.example.app"][0]
-    assert "retrieval_profile" not in stored_skill
-
-    graph_payload = json.loads((tmp_path / "store" / "skill_graph.json").read_text(encoding="utf-8"))
-    assert any(node.get("retrieval_profile") for node in graph_payload["nodes"])
-    assert any(
-        node.get("retrieval_profile", {}).get("stable_controls")
-        for node in graph_payload["nodes"]
-    )
-
-
-@pytest.mark.asyncio
-async def test_postrun_graph_sync_compacts_duplicate_nodes_after_ingest(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    trace_path = tmp_path / "trace.jsonl"
-    _write_trace(
-        trace_path,
-        [
             {
                 "type": "step",
-                "step_index": 0,
+                "step_index": 1,
+                "action": {"action_type": "tap", "target": "Orders"},
                 "observation": {
                     "app": "com.example.app",
                     "foreground_app": "com.example.app",
                     "platform": "android",
+                    "extra": {
+                        "visible_text": ["Orders", "All orders"],
+                        "resource_ids": ["com.example:id/orders_title"],
+                        "ui_tree": [
+                            {
+                                "text": "Orders",
+                                "resource_id": "com.example:id/orders_title",
+                            }
+                        ],
+                    },
                 },
             },
             {"type": "result", "status": "succeeded"},
         ],
     )
 
+    processor = PostRunProcessor(
+        llm=_CodeLLM(),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=True,
+    )
+
+    await processor._extract_skill(trace_path, is_success=True, platform="android")
+
+    assert not (tmp_path / "store" / "android" / "skills.json").exists()
+    assert (tmp_path / "store" / "skill_graph_code.py").exists()
+    graph_payload = json.loads((tmp_path / "store" / "skill_graph.json").read_text(encoding="utf-8"))
+    assert any((node.get("source_ref") or {}).get("path") == "skill_graph_code.py" for node in graph_payload["nodes"])
+
+
+def test_graph_store_compacts_duplicate_nodes_after_ingest(
+    tmp_path: Path,
+) -> None:
     graph_dir = tmp_path / "store"
     graph = SkillGraphStore(store_dir=graph_dir)
     survivor = GraphNode(
@@ -679,39 +602,7 @@ async def test_postrun_graph_sync_compacts_duplicate_nodes_after_ingest(
     )
     graph.save()
 
-    expected_skill = _skill("branch", "Orders", contract_text="Orders")
-
-    class FakeSkillExtractor:
-        def __init__(self, *, llm: object) -> None:
-            self.total_usage = {}
-
-        async def extract_from_file(self, trace_path: Path, is_success: bool) -> Skill | None:
-            return expected_skill
-
-    class FakeSkillLibrary:
-        def __init__(self, **kwargs: object) -> None:
-            self._skill = expected_skill
-
-        async def add_or_merge(self, skill: Skill) -> tuple[str, str]:
-            return ("added", skill.skill_id)
-
-        def get(self, skill_id: str) -> Skill | None:
-            return self._skill if skill_id == self._skill.skill_id else None
-
-    def fake_graph_store(*args: object, **kwargs: object) -> SkillGraphStore:
-        return graph
-
-    monkeypatch.setattr("opengui.skills.extractor.SkillExtractor", FakeSkillExtractor)
-    monkeypatch.setattr("opengui.skills.library.SkillLibrary", FakeSkillLibrary)
-    monkeypatch.setattr("opengui.skills.graph.SkillGraphStore", fake_graph_store)
-
-    processor = PostRunProcessor(
-        llm=object(),
-        skill_store_root=graph_dir,
-        enable_skill_extraction=True,
-    )
-
-    await processor._extract_skill(trace_path, is_success=True, platform="android")
+    graph.compact_canonical_graph()
 
     graph_payload = json.loads((graph_dir / "skill_graph.json").read_text(encoding="utf-8"))
     node_ids = [node.get("node_id") for node in graph_payload["nodes"]]

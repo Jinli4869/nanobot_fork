@@ -25,12 +25,12 @@ import logging
 import re
 import time
 import typing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from opengui.action import Action
+from opengui.action import Action, ActionError, parse_action
 from opengui.interfaces import DeviceBackend
 from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
@@ -397,23 +397,75 @@ def _build_template_action(step: SkillStep, params: dict[str, str]) -> Action:
     Used when no ``ActionGrounder`` is provided or when callers do not supply
     one. Mirrors the original ``_ground_step`` behaviour.
     """
+    payload = _build_template_payload(step, params)
+    return _lenient_action_from_payload(payload)
+
+
+def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str, Any]:
+    """Build a raw action payload from step templates and runtime parameters."""
     target = _ground_text(step.target, params)
     grounded: dict[str, Any] = {}
     for k, v in step.parameters.items():
         grounded[k] = _ground_text(str(v), params) if isinstance(v, str) else v
 
-    kwargs: dict[str, Any] = {"action_type": step.action_type}
-    if "x" in grounded:
-        kwargs["x"] = float(grounded["x"])
-    if "y" in grounded:
-        kwargs["y"] = float(grounded["y"])
-    if "text" in grounded:
-        kwargs["text"] = grounded["text"]
-    elif step.action_type == "input_text":
-        kwargs["text"] = target
-    elif step.action_type == "open_app":
-        kwargs["text"] = target
+    payload: dict[str, Any] = {"action_type": step.action_type}
+    for key in (
+        "x",
+        "y",
+        "x2",
+        "y2",
+        "text",
+        "key",
+        "pixels",
+        "duration_ms",
+        "relative",
+        "status",
+        "auto_enter",
+    ):
+        if key in grounded:
+            payload[key] = grounded[key]
+    if "text" not in payload and step.action_type in {"input_text", "open_app", "close_app"}:
+        payload["text"] = target
+    return payload
+
+
+def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
+    """Create an Action while preserving legacy permissive template fallback."""
+    kwargs: dict[str, Any] = {"action_type": str(payload.get("action_type") or "")}
+    for key in ("x", "y", "x2", "y2"):
+        if key in payload:
+            kwargs[key] = float(payload[key])
+    if "text" in payload:
+        kwargs["text"] = str(payload["text"])
+    if "key" in payload:
+        raw_key = payload["key"]
+        kwargs["key"] = [str(item) for item in raw_key] if isinstance(raw_key, list) else [str(raw_key)]
+    if "pixels" in payload:
+        kwargs["pixels"] = int(payload["pixels"])
+    if "duration_ms" in payload:
+        kwargs["duration_ms"] = int(payload["duration_ms"])
+    if "relative" in payload:
+        kwargs["relative"] = bool(payload["relative"])
+    if "status" in payload:
+        kwargs["status"] = str(payload["status"])
+    if "auto_enter" in payload:
+        kwargs["auto_enter"] = bool(payload["auto_enter"])
     return Action(**kwargs)
+
+
+def _try_build_complete_template_action(
+    step: SkillStep,
+    params: dict[str, str],
+) -> Action | None:
+    """Return a fully-resolved template action when no visual grounding is needed."""
+    try:
+        action = parse_action(_build_template_payload(step, params))
+    except (ActionError, TypeError, ValueError):
+        return None
+    for value in (action.text, *(action.key or ())):
+        if isinstance(value, str) and re.search(r"\{\{\w+\}\}", value):
+            return None
+    return action
 
 
 # ---------------------------------------------------------------------------
@@ -730,6 +782,10 @@ class SkillExecutor:
         """Return ``(action, grounding_mode, token_usage, duration_s)`` for the given step."""
         if step.fixed:
             return self._normalize_app_action(_build_fixed_action(step, params)), "fixed", {}, 0.0
+
+        template_action = _try_build_complete_template_action(step, params)
+        if template_action is not None:
+            return self._normalize_app_action(template_action), "template", {}, 0.0
 
         if self.action_grounder is not None and screenshot is not None:
             try:

@@ -37,8 +37,8 @@ from opengui.interfaces import (
 )
 from opengui.memory.retrieval import MemoryRetriever
 from opengui.memory.store import MemoryStore
+from opengui.skills.code_first import CodeSkillLibrary
 from opengui.skills.executor import LLMStateValidator, SkillExecutor
-from opengui.skills.library import SkillLibrary
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
@@ -449,6 +449,7 @@ def build_backend(name: str, config: CliConfig) -> Any:
             scrcpy_frame_timeout_ms=config.scrcpy.frame_timeout_ms,
             scrcpy_max_frame_age_ms=config.scrcpy.max_frame_age_ms,
             collect_ui_tree=True,
+            collect_ui_tree_nodes=True,
         )
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend
@@ -489,7 +490,7 @@ async def build_optional_components(
     await memory_retriever.index(memory_store.list_all())
 
     try:
-        skill_library = SkillLibrary(
+        skill_library = CodeSkillLibrary(
             store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
             embedding_provider=embedding_provider,
             merge_llm=provider,
@@ -498,7 +499,7 @@ async def build_optional_components(
     except TypeError as exc:
         if "embedding_signature" not in str(exc):
             raise
-        skill_library = SkillLibrary(
+        skill_library = CodeSkillLibrary(
             store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
             embedding_provider=embedding_provider,
             merge_llm=provider,
