@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import litellm
 import numpy as np
+from openai import AsyncOpenAI
 
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
@@ -235,6 +236,14 @@ class GuiSubagentTool(Tool):
             await self._shutdown_android_backend(active_backend)
 
     async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
+        max_retries_raw = kwargs.pop("max_retries", kwargs.pop("gui_max_retries", 1))
+        try:
+            max_retries = int(max_retries_raw)
+        except (TypeError, ValueError):
+            max_retries = 1
+        if max_retries <= 0:
+            max_retries = 1
+
         policy_context, memory_store = self._load_policy_context_and_memory_store()
         skill_library = None
         if self._gui_config.enable_skill_execution:
@@ -331,7 +340,7 @@ class GuiSubagentTool(Tool):
             stagnation_limit=self._gui_config.stagnation_limit,
         )
 
-        result = await agent.run(task=task)
+        result = await agent.run(task=task, max_retries=max_retries)
         summary = result.summary
         error = result.error
         if error and error.startswith("intervention_cancelled:"):
@@ -581,6 +590,27 @@ class GuiSubagentTool(Tool):
         resolved_model = self._resolve_embedding_model()
 
         embedding_model = resolved_model
+        embedding_api_base = (self._gui_config.embedding_api_base or "").strip() or None
+        embedding_api_key = (self._gui_config.embedding_api_key or "").strip()
+
+        if embedding_api_base or embedding_api_key:
+            embedding_client = AsyncOpenAI(
+                api_key=embedding_api_key or "no-key",
+                base_url=embedding_api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            )
+            direct_model = self._normalize_direct_embedding_model(embedding_model)
+
+            async def _embed_configured(texts: list[str]) -> np.ndarray:
+                async def _request_batch(batch: list[str]) -> list[list[float]]:
+                    response = await embedding_client.embeddings.create(
+                        model=direct_model,
+                        input=batch,
+                    )
+                    return [item.embedding for item in response.data]
+
+                return await self._embed_texts_in_batches(texts, _request_batch)
+
+            return NanobotEmbeddingAdapter(_embed_configured)
 
         direct_client = getattr(self._provider, "_client", None)
         if direct_client is not None and hasattr(direct_client, "embeddings"):
@@ -662,6 +692,14 @@ class GuiSubagentTool(Tool):
             return None
 
         resolved_model = self._resolve_embedding_model()
+        embedding_api_base = (self._gui_config.embedding_api_base or "").strip() or None
+        if embedding_api_base:
+            return "|".join([
+                "embedding",
+                embedding_api_base,
+                self._normalize_direct_embedding_model(resolved_model),
+            ])
+
         direct_client = getattr(self._provider, "_client", None)
         if direct_client is not None and hasattr(direct_client, "embeddings"):
             resolved_model = self._normalize_direct_embedding_model(resolved_model)

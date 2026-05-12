@@ -56,7 +56,14 @@ from nanobot.utils.progress_events import (
 from nanobot.utils.runtime import EMPTY_FINAL_RESPONSE_MESSAGE
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ChannelsConfig, ExecToolConfig, GuiConfig, ToolsConfig, WebToolsConfig
+    from nanobot.config.schema import (
+        ChannelsConfig,
+        ExecToolConfig,
+        GuiConfig,
+        ToolsConfig,
+        WebSearchConfig,
+        WebToolsConfig,
+    )
     from nanobot.cron.service import CronService
 
 
@@ -193,6 +200,8 @@ class AgentLoop:
         max_tool_result_chars: int | None = None,
         provider_retry_mode: str = "standard",
         web_config: WebToolsConfig | None = None,
+        web_search_config: WebSearchConfig | None = None,
+        web_proxy: str | None = None,
         exec_config: ExecToolConfig | None = None,
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
@@ -241,6 +250,11 @@ class AgentLoop:
             else defaults.max_tool_result_chars
         )
         self.provider_retry_mode = provider_retry_mode
+        if web_config is None and (web_search_config is not None or web_proxy is not None):
+            web_config = WebToolsConfig()
+            if web_search_config is not None:
+                web_config.search = web_search_config
+            web_config.proxy = web_proxy
         self.web_config = web_config or WebToolsConfig()
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
@@ -249,6 +263,8 @@ class AgentLoop:
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
         self._gui_config = gui_config
+        self._gui_provider = gui_provider or provider
+        self._gui_model = gui_model or self.model
 
         self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)

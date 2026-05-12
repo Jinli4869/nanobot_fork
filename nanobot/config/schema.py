@@ -285,6 +285,8 @@ class GuiConfig(Base):
     stagnation_limit: int = 0
     skill_threshold: float = 0.6
     embedding_model: str | None = None
+    embedding_api_key: str = ""
+    embedding_api_base: str | None = None
     background: bool = False
     display_num: int | None = None
     display_width: int = 1280

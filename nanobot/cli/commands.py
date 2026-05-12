@@ -443,7 +443,6 @@ def _resolve_gui_runtime(config: Config):
         return None, None
     return snapshot.provider, snapshot.model
 
-
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
     """Load config and optionally override the active workspace."""
     from nanobot.config.loader import load_config, resolve_config_env_vars, set_config_path
