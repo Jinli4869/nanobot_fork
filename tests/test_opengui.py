@@ -94,6 +94,33 @@ class _SkillTestBackend:
         return []
 
 
+class _UiTreeDryRunBackend(DryRunBackend):
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        observation = await super().observe(screenshot_path, timeout=timeout)
+        observation.extra = {
+            "visible_text": ["我的订单"],
+            "resource_ids": ["com.max.xiaoheihe:id/tv_desc"],
+            "ui_tree": [{
+                "text": "我的订单",
+                "resource_id": "com.max.xiaoheihe:id/tv_desc",
+                "bounds": "[258,723][390,768]",
+            }],
+        }
+        return observation
+
+
+class _CountingSkillReuser:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def find(self, *args, **kwargs):
+        self.calls += 1
+        return None
+
+    def drain_usage(self) -> dict[str, int]:
+        return {}
+
+
 def test_parse_scroll_allows_center_default() -> None:
     action = parse_action({
         "action_type": "scroll",
@@ -113,6 +140,46 @@ def test_parse_scroll_rejects_partial_coordinates() -> None:
             "x": 100,
             "pixels": 180,
         })
+
+
+def test_parse_action_accepts_open_deeplink_fields() -> None:
+    action = parse_action({
+        "action_type": "open_deeplink",
+        "text": "xhh://mall/order",
+        "component": "com.max.xiaoheihe/.RouterActivity",
+        "package": "com.max.xiaoheihe",
+    })
+
+    assert action.action_type == "open_deeplink"
+    assert action.text == "xhh://mall/order"
+    assert action.component == "com.max.xiaoheihe/.RouterActivity"
+    assert action.package == "com.max.xiaoheihe"
+
+
+def test_parse_action_requires_open_deeplink_uri() -> None:
+    with pytest.raises(ActionError, match="open_deeplink.*text"):
+        parse_action({"action_type": "open_deeplink"})
+
+
+def test_parse_action_accepts_open_intent_fields() -> None:
+    action = parse_action({
+        "action_type": "open_intent",
+        "intent_action": "android.provider.action.VIEW_DOWNLOADS",
+        "package": "com.google.android.documentsui",
+        "categories": ["android.intent.category.DEFAULT"],
+        "extras": {"show_advanced": True},
+    })
+
+    assert action.action_type == "open_intent"
+    assert action.intent_action == "android.provider.action.VIEW_DOWNLOADS"
+    assert action.package == "com.google.android.documentsui"
+    assert action.categories == ("android.intent.category.DEFAULT",)
+    assert action.extras == (("show_advanced", True),)
+
+
+def test_parse_action_requires_open_intent_action() -> None:
+    with pytest.raises(ActionError, match="open_intent.*intent_action"):
+        parse_action({"action_type": "open_intent"})
 
 
 def test_parse_action_unwraps_singleton_coordinate_lists() -> None:
@@ -484,6 +551,108 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
     run_mock.assert_awaited_once_with(
         "shell", "input", "tap", str(expected_x), str(expected_y), timeout=5.0,
     )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_open_deeplink_uses_restricted_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="Status: ok")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    await backend.execute(Action(
+        action_type="open_deeplink",
+        text="xhh://mall/order?tab=all&from=skill",
+        component="com.max.xiaoheihe/.RouterActivity",
+        package="com.max.xiaoheihe",
+    ))
+
+    run_mock.assert_awaited_once_with(
+        "shell",
+        "am start -W -a android.intent.action.VIEW -d "
+        "'xhh://mall/order?tab=all&from=skill' "
+        "-n com.max.xiaoheihe/.RouterActivity -p com.max.xiaoheihe",
+        timeout=5.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_open_deeplink_rejects_invalid_component(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="Status: ok")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    with pytest.raises(ValueError, match="Invalid Android component"):
+        await backend.execute(Action(
+            action_type="open_deeplink",
+            text="xhh://mall/order",
+            component="com.max.xiaoheihe/.RouterActivity;rm -rf /",
+        ))
+    run_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_open_deeplink_rejects_am_start_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="Error: Activity not started, unable to resolve Intent")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    with pytest.raises(AdbError, match="open_deeplink failed"):
+        await backend.execute(Action(
+            action_type="open_deeplink",
+            text="invalid://target",
+        ))
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_open_intent_uses_restricted_am_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="Status: ok")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    await backend.execute(Action(
+        action_type="open_intent",
+        intent_action="android.intent.action.INSERT",
+        mime_type="vnd.android.cursor.dir/contact",
+        package="com.google.android.contacts",
+        extras=(
+            ("name", "Grace Taylor"),
+            ("phone", "799-802-1530"),
+            ("finishActivityOnSaveCompleted", True),
+        ),
+    ))
+
+    run_mock.assert_awaited_once_with(
+        "shell",
+        "am start -W -a android.intent.action.INSERT "
+        "-t vnd.android.cursor.dir/contact -p com.google.android.contacts "
+        "--es name 'Grace Taylor' --es phone 799-802-1530 "
+        "--ez finishActivityOnSaveCompleted true",
+        timeout=5.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_open_intent_rejects_invalid_action(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(return_value="Status: ok")
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    with pytest.raises(ValueError, match="Invalid Android intent action"):
+        await backend.execute(Action(
+            action_type="open_intent",
+            intent_action="android.intent.action.VIEW;rm -rf /",
+        ))
+    run_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -1535,6 +1704,88 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
     ]
     assert image_blocks
     assert image_blocks[0]["image_url"]["url"] == "<omitted:image-data-url>"
+
+
+@pytest.mark.asyncio
+async def test_agent_prompt_hides_ui_tree_but_trace_records_it(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        _UiTreeDryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "Open orders screen"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+    )
+
+    result = await agent.run("Open orders screen", max_retries=1)
+
+    assert result.success
+    assert result.trace_path is not None
+    prompt_text = "\n".join(
+        block["text"]
+        for block in llm.calls[0][1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Additional context:" not in prompt_text
+    assert "ui_tree" not in prompt_text
+    assert "resource_ids" not in prompt_text
+    assert "我的订单" not in prompt_text
+    assert "[258,723][390,768]" not in prompt_text
+
+    trace_path = Path(result.trace_path) / "trace.jsonl"
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    step_event = next(event for event in events if event["event"] == "step")
+    extra = step_event["prompt"]["current_observation"]["extra"]
+    assert extra["visible_text"] == ["我的订单"]
+    assert extra["resource_ids"] == ["com.max.xiaoheihe:id/tv_desc"]
+    assert extra["ui_tree"][0]["bounds"] == "[258,723][390,768]"
+
+
+@pytest.mark.asyncio
+async def test_agent_does_not_attempt_graph_runtime_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    reuser = _CountingSkillReuser()
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "finish without graph runtime"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=object(),
+        skill_executor=object(),
+        skill_reuser=reuser,
+    )
+    graph_runtime = AsyncMock(side_effect=AssertionError("graph runtime should be disabled"))
+    monkeypatch.setattr(agent, "_try_graph_runtime", graph_runtime)
+
+    result = await agent.run("finish without graph runtime", max_retries=1)
+
+    assert result.success
+    graph_runtime.assert_not_awaited()
+    assert reuser.calls == 1
 
 
 @pytest.mark.asyncio

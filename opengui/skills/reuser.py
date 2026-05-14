@@ -2,16 +2,16 @@
 opengui.skills.reuser
 ~~~~~~~~~~~~~~~~~~~~~
 LLM-gated skill reuse: retrieves top-k candidates from SkillLibrary,
-then serially judges each (score-descending) until one is approved by the LLM.
+then asks the LLM to choose the best reusable prefix, including optional
+truncation.
 
-Judgment pipeline per candidate:
-1. Build a lightweight prompt with the task description, skill name/app/description,
-   and a step summary (action_type + target only, no coordinates).
-2. Call the LLM and parse the JSON response for ``{"applicable": true/false}``.
-3. Return the first approved (skill, score) pair; fall back to None if all fail.
+Selection pipeline:
+1. Build a lightweight prompt with the task description and top-k skill summaries.
+2. Call the LLM once and parse ``selected_skill_id`` plus optional ``end_step``.
+3. Return the selected skill prefix; fall back to None if no candidate is suitable.
 
-Fail-closed: any LLM call error causes that candidate to be skipped (returns False),
-so the GUI agent loop is the safe fallback.
+Fail-closed: any LLM call or parse error returns None, so the GUI agent loop is
+the safe fallback.
 """
 
 from __future__ import annotations
@@ -19,7 +19,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import typing
+from dataclasses import replace
 from typing import Any
 
 if typing.TYPE_CHECKING:
@@ -29,23 +31,23 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-_JUDGE_PROMPT = """\
-You are deciding whether a stored GUI skill can serve as a **complete or preceding** \
-action sequence for a new task.
+_SELECTION_PROMPT = """\
+You choose whether one stored GUI skill can serve as a useful action prefix for a new task.
 
 Task: {task}
 
-Skill:
-  Name: {name}
-  App:  {app}
-  Description: {description}
-  Steps:
-{steps}
+Candidates:
+{candidates}
 
-Can this skill fully complete, or be a valid preceding sub-sequence for, the task above?
-If the task dosen't contain any app-specific requirement, return false to avoid false positives.
+Rules:
+- Return null when no candidate is clearly useful for this task.
+- Prefer the shortest prefix that moves toward the task without doing irrelevant later actions.
+- end_step is 1-based and inclusive. Use the full step count only when every step is relevant.
+- If the task has no app-specific requirement, return null to avoid false positives.
+- Do not choose a candidate only because it shares generic words such as open, search, tap, or settings.
 
-Reply with JSON only: {{"applicable": true/false}}
+Reply with JSON only:
+{{"selected_skill_id": "skill-id-or-null", "end_step": 1, "reason": "short reason"}}
 """
 
 
@@ -59,7 +61,8 @@ class SkillReuser:
     top_k:
         Number of candidates to fetch from the library before LLM filtering.
     auto_accept_threshold:
-        Candidate score threshold for immediate acceptance without LLM judge.
+        Deprecated compatibility argument. Candidate selection always goes
+        through one LLM top-k selection call.
     threshold:
         Minimum hybrid retrieval score; candidates below this are skipped before
         any LLM call is made.
@@ -77,6 +80,7 @@ class SkillReuser:
         self._threshold = threshold
         self._auto_accept_threshold = auto_accept_threshold
         self._usage_accum: dict[str, int] = {}
+        self._last_selection_timing: dict[str, float] = {}
 
     def drain_usage(self) -> dict[str, int]:
         """Return accumulated token usage since the last drain and reset the counter."""
@@ -92,10 +96,10 @@ class SkillReuser:
         *,
         trajectory_recorder: TrajectoryRecorder | None = None,
     ) -> tuple[Any, float] | None:
-        """Return the first LLM-approved ``(skill, score)`` or ``None``.
+        """Return an LLM-selected ``(skill_prefix, score)`` or ``None``.
 
         Fetches up to *top_k* candidates from *library*, pre-filters by *threshold*,
-        then serially calls the LLM (highest score first) until one is approved.
+        then asks the LLM to pick one candidate and optional prefix length.
         """
         results: list[tuple[Any, float]] = await library.search(
             task, platform=platform, top_k=self._top_k
@@ -108,70 +112,101 @@ class SkillReuser:
                     threshold=self._threshold)
             return None
 
-        for skill, score in candidates:
-            if score >= self._auto_accept_threshold:
-                _record(trajectory_recorder, "skill_search",
-                        source="reuser", matched=True,
-                        skill_id=skill.skill_id,
-                        skill_name=skill.name,
-                        score=round(score, 4),
-                        reason="auto_accept")
-                return skill, score
+        selection = await self._select(task, candidates)
+        selection_timing = dict(self._last_selection_timing)
+        if selection is None:
+            _record(trajectory_recorder, "skill_search",
+                    source="reuser", matched=False, reason="all_rejected",
+                    selection_duration_s=selection_timing.get("selection_duration_s"),
+                    llm_latency_s=selection_timing.get("llm_latency_s"),
+                    candidates_checked=len(candidates))
+            return None
 
-            applicable = await self._judge(task, skill)
-            _record(trajectory_recorder, "skill_judge",
-                    source="reuser",
-                    skill_id=skill.skill_id,
-                    skill_name=skill.name,
-                    score=round(score, 4),
-                    applicable=applicable)
-            if applicable:
-                _record(trajectory_recorder, "skill_search",
-                        source="reuser", matched=True,
-                        skill_id=skill.skill_id,
-                        skill_name=skill.name,
-                        score=round(score, 4))
-                return skill, score
+        selected_skill_id, end_step, reason = selection
+        candidate_by_id = {skill.skill_id: (skill, score) for skill, score in candidates}
+        selected = candidate_by_id.get(selected_skill_id)
+        if selected is None:
+            _record(trajectory_recorder, "skill_search",
+                    source="reuser", matched=False, reason="invalid_selection",
+                    selected_skill_id=selected_skill_id,
+                    candidates_checked=len(candidates))
+            return None
 
+        skill, score = selected
+        step_count = len(getattr(skill, "steps", ()) or ())
+        if step_count > 0:
+            end_step = max(1, min(end_step or step_count, step_count))
+        else:
+            end_step = 0
+        selected_skill = skill
+        if 0 < end_step < step_count:
+            selected_skill = replace(skill, steps=skill.steps[:end_step])
+
+        _record(trajectory_recorder, "skill_selection",
+                source="reuser",
+                candidate_count=len(candidates),
+                selected_skill_id=skill.skill_id,
+                selected_skill_name=skill.name,
+                score=round(score, 4),
+                end_step=end_step,
+                total_steps=step_count,
+                truncated=end_step < step_count,
+                selection_duration_s=selection_timing.get("selection_duration_s"),
+                llm_latency_s=selection_timing.get("llm_latency_s"),
+                reason=reason)
         _record(trajectory_recorder, "skill_search",
-                source="reuser", matched=False, reason="all_rejected",
-                candidates_checked=len(candidates))
-        return None
+                source="reuser", matched=True,
+                skill_id=skill.skill_id,
+                skill_name=skill.name,
+                score=round(score, 4),
+                end_step=end_step,
+                total_steps=step_count,
+                selection_duration_s=selection_timing.get("selection_duration_s"),
+                llm_latency_s=selection_timing.get("llm_latency_s"))
+        return selected_skill, score
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _judge(self, task: str, skill: Any) -> bool:
-        """Ask the LLM whether *skill* is applicable for *task*.
+    async def _select(self, task: str, candidates: list[tuple[Any, float]]) -> tuple[str, int | None, str] | None:
+        """Ask the LLM to choose one candidate prefix.
 
-        Returns ``True`` if the LLM says applicable, ``False`` on any error
-        (fail-closed: when uncertain, skip the skill and try the next one).
+        Returns ``(skill_id, end_step, reason)`` or ``None`` on rejection/error.
         """
-        prompt = _JUDGE_PROMPT.format(
+        prompt = _SELECTION_PROMPT.format(
             task=task,
-            name=skill.name,
-            app=skill.app,
-            description=skill.description,
-            steps=_format_steps(skill),
+            candidates=_format_candidates(candidates),
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
+        self._last_selection_timing = {}
+        t0 = time.monotonic()
         try:
             response = await self._llm.chat(messages)
         except Exception as exc:
+            self._last_selection_timing = {
+                "selection_duration_s": round(time.monotonic() - t0, 3),
+            }
             logger.warning(
-                "SkillReuser: LLM judge call failed for skill %r: %s",
-                skill.name, exc,
+                "SkillReuser: LLM selection call failed: %s",
+                exc,
             )
-            return False
+            return None
+        selection_duration = time.monotonic() - t0
+        self._last_selection_timing = {
+            "selection_duration_s": round(selection_duration, 3),
+        }
+        latency_s = getattr(response, "latency_s", None)
+        if latency_s is not None:
+            self._last_selection_timing["llm_latency_s"] = round(float(latency_s), 3)
 
         for k, v in (response.usage or {}).items():
             self._usage_accum[k] = self._usage_accum.get(k, 0) + v
 
-        result = _parse_judge_response(response.content)
+        result = _parse_selection_response(response.content)
         logger.debug(
-            "SkillReuser: skill=%r applicable=%s (raw=%r)",
-            skill.name, result, response.content[:120],
+            "SkillReuser: selection=%s (raw=%r)",
+            result, response.content[:120],
         )
         return result
 
@@ -179,6 +214,25 @@ class SkillReuser:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+def _format_candidates(candidates: list[tuple[Any, float]]) -> str:
+    lines: list[str] = []
+    for index, (skill, score) in enumerate(candidates, 1):
+        parameters = tuple(getattr(skill, "parameters", ()) or ())
+        parameter_text = ", ".join(parameters) if parameters else "(none)"
+        lines.extend([
+            f"Candidate {index}:",
+            f"  skill_id: {getattr(skill, 'skill_id', '')}",
+            f"  score: {score:.4f}",
+            f"  name: {getattr(skill, 'name', '')}",
+            f"  app: {getattr(skill, 'app', '')}",
+            f"  description: {getattr(skill, 'description', '')}",
+            f"  parameters: {parameter_text}",
+            "  steps:",
+            _format_steps(skill),
+        ])
+    return "\n".join(lines)
+
 
 def _format_steps(skill: Any) -> str:
     """Return a compact step summary (action_type + target, no coordinates)."""
@@ -191,27 +245,34 @@ def _format_steps(skill: Any) -> str:
     return "\n".join(lines)
 
 
-def _parse_judge_response(text: str) -> bool:
-    """Parse LLM response into a boolean applicability verdict.
+def _parse_selection_response(text: str) -> tuple[str, int | None, str] | None:
+    """Parse LLM response into a selected skill id and optional prefix length.
 
-    Tries structured JSON first; falls back to keyword scan.
+    Tries structured JSON only. Unclear answers fail closed.
     """
     text = text.strip()
     match = re.search(r"\{.*?\}", text, flags=re.DOTALL)
-    if match:
+    if match is None:
+        return None
+    try:
+        obj = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    raw_id = obj.get("selected_skill_id")
+    if raw_id is None:
+        return None
+    skill_id = str(raw_id).strip()
+    if not skill_id or skill_id.lower() in {"none", "null", "false"}:
+        return None
+    raw_end_step = obj.get("end_step")
+    end_step: int | None = None
+    if raw_end_step is not None:
         try:
-            obj = json.loads(match.group(0))
-            val = obj.get("applicable")
-            if isinstance(val, bool):
-                return val
-            if isinstance(val, str):
-                return val.strip().lower() in ("true", "yes")
-        except json.JSONDecodeError:
-            pass
-    lowered = text.lower()
-    return '"applicable": true' in lowered or (
-        "applicable" not in lowered and "true" in lowered
-    )
+            end_step = int(raw_end_step)
+        except (TypeError, ValueError):
+            end_step = None
+    reason = str(obj.get("reason") or "").strip()
+    return skill_id, end_step, reason
 
 
 def _record(

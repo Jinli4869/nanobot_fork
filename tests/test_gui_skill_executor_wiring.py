@@ -18,7 +18,6 @@ import pytest
 
 from nanobot.config.schema import GuiConfig
 
-
 # ---------------------------------------------------------------------------
 # GuiConfig field tests
 # ---------------------------------------------------------------------------
@@ -66,6 +65,22 @@ class TestGuiConfigSkillExtractionField:
         assert config.enable_skill_extraction is True
 
 
+class TestGuiConfigDeeplinkSkillExtractionField:
+    """GuiConfig.enable_deeplink_skill_extraction gates post-run deeplink probing."""
+
+    def test_defaults_to_false(self) -> None:
+        config = GuiConfig()
+        assert config.enable_deeplink_skill_extraction is False
+
+    def test_accepts_true(self) -> None:
+        config = GuiConfig(enable_deeplink_skill_extraction=True)
+        assert config.enable_deeplink_skill_extraction is True
+
+    def test_accepts_camel_case_key(self) -> None:
+        config = GuiConfig.model_validate({"enableDeeplinkSkillExtraction": True})
+        assert config.enable_deeplink_skill_extraction is True
+
+
 # ---------------------------------------------------------------------------
 # GuiSubagentTool wiring tests
 # ---------------------------------------------------------------------------
@@ -75,7 +90,7 @@ def _make_gui_config(enable_skill_execution: bool) -> GuiConfig:
     return GuiConfig(backend="dry-run", enable_skill_execution=enable_skill_execution)
 
 
-def _make_tool(gui_config: GuiConfig) -> "GuiSubagentTool":  # type: ignore[name-defined]
+def _make_tool(gui_config: GuiConfig):
     """Build a GuiSubagentTool with mocked provider/model/workspace."""
     from nanobot.agent.tools.gui import GuiSubagentTool
 
@@ -92,6 +107,14 @@ def _make_tool(gui_config: GuiConfig) -> "GuiSubagentTool":  # type: ignore[name
         model="test/model",
         workspace=Path("/tmp/test_workspace"),
     )
+
+
+def test_deeplink_skill_extraction_switch_reaches_postprocessor() -> None:
+    gui_config = GuiConfig(backend="dry-run", enable_deeplink_skill_extraction=True)
+    tool = _make_tool(gui_config)
+
+    assert tool._postprocessor._enable_deeplink_skill_extraction is True
+    assert tool._postprocessor._deeplink_probe_backend is tool._backend
 
 
 class TestSkillExecutorWiringDisabled:

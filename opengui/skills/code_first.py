@@ -11,7 +11,10 @@ authoritative editable representation.
 from __future__ import annotations
 
 import ast
+import asyncio
+import base64
 import copy
+import io
 import json
 import logging
 import os
@@ -24,9 +27,8 @@ from typing import Any
 import numpy as np
 
 from opengui.memory.retrieval import _BM25Index, _FaissIndex
-from opengui.skills.code_graph import compile_code_graph, compile_code_skills
+from opengui.skills.code_graph import compile_code_skills
 from opengui.skills.data import Skill, SkillStep
-from opengui.skills.graph import SkillGraphStore
 from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
 from opengui.skills.state_contract import normalize_state_contract
 from opengui.skills.static_selector_filter import (
@@ -40,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 CANONICAL_CODE_FILENAME = "skill_graph_code.py"
 _CODE_HEADER = "from opengui.skills.code_graph import C, R, action, skill, state, tag, transition"
+_SCREENSHOT_EXTRACTION_TIMEOUT_S = 45.0
+_TEXT_EXTRACTION_TIMEOUT_S = 180.0
 
 
 _CODE_EXTRACTION_PROMPT = """\
@@ -61,13 +65,27 @@ python_code must be directly mergeable into skill_graph_code.py and must obey:
 - Express each GUI action as: await action("...", target="...", ...)
 - target must be a plain string or parameter placeholder. Never use target=R(...);
   selectors belong only inside state_contract.
-- state_contract is a PRE-action check for the screen before that action.
+- state_contract is a PRE-action check for the screen before that action,
+  except for open_deeplink where it is a required POST-action verification that
+  the deeplink reached the target page.
+- Pass state_contract=C(...) inline inside await action(...). Do not assign C(...)
+  or R(...) objects to local variables and then reference those variables.
 - Put app anchors on C(app="..."), never inside R(...). For example:
   state_contract=C(app="com.example", required=[R(text="Orders", clickable=True)])
 - R(...) only accepts text, content_desc, resource_id, class_, xpath, visible,
   clickable, enabled, focused, and scrollable.
 - Do not attach a postcondition-like state_contract to open_app unless the trace
   must already be inside that app before opening a deep link.
+- You may use await action("open_deeplink", ...) only when the trajectory
+  contains a verified deeplink candidate. It must be fixed=True, carry the URI
+  in fixed_values["text"], optionally include fixed_values["component"] or
+  fixed_values["package"], and include a state_contract proving the target page.
+- Keep the skill as the shortest necessary linear prefix. Drop detours, repeated
+  taps, retries, waits, back navigation, and already-completed answer/inspection
+  steps unless they are required to reach the reusable screen.
+- For floating popups such as ads, login prompts, sign-in dialogs, or notices,
+  encode the dismiss action only when the trace actually dismissed it, and mark
+  it optional=True with a state_contract that proves the popup is present.
 - Do not keep unconditional back/wait/recovery actions unless the current screen
   contract proves they are part of the reusable prefix.
 - Do not import modules, read files, access backend/env/adb, or write arbitrary Python logic.
@@ -85,6 +103,8 @@ Original task: {task}
 Trajectory success flag: {is_success}
 Platform hint: {platform}
 Evaluation result: {evaluation}
+Segment id: {segment_id}
+Segment summary: {segment_summary}
 
 Trajectory JSON:
 {trajectory}
@@ -97,6 +117,7 @@ class CodeSkillExtraction:
     reasoning: str = ""
     attempts: tuple[dict[str, Any], ...] = ()
     usage: dict[str, int] = field(default_factory=dict)
+    screenshots_used: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,15 +136,55 @@ class CodeContractRepair:
 
 
 @dataclass(frozen=True)
+class CodeContractFilter:
+    source: str
+    report: dict[str, Any]
+    removed_functions: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CodeEntrypointNormalization:
+    source: str
+    report: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class CodeVisualGuardFallback:
+    source: str
+    report: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class CodeActionCanonicalization:
     source: str
     report: dict[str, Any]
 
 
 @dataclass(frozen=True)
+class TraceSegment:
+    segment_id: str
+    start_step_index: int
+    end_step_index: int
+    events: tuple[dict[str, Any], ...]
+    reusable_action_count: int
+    reason: str
+
+    def to_result_stub(self) -> dict[str, Any]:
+        return {
+            "segment_id": self.segment_id,
+            "start_step_index": self.start_step_index,
+            "end_step_index": self.end_step_index,
+            "reusable_action_count": self.reusable_action_count,
+            "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
 class _TraceEvidenceStep:
     index: int
     action_type: str
+    parameters: dict[str, Any]
+    target: str
     text_blob: str
     pre_observation: dict[str, Any] | None
     post_observation: dict[str, Any] | None
@@ -143,9 +204,18 @@ class _TraceAction:
 class CodeSkillExtractor:
     """Extract reusable OpenGUI skills as declarative Python source."""
 
-    def __init__(self, llm: Any, *, max_events: int = 80) -> None:
+    def __init__(
+        self,
+        llm: Any,
+        *,
+        max_events: int = 80,
+        include_screenshots: bool = True,
+        max_screenshots_per_segment: int = 4,
+    ) -> None:
         self._llm = llm
         self._max_events = max_events
+        self._include_screenshots = include_screenshots
+        self._max_screenshots_per_segment = max(0, max_screenshots_per_segment)
         self._total_usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -170,15 +240,43 @@ class CodeSkillExtractor:
             logger.warning("Trajectory file not found: %s", trajectory_path)
             return None
         events = _load_events(trajectory_path)
-        step_count = sum(1 for event in events if event.get("type") in {"step", "skill_step"})
+        return await self.extract_from_events(
+            events,
+            is_success=is_success,
+            platform=platform,
+            task=task,
+            evaluation_result=evaluation_result,
+            feedback=feedback,
+        )
+
+    async def extract_from_events(
+        self,
+        events: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+        *,
+        is_success: bool,
+        platform: str | None = None,
+        task: str | None = None,
+        evaluation_result: dict[str, Any] | None = None,
+        feedback: str | None = None,
+        segment_id: str | None = None,
+        segment_summary: str | None = None,
+    ) -> CodeSkillExtraction | None:
+        event_list = [event for event in events if isinstance(event, dict)]
+        step_count = sum(
+            1
+            for event in event_list
+            if (event.get("type") or event.get("event")) in {"step", "skill_step"}
+        )
         if step_count < 1:
             return None
         prompt = _CODE_EXTRACTION_PROMPT.format(
             task=task or "",
             is_success=is_success,
-            platform=platform or _platform_hint(events) or "unknown",
+            platform=platform or _platform_hint(event_list) or "unknown",
             evaluation=json.dumps(_compact_evaluation(evaluation_result), ensure_ascii=False),
-            trajectory=json.dumps(_compact_events(events, self._max_events), ensure_ascii=False, indent=2),
+            segment_id=segment_id or "full",
+            segment_summary=segment_summary or "",
+            trajectory=json.dumps(_compact_events(event_list, self._max_events), ensure_ascii=False, indent=2),
         )
         if feedback:
             prompt += (
@@ -187,29 +285,204 @@ class CodeSkillExtractor:
                 f"{feedback}\n"
                 "</validation_errors>"
             )
-        response = await self._llm.chat([{"role": "user", "content": prompt}])
+        messages, screenshots_used = self._build_messages(prompt, event_list)
+        try:
+            if screenshots_used:
+                response = await asyncio.wait_for(
+                    self._llm.chat(messages),
+                    timeout=_SCREENSHOT_EXTRACTION_TIMEOUT_S,
+                )
+            else:
+                response = await asyncio.wait_for(
+                    self._llm.chat(messages),
+                    timeout=_TEXT_EXTRACTION_TIMEOUT_S,
+                )
+        except Exception:
+            if not screenshots_used:
+                raise
+            logger.info(
+                "Code skill extraction with screenshots failed; retrying text-only",
+                exc_info=True,
+            )
+            screenshots_used = ()
+            messages = [{"role": "user", "content": prompt}]
+            response = await asyncio.wait_for(
+                self._llm.chat(messages),
+                timeout=_TEXT_EXTRACTION_TIMEOUT_S,
+            )
         self._accumulate_usage(getattr(response, "usage", {}) or {})
         parsed, violations = _parse_code_response(getattr(response, "content", "") or "")
         attempts = [{
             "violations": violations,
             "raw_response": _safe_json(getattr(response, "content", "") or ""),
+            "screenshots_used": list(screenshots_used),
         }]
         if violations:
             return CodeSkillExtraction(
                 python_code="",
                 attempts=tuple(attempts),
                 usage=self.total_usage,
+                screenshots_used=screenshots_used,
             )
         return CodeSkillExtraction(
             python_code=parsed["python_code"],
             reasoning=parsed["step_by_step_reasoning"],
             attempts=tuple(attempts),
             usage=self.total_usage,
+            screenshots_used=screenshots_used,
         )
+
+    def _build_messages(
+        self,
+        prompt: str,
+        events: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
+        if (
+            not self._include_screenshots
+            or self._max_screenshots_per_segment <= 0
+            or not _llm_supports_screenshot_input(self._llm)
+        ):
+            return [{"role": "user", "content": prompt}], ()
+
+        candidates: list[tuple[int, str, str]] = []
+        for index, event in enumerate(events):
+            path = _screenshot_path_from_event(event)
+            if path is None or not path.is_file():
+                continue
+            action = event.get("action") if isinstance(event.get("action"), dict) else {}
+            action_type = action.get("action_type") or "?"
+            step_index = event.get("step_index", index)
+            label = f"Segment step {step_index} - {action_type}"
+            candidates.append((index, str(path), label))
+        if not candidates:
+            return [{"role": "user", "content": prompt}], ()
+
+        selected = _sample_screenshot_candidates(candidates, self._max_screenshots_per_segment)
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        content.append({
+            "type": "text",
+            "text": (
+                "\n\nThe following screenshots are offline extraction evidence only. "
+                "Use them to understand page semantics, redundant steps, popups, and segment boundaries. "
+                "Do not invent actions or resource_id/content_desc selectors from screenshots; "
+                "selectors and state_contracts must be supported by the trajectory JSON observation/UI tree."
+            ),
+        })
+        screenshots_used: list[str] = []
+        for _, path, label in selected:
+            encoded = _encode_image_b64(path)
+            if encoded is None:
+                continue
+            screenshots_used.append(path)
+            content.append({"type": "text", "text": f"\n{label}:"})
+            content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            })
+        if not screenshots_used:
+            return [{"role": "user", "content": prompt}], ()
+        return [{"role": "user", "content": content}], tuple(screenshots_used)
 
     def _accumulate_usage(self, usage: dict[str, int]) -> None:
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             self._total_usage[key] = self._total_usage.get(key, 0) + int(usage.get(key, 0) or 0)
+
+
+class TraceSegmenter:
+    """Split long GUI traces into short extraction windows."""
+
+    def __init__(
+        self,
+        *,
+        max_reusable_actions: int = 10,
+        overlap_reusable_actions: int = 2,
+        page_change_threshold: float = 0.35,
+        min_reusable_actions_for_page_split: int = 8,
+    ) -> None:
+        self.max_reusable_actions = max(1, max_reusable_actions)
+        self.overlap_reusable_actions = max(0, overlap_reusable_actions)
+        self.page_change_threshold = page_change_threshold
+        self.min_reusable_actions_for_page_split = max(1, min_reusable_actions_for_page_split)
+
+    def segment(self, events: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> list[TraceSegment]:
+        step_events = [
+            event
+            for event in events
+            if isinstance(event, dict) and (event.get("type") or event.get("event")) == "step"
+        ]
+        segments: list[TraceSegment] = []
+        current: list[dict[str, Any]] = []
+        current_reason = "initial"
+        previous_step: dict[str, Any] | None = None
+
+        for event in step_events:
+            if current and _reusable_event_count(current) > 0 and self._crosses_app(previous_step, event):
+                self._append_segment(segments, current, current_reason or "app_changed")
+                current = []
+                current_reason = "app_changed"
+            elif (
+                current
+                and _reusable_event_count(current) >= self.min_reusable_actions_for_page_split
+                and self._is_page_change(previous_step, event)
+            ):
+                self._append_segment(segments, current, current_reason or "page_changed")
+                current = _overlap_events(current, self.overlap_reusable_actions)
+                current_reason = "page_changed"
+
+            if (
+                current
+                and _event_is_reusable_action(event)
+                and _reusable_event_count(current) >= self.max_reusable_actions
+            ):
+                self._append_segment(segments, current, current_reason or "max_reusable_actions")
+                current = _overlap_events(current, self.overlap_reusable_actions)
+                current_reason = "max_reusable_actions"
+
+            current.append(event)
+            previous_step = event
+
+        self._append_segment(segments, current, current_reason or "end")
+        return segments
+
+    def _append_segment(
+        self,
+        segments: list[TraceSegment],
+        events: list[dict[str, Any]],
+        reason: str,
+    ) -> None:
+        reusable_count = _reusable_event_count(events)
+        if reusable_count < 1:
+            return
+        step_indices = [_event_step_index(event, fallback=i) for i, event in enumerate(events)]
+        segments.append(TraceSegment(
+            segment_id=f"seg-{len(segments):03d}",
+            start_step_index=min(step_indices),
+            end_step_index=max(step_indices),
+            events=tuple(copy.deepcopy(events)),
+            reusable_action_count=reusable_count,
+            reason=reason,
+        ))
+
+    def _crosses_app(
+        self,
+        previous: dict[str, Any] | None,
+        current: dict[str, Any],
+    ) -> bool:
+        previous_app = _event_foreground_app(previous)
+        current_app = _event_foreground_app(current)
+        return bool(previous_app and current_app and previous_app != current_app)
+
+    def _is_page_change(
+        self,
+        previous: dict[str, Any] | None,
+        current: dict[str, Any],
+    ) -> bool:
+        previous_signature = _event_page_signature(previous)
+        current_signature = _event_page_signature(current)
+        if not previous_signature or not current_signature:
+            return False
+        similarity = _jaccard_similarity(previous_signature, current_signature)
+        return similarity < self.page_change_threshold
 
 
 class CodeSkillRepository:
@@ -356,37 +629,8 @@ class CodeSkillLibrary:
         self.refresh_if_stale()
 
     async def sync_graph_cache(self) -> bool:
-        source_path = self._repository.source_path
-        if not source_path.is_file():
-            return False
-        source = source_path.read_text(encoding="utf-8")
-        if not _has_graph_transitions(source):
-            return False
-        source_mtime = _mtime(source_path)
-        graph_path = self.store_dir / "skill_graph.json"
-        graph_mtime = _mtime(graph_path)
-        if (
-            self._graph_source_mtime == source_mtime
-            and graph_mtime is not None
-            and source_mtime is not None
-            and graph_mtime >= source_mtime
-        ):
-            return True
-
-        graph_path.unlink(missing_ok=True)
-        (self.store_dir / "skill_graph_embeddings.npy").unlink(missing_ok=True)
-        graph = SkillGraphStore(
-            store_dir=self.store_dir,
-            embedding_provider=self.embedding_provider,
-            embedding_signature=self.embedding_signature,
-        )
-        result = await compile_code_graph(source, graph)
-        self.graph_compile_errors = tuple(result.errors)
-        if result.errors:
-            logger.warning("Cannot sync code graph cache: %s", result.errors)
-            return False
-        self._graph_source_mtime = source_mtime
-        return bool(result.nodes or result.edges)
+        self.graph_compile_errors = ()
+        return False
 
     def list_all(self, *, platform: str | None = None, app: str | None = None) -> list[Skill]:
         skills = self._repository.list_all(platform=platform, app=app)
@@ -572,6 +816,85 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
     return events
 
 
+def _event_step_index(event: dict[str, Any], *, fallback: int) -> int:
+    try:
+        return int(event.get("step_index"))
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _event_action_type(event: dict[str, Any]) -> str:
+    action = event.get("action") if isinstance(event.get("action"), dict) else {}
+    return _canonical_trace_action_type(action)
+
+
+def _event_is_reusable_action(event: dict[str, Any]) -> bool:
+    action_type = _event_action_type(event)
+    return bool(action_type and _is_reusable_action_type(action_type))
+
+
+def _reusable_event_count(events: list[dict[str, Any]]) -> int:
+    return sum(1 for event in events if _event_is_reusable_action(event))
+
+
+def _overlap_events(events: list[dict[str, Any]], reusable_count: int) -> list[dict[str, Any]]:
+    if reusable_count <= 0:
+        return []
+    seen_reusable = 0
+    start_index = len(events)
+    for index in range(len(events) - 1, -1, -1):
+        if _event_is_reusable_action(events[index]):
+            seen_reusable += 1
+            if seen_reusable >= reusable_count:
+                start_index = index
+                break
+    if start_index >= len(events):
+        return []
+    return list(events[start_index:])
+
+
+def _event_foreground_app(event: dict[str, Any] | None) -> str:
+    if not isinstance(event, dict):
+        return ""
+    observation = _event_post_observation(event) or _event_prompt_observation(event)
+    if not isinstance(observation, dict):
+        return ""
+    app = observation.get("foreground_app") or observation.get("app") or ""
+    return str(app).strip()
+
+
+def _event_page_signature(event: dict[str, Any] | None) -> set[str]:
+    if not isinstance(event, dict):
+        return set()
+    observation = _event_post_observation(event) or _event_prompt_observation(event)
+    if not isinstance(observation, dict):
+        return set()
+    extra = observation.get("extra") if isinstance(observation.get("extra"), dict) else {}
+    values: set[str] = set()
+    for key in ("visible_text", "resource_ids", "content_desc"):
+        raw = extra.get(key)
+        if isinstance(raw, list):
+            values.update(str(item).strip().casefold() for item in raw if str(item).strip())
+    ui_tree = extra.get("ui_tree")
+    if isinstance(ui_tree, list):
+        for node in ui_tree:
+            if not isinstance(node, dict):
+                continue
+            for key in ("text", "content_desc", "resource_id"):
+                value = node.get(key)
+                if isinstance(value, str) and value.strip():
+                    values.add(value.strip().casefold())
+    return values
+
+
+def _jaccard_similarity(left: set[str], right: set[str]) -> float:
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
 def canonicalize_code_actions_from_trace(
     code_update: str,
     trace_path: Path,
@@ -598,6 +921,8 @@ def canonicalize_code_actions_from_events(
     for skill in result.skills:
         trace_cursor = -1
         aligned: list[tuple[int | None, _TraceAction]] = []
+        last_source_step: Any | None = None
+        last_match: _TraceAction | None = None
         for step_index, step in enumerate(skill.steps):
             match = _next_trace_action(
                 trace_actions,
@@ -621,6 +946,8 @@ def canonicalize_code_actions_from_events(
                 skill_platform=skill.platform,
                 after=trace_cursor,
                 before=match.index,
+                source_step=step,
+                match=match,
             ):
                 aligned.append((None, gap_action))
                 report["synthesized_steps"].append({
@@ -641,6 +968,25 @@ def canonicalize_code_actions_from_events(
                 "trace_target": match.target,
                 "target_rewritten": bool(match.target and match.target != step.target),
             })
+            last_source_step = step
+            last_match = match
+        if last_source_step is not None and last_match is not None:
+            for tail_action in _tail_trace_actions(
+                trace_actions,
+                skill_app=skill.app,
+                skill_platform=skill.platform,
+                after=trace_cursor,
+                source_step=last_source_step,
+                match=last_match,
+            ):
+                aligned.append((None, tail_action))
+                report["synthesized_steps"].append({
+                    "function": skill.name,
+                    "trace_step_index": tail_action.index,
+                    "action_type": tail_action.action_type,
+                    "target": tail_action.target,
+                    "reason": "trace_tail",
+                })
         if not aligned and trace_actions:
             aligned = [
                 (None, action)
@@ -711,10 +1057,13 @@ def _trace_actions_from_events(events: list[dict[str, Any]]) -> list[_TraceActio
             continue
         raw_action = event.get("action") if isinstance(event.get("action"), dict) else {}
         action_type = _canonical_trace_action_type(raw_action)
-        observation = event.get("observation")
-        post_observation = observation if isinstance(observation, dict) else None
+        post_observation = _event_post_observation(event)
         pre_observation = _event_pre_observation(event, latest_observation)
-        if action_type and action_type not in {"screenshot", "wait", "done", "request_intervention"}:
+        if (
+            action_type
+            and action_type not in {"screenshot", "wait", "done", "request_intervention"}
+            and not _observation_has_auth_gate(pre_observation)
+        ):
             text_blob = _trace_text_blob(event, raw_action)
             action = _TraceAction(
                 index=int(event.get("step_index") or len(actions)),
@@ -746,7 +1095,31 @@ def _event_pre_observation(
         value = event.get(key)
         if isinstance(value, dict):
             return value
+    prompt_observation = _event_prompt_observation(event)
+    if prompt_observation is not None:
+        return prompt_observation
     return fallback
+
+
+def _event_post_observation(event: dict[str, Any]) -> dict[str, Any] | None:
+    observation = event.get("observation")
+    if isinstance(observation, dict):
+        return observation
+    execution = event.get("execution")
+    if isinstance(execution, dict):
+        next_observation = execution.get("next_observation")
+        if isinstance(next_observation, dict):
+            return next_observation
+    return None
+
+
+def _event_prompt_observation(event: dict[str, Any]) -> dict[str, Any] | None:
+    prompt = event.get("prompt")
+    if isinstance(prompt, dict):
+        current_observation = prompt.get("current_observation")
+        if isinstance(current_observation, dict):
+            return current_observation
+    return None
 
 
 def _canonical_trace_action_type(action: dict[str, Any]) -> str:
@@ -783,7 +1156,7 @@ def _target_from_trace_action(
         target = _focused_target_from_observation(pre_observation)
         if target:
             return target
-    return _quoted_target_from_blob(text_blob)
+    return _target_from_blob(text_blob)
 
 
 def _explicit_action_target(action: dict[str, Any], *, action_type: str) -> str:
@@ -957,6 +1330,24 @@ def _focused_target_from_observation(observation: dict[str, Any] | None) -> str:
     return ""
 
 
+def _target_from_blob(blob: str) -> str:
+    quoted = _quoted_target_from_blob(blob)
+    if quoted:
+        return quoted
+    for pattern in (
+        r"(?:点击|点按|选择|打开|进入)\s*([^，,。.!?；;\n]{1,40}?)(?:入口|按钮|标签|选项|菜单|页面)",
+        r"(?:点击|点按|选择|打开|进入)\s*([^，,。.!?；;\n]{1,40})",
+    ):
+        match = re.search(pattern, blob)
+        if match is None:
+            continue
+        target = match.group(1).strip()
+        target = re.sub(r"^(?:底部|顶部)?(?:导航栏)?(?:的)", "", target).strip()
+        if target:
+            return target[:80]
+    return ""
+
+
 def _quoted_target_from_blob(blob: str) -> str:
     for pattern in (r'"([^"\n]{1,80})"', r"'([^'\n]{1,80})'", r"“([^”\n]{1,80})”"):
         match = re.search(pattern, blob)
@@ -1019,11 +1410,54 @@ def _next_trace_action(
             score += 4
         if _step_coordinates_match_trace_action(step, action):
             score += 6
-        if action.target:
+        if action.target and target and not _is_placeholder_value(target):
             score += 1
-        scored.append((-score, action.index, action))
+        if score > 0 or not target:
+            scored.append((-score, action.index, action))
+    if not scored:
+        return None
     scored.sort(key=lambda item: (item[0], item[1]))
     return scored[0][2]
+
+
+def _is_generic_target_text(target: str) -> bool:
+    lowered = str(target or "").strip().casefold()
+    return bool(
+        lowered
+        and (
+            lowered.endswith(":id/a")
+            or lowered.endswith("/id/a")
+            or lowered in {"a", "ctrip.android.view:id/a", "com.ctrip.ctrip:id/a"}
+        )
+    )
+
+
+def _observation_has_auth_gate(observation: dict[str, Any] | None) -> bool:
+    if not isinstance(observation, dict):
+        return False
+    extra = observation.get("extra") if isinstance(observation.get("extra"), dict) else {}
+    values: list[str] = []
+    for key in ("visible_text", "content_desc", "clickable_text", "enabled_text"):
+        raw = extra.get(key)
+        if isinstance(raw, list):
+            values.extend(str(item) for item in raw if item is not None)
+    ui_tree = extra.get("ui_tree")
+    if isinstance(ui_tree, list):
+        for node in ui_tree:
+            if not isinstance(node, dict):
+                continue
+            values.extend(
+                str(node.get(key))
+                for key in ("text", "content_desc")
+                if node.get(key) is not None
+            )
+    blob = "\n".join(values)
+    if not blob:
+        return False
+    return any(
+        marker in blob
+        for marker in ("获取验证码", "手机验证码登录", "账号密码登录", "登录密码", "短信验证码")
+    )
 
 
 def _gap_trace_actions(
@@ -1033,6 +1467,8 @@ def _gap_trace_actions(
     skill_platform: str,
     after: int,
     before: int,
+    source_step: Any,
+    match: _TraceAction,
 ) -> list[_TraceAction]:
     return [
         action
@@ -1043,6 +1479,31 @@ def _gap_trace_actions(
             skill_app=skill_app,
             skill_platform=skill_platform,
         )
+        and _should_synthesize_bridge_action(action, source_step=source_step, match=match)
+        and _trace_action_has_precondition_evidence(action)
+    ]
+
+
+def _tail_trace_actions(
+    trace_actions: list[_TraceAction],
+    *,
+    skill_app: str,
+    skill_platform: str,
+    after: int,
+    source_step: Any,
+    match: _TraceAction,
+) -> list[_TraceAction]:
+    return [
+        action
+        for action in trace_actions
+        if action.index > after
+        and _should_synthesize_trace_action(
+            action,
+            skill_app=skill_app,
+            skill_platform=skill_platform,
+        )
+        and _should_synthesize_bridge_action(action, source_step=source_step, match=match)
+        and _trace_action_has_precondition_evidence(action)
     ]
 
 
@@ -1057,6 +1518,48 @@ def _should_synthesize_trace_action(
         skill_app=skill_app,
         skill_platform=skill_platform,
     )
+
+
+def _should_synthesize_bridge_action(
+    action: _TraceAction,
+    *,
+    source_step: Any,
+    match: _TraceAction,
+) -> bool:
+    target = str(getattr(source_step, "target", "") or "").strip().casefold()
+    if not target:
+        return False
+    action_related = _targets_equal(target, action.target)
+    match_related = _targets_equal(target, match.target)
+    return action_related and match_related
+
+
+def _trace_action_has_precondition_evidence(action: _TraceAction) -> bool:
+    if action.action_type in {"open_app", "close_app", "back", "home", "enter", "app_switch"}:
+        return True
+    if action.action_type in {"tap", "long_press", "double_tap", "input_text"}:
+        if _best_selector_for_point_action(action.parameters, action.pre_observation, action.action_type):
+            return True
+        if action.target and _best_selector_for_action(action.pre_observation, action.target, action.action_type):
+            return True
+        return False
+    return isinstance(action.pre_observation, dict)
+
+
+def _targets_equal(left: str, right: str) -> bool:
+    left = left.strip().casefold()
+    right = right.strip().casefold()
+    return bool(left and right and left == right)
+
+
+def _targets_related(left: str, right: str) -> bool:
+    left = left.strip().casefold()
+    right = right.strip().casefold()
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    return len(left) > 1 and (left in right or right in left)
 
 
 def _trace_action_crosses_app(
@@ -1229,6 +1732,7 @@ def repair_code_contracts_from_events(
             trace_cursor, selector, evidence_observation = evidence.selector_for_step(
                 target=step.target,
                 action_type=step.action_type,
+                parameters=step.parameters,
                 after=trace_cursor,
             )
             current = normalize_state_contract(step.state_contract)
@@ -1255,11 +1759,7 @@ def repair_code_contracts_from_events(
             if current_has_stable and current_supported:
                 continue
             replacement: dict[str, Any] | None = None
-            states = ["visible"]
-            if step.action_type in {"tap", "long_press", "double_tap"}:
-                states.append("clickable")
-            if step.action_type == "input_text":
-                states.append("focused")
+            states = _contract_states_for_selector(step.action_type, selector)
             reason = "ui_tree_static_selector"
             if selector and _selector_has_stable_identity(selector):
                 replacement = {
@@ -1278,6 +1778,18 @@ def repair_code_contracts_from_events(
                     "contract": page_contract or _fallback_target_contract(skill.app, step.target),
                 }
                 reason = "unsupported_static_selector_replaced"
+            elif selector is None and evidence_observation is not None:
+                page_contract = _page_contract_from_observation(
+                    evidence_observation,
+                    app=skill.app,
+                    target=step.target,
+                )
+                if page_contract is not None:
+                    replacement = {
+                        "app": skill.app,
+                        "contract": page_contract,
+                    }
+                    reason = "page_contract_without_static_selector"
             if replacement is None:
                 continue
             replacements.setdefault(skill.name, {})[index] = replacement
@@ -1296,6 +1808,505 @@ def repair_code_contracts_from_events(
     return CodeContractRepair(source=repaired_source, report=report)
 
 
+def filter_code_to_contract_complete(
+    code_update: str,
+    *,
+    repair_report: dict[str, Any] | None = None,
+) -> CodeContractFilter:
+    """Drop or trim generated functions that still have weak step contracts."""
+    source = _normalize_generated_code(_strip_code_fences(code_update).strip())
+    result = compile_code_skills(source)
+    if result.errors or not result.skills:
+        return CodeContractFilter(source=code_update, report=_empty_contract_quality_report())
+    report = _merge_repair_steps_into_quality_report(
+        _contract_quality_report(result.skills),
+        repair_report,
+    )
+    weak_functions = {
+        str(step.get("function"))
+        for step in report.get("weak_steps", [])
+        if isinstance(step, dict) and step.get("function")
+    }
+    if not weak_functions:
+        return CodeContractFilter(source=source, report=report)
+    tree = ast.parse(source)
+    first_weak_step_by_function: dict[str, int] = {}
+    for step in report.get("weak_steps", []):
+        if not isinstance(step, dict):
+            continue
+        function_name = str(step.get("function") or "")
+        step_index = step.get("step_index")
+        if not function_name or not isinstance(step_index, int):
+            continue
+        existing = first_weak_step_by_function.get(function_name)
+        if existing is None or step_index < existing:
+            first_weak_step_by_function[function_name] = step_index
+
+    removed: list[str] = []
+    trimmed: list[str] = []
+    kept_body: list[ast.stmt] = []
+    for node in tree.body:
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in weak_functions:
+            first_weak_step = first_weak_step_by_function.get(node.name, 0)
+            if first_weak_step > 0 and _trim_skill_function_to_action_prefix(node, first_weak_step):
+                trimmed.append(node.name)
+                kept_body.append(node)
+                continue
+            else:
+                removed.append(node.name)
+                continue
+        kept_body.append(node)
+    tree.body = kept_body
+    ast.fix_missing_locations(tree)
+    filtered_source = ast.unparse(tree) + "\n"
+    filtered_result = compile_code_skills(filtered_source)
+    filtered_report = report if filtered_result.errors or not filtered_result.skills else (
+        _merge_repair_steps_into_quality_report(
+            _contract_quality_report(filtered_result.skills),
+            repair_report,
+            removed_functions=set(removed),
+        )
+    )
+    if trimmed:
+        filtered_report = {
+            **filtered_report,
+            "trimmed_functions": trimmed,
+        }
+    return CodeContractFilter(
+        source=filtered_source,
+        report=filtered_report,
+        removed_functions=tuple(removed),
+    )
+
+
+def build_visual_guarded_code_fallback(
+    code_update: str,
+    events: list[dict[str, Any]],
+    *,
+    action_sequence_report: dict[str, Any] | None = None,
+) -> CodeVisualGuardFallback:
+    """Convert trace-aligned weak-contract skills into vision-gated UI skills.
+
+    This is intentionally a fallback path for apps where accessibility/UI-tree
+    evidence is unavailable but screenshots still exist.  It strips weak
+    structured contracts from ordinary UI actions and replaces them with
+    ``valid_state`` strings, so runtime execution must pass the vision validator
+    before grounding and acting.
+    """
+    source = _normalize_generated_code(_strip_code_fences(code_update).strip())
+    report: dict[str, Any] = {
+        "mode": "visual_guarded",
+        "enabled": False,
+        "visual_guarded_functions": [],
+        "visual_guarded_steps": [],
+        "rejected_functions": [],
+        "reason": None,
+    }
+    if not _events_have_screenshot_evidence(events):
+        report["reason"] = "missing_screenshot_evidence"
+        return CodeVisualGuardFallback(source=code_update, report=report)
+
+    result = compile_code_skills(source)
+    if result.errors or not result.skills:
+        report["reason"] = "code_compile_error" if result.errors else "no_skills"
+        if result.errors:
+            report["errors"] = list(result.errors)
+        return CodeVisualGuardFallback(source=code_update, report=report)
+
+    aligned = _aligned_trace_steps_by_function(action_sequence_report or {})
+    event_by_step = _events_by_step_index(events)
+    skills_by_name = {skill.name: skill for skill in result.skills}
+    tree = ast.parse(source)
+    kept_body: list[ast.stmt] = []
+
+    for node in tree.body:
+        if not isinstance(node, ast.AsyncFunctionDef) or not _has_decorator(node, "skill"):
+            kept_body.append(node)
+            continue
+        skill = skills_by_name.get(node.name)
+        if skill is None:
+            kept_body.append(node)
+            continue
+        if str(skill.platform or "").lower() != "android":
+            kept_body.append(node)
+            continue
+
+        action_index = 0
+        guarded_steps: list[dict[str, Any]] = []
+        rejected_reason: str | None = None
+        for stmt in node.body:
+            call = _awaited_action_call(stmt)
+            if call is None:
+                continue
+            action_type = _action_call_type(call)
+            if action_type in {"open_app", "open_deeplink", "open_intent", "wait", "done", "request_intervention"}:
+                if action_type == "open_app":
+                    _remove_action_keyword(call, "state_contract")
+                action_index += 1
+                continue
+
+            step = skill.steps[action_index] if action_index < len(skill.steps) else None
+            aligned_step = aligned.get((node.name, action_index), {})
+            trace_step_index = _int_or_none(aligned_step.get("trace_step_index"))
+            event = event_by_step.get(trace_step_index) if trace_step_index is not None else None
+            if event is None:
+                rejected_reason = "missing_aligned_trace_step"
+                break
+            valid_state = _visual_valid_state_for_action(
+                skill=skill,
+                step=step,
+                event=event,
+                trace_target=str(aligned_step.get("trace_target") or ""),
+            )
+            if not valid_state:
+                rejected_reason = "missing_visual_valid_state"
+                break
+
+            _remove_action_keyword(call, "state_contract")
+            _replace_string_keyword(call, "valid_state", valid_state)
+            guarded_steps.append({
+                "function": node.name,
+                "step_index": action_index,
+                "trace_step_index": trace_step_index,
+                "action_type": action_type,
+                "target": getattr(step, "target", "") if step is not None else "",
+                "valid_state": valid_state,
+            })
+            action_index += 1
+
+        if rejected_reason is not None:
+            report["rejected_functions"].append({
+                "function": node.name,
+                "reason": rejected_reason,
+            })
+            continue
+        if guarded_steps:
+            _ensure_skill_decorator_tag(node, "visual_guarded")
+            _ensure_skill_decorator_tag(node, "ui")
+            report["visual_guarded_functions"].append(node.name)
+            report["visual_guarded_steps"].extend(guarded_steps)
+        kept_body.append(node)
+
+    tree.body = kept_body
+    ast.fix_missing_locations(tree)
+    transformed_source = ast.unparse(tree) + "\n"
+    transformed_result = compile_code_skills(transformed_source)
+    if transformed_result.errors:
+        report["reason"] = "visual_guard_compile_error"
+        report["errors"] = list(transformed_result.errors)
+        return CodeVisualGuardFallback(source=code_update, report=report)
+    if not report["visual_guarded_functions"]:
+        report["reason"] = report["reason"] or "no_guarded_functions"
+        return CodeVisualGuardFallback(source=code_update, report=report)
+
+    report["enabled"] = True
+    return CodeVisualGuardFallback(source=transformed_source, report=report)
+
+
+def normalize_code_skill_entrypoints(code_update: str) -> CodeEntrypointNormalization:
+    """Add deterministic Android app entrypoints and clean ``open_app`` contracts.
+
+    Extraction segments often begin after launcher/app-open actions have been
+    cut away.  For Android package-scoped skills, prepend a plain ``open_app``
+    entry action when the learned prefix starts mid-flow.  ``open_deeplink`` is
+    already a stronger entry action and is left untouched.
+    """
+    source = _normalize_generated_code(_strip_code_fences(code_update).strip())
+    report: dict[str, Any] = {
+        "entrypoint_normalized_functions": [],
+        "open_app_contract_stripped_functions": [],
+    }
+    result = compile_code_skills(source)
+    if result.errors or not result.skills:
+        if result.errors:
+            report["errors"] = list(result.errors)
+        return CodeEntrypointNormalization(source=code_update, report=report)
+
+    skills_by_name = {skill.name: skill for skill in result.skills}
+    tree = ast.parse(source)
+
+    class Transformer(ast.NodeTransformer):
+        def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+            self.generic_visit(node)
+            stripped = _strip_open_app_state_contracts_in_function(node)
+            if stripped:
+                report["open_app_contract_stripped_functions"].append(node.name)
+
+            skill = skills_by_name.get(node.name)
+            if skill is None or not _has_decorator(node, "skill"):
+                return node
+            if not _should_normalize_android_skill_entrypoint(skill):
+                return node
+
+            first_action = skill.steps[0].action_type if skill.steps else ""
+            if first_action in _ENTRY_ACTION_TYPES:
+                return node
+
+            app_target = normalize_app_identifier(skill.platform, skill.app)
+            node.body.insert(
+                _skill_entry_insert_index(node),
+                _open_app_action_stmt(app_target),
+            )
+            report["entrypoint_normalized_functions"].append(node.name)
+            return node
+
+    transformed = Transformer().visit(tree)
+    ast.fix_missing_locations(transformed)
+    return CodeEntrypointNormalization(source=ast.unparse(transformed) + "\n", report=report)
+
+
+def _trim_skill_function_to_action_prefix(func: ast.AsyncFunctionDef, action_limit: int) -> bool:
+    """Trim ``func`` after ``action_limit`` direct action calls.
+
+    Generated flat skills are usually a sequence of ``await action(...)``
+    statements.  When a weak action appears after a useful canonical prefix,
+    keeping that prefix is safer than dropping the whole learned skill.
+    """
+    kept: list[ast.stmt] = []
+    action_count = 0
+    kept_reusable_actions = 0
+    for stmt in func.body:
+        if _is_direct_action_await(stmt):
+            if action_count >= action_limit:
+                break
+            action_type = _direct_action_type(stmt)
+            if action_type not in {"open_app", "wait", "done", "request_intervention"}:
+                kept_reusable_actions += 1
+            action_count += 1
+        kept.append(stmt)
+    if kept_reusable_actions <= 0:
+        return False
+    func.body = kept
+    return True
+
+
+def _is_direct_action_await(stmt: ast.stmt) -> bool:
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Await):
+        return False
+    call = stmt.value.value
+    if not isinstance(call, ast.Call):
+        return False
+    return _call_name_from_ast(call.func) == "action"
+
+
+def _direct_action_type(stmt: ast.stmt) -> str:
+    if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Await):
+        return ""
+    call = stmt.value.value
+    if not isinstance(call, ast.Call) or _call_name_from_ast(call.func) != "action":
+        return ""
+    first_arg = call.args[0] if call.args else None
+    if isinstance(first_arg, ast.Constant):
+        return str(first_arg.value or "")
+    return ""
+
+
+_ENTRY_ACTION_TYPES = frozenset({"open_app", "open_deeplink", "open_intent"})
+
+
+def _should_normalize_android_skill_entrypoint(skill: Skill) -> bool:
+    platform = str(getattr(skill, "platform", "") or "").strip().lower()
+    if platform != "android":
+        return False
+    normalized_app = normalize_app_identifier(platform, str(getattr(skill, "app", "") or ""))
+    return bool(normalized_app and normalized_app != "unknown" and "." in normalized_app)
+
+
+def _skill_entry_insert_index(func: ast.AsyncFunctionDef) -> int:
+    if (
+        func.body
+        and isinstance(func.body[0], ast.Expr)
+        and isinstance(func.body[0].value, ast.Constant)
+        and isinstance(func.body[0].value.value, str)
+    ):
+        return 1
+    return 0
+
+
+def _open_app_action_stmt(app_target: str) -> ast.stmt:
+    return ast.Expr(
+        value=ast.Await(
+            value=ast.Call(
+                func=ast.Name(id="action", ctx=ast.Load()),
+                args=[ast.Constant(value="open_app")],
+                keywords=[ast.keyword(arg="target", value=ast.Constant(value=app_target))],
+            )
+        )
+    )
+
+
+def _strip_open_app_state_contracts_in_function(
+    func: ast.AsyncFunctionDef | ast.FunctionDef,
+) -> bool:
+    stripped = False
+    for stmt in func.body:
+        call = _awaited_action_call(stmt)
+        if call is None or _action_call_type(call) != "open_app":
+            continue
+        if _remove_action_keyword(call, "state_contract"):
+            stripped = True
+    return stripped
+
+
+def _action_call_type(call: ast.Call) -> str:
+    first_arg = call.args[0] if call.args else None
+    if isinstance(first_arg, ast.Constant):
+        return str(first_arg.value or "")
+    return ""
+
+
+def _remove_action_keyword(call: ast.Call, keyword_name: str) -> bool:
+    before = len(call.keywords)
+    call.keywords = [keyword for keyword in call.keywords if keyword.arg != keyword_name]
+    return len(call.keywords) != before
+
+
+def _replace_string_keyword(call: ast.Call, keyword_name: str, value: str) -> None:
+    expr = ast.Constant(value=value)
+    for keyword in call.keywords:
+        if keyword.arg == keyword_name:
+            keyword.value = expr
+            return
+    call.keywords.append(ast.keyword(arg=keyword_name, value=expr))
+
+
+def _ensure_skill_decorator_tag(func: ast.AsyncFunctionDef, tag: str) -> None:
+    for decorator in func.decorator_list:
+        if not isinstance(decorator, ast.Call) or _call_name_from_ast(decorator.func) != "skill":
+            continue
+        tags_kw = next((kw for kw in decorator.keywords if kw.arg == "tags"), None)
+        if tags_kw is None:
+            tags_kw = ast.keyword(arg="tags", value=ast.List(elts=[], ctx=ast.Load()))
+            decorator.keywords.append(tags_kw)
+        if isinstance(tags_kw.value, ast.Tuple):
+            existing = [
+                elt.value
+                for elt in tags_kw.value.elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            ]
+            if tag not in existing:
+                tags_kw.value.elts.append(ast.Constant(value=tag))
+            return
+        if isinstance(tags_kw.value, ast.List):
+            existing = [
+                elt.value
+                for elt in tags_kw.value.elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            ]
+            if tag not in existing:
+                tags_kw.value.elts.append(ast.Constant(value=tag))
+            return
+        tags_kw.value = ast.List(elts=[ast.Constant(value=tag)], ctx=ast.Load())
+        return
+
+
+def _events_have_screenshot_evidence(events: list[dict[str, Any]]) -> bool:
+    return any(_screenshot_path_from_event(event) is not None for event in events)
+
+
+def _aligned_trace_steps_by_function(
+    action_sequence_report: dict[str, Any],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    aligned: dict[tuple[str, int], dict[str, Any]] = {}
+    for item in action_sequence_report.get("aligned_steps") or []:
+        if not isinstance(item, dict):
+            continue
+        function_name = str(item.get("function") or "")
+        step_index = _int_or_none(item.get("step_index"))
+        if function_name and step_index is not None:
+            aligned[(function_name, step_index)] = item
+    return aligned
+
+
+def _events_by_step_index(events: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    mapped: dict[int, dict[str, Any]] = {}
+    for index, event in enumerate(events):
+        if not isinstance(event, dict):
+            continue
+        if (event.get("type") or event.get("event")) != "step":
+            continue
+        step_index = _int_or_none(event.get("step_index"))
+        mapped[step_index if step_index is not None else index] = event
+    return mapped
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _visual_valid_state_for_action(
+    *,
+    skill: Skill,
+    step: SkillStep | None,
+    event: dict[str, Any],
+    trace_target: str,
+) -> str:
+    target = (
+        trace_target
+        or (step.target if step is not None else "")
+        or _target_from_trace_action(
+            event.get("action") if isinstance(event.get("action"), dict) else {},
+            action_type=str(getattr(step, "action_type", "") or ""),
+            pre_observation=_event_pre_observation(event, None),
+            text_blob=_trace_text_blob(event, event.get("action") if isinstance(event.get("action"), dict) else {}),
+        )
+    )
+    action_summary = _first_nonempty_string(
+        event.get("state_summary"),
+        event.get("summary"),
+        event.get("action_summary"),
+        event.get("model_output"),
+    )
+    app = normalize_app_identifier(str(skill.platform or ""), str(skill.app or ""))
+    action_type = str(getattr(step, "action_type", "") or "")
+    target_clause = f" target {target!r}" if target else " the intended target"
+    if action_summary:
+        return _trim_visual_state(
+            f"The current {app} screen visually matches this step context: "
+            f"{action_summary}. The next {action_type or 'GUI'} action can be applied to{target_clause}."
+        )
+    return _trim_visual_state(
+        f"The current {app} screen visually shows{target_clause} and is ready for the next "
+        f"{action_type or 'GUI'} action."
+    )
+
+
+def _first_nonempty_string(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _trim_visual_state(text: str, *, limit: int = 360) -> str:
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def _merge_repair_steps_into_quality_report(
+    quality_report: dict[str, Any],
+    repair_report: dict[str, Any] | None,
+    *,
+    removed_functions: set[str] | None = None,
+) -> dict[str, Any]:
+    if not isinstance(repair_report, dict):
+        return quality_report
+    removed_functions = removed_functions or set()
+    repaired_steps = [
+        step
+        for step in repair_report.get("repaired_steps", [])
+        if isinstance(step, dict) and str(step.get("function") or "") not in removed_functions
+    ]
+    merged = dict(quality_report)
+    merged["repaired_steps"] = repaired_steps
+    return merged
+
+
 class _TraceEvidenceIndex:
     def __init__(self, events: list[dict[str, Any]]) -> None:
         self._steps: list[_TraceEvidenceStep] = []
@@ -1307,13 +2318,26 @@ class _TraceEvidenceIndex:
             if event_type == "step":
                 action = event.get("action") if isinstance(event.get("action"), dict) else {}
                 action_type = str(action.get("action_type") or "").strip()
-                observation = event.get("observation")
-                post_observation = observation if isinstance(observation, dict) else None
+                post_observation = _event_post_observation(event)
                 pre_observation = _event_pre_observation(event, latest_observation)
+                if _observation_has_auth_gate(pre_observation):
+                    if post_observation is not None:
+                        latest_observation = post_observation
+                    elif action_type not in {"", "screenshot", "wait"}:
+                        latest_observation = None
+                    continue
+                text_blob = _trace_text_blob(event, action)
                 self._steps.append(_TraceEvidenceStep(
                     index=int(event.get("step_index") or len(self._steps)),
                     action_type=action_type,
-                    text_blob=_trace_text_blob(event, action),
+                    parameters=_parameters_from_trace_action(action, action_type=action_type),
+                    target=_target_from_trace_action(
+                        action,
+                        action_type=action_type,
+                        pre_observation=pre_observation,
+                        text_blob=text_blob,
+                    ),
+                    text_blob=text_blob,
                     pre_observation=pre_observation,
                     post_observation=post_observation,
                 ))
@@ -1327,6 +2351,7 @@ class _TraceEvidenceIndex:
         *,
         target: str,
         action_type: str,
+        parameters: dict[str, Any] | None = None,
         after: int,
     ) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None]:
         if action_type not in {"tap", "long_press", "double_tap", "input_text"}:
@@ -1343,10 +2368,22 @@ class _TraceEvidenceIndex:
             match = _best_trace_step(candidates, target_text)
             if match is None:
                 match = candidates[0]
-            selector = _best_selector_for_action(match.pre_observation, target_text, action_type)
+            selector = _best_selector_for_point_action(
+                parameters or match.parameters,
+                match.pre_observation,
+                action_type,
+            )
+            if selector is None and not _is_generic_target_text(target_text):
+                selector = _best_selector_for_action(match.pre_observation, target_text, action_type)
             evidence_observation = match.pre_observation
             if selector is None and match.pre_observation is None:
-                selector = _best_selector_for_action(match.post_observation, target_text, action_type)
+                selector = _best_selector_for_point_action(
+                    parameters or match.parameters,
+                    match.post_observation,
+                    action_type,
+                )
+                if selector is None and not _is_generic_target_text(target_text):
+                    selector = _best_selector_for_action(match.post_observation, target_text, action_type)
                 evidence_observation = match.post_observation
             return match.index, selector, evidence_observation
         for step in self._steps:
@@ -1362,6 +2399,16 @@ def _best_trace_step(candidates: list[_TraceEvidenceStep], target_text: str) -> 
     scored: list[tuple[int, int, _TraceEvidenceStep]] = []
     for candidate in candidates:
         score = 0
+        if (
+            _best_selector_for_point_action(candidate.parameters, candidate.pre_observation, candidate.action_type)
+            or (
+                not _is_generic_target_text(target_text)
+                and _best_selector_for_action(candidate.pre_observation, target_text, candidate.action_type)
+            )
+        ):
+            score += 8
+        if candidate.target.strip().casefold() == target_text.strip().casefold():
+            score += 12
         if _blob_mentions_target(candidate.text_blob, target_text):
             score += 4
         if _observation_mentions_target(candidate.pre_observation, target_text):
@@ -1394,9 +2441,74 @@ def _best_selector_for_action(
     return matches[0]
 
 
+def _best_selector_for_point_action(
+    parameters: dict[str, Any] | None,
+    observation: dict[str, Any] | None,
+    action_type: str,
+) -> dict[str, Any] | None:
+    if action_type not in {"tap", "long_press", "double_tap", "input_text"}:
+        return None
+    if not isinstance(parameters, dict) or not isinstance(observation, dict):
+        return None
+    try:
+        raw_x = float(parameters.get("x"))
+        raw_y = float(parameters.get("y"))
+    except (TypeError, ValueError):
+        return None
+    extra = observation.get("extra") if isinstance(observation.get("extra"), dict) else {}
+    ui_tree = extra.get("ui_tree")
+    if not isinstance(ui_tree, list):
+        return None
+    nodes: list[tuple[dict[str, Any], tuple[float, float, float, float]]] = []
+    for node in ui_tree:
+        if not isinstance(node, dict):
+            continue
+        bounds = _parse_ui_bounds(node.get("bounds"))
+        if bounds is not None:
+            nodes.append((node, bounds))
+    if not nodes:
+        return None
+    max_right = max(bounds[2] for _, bounds in nodes)
+    max_bottom = max(bounds[3] for _, bounds in nodes)
+    x, y = _point_in_ui_tree_coordinates(
+        raw_x,
+        raw_y,
+        bool(parameters.get("relative", False)),
+        observation=observation,
+        max_right=max_right,
+        max_bottom=max_bottom,
+    )
+    matches = [
+        (node, bounds)
+        for node, bounds in nodes
+        if bounds[0] <= x <= bounds[2] and bounds[1] <= y <= bounds[3]
+    ]
+    selectors: list[dict[str, Any]] = []
+    for node, _ in sorted(matches, key=_point_target_rank):
+        selector = _input_selector_from_node(node) if action_type == "input_text" else _stable_selector_from_node(node)
+        if selector and _selector_has_stable_identity(selector):
+            selectors.append(selector)
+    if not selectors:
+        return None
+    return selectors[0]
+
+
+def _contract_states_for_selector(action_type: str, selector: dict[str, Any] | None) -> list[str]:
+    states = ["visible"]
+    if not isinstance(selector, dict):
+        return states
+    if selector.get("enabled"):
+        states.append("enabled")
+    if action_type in {"tap", "long_press", "double_tap"} and selector.get("clickable"):
+        states.append("clickable")
+    if action_type == "input_text" and selector.get("focused"):
+        states.append("focused")
+    return list(dict.fromkeys(states))
+
+
 def _selector_compatible_with_action(selector: dict[str, Any], action_type: str) -> bool:
     if action_type in {"tap", "long_press", "double_tap"}:
-        return bool(selector.get("clickable"))
+        return _selector_has_stable_identity(selector)
     if action_type == "input_text":
         selector_class = str(selector.get("class") or "").casefold()
         return bool(
@@ -1529,14 +2641,15 @@ def _selectors_for_target(
         ]
         if not any(_value_mentions_target(label, target_text) for label in labels):
             continue
-        selector = _stable_selector_from_node(node)
-        if selector:
-            matches.append(selector)
-            continue
         if action_type == "input_text":
             selector = _input_selector_from_node(node)
             if selector:
                 matches.append(selector)
+                continue
+        selector = _stable_selector_from_node(node)
+        if selector:
+            matches.append(selector)
+            continue
     return matches
 
 
@@ -1559,7 +2672,7 @@ def _selector_has_stable_identity(selector: dict[str, Any]) -> bool:
 def _selector_has_input_identity(selector: dict[str, Any]) -> bool:
     selector_class = str(selector.get("class") or "").casefold()
     return bool(
-        selector.get("resource_id")
+        (selector.get("resource_id") or selector.get("text") or selector.get("content_desc"))
         and ("edittext" in selector_class or "input" in selector_class)
         and (selector.get("focused") or selector.get("enabled"))
     )
@@ -1635,18 +2748,23 @@ def _stable_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
 
 def _input_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
     resource_id = node.get("resource_id")
+    text = node.get("text")
+    content_desc = node.get("content_desc")
     node_class = node.get("class")
-    if not isinstance(resource_id, str) or not resource_id.strip():
-        return None
     if not isinstance(node_class, str) or not node_class.strip():
         return None
     class_key = node_class.casefold()
     if not (node.get("focused") or "edittext" in class_key or "input" in class_key):
         return None
-    selector: dict[str, Any] = {
-        "resource_id": resource_id.strip(),
-        "class": node_class.strip(),
-    }
+    selector: dict[str, Any] = {"class": node_class.strip()}
+    if isinstance(resource_id, str) and resource_id.strip():
+        selector["resource_id"] = resource_id.strip()
+    elif isinstance(content_desc, str) and content_desc.strip():
+        selector["content_desc"] = content_desc.strip()
+    elif isinstance(text, str) and text.strip():
+        selector["text"] = text.strip()
+    else:
+        return None
     for flag in ("clickable", "enabled", "focused", "scrollable"):
         if node.get(flag):
             selector[flag] = True
@@ -1876,7 +2994,7 @@ def _is_canonical_step_contract(contract: dict[str, Any] | None) -> bool:
         selector = element.get("selector") if isinstance(element, dict) else None
         if not isinstance(selector, dict):
             continue
-        if _selector_has_input_identity(selector):
+        if _selector_has_input_identity(selector) or _element_has_input_identity(element):
             return True
         if not selector_is_static(selector):
             continue
@@ -1905,6 +3023,8 @@ def _weak_contract_reason(contract: dict[str, Any] | None) -> str:
         selector = element.get("selector") if isinstance(element, dict) else None
         if not isinstance(selector, dict):
             continue
+        if _selector_has_input_identity(selector) or _element_has_input_identity(element):
+            has_identity = True
         if selector.get("resource_id") or selector.get("content_desc"):
             has_identity = True
         if selector.get("text"):
@@ -1912,6 +3032,19 @@ def _weak_contract_reason(contract: dict[str, Any] | None) -> str:
     if text_count == 1 and not has_identity:
         return "single_text_selector"
     return "noncanonical_selector"
+
+
+def _element_has_input_identity(element: dict[str, Any]) -> bool:
+    selector = element.get("selector")
+    if not isinstance(selector, dict):
+        return False
+    selector_class = str(selector.get("class") or "").casefold()
+    state = set(element.get("state") if isinstance(element.get("state"), list) else [])
+    return bool(
+        (selector.get("resource_id") or selector.get("text") or selector.get("content_desc"))
+        and ("edittext" in selector_class or "input" in selector_class)
+        and ({"focused", "enabled"} & state)
+    )
 
 
 def _compact_events(events: list[dict[str, Any]], max_events: int) -> list[dict[str, Any]]:
@@ -1942,6 +3075,74 @@ def _compact_events(events: list[dict[str, Any]], max_events: int) -> list[dict[
     return compacted
 
 
+def _screenshot_path_from_event(event: dict[str, Any]) -> Path | None:
+    value = event.get("screenshot_path")
+    if value is None:
+        observation = _event_post_observation(event) or _event_prompt_observation(event)
+        if isinstance(observation, dict):
+            value = observation.get("screenshot_path")
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return Path(value).expanduser()
+
+
+def _llm_supports_screenshot_input(llm: Any) -> bool:
+    model = str(
+        getattr(llm, "_model", "")
+        or getattr(llm, "model", "")
+        or ""
+    ).casefold()
+    if not model:
+        return True
+    vision_markers = (
+        "vision",
+        "vl",
+        "gpt-4o",
+        "gpt-5",
+        "gemini",
+        "claude-3",
+        "qwen-vl",
+        "qwen2.5-vl",
+        "qwen3-vl",
+        "ui-tars",
+    )
+    return any(marker in model for marker in vision_markers)
+
+
+def _sample_screenshot_candidates(
+    candidates: list[tuple[int, str, str]],
+    limit: int,
+) -> list[tuple[int, str, str]]:
+    if limit <= 0 or not candidates:
+        return []
+    if len(candidates) <= limit:
+        return candidates
+    if limit == 1:
+        return [candidates[-1]]
+    selected_indices = {0, len(candidates) - 1}
+    remaining = limit - len(selected_indices)
+    if remaining > 0:
+        span = len(candidates) - 1
+        for i in range(1, remaining + 1):
+            selected_indices.add(round(i * span / (remaining + 1)))
+    return [candidates[index] for index in sorted(selected_indices)]
+
+
+def _encode_image_b64(path: str) -> str | None:
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            width, height = img.size
+            scaled = img.resize((max(width // 4, 1), max(height // 4, 1)), Image.LANCZOS)
+            buffer = io.BytesIO()
+            scaled.save(buffer, format="PNG")
+            return base64.b64encode(buffer.getvalue()).decode("ascii")
+    except Exception as exc:
+        logger.debug("Could not encode screenshot %s: %s", path, exc)
+        return None
+
+
 def _compact_evaluation(evaluation_result: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(evaluation_result, dict):
         return {}
@@ -1956,7 +3157,7 @@ def _compact_evaluation(evaluation_result: dict[str, Any] | None) -> dict[str, A
 
 def _platform_hint(events: list[dict[str, Any]]) -> str | None:
     for event in events:
-        observation = event.get("observation")
+        observation = _event_post_observation(event) or _event_prompt_observation(event)
         if isinstance(observation, dict) and isinstance(observation.get("platform"), str):
             return observation["platform"]
     return None
@@ -2026,9 +3227,34 @@ class _GeneratedCodeNormalizer(ast.NodeTransformer):
     def __init__(self, *, description_hint: str | None = None) -> None:
         self.changed = False
         self.description_hint = " ".join(str(description_hint or "").split())
+        self._default_stack: list[dict[str, Any]] = []
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
+        self._default_stack.append(_literal_function_defaults(node))
         self.generic_visit(node)
+        self._default_stack.pop()
+        return self._merge_skill_description(node)
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        if _is_r_call(node):
+            self._normalize_selector_keyword_expressions(node)
+            return node
+        if not _is_action_call(node):
+            return node
+        target_kw = next((kw for kw in node.keywords if kw.arg == "target"), None)
+        if target_kw is not None and _is_r_call(target_kw.value):
+            label = _target_label_from_r_call(target_kw.value)
+            if label:
+                selector_call = copy.deepcopy(target_kw.value)
+                target_kw.value = ast.Constant(value=label)
+                if not _action_call_has_required_state_contract(node):
+                    _set_or_add_state_contract(node, selector_call)
+                self.changed = True
+        self._normalize_action_keyword_expressions(node)
+        return node
+
+    def _merge_skill_description(self, node: ast.AsyncFunctionDef) -> ast.AST:
         description = _merge_description_hint(
             ast.get_docstring(node, clean=True) or "",
             self.description_hint,
@@ -2058,22 +3284,139 @@ class _GeneratedCodeNormalizer(ast.NodeTransformer):
             return node
         return node
 
-    def visit_Call(self, node: ast.Call) -> ast.AST:
-        self.generic_visit(node)
-        if not _is_action_call(node):
-            return node
-        target_kw = next((kw for kw in node.keywords if kw.arg == "target"), None)
-        if target_kw is None or not _is_r_call(target_kw.value):
-            return node
-        label = _target_label_from_r_call(target_kw.value)
-        if not label:
-            return node
-        selector_call = copy.deepcopy(target_kw.value)
-        target_kw.value = ast.Constant(value=label)
-        if not _action_call_has_required_state_contract(node):
-            _set_or_add_state_contract(node, selector_call)
-        self.changed = True
-        return node
+    def _normalize_action_keyword_expressions(self, node: ast.Call) -> None:
+        defaults = self._default_stack[-1] if self._default_stack else {}
+        for keyword in node.keywords:
+            if keyword.arg in {None, "state_contract", "fixed_values", "parameters"}:
+                continue
+            try:
+                ast.literal_eval(keyword.value)
+                continue
+            except (TypeError, ValueError):
+                pass
+            if isinstance(keyword.value, ast.Name):
+                continue
+            normalized = _literalize_safe_generated_expr(keyword.value, defaults)
+            if normalized is None:
+                continue
+            keyword.value = ast.Constant(value=normalized)
+            self.changed = True
+
+    def _normalize_selector_keyword_expressions(self, node: ast.Call) -> None:
+        defaults = self._default_stack[-1] if self._default_stack else {}
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                continue
+            try:
+                ast.literal_eval(keyword.value)
+                continue
+            except (TypeError, ValueError):
+                pass
+            if isinstance(keyword.value, ast.Name):
+                continue
+            normalized = _literalize_safe_generated_expr(keyword.value, defaults)
+            if normalized is None:
+                continue
+            keyword.value = ast.Constant(value=normalized)
+            self.changed = True
+
+
+def _literal_function_defaults(node: ast.AsyncFunctionDef) -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    if not node.args.defaults:
+        return defaults
+    default_args = node.args.args[-len(node.args.defaults):]
+    for arg, default in zip(default_args, node.args.defaults, strict=False):
+        try:
+            defaults[arg.arg] = ast.literal_eval(default)
+        except (TypeError, ValueError):
+            continue
+    return defaults
+
+
+def _literalize_safe_generated_expr(node: ast.AST, defaults: dict[str, Any]) -> Any | None:
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(str(value.value))
+                continue
+            if isinstance(value, ast.FormattedValue):
+                formatted = value.value
+                if isinstance(formatted, ast.Name):
+                    if formatted.id in defaults:
+                        parts.append(str(defaults[formatted.id]))
+                    else:
+                        parts.append("{{" + formatted.id + "}}")
+                    continue
+                literal = _literalize_safe_generated_expr(formatted, defaults)
+                if literal is None:
+                    return None
+                parts.append(str(literal))
+                continue
+            return None
+        return "".join(parts)
+    if isinstance(node, ast.BinOp):
+        left = _literalize_safe_generated_expr(node.left, defaults)
+        right = _literalize_safe_generated_expr(node.right, defaults)
+        if left is None or right is None:
+            return None
+        try:
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+        except (TypeError, ZeroDivisionError):
+            return None
+        return None
+    if isinstance(node, ast.UnaryOp):
+        operand = _literalize_safe_generated_expr(node.operand, defaults)
+        if operand is None:
+            return None
+        try:
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+        except TypeError:
+            return None
+        return None
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        base = _literalize_safe_generated_expr(node.func.value, defaults)
+        args = [_literalize_safe_generated_expr(arg, defaults) for arg in node.args]
+        if base is None or any(arg is None for arg in args) or any(kw.arg is None for kw in node.keywords):
+            return None
+        if node.keywords:
+            return None
+        if isinstance(base, str):
+            try:
+                if node.func.attr == "lower" and not args:
+                    return base.lower()
+                if node.func.attr == "casefold" and not args:
+                    return base.casefold()
+                if node.func.attr == "upper" and not args:
+                    return base.upper()
+                if node.func.attr == "strip" and len(args) <= 1:
+                    return base.strip(*args)
+                if node.func.attr == "replace" and len(args) in {2, 3}:
+                    return base.replace(*args)
+            except (TypeError, ValueError):
+                return None
+        return None
+    if isinstance(node, ast.Name):
+        return defaults.get(node.id)
+    try:
+        return ast.literal_eval(node)
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_action_call(node: ast.Call) -> bool:
@@ -2183,12 +3526,28 @@ def _safe_json(value: str) -> str:
 def _merge_code_source(existing_source: str, code_update: str) -> tuple[str, tuple[str, ...]]:
     existing_tree = ast.parse(existing_source)
     update_tree = ast.parse(code_update)
+    _strip_open_app_state_contracts_in_tree(update_tree)
+    _preserve_existing_entry_actions(existing_tree, update_tree)
+    ast.fix_missing_locations(update_tree)
+    code_update = ast.unparse(update_tree) + "\n"
+    update_tree = ast.parse(code_update)
     existing_functions = _function_sources(existing_source, existing_tree)
     update_functions = _function_sources(code_update, update_tree)
+    existing_nodes = _function_nodes(existing_tree)
+    update_nodes = _function_nodes(update_tree)
+    existing_functions = {
+        name: source
+        for name, source in existing_functions.items()
+        if not _is_graph_declaration(existing_nodes[name])
+    }
+    update_functions = {
+        name: source
+        for name, source in update_functions.items()
+        if not _is_graph_declaration(update_nodes[name])
+    }
     if not update_functions:
         return existing_source, ()
     updated_skill_names = _decorated_function_names(update_tree, "skill")
-    existing_nodes = _function_nodes(existing_tree)
     existing_functions = {
         name: source
         for name, source in existing_functions.items()
@@ -2211,6 +3570,55 @@ def _merge_code_source(existing_source: str, code_update: str) -> tuple[str, tup
         parts.append("")
         parts.append("")
     return "\n".join(parts).rstrip() + "\n", tuple(update_functions)
+
+
+def _strip_open_app_state_contracts_in_tree(tree: ast.Module) -> None:
+    for node in tree.body:
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            _strip_open_app_state_contracts_in_function(node)
+
+
+def _preserve_existing_entry_actions(existing_tree: ast.Module, update_tree: ast.Module) -> None:
+    existing_nodes = _function_nodes(existing_tree)
+    update_nodes = _function_nodes(update_tree)
+    for name, update_node in update_nodes.items():
+        existing_node = existing_nodes.get(name)
+        if not isinstance(existing_node, ast.AsyncFunctionDef) or not isinstance(update_node, ast.AsyncFunctionDef):
+            continue
+        if not (_has_decorator(existing_node, "skill") and _has_decorator(update_node, "skill")):
+            continue
+        existing_entry = _first_direct_entry_action_stmt(existing_node)
+        if existing_entry is None:
+            continue
+        update_first = _first_direct_action_stmt(update_node)
+        update_first_type = _action_call_type(update_first[1]) if update_first is not None else ""
+        if update_first_type in _ENTRY_ACTION_TYPES:
+            continue
+        entry_stmt = copy.deepcopy(existing_entry)
+        entry_call = _awaited_action_call(entry_stmt)
+        if entry_call is not None and _action_call_type(entry_call) == "open_app":
+            _remove_action_keyword(entry_call, "state_contract")
+        update_node.body.insert(_skill_entry_insert_index(update_node), entry_stmt)
+
+
+def _first_direct_action_stmt(func: ast.AsyncFunctionDef) -> tuple[ast.stmt, ast.Call] | None:
+    for stmt in func.body:
+        call = _awaited_action_call(stmt)
+        if call is not None:
+            return stmt, call
+    return None
+
+
+def _first_direct_entry_action_stmt(func: ast.AsyncFunctionDef) -> ast.stmt | None:
+    first = _first_direct_action_stmt(func)
+    if first is None:
+        return None
+    stmt, call = first
+    return stmt if _action_call_type(call) in _ENTRY_ACTION_TYPES else None
+
+
+def _is_graph_declaration(func: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
+    return _has_decorator(func, "state") or _has_decorator(func, "transition")
 
 
 def _has_graph_declarations(source: str) -> bool:

@@ -169,7 +169,7 @@ in ``parameters``.
 ## valid_state guidelines
 - For app launch / wait actions: "No need to verify"
 - For tap actions: "the target button/element is visible and clickable"
-- For input_text: "text input field is visible and focused"
+- For input_text: "text input field is visible and enabled"
 - For scroll/swipe: "content area is scrollable and visible"
 - Be specific about which UI element should be visible.
 - Keep semantic intent in ``description``, ``valid_state``, and
@@ -605,6 +605,8 @@ class SkillExtractor:
                     data.get("app", ""),
                     app,
                 )
+            trace_steps = _trace_steps_for_contract_alignment(trajectory)
+            trace_cursor = 0
             for s in data.get("steps", []):
                 action_type = s["action_type"]
                 parameters = _normalize_step_parameters(
@@ -619,9 +621,19 @@ class SkillExtractor:
                 # executor can bypass grounding; parameters are kept as-is for
                 # documentation and template-fallback purposes.
                 fixed_values = dict(parameters) if fixed else {}
+                aligned_extra, trace_cursor = _aligned_observation_extra_for_step(
+                    s,
+                    trace_steps,
+                    start_index=trace_cursor,
+                )
+                inferred_contract = (
+                    infer_state_contract(s, observation_extra=aligned_extra, app=app)
+                    if aligned_extra is not None
+                    else None
+                )
                 state_contract = _merge_step_contract(
                     s.get("state_contract"),
-                    infer_state_contract(s, trajectory=trajectory, app=app),
+                    inferred_contract,
                 )
                 steps.append(SkillStep(
                     action_type=action_type,
@@ -782,6 +794,130 @@ def _build_full_trajectory(
         trajectory["agent_phase"] = agent_phase
 
     return trajectory, screenshot_events
+
+
+def _trace_steps_for_contract_alignment(
+    trajectory: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(trajectory, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    skill_phase = trajectory.get("skill_phase")
+    if isinstance(skill_phase, dict):
+        for step in skill_phase.get("steps", []) or []:
+            if isinstance(step, dict):
+                out.append(step)
+    for step in trajectory.get("agent_phase", []) or []:
+        if isinstance(step, dict):
+            out.append(step)
+    return out
+
+
+def _aligned_observation_extra_for_step(
+    step_payload: dict[str, Any],
+    trace_steps: list[dict[str, Any]],
+    *,
+    start_index: int,
+) -> tuple[dict[str, Any] | None, int]:
+    if not trace_steps:
+        return None, start_index
+
+    best_score = 0.0
+    best_index: int | None = None
+    for index in range(start_index, len(trace_steps)):
+        score = _trace_step_alignment_score(step_payload, trace_steps[index])
+        if score > best_score:
+            best_score = score
+            best_index = index
+        if score >= 0.85:
+            break
+
+    if best_index is None or best_score < 0.65:
+        return None, start_index
+    observation = trace_steps[best_index].get("observation")
+    if not isinstance(observation, dict):
+        return None, best_index + 1
+    extra = observation.get("extra")
+    return (extra if isinstance(extra, dict) else None), best_index + 1
+
+
+def _trace_step_alignment_score(step_payload: dict[str, Any], trace_step: dict[str, Any]) -> float:
+    expected_action = _normalize_alignment_text(step_payload.get("action_type"))
+    actual_action = _normalize_alignment_text(_trace_action_type(trace_step))
+    if not expected_action or expected_action != actual_action:
+        return 0.0
+
+    score = 0.45
+    target = _normalize_alignment_text(step_payload.get("target"))
+    labels = _trace_alignment_labels(trace_step)
+    if target:
+        if target in labels:
+            score += 0.45
+        elif len(target) >= 4 and any(target in label or label in target for label in labels):
+            score += 0.25
+
+    if _step_coordinates_match(step_payload, trace_step):
+        score += 0.10
+    return min(score, 1.0)
+
+
+def _trace_action_type(trace_step: dict[str, Any]) -> Any:
+    action = trace_step.get("action")
+    if isinstance(action, dict):
+        return action.get("action_type")
+    if isinstance(action, str):
+        return action
+    return trace_step.get("action_type")
+
+
+def _trace_alignment_labels(trace_step: dict[str, Any]) -> set[str]:
+    values: list[Any] = [
+        trace_step.get("target"),
+        trace_step.get("action_summary"),
+        trace_step.get("model_output"),
+    ]
+    action = trace_step.get("action")
+    if isinstance(action, dict):
+        values.extend(
+            action.get(key)
+            for key in ("target", "text", "label", "content_desc", "resource_id", "package")
+        )
+    observation = trace_step.get("observation")
+    if isinstance(observation, dict):
+        extra = observation.get("extra")
+        if isinstance(extra, dict):
+            for key in ("visible_text", "clickable_text", "content_desc", "resource_ids"):
+                value = extra.get(key)
+                if isinstance(value, list):
+                    values.extend(value)
+                elif isinstance(value, str):
+                    values.append(value)
+    return {
+        normalized
+        for value in values
+        if (normalized := _normalize_alignment_text(value))
+    }
+
+
+def _step_coordinates_match(step_payload: dict[str, Any], trace_step: dict[str, Any]) -> bool:
+    params = step_payload.get("parameters")
+    if not isinstance(params, dict):
+        return False
+    action = trace_step.get("action")
+    if not isinstance(action, dict):
+        return False
+    for key in ("x", "y", "x2", "y2"):
+        if key not in params:
+            continue
+        if str(params.get(key)) != str(action.get(key)):
+            return False
+    return any(key in params for key in ("x", "y", "x2", "y2"))
+
+
+def _normalize_alignment_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().casefold().split())
 
 
 def _merge_step_contract(

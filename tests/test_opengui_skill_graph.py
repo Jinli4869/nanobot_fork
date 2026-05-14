@@ -28,6 +28,7 @@ from opengui.skills.graph import (
 )
 from opengui.skills.reuser import SkillReuser
 from opengui.skills.state_contract import (
+    evaluate_state_contract_detail,
     evaluate_state_contract,
     infer_state_contract,
     normalize_state_contract,
@@ -296,7 +297,11 @@ def _xiaoheihe_trajectory() -> dict[str, object]:
 
 def _xiaoheihe_extra() -> dict[str, object]:
     trajectory = _xiaoheihe_trajectory()
-    return trajectory["agent_phase"][0]["observation"]["extra"]  # type: ignore[index]
+    observation = trajectory["agent_phase"][0]["observation"]  # type: ignore[index]
+    extra = dict(observation["extra"])  # type: ignore[index]
+    extra["screen_width"] = observation["screen_width"]  # type: ignore[index]
+    extra["screen_height"] = observation["screen_height"]  # type: ignore[index]
+    return extra
 
 
 def _write_transition_evidence(store_dir: Path, record: dict[str, object]) -> None:
@@ -314,7 +319,7 @@ def test_infer_state_contract_uses_real_xiaoheihe_label_for_exact_target() -> No
             "valid_state": "黑盒商城 tab is visible and clickable",
             "expected_state": "Black Box Mall page is open",
         },
-        trajectory=_xiaoheihe_trajectory(),
+        observation_extra=_xiaoheihe_extra(),
         app="com.max.xiaoheihe",
     )
 
@@ -332,7 +337,7 @@ def test_inferred_resource_id_clickable_contract_evaluates_against_source_ui_tre
             "valid_state": "黑盒商城 tab is visible and clickable",
             "expected_state": "Black Box Mall page is open",
         },
-        trajectory=_xiaoheihe_trajectory(),
+        observation_extra=_xiaoheihe_extra(),
         app="com.max.xiaoheihe",
     )
 
@@ -342,6 +347,286 @@ def test_inferred_resource_id_clickable_contract_evaluates_against_source_ui_tre
         foreground_app="com.max.xiaoheihe",
         observation_extra=_xiaoheihe_extra(),
     ) is True
+
+
+def test_infer_state_contract_uses_current_step_observation_not_later_trajectory() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "Search",
+            "valid_state": "Search is visible",
+            "observation": {
+                "extra": {
+                    "visible_text": ["Search"],
+                    "ui_tree": [
+                        {
+                            "text": "Search",
+                            "resource_id": "com.example:id/current_search",
+                            "clickable": True,
+                        }
+                    ],
+                    "ui_tree_node_count": 1,
+                }
+            },
+        },
+        trajectory={
+            "agent_phase": [
+                {
+                    "observation": {
+                        "extra": {
+                            "visible_text": ["Search"],
+                            "ui_tree": [
+                                {
+                                    "text": "Search",
+                                    "resource_id": "com.example:id/later_search",
+                                    "clickable": True,
+                                }
+                            ],
+                            "ui_tree_node_count": 1,
+                        }
+                    }
+                }
+            ]
+        },
+        app="com.example",
+    )
+
+    assert contract is not None
+    assert _first_required_selector(contract) == {"resource_id": "com.example:id/current_search"}
+
+
+def test_infer_state_contract_without_current_observation_does_not_scan_trajectory_by_default() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "Search",
+            "valid_state": "Search is visible",
+        },
+        trajectory={
+            "agent_phase": [
+                {
+                    "observation": {
+                        "extra": {
+                            "visible_text": ["Search"],
+                            "ui_tree": [
+                                {
+                                    "text": "Search",
+                                    "resource_id": "com.example:id/search",
+                                    "clickable": True,
+                                }
+                            ],
+                            "ui_tree_node_count": 1,
+                        }
+                    }
+                }
+            ]
+        },
+        app="com.example",
+    )
+
+    assert contract is None
+
+
+def test_infer_state_contract_ranks_multiple_same_page_candidates() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "Search",
+            "valid_state": "Search is visible",
+        },
+        observation_extra={
+            "visible_text": ["Search"],
+            "ui_tree": [
+                {"text": "Search", "clickable": True},
+                {
+                    "text": "Search",
+                    "resource_id": "com.example:id/search_box",
+                    "clickable": True,
+                },
+            ],
+            "ui_tree_node_count": 2,
+        },
+        app="com.example",
+    )
+
+    assert contract is not None
+    assert _first_required_selector(contract) == {"resource_id": "com.example:id/search_box"}
+
+
+def test_infer_state_contract_does_not_compound_flat_global_fields() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "黑盒商城",
+            "valid_state": "Black Box Mall page is visible",
+        },
+        observation_extra={
+            "ui_tree": {
+                "resource_ids": ["com.max.xiaoheihe:id/mall_entry"],
+                "content_desc": ["黑盒商城"],
+                "visible_text": ["黑盒商城"],
+                "clickable_text": ["黑盒商城"],
+            }
+        },
+        app="com.max.xiaoheihe",
+    )
+
+    assert contract is not None
+    assert _first_required_selector(contract) == {"content_desc": "黑盒商城"}
+
+
+def test_node_state_validation_does_not_use_global_clickable_text_for_selector() -> None:
+    contract = normalize_state_contract({
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [
+                {
+                    "selector": {"resource_id": "com.example:id/profile"},
+                    "state": ["visible", "clickable"],
+                },
+            ],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    })
+
+    assert contract is not None
+    assert evaluate_state_contract(
+        contract,
+        foreground_app="com.example.app",
+        observation_extra={
+            "clickable_text": ["Profile"],
+            "ui_tree": [
+                {
+                    "text": "Profile",
+                    "resource_id": "com.example:id/profile",
+                    "clickable": False,
+                },
+                {"text": "Profile", "resource_id": "com.example:id/other", "clickable": True},
+            ],
+        },
+    ) is False
+
+
+def test_node_state_validation_returns_unknown_when_state_channel_missing() -> None:
+    contract = normalize_state_contract({
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [
+                {
+                    "selector": {"resource_id": "com.example:id/profile"},
+                    "state": ["visible", "clickable"],
+                },
+            ],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    })
+
+    assert contract is not None
+    assert evaluate_state_contract(
+        contract,
+        foreground_app="com.example.app",
+        observation_extra={
+            "clickable_text": ["Profile"],
+            "ui_tree": [
+                {
+                    "text": "Profile",
+                    "resource_id": "com.example:id/profile",
+                }
+            ],
+        },
+    ) is None
+
+
+def test_infer_input_text_contract_requires_enabled_not_focused() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "input_text",
+            "target": "Search",
+            "valid_state": "Search input is visible",
+        },
+        observation_extra={
+            "visible_text": ["Search"],
+            "ui_tree": [
+                {
+                    "text": "Search",
+                    "resource_id": "com.example:id/search_box",
+                    "enabled": True,
+                    "focused": False,
+                }
+            ],
+            "ui_tree_node_count": 1,
+        },
+        app="com.example",
+    )
+
+    assert contract is not None
+    required = contract["signature"]["required"][0]
+    assert required["selector"] == {"resource_id": "com.example:id/search_box"}
+    assert required["state"] == ["visible", "enabled"]
+
+
+def test_short_text_does_not_substring_match_longer_label() -> None:
+    contract = normalize_state_contract({
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "set"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    })
+
+    assert score_state_contract(
+        contract,
+        foreground_app="com.example.app",
+        observation_extra={"visible_text": ["Settings"]},
+    ) == 0.0
+
+
+def test_evaluate_state_contract_detail_splits_unknown_from_matched() -> None:
+    contract = normalize_state_contract({
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "Profile"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    })
+
+    result = evaluate_state_contract_detail(
+        contract,
+        observation_extra={"visible_text": ["Profile"]},
+    )
+
+    assert result.passed is None
+    assert result.matched_required
+    assert result.unknown_required[0]["reason"] == "missing_foreground_app"
+    assert result.evidence_coverage == 0.5
+
+
+def test_skip_valid_state_rules_do_not_match_unrelated_words() -> None:
+    contract = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "Skip",
+            "valid_state": "skip button should not appear",
+        },
+        observation_extra={"visible_text": ["Skip"], "clickable_text": ["Skip"]},
+        app="com.example",
+    )
+    skipped = infer_state_contract(
+        {
+            "action_type": "tap",
+            "target": "Skip",
+            "valid_state": "skip verification",
+        },
+        observation_extra={"visible_text": ["Skip"], "clickable_text": ["Skip"]},
+        app="com.example",
+    )
+
+    assert contract is not None
+    assert skipped is None
 
 
 def test_state_contract_does_not_match_short_partial_selector_label() -> None:
@@ -366,6 +651,13 @@ def test_state_contract_does_not_match_short_partial_selector_label() -> None:
             "visible_text": ["关注", "推荐", "首页", "热点", "游戏库", "我"],
             "clickable_text": ["关注", "首页", "热点", "游戏库", "我"],
             "resource_ids": ["com.max.xiaoheihe:id/rg_main"],
+            "ui_tree": [
+                {
+                    "text": "我",
+                    "resource_id": "com.max.xiaoheihe:id/rb_5",
+                    "clickable": True,
+                }
+            ],
         },
     )
 
@@ -380,7 +672,7 @@ def test_infer_app_hint_from_task_uses_known_graph_app_aliases() -> None:
     ) == "com.max.xiaoheihe"
 
 
-def test_state_contract_returns_none_when_required_evidence_is_unknown() -> None:
+def test_state_contract_activity_class_hint_missing_does_not_block() -> None:
     contract = normalize_state_contract({
         "anchor": {"app_package": "com.example.app", "activity_class": "MainActivity"},
         "signature": {
@@ -397,7 +689,7 @@ def test_state_contract_returns_none_when_required_evidence_is_unknown() -> None
         contract,
         foreground_app="com.example.app",
         observation_extra={"visible_text": ["Profile"]},
-    ) is None
+    ) is True
 
 
 def test_compound_selector_requires_each_field_to_match() -> None:
@@ -474,7 +766,7 @@ def test_infer_state_contract_bridges_semantic_target_to_coordinate_grounded_lab
             "valid_state": "the bottom navigation is visible",
             "expected_state": "Black Box Mall page is open",
         },
-        trajectory=_xiaoheihe_trajectory(),
+        observation_extra=_xiaoheihe_extra(),
         app="com.max.xiaoheihe",
     )
 
@@ -493,25 +785,17 @@ def test_infer_state_contract_bridges_semantic_target_to_context_grounded_label(
             "valid_state": "我的订单 is visible and clickable on the mall page",
             "expected_state": "orders page opens",
         },
-        trajectory={
-            "agent_phase": [
+        observation_extra={
+            "visible_text": ["黑盒商城", "我的订单", "购物车"],
+            "clickable_text": ["我的订单", "购物车"],
+            "ui_tree": [
                 {
-                    "observation": {
-                        "extra": {
-                            "visible_text": ["黑盒商城", "我的订单", "购物车"],
-                            "clickable_text": ["我的订单", "购物车"],
-                            "ui_tree": [
-                                {
-                                    "text": "我的订单",
-                                    "resource_id": "com.max.xiaoheihe:id/my_orders",
-                                    "clickable": True,
-                                }
-                            ],
-                            "ui_tree_node_count": 3,
-                        }
-                    }
+                    "text": "我的订单",
+                    "resource_id": "com.max.xiaoheihe:id/my_orders",
+                    "clickable": True,
                 }
-            ]
+            ],
+            "ui_tree_node_count": 3,
         },
         app="com.max.xiaoheihe",
     )
@@ -531,41 +815,33 @@ def test_infer_state_contract_rejects_dynamic_feed_title_selector() -> None:
             "valid_state": "the feed item is visible",
             "expected_state": "the post detail page opens",
         },
-        trajectory={
-            "agent_phase": [
+        observation_extra={
+            "visible_text": [
+                "首页",
+                "热点",
+                "我",
+                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                "12分钟前",
+            ],
+            "clickable_text": [
+                "首页",
+                "热点",
+                "我",
+                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+            ],
+            "resource_ids": [
+                "com.max.xiaoheihe:id/nav_home",
+                "com.max.xiaoheihe:id/nav_me",
+                "com.max.xiaoheihe:id/tv_post_title",
+            ],
+            "ui_tree": [
                 {
-                    "observation": {
-                        "extra": {
-                            "visible_text": [
-                                "首页",
-                                "热点",
-                                "我",
-                                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
-                                "12分钟前",
-                            ],
-                            "clickable_text": [
-                                "首页",
-                                "热点",
-                                "我",
-                                "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
-                            ],
-                            "resource_ids": [
-                                "com.max.xiaoheihe:id/nav_home",
-                                "com.max.xiaoheihe:id/nav_me",
-                                "com.max.xiaoheihe:id/tv_post_title",
-                            ],
-                            "ui_tree": [
-                                {
-                                    "text": "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
-                                    "resource_id": "com.max.xiaoheihe:id/tv_post_title",
-                                    "clickable": True,
-                                }
-                            ],
-                            "ui_tree_node_count": 4,
-                        }
-                    }
+                    "text": "这篇帖子详细聊聊今天版本更新后的新配队和强度变化",
+                    "resource_id": "com.max.xiaoheihe:id/tv_post_title",
+                    "clickable": True,
                 }
-            ]
+            ],
+            "ui_tree_node_count": 4,
         },
         app="com.max.xiaoheihe",
     )
@@ -582,7 +858,7 @@ def test_infer_state_contract_does_not_promote_abstract_target_without_grounding
             "valid_state": "the bottom navigation is visible",
             "expected_state": "the requested tab opens",
         },
-        trajectory=_xiaoheihe_trajectory(),
+        observation_extra=_xiaoheihe_extra(),
         app="com.max.xiaoheihe",
     )
 
@@ -601,7 +877,7 @@ async def test_ingest_xiaoheihe_skill_promotes_grounded_contracts_to_state_nodes
             "valid_state": "bottom navigation is visible",
             "expected_state": "Black Box Mall opens",
         },
-        trajectory=_xiaoheihe_trajectory(),
+        observation_extra=_xiaoheihe_extra(),
         app="com.max.xiaoheihe",
     )
     orders_contract = infer_state_contract(
@@ -612,25 +888,17 @@ async def test_ingest_xiaoheihe_skill_promotes_grounded_contracts_to_state_nodes
             "valid_state": "我的订单 is visible and clickable on the 黑盒商城 page",
             "expected_state": "My Orders page opens",
         },
-        trajectory={
-            "agent_phase": [
+        observation_extra={
+            "visible_text": ["黑盒商城", "我的订单"],
+            "clickable_text": ["我的订单"],
+            "ui_tree": [
                 {
-                    "observation": {
-                        "extra": {
-                            "visible_text": ["黑盒商城", "我的订单"],
-                            "clickable_text": ["我的订单"],
-                            "ui_tree": [
-                                {
-                                    "text": "我的订单",
-                                    "resource_id": "com.max.xiaoheihe:id/my_orders",
-                                    "clickable": True,
-                                }
-                            ],
-                            "ui_tree_node_count": 2,
-                        }
-                    }
+                    "text": "我的订单",
+                    "resource_id": "com.max.xiaoheihe:id/my_orders",
+                    "clickable": True,
                 }
-            ]
+            ],
+            "ui_tree_node_count": 2,
         },
         app="com.max.xiaoheihe",
     )
@@ -2112,6 +2380,14 @@ def test_state_contract_matches_new_schema_against_ui_tree() -> None:
         "clickable_text": ["Profile"],
         "resource_ids": ["com.example:id/profile"],
         "class_names": ["android.widget.TextView"],
+        "ui_tree": [
+            {
+                "text": "Profile",
+                "resource_id": "com.example:id/profile",
+                "class": "android.widget.TextView",
+                "clickable": True,
+            }
+        ],
         "ui_tree_node_count": 3,
     }
     assert evaluate_state_contract(
@@ -2409,6 +2685,13 @@ async def test_state_identifier_and_path_compiler_use_active_graph(tmp_path: Pat
             "visible_text": ["Settings", "Profile"],
             "clickable_text": ["Settings"],
             "resource_ids": ["com.example:id/settings"],
+            "ui_tree": [
+                {
+                    "text": "Settings",
+                    "resource_id": "com.example:id/settings",
+                    "clickable": True,
+                }
+            ],
             "ui_tree_node_count": 4,
         },
     )

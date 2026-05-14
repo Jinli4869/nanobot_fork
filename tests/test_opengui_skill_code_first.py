@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -6,24 +7,39 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
+from opengui.action import Action
 from opengui.interfaces import LLMResponse
+from opengui.observation import Observation
 from opengui.postprocessing import PostRunProcessor, _load_completed_reuse
 from opengui.skills.code_first import (
+    CodeSkillExtraction,
     CodeSkillExtractor,
     CodeSkillLibrary,
     CodeSkillRepository,
+    TraceSegmenter,
     canonicalize_code_actions_from_events,
+    filter_code_to_contract_complete,
+    normalize_code_skill_entrypoints,
     repair_code_contracts_from_events,
 )
 from opengui.skills.code_graph import compile_code_graph, compile_code_skills
 from opengui.skills.code_graph_projection import project_graph_code_from_events
+from opengui.skills.deeplink import (
+    DeeplinkCandidate,
+    _build_candidates,
+    _contract_from_observation,
+    _probe_candidate,
+    discover_deeplink_skills_from_trace,
+)
 from opengui.skills.graph import GraphEdge, GraphNode, SkillGraphStore
 
 
 class _ScriptedLLM:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str], *, model: str | None = None) -> None:
         self._responses = [LLMResponse(content=response) for response in responses]
         self.messages: list[list[dict[str, Any]]] = []
+        if model is not None:
+            self._model = model
 
     async def chat(
         self,
@@ -50,10 +66,171 @@ class _SemanticEmbedder:
         return np.array(rows, dtype=np.float32)
 
 
+class _SlowLLM:
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+    ) -> LLMResponse:
+        del messages, tools, tool_choice
+        await asyncio.sleep(10.0)
+        return LLMResponse(content="")
+
+
+class _FakeDeeplinkBackend:
+    platform = "android"
+
+    def __init__(
+        self,
+        *,
+        app: str = "com.example.app",
+        package_output: str = "Activity Resolver Table:\n  scheme=demo\n",
+        activity_outputs: dict[str, str] | None = None,
+        verified_uris: set[str] | None = None,
+        launch_errors: dict[str, Exception] | None = None,
+        component_launch_errors: set[str] | None = None,
+        resolve_outputs: dict[str, str] | None = None,
+        verified_intents: set[str] | None = None,
+    ) -> None:
+        self.app = app
+        self.package_output = package_output
+        self.activity_outputs = activity_outputs or {}
+        self.verified_uris = verified_uris or {"demo://order"}
+        self.launch_errors = launch_errors or {}
+        self.component_launch_errors = component_launch_errors or set()
+        self.resolve_outputs = resolve_outputs or {}
+        self.verified_intents = verified_intents or set()
+        self.launched_uri: str | None = None
+        self.launched_intent_action: str | None = None
+        self.launched_package: str | None = None
+        self.actions: list[Action] = []
+        self.run_calls: list[tuple[str, ...]] = []
+
+    async def _run(self, *args: str, timeout: float = 10.0) -> str:
+        del timeout
+        self.run_calls.append(args)
+        command = " ".join(args)
+        if "dumpsys activity activities" in command:
+            for marker, output in self.activity_outputs.items():
+                if marker in command:
+                    return output
+            return self.activity_outputs.get("*", "")
+        if "cmd package resolve-activity" in command:
+            for marker, output in self.resolve_outputs.items():
+                if marker in command:
+                    return output
+            return self.resolve_outputs.get("*", "")
+        if "dumpsys package" in command:
+            return self.package_output
+        return ""
+
+    async def execute(self, action: Action, timeout: float = 5.0) -> str:
+        del timeout
+        self.actions.append(action)
+        if action.action_type == "open_deeplink":
+            if action.component and action.text in self.component_launch_errors:
+                raise RuntimeError("SecurityException: Permission Denial")
+            if action.text in self.launch_errors:
+                raise self.launch_errors[action.text]
+            self.launched_uri = action.text
+            self.launched_intent_action = None
+            self.launched_package = action.package
+        if action.action_type == "open_intent":
+            self.launched_uri = action.text
+            self.launched_intent_action = action.intent_action
+            self.launched_package = action.package
+        if action.action_type == "close_app":
+            self.launched_uri = None
+            self.launched_intent_action = None
+            self.launched_package = None
+        return "ok"
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        del timeout
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_png(screenshot_path)
+        if (
+            self.launched_uri in self.verified_uris
+            or self.launched_intent_action in self.verified_intents
+        ):
+            if self.app == "com.google.android.documentsui":
+                return Observation(
+                    screenshot_path=str(screenshot_path),
+                    screen_width=1080,
+                    screen_height=1920,
+                    foreground_app=self.app,
+                    platform="android",
+                    extra={
+                        "visible_text": ["Downloads"],
+                        "content_desc": ["Downloads"],
+                        "resource_ids": ["com.google.android.documentsui:id/dir_list"],
+                    },
+                )
+            if (self.launched_package or self.app) == "com.google.android.contacts":
+                return Observation(
+                    screenshot_path=str(screenshot_path),
+                    screen_width=1080,
+                    screen_height=1920,
+                    foreground_app="com.google.android.contacts",
+                    platform="android",
+                    extra={
+                        "visible_text": ["Create contact", "Save", "First name"],
+                        "content_desc": ["Cancel", "More options"],
+                        "resource_ids": [
+                            "com.google.android.contacts:id/contact_editor_fragment",
+                            "com.google.android.contacts:id/toolbar_button",
+                        ],
+                    },
+                )
+            if self.app == "com.google.android.deskclock":
+                return Observation(
+                    screenshot_path=str(screenshot_path),
+                    screen_width=1080,
+                    screen_height=1920,
+                    foreground_app=self.app,
+                    platform="android",
+                    extra={
+                        "visible_text": ["Timer", "00h 00m 00s", "1", "2", "3"],
+                        "content_desc": ["Timer"],
+                        "resource_ids": ["com.google.android.deskclock:id/timer_setup_digit_1"],
+                    },
+                )
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=1080,
+                screen_height=1920,
+                foreground_app=self.app,
+                platform="android",
+                extra={
+                    "visible_text": ["My Orders", "Recent purchases"],
+                    "content_desc": ["My Orders"],
+                    "resource_ids": ["com.example.app:id/orders_title"],
+                },
+            )
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app=self.app,
+            platform="android",
+            extra={"visible_text": ["Home"], "content_desc": [], "resource_ids": []},
+        )
+
+
 def _write_trace(path: Path, events: list[dict[str, Any]]) -> None:
     path.write_text(
         "\n".join(json.dumps(event, ensure_ascii=False) for event in events) + "\n",
         encoding="utf-8",
+    )
+
+
+def _write_png(path: Path) -> None:
+    path.write_bytes(
+        bytes.fromhex(
+            "89504e470d0a1a0a0000000d4948445200000001000000010802000000907753de"
+            "0000000c49444154789c6360f8ffff3f0005fe02fea7ee26db0000000049454e44ae426082"
+        )
     )
 
 
@@ -84,6 +261,16 @@ async def {name}(device):
         target="Orders",
         state_contract=C(app="com.example.app", required=[R(text="Orders", clickable=True)]),
     )
+'''
+
+
+def _single_tap_skill_source(name: str, target: str = "Button") -> str:
+    return f'''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.app", platform="android", tags=["long"])
+async def {name}(device):
+    await action("tap", target="{target}")
 '''
 
 
@@ -362,6 +549,135 @@ async def test_code_skill_extractor_returns_python_code_from_json_wrapper(tmp_pa
     assert result.attempts[0]["violations"] == []
 
 
+@pytest.mark.asyncio
+async def test_code_skill_extractor_attaches_segment_screenshots(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    _write_png(screenshot)
+    llm = _ScriptedLLM([_wrapped_code(_skill_source())])
+    extractor = CodeSkillExtractor(llm=llm, max_screenshots_per_segment=1)
+
+    result = await extractor.extract_from_events(
+        [{
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Orders"},
+            "screenshot_path": str(screenshot),
+            "observation": {"foreground_app": "com.example.app", "extra": {"visible_text": ["Orders"]}},
+        }],
+        is_success=True,
+        platform="android",
+        task="open orders",
+        segment_id="seg-000",
+    )
+
+    assert result is not None
+    assert result.screenshots_used == (str(screenshot),)
+    content = llm.messages[0][0]["content"]
+    assert isinstance(content, list)
+    assert any(block.get("type") == "image_url" for block in content)
+
+
+@pytest.mark.asyncio
+async def test_code_skill_extractor_can_disable_screenshots(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    _write_png(screenshot)
+    llm = _ScriptedLLM([_wrapped_code(_skill_source())])
+    extractor = CodeSkillExtractor(llm=llm, include_screenshots=False)
+
+    result = await extractor.extract_from_events(
+        [{
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Orders"},
+            "screenshot_path": str(screenshot),
+        }],
+        is_success=True,
+    )
+
+    assert result is not None
+    assert result.screenshots_used == ()
+    assert isinstance(llm.messages[0][0]["content"], str)
+
+
+@pytest.mark.asyncio
+async def test_code_skill_extractor_skips_screenshots_for_text_model(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    _write_png(screenshot)
+    llm = _ScriptedLLM([_wrapped_code(_skill_source())], model="qwen3.5-plus")
+    extractor = CodeSkillExtractor(llm=llm)
+
+    result = await extractor.extract_from_events(
+        [{
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Orders"},
+            "screenshot_path": str(screenshot),
+        }],
+        is_success=True,
+    )
+
+    assert result is not None
+    assert result.screenshots_used == ()
+    assert isinstance(llm.messages[0][0]["content"], str)
+
+
+@pytest.mark.asyncio
+async def test_code_skill_extractor_accepts_cli_event_step_key() -> None:
+    llm = _ScriptedLLM([_wrapped_code('''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_home(device):
+    await action("tap", target="Home")
+''')])
+    extractor = CodeSkillExtractor(llm=llm, include_screenshots=False)
+
+    result = await extractor.extract_from_events(
+        [{"event": "step", "step_index": 0, "action": {"action_type": "tap", "target": "Home"}}],
+        is_success=True,
+        platform="android",
+        task="Open home",
+    )
+
+    assert result is not None
+    assert "open_home" in result.python_code
+    assert llm.messages
+
+
+@pytest.mark.asyncio
+async def test_code_skill_extractor_falls_back_when_screenshot_missing(tmp_path: Path) -> None:
+    llm = _ScriptedLLM([_wrapped_code(_skill_source())])
+    extractor = CodeSkillExtractor(llm=llm)
+
+    result = await extractor.extract_from_events(
+        [{
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Orders"},
+            "screenshot_path": str(tmp_path / "missing.png"),
+        }],
+        is_success=True,
+    )
+
+    assert result is not None
+    assert result.screenshots_used == ()
+    assert isinstance(llm.messages[0][0]["content"], str)
+
+
+@pytest.mark.asyncio
+async def test_code_skill_extractor_times_out_text_only_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    from opengui.skills import code_first
+
+    monkeypatch.setattr(code_first, "_TEXT_EXTRACTION_TIMEOUT_S", 0.01)
+    extractor = CodeSkillExtractor(llm=_SlowLLM())
+
+    with pytest.raises(asyncio.TimeoutError):
+        await extractor.extract_from_events(
+            [{"type": "step", "step_index": 0, "action": {"action_type": "tap", "target": "Orders"}}],
+            is_success=True,
+        )
+
+
 def test_code_skill_repository_merges_and_compiles_code(tmp_path: Path) -> None:
     repository = CodeSkillRepository(tmp_path / "skills")
 
@@ -430,6 +746,71 @@ async def open_orders(device):
     assert "resource_id='com.max.xiaoheihe:id/rb_5'" in source
 
 
+def test_code_skill_repository_literalizes_safe_generated_expressions(tmp_path: Path) -> None:
+    repository = CodeSkillRepository(tmp_path / "skills")
+
+    result = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.dimowner.audiorecorder", platform="android", tags=["audio"])
+async def record_audio_clip(device, duration_seconds: int = 10):
+    await action(
+        "wait",
+        target=f"{duration_seconds} seconds",
+        duration_ms=duration_seconds * 1000,
+        state_contract=C(app="com.dimowner.audiorecorder", required=[R(text="Recording", visible=True)]),
+    )
+''')
+
+    assert not result.errors
+    assert result.skills[0].steps[0].target == "10 seconds"
+    assert result.skills[0].steps[0].parameters["duration_ms"] == 10000
+
+
+def test_code_skill_repository_literalizes_safe_string_method_chain(tmp_path: Path) -> None:
+    repository = CodeSkillRepository(tmp_path / "skills")
+
+    result = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.apps.nexuslauncher", platform="android", tags=["launch"])
+async def open_audio_recorder(device, app_name: str = "Audio Recorder"):
+    await action("open_app", target=app_name.lower().replace(" ", "-"))
+    await action(
+        "tap",
+        target=app_name,
+        state_contract=C(app="com.google.android.apps.nexuslauncher", required=[R(text=app_name, clickable=True)]),
+    )
+''')
+
+    assert not result.errors
+    assert result.skills[0].steps[0].target == "audio-recorder"
+    assert result.skills[0].steps[1].target == "{{app_name}}"
+
+
+def test_code_skill_repository_literalizes_safe_selector_expressions(tmp_path: Path) -> None:
+    repository = CodeSkillRepository(tmp_path / "skills")
+
+    result = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.contacts", platform="android", tags=["contacts"])
+async def enter_contact_phone(device, phone_label: str):
+    await action(
+        "tap",
+        target="Phone",
+        state_contract=C(
+            app="com.google.android.contacts",
+            required=[R(text=f"{phone_label} Phone", visible=True)],
+        ),
+    )
+''')
+
+    assert not result.errors
+    required = result.skills[0].steps[0].state_contract["signature"]["required"]
+    assert required[0]["selector"]["text"] == "{{phone_label}} Phone"
+
+
 def test_code_skill_repository_removes_stale_graph_projection_for_updated_skill(tmp_path: Path) -> None:
     repository = CodeSkillRepository(tmp_path / "skills")
     repository.store_dir.mkdir(parents=True)
@@ -465,8 +846,31 @@ async def transition_open_orders_stale(device):
     assert source.count("async def open_orders") == 1
 
 
+def test_trace_segmenter_splits_long_traces_with_overlap() -> None:
+    events = [
+        {
+            "type": "step",
+            "step_index": index,
+            "action": {"action_type": "tap", "target": f"Button {index}"},
+            "observation": {
+                "foreground_app": "com.example.app",
+                "extra": {"visible_text": ["Stable page"], "resource_ids": ["com.example:id/root"]},
+            },
+        }
+        for index in range(25)
+    ]
+
+    segments = TraceSegmenter(max_reusable_actions=10, overlap_reusable_actions=2).segment(events)
+
+    assert len(segments) == 3
+    assert segments[0].start_step_index == 0
+    assert segments[1].start_step_index == 8
+    assert segments[2].start_step_index == 16
+    assert all(segment.reusable_action_count <= 10 for segment in segments)
+
+
 @pytest.mark.asyncio
-async def test_code_skill_library_syncs_graph_cache_from_code_source(tmp_path: Path) -> None:
+async def test_code_skill_library_sync_graph_cache_is_disabled_for_linear_mode(tmp_path: Path) -> None:
     store_dir = tmp_path / "skills"
     store_dir.mkdir()
     (store_dir / "skill_graph_code.py").write_text(
@@ -496,9 +900,9 @@ async def open_orders(device):
     synced = await library.sync_graph_cache()
 
     graph = SkillGraphStore(store_dir=store_dir)
-    assert synced is True
-    assert graph.get_node("node-home") is not None
-    assert graph.get_edge("edge-orders") is not None
+    assert synced is False
+    assert graph.get_node("node-home") is None
+    assert graph.get_edge("edge-orders") is None
 
 
 @pytest.mark.asyncio
@@ -776,7 +1180,7 @@ async def search_bilibili(device):
     assert "ad_banner_item_container" not in canonicalized.source
 
 
-def test_action_canonicalization_synthesizes_missing_in_app_trace_gap() -> None:
+def test_action_canonicalization_does_not_synthesize_unrelated_in_app_trace_gap() -> None:
     source = '''
 from opengui.skills.code_graph import action, skill
 
@@ -846,11 +1250,8 @@ async def search_city(device, city: str):
         "open_app",
         "tap",
         "tap",
-        "input_text",
-        "tap",
     ]
-    assert compiled.skills[0].steps[3].parameters["text"] == "{{city}}"
-    assert [step["trace_step_index"] for step in canonicalized.report["synthesized_steps"]] == [2, 3]
+    assert all(step["reason"] != "trace_gap" for step in canonicalized.report["synthesized_steps"])
 
 
 @pytest.mark.asyncio
@@ -888,7 +1289,7 @@ async def xiaoheihe_open_preferences(device):
 
 
 @pytest.mark.asyncio
-async def test_postrun_code_first_extraction_writes_code_and_graph_not_skill_json(
+async def test_postrun_code_first_extraction_writes_code_not_graph_or_skill_json(
     tmp_path: Path,
 ) -> None:
     trace_path = tmp_path / "trace.jsonl"
@@ -929,7 +1330,1116 @@ async def test_postrun_code_first_extraction_writes_code_and_graph_not_skill_jso
     assert (tmp_path / "store" / "skill_graph_code.py").exists()
     assert not (tmp_path / "store" / "android" / "skills.json").exists()
     graph = SkillGraphStore(store_dir=tmp_path / "store")
-    assert graph.count_nodes > 0
+    assert graph.count_nodes == 0
+
+
+@pytest.mark.asyncio
+async def test_postrun_runs_deeplink_before_code_extraction_after_evaluation(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [{"type": "result", "success": True}])
+    processor = PostRunProcessor(llm=_ScriptedLLM([]))
+    order: list[str] = []
+
+    async def summarize(path: Path) -> str:
+        assert path == trace_path
+        order.append("summary")
+        return "state"
+
+    async def evaluate(*, trace_path: Path, is_success: bool, task: str) -> dict[str, Any]:
+        assert is_success is True
+        assert task == "open profile"
+        order.append("evaluation")
+        return {"success": True}
+
+    async def deeplink(
+        path: Path,
+        is_success: bool,
+        platform: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        assert path == trace_path
+        assert is_success is True
+        assert platform == "android"
+        assert kwargs["evaluation_result"] == {"success": True}
+        order.append("deeplink")
+        return {"status": "no_candidate"}
+
+    async def extract(
+        path: Path,
+        is_success: bool,
+        platform: str,
+        **kwargs: Any,
+    ) -> None:
+        assert path == trace_path
+        assert is_success is True
+        assert platform == "android"
+        assert kwargs["evaluation_result"] == {"success": True}
+        order.append("skill")
+
+    processor._summarize_trajectory = summarize  # type: ignore[method-assign]
+    processor._run_evaluation = evaluate  # type: ignore[method-assign]
+    processor._extract_deeplink_skill = deeplink  # type: ignore[method-assign]
+    processor._extract_skill = extract  # type: ignore[method-assign]
+
+    await processor._run_all(trace_path, is_success=True, platform="android", task="open profile")
+
+    assert order.index("evaluation") < order.index("deeplink")
+    assert order.index("deeplink") < order.index("skill")
+
+
+@pytest.mark.asyncio
+async def test_postrun_skips_code_extraction_when_agent_did_not_succeed(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [{"type": "result", "success": False, "error": "max_steps"}])
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=True,
+        enable_deeplink_skill_extraction=True,
+    )
+    order: list[str] = []
+
+    async def summarize(path: Path) -> str:
+        assert path == trace_path
+        return "state"
+
+    async def evaluate(*, trace_path: Path, is_success: bool, task: str) -> None:
+        assert is_success is False
+        return None
+
+    async def deeplink(
+        path: Path,
+        is_success: bool,
+        platform: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        assert path == trace_path
+        assert is_success is False
+        assert platform == "android"
+        order.append("deeplink")
+        return {"status": "skipped", "reason": "task_not_successful"}
+
+    async def extract(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("code extraction should not run for agent-failed trajectories")
+
+    processor._summarize_trajectory = summarize  # type: ignore[method-assign]
+    processor._run_evaluation = evaluate  # type: ignore[method-assign]
+    processor._extract_deeplink_skill = deeplink  # type: ignore[method-assign]
+    processor._extract_skill = extract  # type: ignore[method-assign]
+
+    await processor._run_all(trace_path, is_success=False, platform="android", task="open profile")
+
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert order == ["deeplink"]
+    assert result["status"] == "skipped"
+    assert result["reason"] == "agent_not_successful"
+    assert result["agent_success"] is False
+
+
+@pytest.mark.asyncio
+async def test_postrun_continues_after_segment_extraction_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "open_app", "target": "launcher"},
+                "observation": {
+                    "foreground_app": "com.google.android.apps.nexuslauncher",
+                    "platform": "android",
+                    "extra": {"visible_text": ["Home"]},
+                },
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "swipe", "target": "up"},
+                "observation": {
+                    "foreground_app": "com.google.android.apps.nexuslauncher",
+                    "platform": "android",
+                    "extra": {"visible_text": ["Home", "Orders"]},
+                },
+            },
+            {
+                "type": "step",
+                "step_index": 2,
+                "action": {"action_type": "tap", "target": "Orders"},
+                "observation": {
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {"visible_text": ["Home", "Orders"]},
+                },
+            },
+            {"type": "result", "success": True, "error": None, "total_steps": 3},
+        ],
+    )
+
+    async def fake_extract(
+        self: CodeSkillExtractor,
+        events: list[dict[str, Any]],
+        *,
+        is_success: bool,
+        platform: str | None = None,
+        task: str | None = None,
+        evaluation_result: dict[str, Any] | None = None,
+        feedback: str | None = None,
+        segment_id: str | None = None,
+        segment_summary: str | None = None,
+    ) -> CodeSkillExtraction:
+        del self, events, is_success, platform, task, evaluation_result, feedback, segment_summary
+        if segment_id == "seg-000":
+            raise asyncio.TimeoutError()
+        return CodeSkillExtraction(
+            python_code=_skill_source(),
+            attempts=({"segment_id": segment_id, "violations": []},),
+        )
+
+    monkeypatch.setattr(CodeSkillExtractor, "extract_from_events", fake_extract)
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=True,
+    )
+
+    skill_id = await processor._extract_skill(trace_path, is_success=True, platform="android")
+
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert skill_id == "code:open_orders"
+    assert result["status"] == "processed_code"
+    assert result["segments"][0]["status"] == "error"
+    assert result["segments"][0]["rejected_reason"] == "extraction_error"
+    assert result["segments"][1]["status"] == "processed_code"
+
+
+def test_postrun_code_result_preserves_existing_deeplink_result(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [{"type": "result", "success": True}])
+    (tmp_path / "extraction_result.json").write_text(
+        json.dumps({
+            "status": "processed_deeplink_code",
+            "trace": str(trace_path),
+            "updated_functions": ["open_deeplink_orders"],
+            "compiled_skill_ids": ["deeplink:orders"],
+            "code_graph_synced": True,
+            "deeplink": {
+                "status": "processed_deeplink_code",
+                "updated_functions": ["open_deeplink_orders"],
+                "compiled_skill_ids": ["deeplink:orders"],
+            },
+            "deeplink_skill_extraction_enabled": True,
+        }),
+        encoding="utf-8",
+    )
+
+    PostRunProcessor._write_extraction_result(trace_path, {
+        "status": "processed_code",
+        "trace": str(trace_path),
+        "updated_functions": ["navigate_to_profile"],
+        "compiled_skill_ids": ["code:navigate_to_profile"],
+        "code_graph_synced": False,
+    })
+
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "processed_code"
+    assert result["deeplink"]["status"] == "processed_deeplink_code"
+    assert result["deeplink_skill_extraction_enabled"] is True
+    assert result["updated_functions"] == ["open_deeplink_orders", "navigate_to_profile"]
+    assert result["compiled_skill_ids"] == ["deeplink:orders", "code:navigate_to_profile"]
+    assert result["code_graph_synced"] is True
+
+
+def test_postrun_code_no_candidate_does_not_downgrade_existing_deeplink(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [{"type": "result", "success": True}])
+    (tmp_path / "extraction_result.json").write_text(
+        json.dumps({
+            "status": "processed_deeplink_code",
+            "trace": str(trace_path),
+            "updated_functions": ["open_deeplink_orders"],
+            "compiled_skill_ids": ["deeplink:orders"],
+            "deeplink": {"status": "processed_deeplink_code"},
+            "deeplink_skill_extraction_enabled": True,
+        }),
+        encoding="utf-8",
+    )
+
+    PostRunProcessor._write_extraction_result(trace_path, {
+        "status": "no_candidate",
+        "trace": str(trace_path),
+        "updated_functions": [],
+        "compiled_skill_ids": [],
+    })
+
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "processed_deeplink_code"
+    assert result["deeplink"]["status"] == "processed_deeplink_code"
+    assert result["updated_functions"] == ["open_deeplink_orders"]
+    assert result["compiled_skill_ids"] == ["deeplink:orders"]
+
+
+@pytest.mark.asyncio
+async def test_postrun_deeplink_missing_backend_writes_audit_file(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [{"type": "result", "success": True, "error": None}])
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        enable_deeplink_skill_extraction=True,
+        deeplink_probe_backend=None,
+    )
+
+    result = await processor._extract_deeplink_skill(
+        trace_path,
+        is_success=True,
+        platform="android",
+        task="open profile",
+    )
+
+    audit = json.loads((tmp_path / "deeplink_result.json").read_text(encoding="utf-8"))
+    extraction = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert result == {"status": "skipped", "reason": "missing_probe_backend"}
+    assert audit == {"status": "skipped", "reason": "missing_probe_backend"}
+    assert extraction["deeplink"] == audit
+    assert extraction["deeplink_skill_extraction_enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_deeplink_discovery_writes_verified_code_skill(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {
+                        "visible_text": ["My Orders", "Recent purchases"],
+                        "content_desc": ["My Orders"],
+                        "resource_ids": ["com.example.app:id/orders_title"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=_FakeDeeplinkBackend(),
+        task="open my orders",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    compiled = compile_code_skills(source)
+    assert result.status == "processed_deeplink_code"
+    assert not result.errors
+    assert result.compiled_skill_ids
+    assert "open_deeplink" in source
+    assert "demo://order" in source
+    assert not compiled.errors
+    assert compiled.skills[0].steps[0].action_type == "open_deeplink"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_discovery_writes_result_for_weak_contract(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {},
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=_FakeDeeplinkBackend(),
+        task="open profile",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    saved = json.loads((tmp_path / "deeplink_result.json").read_text(encoding="utf-8"))
+    assert result.status == "no_candidate"
+    assert result.reason == "weak_final_state_contract"
+    assert saved["status"] == "no_candidate"
+    assert saved["reason"] == "weak_final_state_contract"
+    assert saved["app"] == "com.example.app"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_discovery_prefers_captured_activity_intent(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.max.xiaoheihe",
+                    "foreground_app": "com.max.xiaoheihe",
+                    "platform": "android",
+                    "activity_class": "com.max.xiaoheihe.RouterActivity",
+                    "extra": {
+                        "visible_text": ["My Orders", "Recent purchases"],
+                        "content_desc": ["My Orders"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.max.xiaoheihe/.RouterActivity t42}
+      Intent { act=android.intent.action.VIEW dat=heybox://mall/order cmp=com.max.xiaoheihe/.RouterActivity }
+    """
+    backend = _FakeDeeplinkBackend(
+        app="com.max.xiaoheihe",
+        package_output='Activity Resolver Table:\n  Scheme: "xiaoheihe"\n',
+        activity_outputs={"RouterActivity": activity_dump, "*": activity_dump},
+        verified_uris={"heybox://mall/order"},
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="open my orders",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    open_actions = [action for action in backend.actions if action.action_type == "open_deeplink"]
+    assert result.status == "processed_deeplink_code"
+    assert open_actions[0].text == "heybox://mall/order"
+    assert open_actions[0].component is None
+    assert result.candidates[0].source == "dumpsys_activity_activity_grep"
+    assert result.candidates[0].kind == "captured_intent"
+    assert "heybox://mall/order" in source
+    assert "fixed_values={'text': 'heybox://mall/order', 'package': 'com.max.xiaoheihe'}" in source
+    assert "dumpsys_activity_activity_grep" in source
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_uses_full_activity_dump_fallback() -> None:
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.example.app/.DeepLinkActivity t42}
+      Intent { act=android.intent.action.VIEW dat=demo://order cmp=com.example.app/.DeepLinkActivity }
+    """
+    backend = _FakeDeeplinkBackend(
+        activity_outputs={
+            "DeepLinkActivity": "",
+            "com.example.app": "",
+            "*": activity_dump,
+        },
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.example.app",
+        task="open my orders",
+        final_observation={"activity_class": "com.example.app.DeepLinkActivity"},
+        limit=4,
+    )
+
+    assert candidates[0].uri == "demo://order"
+    assert candidates[0].component is None
+    assert candidates[0].kind == "captured_intent"
+    assert candidates[0].source == "dumpsys_activity_full"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_parses_quoted_package_scheme() -> None:
+    backend = _FakeDeeplinkBackend(package_output='Activity Resolver Table:\n  Scheme: "heybox"\n')
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.max.xiaoheihe",
+        task="open my orders",
+        final_observation=None,
+        limit=2,
+    )
+
+    assert candidates[0].uri == "heybox://order"
+    assert candidates[0].source == "package_manifest"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_uses_manifest_authority_and_path() -> None:
+    package_output = """
+    Activity Resolver Table:
+      Schemes:
+          clock-app:
+            1234567 com.google.android.deskclock/.DeskClock filter 89abcde
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "clock-app"
+              Authority: "com.google.android.deskclock": -1
+              Path: "PatternMatcher{LITERAL: /timer}"
+    """
+    backend = _FakeDeeplinkBackend(
+        app="com.google.android.deskclock",
+        package_output=package_output,
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.google.android.deskclock",
+        task="open timer",
+        final_observation=None,
+        limit=6,
+    )
+
+    assert any(
+        candidate.uri == "clock-app://com.google.android.deskclock/timer"
+        and candidate.source == "package_manifest_authority"
+        for candidate in candidates
+    )
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_distinguishes_internal_uri_intent() -> None:
+    package_output = """
+    Activity Resolver Table:
+      Schemes:
+          clock-app:
+            1234567 com.google.android.deskclock/com.android.deskclock.HandleUris filter 89abcde
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Scheme: "clock-app"
+              Authority: "com.google.android.deskclock": -1
+    """
+    backend = _FakeDeeplinkBackend(
+        app="com.google.android.deskclock",
+        package_output=package_output,
+        resolve_outputs={
+            "clock-app://com.google.android.deskclock": (
+                "com.google.android.deskclock/com.android.deskclock.HandleUris\n"
+            ),
+        },
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.google.android.deskclock",
+        task="open stopwatch",
+        final_observation=None,
+        limit=4,
+    )
+
+    assert candidates[0].kind == "internal_uri_intent"
+    assert candidates[0].uri == "clock-app://com.google.android.deskclock"
+    assert candidates[0].source == "package_manifest_internal_uri_resolved"
+    assert candidates[0].component == "com.google.android.deskclock/com.android.deskclock.HandleUris"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_expands_resolver_component_variant() -> None:
+    backend = _FakeDeeplinkBackend(
+        app="com.max.xiaoheihe",
+        package_output='Activity Resolver Table:\n  Scheme: "heybox"\n',
+        resolve_outputs={
+            "heybox://order": "com.max.xiaoheihe/.RouterActivity\n",
+        },
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.max.xiaoheihe",
+        task="open my orders",
+        final_observation=None,
+        limit=4,
+    )
+
+    assert candidates[0].uri == "heybox://order"
+    assert candidates[0].component == "com.max.xiaoheihe/.RouterActivity"
+    assert candidates[0].source == "package_manifest_resolved"
+    assert any("cmd package resolve-activity" in " ".join(call) for call in backend.run_calls)
+
+
+def test_deeplink_contract_rejects_more_options_only_anchor() -> None:
+    contract = _contract_from_observation(
+        {
+            "foreground_app": "com.google.android.deskclock",
+            "extra": {
+                "content_desc": ["More options"],
+                "visible_text": [],
+                "resource_ids": [],
+                "ui_tree": [{"content_desc": "More options", "clickable": True}],
+            },
+        },
+        app="com.google.android.deskclock",
+        task="open stopwatch",
+    )
+
+    assert contract is None
+
+
+@pytest.mark.asyncio
+async def test_shortcut_intent_discovery_writes_open_intent_skill(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.google.android.documentsui",
+                    "foreground_app": "com.google.android.documentsui",
+                    "platform": "android",
+                    "extra": {
+                        "visible_text": ["Downloads"],
+                        "content_desc": ["Downloads"],
+                        "resource_ids": ["com.google.android.documentsui:id/dir_list"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    backend = _FakeDeeplinkBackend(
+        app="com.google.android.documentsui",
+        package_output="",
+        verified_uris=set(),
+        verified_intents={"android.provider.action.VIEW_DOWNLOADS"},
+        resolve_outputs={
+            "android.provider.action.VIEW_DOWNLOADS": "com.google.android.documentsui/.files.FilesActivity\n",
+        },
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="open downloads",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    compiled = compile_code_skills(source)
+    open_actions = [action for action in backend.actions if action.action_type == "open_intent"]
+    assert result.status == "processed_deeplink_code"
+    assert open_actions
+    assert open_actions[0].intent_action == "android.provider.action.VIEW_DOWNLOADS"
+    assert compiled.skills[0].steps[0].action_type == "open_intent"
+    assert "android.provider.action.VIEW_DOWNLOADS" in source
+
+
+@pytest.mark.asyncio
+async def test_clock_timer_shortcut_intent_writes_open_intent_skill(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.google.android.deskclock",
+                    "foreground_app": "com.google.android.deskclock",
+                    "platform": "android",
+                    "extra": {
+                        "visible_text": ["Timer", "00h 00m 00s"],
+                        "content_desc": ["Timer"],
+                        "resource_ids": ["com.google.android.deskclock:id/timer_setup_digit_1"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    backend = _FakeDeeplinkBackend(
+        app="com.google.android.deskclock",
+        package_output="",
+        verified_uris=set(),
+        verified_intents={"android.intent.action.SHOW_TIMERS"},
+        resolve_outputs={
+            "android.intent.action.SHOW_TIMERS": (
+                "com.google.android.deskclock/com.android.deskclock.HandleApiCalls\n"
+            ),
+        },
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="open timer",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    compiled = compile_code_skills(source)
+    open_actions = [action for action in backend.actions if action.action_type == "open_intent"]
+    assert result.status == "processed_deeplink_code"
+    assert result.candidates[0].kind == "shortcut_intent"
+    assert result.candidates[0].source == "shortcut_profile_clock_show_timers_resolved"
+    assert result.compiled_skill_ids[0].startswith("intent:com.google.android.deskclock:")
+    assert open_actions[0].intent_action == "android.intent.action.SHOW_TIMERS"
+    assert compiled.skills[0].steps[0].action_type == "open_intent"
+    assert "android.intent.action.SHOW_TIMERS" in source
+    assert "shortcut_profile_clock_show_timers_resolved" in source
+
+
+@pytest.mark.asyncio
+async def test_contact_shortcut_intent_maps_dialer_entry_to_contacts_insert(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.google.android.dialer",
+                    "foreground_app": "com.google.android.dialer",
+                    "platform": "android",
+                    "extra": {
+                        "visible_text": ["Hugo Pereira", "saved"],
+                        "content_desc": ["Contacts"],
+                        "resource_ids": ["com.google.android.dialer:id/contact_name"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    backend = _FakeDeeplinkBackend(
+        app="com.google.android.dialer",
+        package_output="",
+        verified_uris=set(),
+        verified_intents={"android.intent.action.INSERT"},
+        resolve_outputs={
+            "android.intent.action.INSERT": (
+                "com.google.android.contacts/"
+                "com.google.android.apps.contacts.editor.ContactEditorActivity\n"
+            ),
+        },
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="Create a new contact for Hugo Pereira.",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    compiled = compile_code_skills(source)
+    open_actions = [action for action in backend.actions if action.action_type == "open_intent"]
+    assert result.status == "processed_deeplink_code"
+    assert result.app == "com.google.android.dialer"
+    assert result.contract["anchor"]["app_package"] == "com.google.android.contacts"
+    assert result.candidates[0].component == (
+        "com.google.android.contacts/"
+        "com.google.android.apps.contacts.editor.ContactEditorActivity"
+    )
+    assert open_actions[0].package == "com.google.android.contacts"
+    assert compiled.skills[0].app == "com.google.android.contacts"
+    assert compiled.skills[0].steps[0].action_type == "open_intent"
+
+
+@pytest.mark.asyncio
+async def test_internal_uri_intent_discovery_writes_open_intent_skill(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.example.clock",
+                    "foreground_app": "com.example.clock",
+                    "platform": "android",
+                    "extra": {
+                        "visible_text": ["My Orders", "Recent purchases"],
+                        "content_desc": ["My Orders"],
+                        "resource_ids": ["com.example.app:id/orders_title"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    package_output = """
+    Activity Resolver Table:
+      Schemes:
+          internal:
+            1234567 com.example.clock/.HandleUris filter 89abcde
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Scheme: "internal"
+              Authority: "example": -1
+    """
+    backend = _FakeDeeplinkBackend(
+        app="com.example.clock",
+        package_output=package_output,
+        verified_uris={"internal://example"},
+        resolve_outputs={
+            "internal://example": "com.example.clock/.HandleUris\n",
+        },
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="open internal page",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    compiled = compile_code_skills(source)
+    open_actions = [action for action in backend.actions if action.action_type == "open_intent"]
+    assert result.status == "processed_deeplink_code"
+    assert result.candidates[0].kind == "internal_uri_intent"
+    assert result.compiled_skill_ids[0].startswith("internal_uri_intent:com.example.clock:")
+    assert open_actions[0].intent_action == "android.intent.action.VIEW"
+    assert open_actions[0].text == "internal://example"
+    assert compiled.skills[0].skill_id.startswith("internal_uri_intent:com.example.clock:")
+    assert compiled.skills[0].steps[0].action_type == "open_intent"
+    assert "open_internal_uri_intent_com_example_clock" in source
+    assert "'text': 'internal://example'" in source
+    assert "'intent_action': 'android.intent.action.VIEW'" in source
+
+
+@pytest.mark.asyncio
+async def test_shortcut_intent_candidates_precede_manifest_uri_noise() -> None:
+    package_output = """
+    Activity Resolver Table:
+      Schemes:
+          content:
+            1111111 com.google.android.contacts/.PeopleActivity filter 2222222
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "content"
+              Authority: "com.android.contacts": -1
+              Path: "PatternMatcher{LITERAL: /contacts}"
+          contacts:
+            3333333 com.google.android.contacts/.PeopleActivity filter 4444444
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "contacts"
+              Authority: "people": -1
+              Path: "PatternMatcher{LITERAL: /list}"
+    """
+    backend = _FakeDeeplinkBackend(
+        app="com.google.android.contacts",
+        package_output=package_output,
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.google.android.contacts",
+        task="Create a new contact for Hugo Pereira",
+        final_observation=None,
+        limit=3,
+    )
+
+    assert candidates[0].kind == "shortcut_intent"
+    assert candidates[0].package == "com.google.android.contacts"
+    assert candidates[0].action == "android.intent.action.INSERT"
+    assert candidates[0].mime_type == "vnd.android.cursor.dir/contact"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_adds_open_router_path_payload() -> None:
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.max.xiaoheihe/.RouterActivity t42}
+      Intent { act=android.intent.action.VIEW dat=hblink://universal/mall/order cmp=com.max.xiaoheihe/.RouterActivity }
+    """
+    package_output = """
+    Activity Resolver Table:
+      Schemes:
+          heybox:
+            1111111 com.max.xiaoheihe/.getui.GeTuiPushActivity filter 2222222
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "heybox"
+              Authority: "c.xiaoheihe.cn": -1
+              Path: "PatternMatcher{LITERAL: /getuipush}"
+            3333333 com.max.xiaoheihe/.RouterActivity filter 4444444
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "heybox"
+    """
+    backend = _FakeDeeplinkBackend(
+        app="com.max.xiaoheihe",
+        package_output=package_output,
+        activity_outputs={"RouterActivity": activity_dump},
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.max.xiaoheihe",
+        task="open my orders",
+        final_observation={"activity_class": "com.max.xiaoheihe.RouterActivity"},
+        limit=3,
+    )
+
+    expected = (
+        "heybox://%7B%22protocol_type%22%3A%22openRouterPath%22%2C"
+        "%22path%22%3A%22%2Fmall%2Forder%22%7D"
+    )
+    assert candidates[1].uri == expected
+    assert candidates[1].kind == "router_payload"
+    assert candidates[1].component == "com.max.xiaoheihe/.RouterActivity"
+    assert candidates[1].source == "package_manifest_router"
+
+
+@pytest.mark.asyncio
+async def test_deeplink_discovery_verifies_open_router_path_payload(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.max.xiaoheihe",
+                    "foreground_app": "com.max.xiaoheihe",
+                    "platform": "android",
+                    "activity_class": "com.max.xiaoheihe.RouterActivity",
+                    "extra": {
+                        "visible_text": ["My Orders", "Recent purchases"],
+                        "content_desc": ["My Orders"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.max.xiaoheihe/.RouterActivity t42}
+      Intent { act=android.intent.action.VIEW dat=hblink://universal/mall/order cmp=com.max.xiaoheihe/.RouterActivity }
+    """
+    package_output = """
+    Activity Resolver Table:
+      Schemes:
+          heybox:
+            3333333 com.max.xiaoheihe/.RouterActivity filter 4444444
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "heybox"
+    """
+    expected = (
+        "heybox://%7B%22protocol_type%22%3A%22openRouterPath%22%2C"
+        "%22path%22%3A%22%2Fmall%2Forder%22%7D"
+    )
+    backend = _FakeDeeplinkBackend(
+        app="com.max.xiaoheihe",
+        package_output=package_output,
+        activity_outputs={"RouterActivity": activity_dump},
+        verified_uris={expected},
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="open my orders",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    open_actions = [action for action in backend.actions if action.action_type == "open_deeplink"]
+    assert result.status == "processed_deeplink_code"
+    assert any(candidate.uri == expected and candidate.matched for candidate in result.candidates)
+    assert open_actions[1].text == expected
+    assert open_actions[1].component == "com.max.xiaoheihe/.RouterActivity"
+    assert f"'text': '{expected}'" in source
+    assert "'package': 'com.max.xiaoheihe'" in source
+    assert "'component': 'com.max.xiaoheihe/.RouterActivity'" in source
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_does_not_publish_component_only_intent() -> None:
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.example.app/.RouterActivity t42}
+      Intent { act=android.intent.action.MAIN cmp=com.example.app/.RouterActivity }
+    """
+    backend = _FakeDeeplinkBackend(
+        package_output="",
+        activity_outputs={"RouterActivity": activity_dump, "*": activity_dump},
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.example.app",
+        task="open my orders",
+        final_observation={"activity_class": "com.example.app.RouterActivity"},
+        limit=6,
+    )
+
+    assert candidates
+    assert all(candidate.component != "com.example.app/.RouterActivity" for candidate in candidates)
+    assert all(candidate.kind != "captured_intent_component" for candidate in candidates)
+
+
+@pytest.mark.asyncio
+async def test_deeplink_discovery_classifies_security_launch_errors(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {"visible_text": ["My Orders"]},
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    backend = _FakeDeeplinkBackend(
+        launch_errors={
+            "demo://order": RuntimeError("SecurityException: Permission Denial"),
+            "demo://order?tab=all": RuntimeError("SecurityException: Permission Denial"),
+        },
+    )
+
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=backend,
+        task="open my orders",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    assert result.status == "no_candidate"
+    assert result.reason == "no_verified_deeplink"
+    assert any(candidate.status == "launch_error_security" for candidate in result.candidates)
+    assert any(candidate.launch_error_type == "launch_error_security" for candidate in result.candidates)
+
+
+@pytest.mark.asyncio
+async def test_deeplink_probe_retries_security_failure_without_component(tmp_path: Path) -> None:
+    backend = _FakeDeeplinkBackend(component_launch_errors={"demo://order"})
+    contract = {
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "My Orders"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    }
+
+    record = await _probe_candidate(
+        backend,
+        DeeplinkCandidate(
+            uri="demo://order",
+            kind="captured_intent_component",
+            package="com.example.app",
+            component="com.example.app/.UnexportedActivity",
+            source="test",
+            confidence=0.9,
+        ),
+        contract=contract,
+        screenshot_path=tmp_path / "probe.png",
+        settle_seconds=0.0,
+    )
+
+    open_actions = [action for action in backend.actions if action.action_type == "open_deeplink"]
+    assert record.status == "target_verified"
+    assert record.component is None
+    assert [action.component for action in open_actions] == [
+        "com.example.app/.UnexportedActivity",
+        None,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_postrun_deeplink_switch_can_run_without_linear_extraction(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {"visible_text": ["My Orders"]},
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=False,
+        enable_deeplink_skill_extraction=True,
+        deeplink_probe_backend=_FakeDeeplinkBackend(),
+    )
+
+    result = await processor._extract_deeplink_skill(
+        trace_path,
+        is_success=True,
+        platform="android",
+        task="open my orders",
+    )
+
+    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert result is not None
+    assert result["status"] == "processed_deeplink_code"
+    assert extraction_result["status"] == "processed_deeplink_code"
+    assert extraction_result["deeplink"]["status"] == "processed_deeplink_code"
+    assert extraction_result["compiled_skill_ids"]
 
 
 @pytest.mark.asyncio
@@ -999,21 +2509,351 @@ async def test_postrun_repairs_text_contract_from_ui_tree_resource_id(tmp_path: 
     source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
     result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
     graph = SkillGraphStore(store_dir=tmp_path / "store")
-    state_nodes = [
-        node
-        for node in graph.list_nodes(platform="android", app="com.example.app")
-        if node.kind == "state"
-    ]
 
     assert "resource_id='com.example:id/nav_orders'" in source
     assert result["contract_quality"]["quality"] == "canonical"
     assert result["contract_quality"]["canonical_node_count"] >= 1
     assert result["contract_quality"]["repaired_steps"][0]["selector"]["resource_id"] == "com.example:id/nav_orders"
-    assert any(
-        node.state_contract["signature"]["required"][0]["selector"].get("resource_id")
-        == "com.example:id/nav_orders"
-        for node in state_nodes
+    assert graph.count_nodes == 0
+
+
+def test_contract_repair_replaces_screenshot_guessed_resource_id_with_ui_tree_evidence() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android", tags=["orders"])
+async def open_orders(device):
+    await action(
+        "tap",
+        target="Orders",
+        state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/from_screenshot", clickable=True)]),
     )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Orders"},
+            "observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "text": "Orders",
+                            "resource_id": "com.example:id/nav_orders",
+                            "clickable": True,
+                        }
+                    ],
+                },
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+
+    assert "from_screenshot" not in repaired.source
+    assert "com.example:id/nav_orders" in repaired.source
+
+
+def test_contract_repair_uses_coordinate_static_selector_without_clickable_flag() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.travel", platform="android", tags=["hotel"])
+async def open_hotels(device):
+    await action("tap", target="Hotel")
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "wait"},
+            "observation": {
+                "foreground_app": "com.example.travel",
+                "platform": "android",
+                "screen_width": 488,
+                "screen_height": 1080,
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "content_desc": "Hotel",
+                            "resource_id": "com.example.travel:id/home_grid_hotel_widget",
+                            "enabled": True,
+                            "bounds": "[36,274][225,440]",
+                        }
+                    ],
+                },
+            },
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 126.0, "y": 152.0, "relative": True},
+            "model_output": '点击 "Hotel"',
+            "observation": {
+                "foreground_app": "com.example.travel",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        },
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+
+    assert "home_grid_hotel_widget" in repaired.source
+    assert "enabled=True" in repaired.source
+    assert "clickable=True" not in repaired.source
+    assert repaired.report["quality"] == "canonical"
+
+
+def test_contract_repair_reads_cli_prompt_observation_for_precondition() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.travel", platform="android", tags=["hotel"])
+async def open_hotels(device):
+    await action("tap", target="酒店")
+'''
+    events = [
+        {
+            "event": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 123.0, "y": 137.0, "relative": True},
+            "prompt": {
+                "current_observation": {
+                    "foreground_app": "com.example.travel",
+                    "platform": "android",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "content_desc": "酒店",
+                                "resource_id": "com.example.travel:id/home_grid_hotel_widget",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[42,324][296,547]",
+                            }
+                        ],
+                    },
+                },
+            },
+            "execution": {
+                "next_observation": {
+                    "foreground_app": "com.example.travel",
+                    "platform": "android",
+                    "extra": {"ui_tree": []},
+                },
+            },
+        },
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+
+    assert "home_grid_hotel_widget" in repaired.source
+    assert repaired.report["quality"] == "canonical"
+
+
+def test_contract_repair_treats_focused_text_edit_as_canonical_input_identity() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.travel", platform="android", tags=["hotel"])
+async def enter_destination(device, destination: str):
+    await action("input_text", target="位置/品牌/酒店", text=destination, auto_enter=True)
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "input_text", "text": "深圳北站", "auto_enter": True},
+            "pre_observation": {
+                "foreground_app": "com.example.travel",
+                "platform": "android",
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "text": "位置/品牌/酒店",
+                            "class": "android.widget.EditText",
+                            "clickable": True,
+                            "focused": True,
+                            "enabled": True,
+                        }
+                    ],
+                },
+            },
+            "observation": {
+                "foreground_app": "com.example.travel",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        },
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+
+    assert "class_='android.widget.EditText'" in repaired.source
+    assert "focused=True" in repaired.source
+    assert repaired.report["quality"] == "canonical"
+
+
+def test_contract_filter_drops_functions_with_weak_steps() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def strong(device):
+    await action("tap", target="Orders", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/orders", visible=True, enabled=True)]))
+
+@skill(app="com.example.app", platform="android")
+async def weak(device):
+    await action("tap", target="Orders")
+'''
+
+    filtered = filter_code_to_contract_complete(source)
+    compiled = compile_code_skills(filtered.source)
+
+    assert compiled.errors == []
+    assert [skill.name for skill in compiled.skills] == ["strong"]
+    assert filtered.removed_functions == ("weak",)
+    assert filtered.report["quality"] == "canonical"
+
+
+def test_contract_filter_trims_weak_suffix_instead_of_dropping_prefix() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_orders_prefix(device):
+    await action("open_app", target="com.example.app")
+    await action("tap", target="Orders", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/orders", visible=True, enabled=True)]))
+    await action("swipe", target="page", state_contract=C(app="com.example.app", required=[R(text="More")]))
+    await action("tap", target="AfterWeak", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/after", visible=True, enabled=True)]))
+'''
+
+    filtered = filter_code_to_contract_complete(source)
+    compiled = compile_code_skills(filtered.source)
+
+    assert compiled.errors == []
+    assert [skill.name for skill in compiled.skills] == ["open_orders_prefix"]
+    assert [step.action_type for step in compiled.skills[0].steps] == ["open_app", "tap"]
+    assert filtered.removed_functions == ()
+    assert filtered.report["quality"] == "canonical"
+    assert filtered.report["trimmed_functions"] == ["open_orders_prefix"]
+    assert "AfterWeak" not in filtered.source
+
+
+def test_entrypoint_normalization_adds_open_app_after_app_change_segment() -> None:
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Files"},
+            "observation": {
+                "foreground_app": "com.google.android.apps.nexuslauncher",
+                "extra": {"visible_text": ["Files"]},
+            },
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "target": "Downloads"},
+            "observation": {
+                "foreground_app": "com.google.android.documentsui",
+                "extra": {"visible_text": ["Downloads"]},
+            },
+        },
+    ]
+    segments = TraceSegmenter(max_reusable_actions=10).segment(events)
+    assert len(segments) == 2
+    assert segments[1].reason == "app_changed"
+
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.documentsui", platform="android")
+async def open_downloads(device):
+    await action("tap", target="Downloads", state_contract=C(app="com.google.android.documentsui", required=[R(content_desc="Downloads", visible=True, clickable=True)]))
+'''
+
+    filtered = filter_code_to_contract_complete(source)
+    normalized = normalize_code_skill_entrypoints(filtered.source)
+    compiled = compile_code_skills(normalized.source)
+
+    assert compiled.errors == []
+    skill = compiled.skills[0]
+    assert [step.action_type for step in skill.steps] == ["open_app", "tap"]
+    assert skill.steps[0].target == "com.google.android.documentsui"
+    assert normalized.report["entrypoint_normalized_functions"] == ["open_downloads"]
+
+
+def test_entrypoint_normalization_keeps_deeplink_as_entrypoint() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_orders(device):
+    await action("open_deeplink", target="example://orders", fixed=True, fixed_values={"text": "example://orders"}, state_contract=C(app="com.example.app", required=[R(text="Orders", visible=True)]))
+    await action("tap", target="Orders", state_contract=C(app="com.example.app", required=[R(text="Orders", visible=True, clickable=True)]))
+'''
+
+    normalized = normalize_code_skill_entrypoints(source)
+    compiled = compile_code_skills(normalized.source)
+
+    assert compiled.errors == []
+    assert [step.action_type for step in compiled.skills[0].steps] == ["open_deeplink", "tap"]
+    assert normalized.report["entrypoint_normalized_functions"] == []
+    assert normalized.source.count("open_app") == 0
+
+
+def test_entrypoint_normalization_strips_open_app_state_contract() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_orders(device):
+    await action("open_app", target="com.example.app", state_contract=C(app="com.example.app", required=[R(text="Orders", visible=True)]))
+    await action("tap", target="Orders", state_contract=C(app="com.example.app", required=[R(text="Orders", visible=True, clickable=True)]))
+'''
+
+    normalized = normalize_code_skill_entrypoints(source)
+    compiled = compile_code_skills(normalized.source)
+
+    assert compiled.errors == []
+    assert compiled.skills[0].steps[0].state_contract is None
+    assert normalized.report["open_app_contract_stripped_functions"] == ["open_orders"]
+    assert "open_app', target='com.example.app', state_contract" not in normalized.source
+
+
+def test_code_skill_repository_preserves_existing_entrypoint_on_same_name_update(tmp_path: Path) -> None:
+    repository = CodeSkillRepository(tmp_path / "skills")
+    first = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.contacts", platform="android")
+async def create_contact(device):
+    await action("open_app", target="com.google.android.contacts", state_contract=C(app="com.google.android.contacts", required=[R(text="Create contact", visible=True)]))
+    await action("tap", target="Create contact", state_contract=C(app="com.google.android.contacts", required=[R(text="Create contact", visible=True, clickable=True)]))
+''')
+    assert not first.errors
+
+    second = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.contacts", platform="android")
+async def create_contact(device):
+    await action("tap", target="Create contact", state_contract=C(app="com.google.android.contacts", required=[R(text="Create contact", visible=True, clickable=True)]))
+    await action("tap", target="First name", state_contract=C(app="com.google.android.contacts", required=[R(text="First name", visible=True, clickable=True)]))
+''')
+
+    assert not second.errors
+    skill = next(skill for skill in second.skills if skill.name == "create_contact")
+    assert [step.action_type for step in skill.steps] == ["open_app", "tap", "tap"]
+    assert skill.steps[0].state_contract is None
+    source = repository.source_path.read_text(encoding="utf-8")
+    assert source.count("async def create_contact") == 1
+    assert source.index("open_app") < source.index("First name")
 
 
 @pytest.mark.asyncio
@@ -1126,9 +2966,104 @@ async def test_postrun_reports_weak_contract_when_ui_tree_has_only_text(tmp_path
 
     result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
 
-    assert result["contract_quality"]["quality"] == "weak"
-    assert result["contract_quality"]["canonical_node_count"] == 0
-    assert result["contract_quality"]["weak_steps"][0]["reason"] == "single_text_selector"
+    assert result["status"] == "no_candidate"
+    assert result["processed_segment_count"] == 0
+    assert result["segments"][0]["status"] == "no_candidate"
+    assert result["segments"][0]["rejected_reason"] == "weak_contracts"
+    assert result["segments"][0]["contract_quality"]["quality"] == "weak"
+    assert result["segments"][0]["contract_quality"]["canonical_node_count"] == 0
+    assert result["segments"][0]["contract_quality"]["weak_steps"][0]["reason"] == "single_text_selector"
+
+
+@pytest.mark.asyncio
+async def test_postrun_visual_guarded_fallback_writes_ui_skill_for_screenshot_only_trace(
+    tmp_path: Path,
+) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    screenshot_dir = tmp_path / "screenshots"
+    screenshot_dir.mkdir()
+    for name in ("step_000.png", "step_001.png", "step_002.png"):
+        _write_png(screenshot_dir / name)
+    weak_source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.tencent.mm", platform="android", tags=["wechat"], description="open WeChat profile")
+async def navigate_to_wechat_profile(device):
+    await action("open_app", target="com.tencent.mm")
+    await action("tap", target="Me tab", state_contract=C(app="com.tencent.mm", required=[R(text="Me", clickable=True)]))
+    await action("tap", target="profile area")
+'''
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "screenshot_path": str(screenshot_dir / "step_000.png"),
+                "model_output": "Open WeChat",
+                "action": {"action_type": "open_app", "text": "com.tencent.mm"},
+                "observation": {
+                    "foreground_app": "com.tencent.mm",
+                    "platform": "android",
+                    "screenshot_path": str(screenshot_dir / "step_000.png"),
+                    "extra": {"ui_tree_node_count": 1},
+                },
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "screenshot_path": str(screenshot_dir / "step_001.png"),
+                "model_output": "Tap the bottom Me tab to enter the personal center page",
+                "action": {"action_type": "tap", "x": 873, "y": 942, "relative": True},
+                "observation": {
+                    "foreground_app": "com.tencent.mm",
+                    "platform": "android",
+                    "screenshot_path": str(screenshot_dir / "step_001.png"),
+                    "extra": {"ui_tree_node_count": 1},
+                },
+            },
+            {
+                "type": "step",
+                "step_index": 2,
+                "screenshot_path": str(screenshot_dir / "step_002.png"),
+                "model_output": "Tap the top profile area to enter the personal information page",
+                "action": {"action_type": "tap", "x": 131, "y": 149, "relative": True},
+                "observation": {
+                    "foreground_app": "com.tencent.mm",
+                    "platform": "android",
+                    "screenshot_path": str(screenshot_dir / "step_002.png"),
+                    "extra": {"ui_tree_node_count": 1},
+                },
+            },
+            {"type": "result", "success": True},
+        ],
+    )
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([_wrapped_code(weak_source)]),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=True,
+    )
+
+    await processor._extract_skill(trace_path, is_success=True, platform="android")
+
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    compiled = compile_code_skills(source)
+
+    assert result["status"] == "processed_code"
+    assert result["processed_segment_count"] == 1
+    assert result["visual_guarded_segment_count"] == 1
+    assert result["segments"][0]["status"] == "processed_visual_guarded_code"
+    assert result["segments"][0]["contract_quality"]["quality"] == "visual_guarded"
+    assert result["segments"][0]["visual_guarded_fallback"]["enabled"] is True
+    assert "visual_guarded" in source
+    assert "valid_state=" in source
+    assert "state_contract=" not in source
+    assert not compiled.errors
+    assert compiled.skills[0].tags == ("wechat", "visual_guarded", "ui")
+    assert compiled.skills[0].steps[1].state_contract is None
+    assert compiled.skills[0].steps[1].valid_state
+    assert "bottom Me tab" in compiled.skills[0].steps[1].valid_state
 
 
 @pytest.mark.asyncio
@@ -1267,6 +3202,7 @@ async def search_example(device, query: str):
                             "resource_id": "com.example:id/search_results",
                             "text": "MacBook Pro测评",
                         },
+                        {"content_desc": "MacBook Pro测评"},
                         {"resource_id": "com.example:id/result_list"},
                     ],
                 },
@@ -1288,8 +3224,61 @@ async def search_example(device, query: str):
     required = target_node.state_contract["signature"]["required"]
     assert not any(
         item["selector"].get("text") == "MacBook Pro测评"
+        or item["selector"].get("content_desc") == "MacBook Pro测评"
         for item in required
     )
+
+
+def test_graph_projection_strips_stale_text_before_parameterized_input() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android", tags=["search"])
+async def search_example(device, query: str):
+    await action("tap", target="Search", state_contract=C(app="com.example.app", required=[R(text="Search", visible=True)]))
+    await action("input_text", target="com.example:id/search", text=query, auto_enter=True)
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Search"},
+            "pre_observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {"visible_text": ["Search"]},
+            },
+            "observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "resource_id": "com.example:id/search",
+                            "text": "old query",
+                            "focused": True,
+                            "enabled": True,
+                        }
+                    ],
+                },
+            },
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "input_text", "text": "new query", "auto_enter": True},
+            "observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {"ui_tree": [{"resource_id": "com.example:id/result_list"}]},
+            },
+        },
+    ]
+
+    projection = project_graph_code_from_events(source, events)
+
+    assert "old query" not in projection.source
+    assert "parameters={'auto_enter': True, 'text': '{{query}}'}" in projection.source
 
 
 @pytest.mark.asyncio
@@ -1671,7 +3660,8 @@ def test_contract_repair_does_not_use_future_order_title_as_tap_precondition() -
 
     assert "com.max.xiaoheihe:id/rb_5" in repaired.source
     assert "com.max.xiaoheihe:id/tv_appbar_title" not in repaired.source
-    assert [step["step_index"] for step in repaired.report["repaired_steps"]] == [1]
+    assert [step["step_index"] for step in repaired.report["repaired_steps"]] == [1, 2]
+    assert repaired.report["repaired_steps"][1]["reason"] == "page_contract_without_static_selector"
 
 
 def test_contract_repair_replaces_unsupported_stable_precondition() -> None:
@@ -1722,6 +3712,106 @@ def test_contract_repair_uses_post_ui_tree_when_first_pre_observation_is_missing
     assert "text='com.zhihu.android:id/input_text'" not in repaired.source
     assert "resource_id='com.zhihu.android:id/input_text'" in repaired.source
     assert repaired.report["repaired_steps"][0]["step_index"] == 0
+
+
+def test_action_canonicalization_does_not_synthesize_unverifiable_trailing_trace_actions() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.max.xiaoheihe", platform="android", tags=["orders"])
+async def navigate_to_my_orders(device):
+    await action("open_app", target="com.max.xiaoheihe")
+    await action(
+        "tap",
+        target="我",
+        state_contract=C(app="com.max.xiaoheihe", required=[R(text="我", clickable=True)]),
+    )
+    await action(
+        "tap",
+        target="我的订单",
+        state_contract=C(app="com.max.xiaoheihe", required=[R(text="我的订单", clickable=True)]),
+    )
+'''
+
+    canonicalized = canonicalize_code_actions_from_events(
+        source,
+        _xiaoheihe_repeated_orders_events(),
+    )
+    compiled = compile_code_skills(canonicalized.source)
+
+    assert compiled.errors == []
+    assert [step.target for step in compiled.skills[0].steps] == [
+        "com.max.xiaoheihe",
+        "我",
+        "我的订单",
+    ]
+    assert canonicalized.report["quality"] == "aligned"
+    assert canonicalized.report["synthesized_steps"] == []
+
+
+def test_action_canonicalization_removes_unmatched_parameterized_tap() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="ctrip.android.view", platform="android", tags=["hotel"])
+async def search_hotel_by_city(device, city_name: str = "杭州"):
+    await action("open_app", target="ctrip.android.view")
+    await action("tap", target="酒店")
+    await action("tap", target="{{city_name}}")
+'''
+    events = [
+        {
+            "event": "step",
+            "step_index": 1,
+            "action": {"action_type": "open_app", "text": "ctrip.android.view"},
+            "execution": {
+                "next_observation": {
+                    "foreground_app": "ctrip.android.view",
+                    "platform": "android",
+                    "extra": {"ui_tree": []},
+                },
+            },
+        },
+        {
+            "event": "step",
+            "step_index": 3,
+            "action": {"action_type": "tap", "x": 121.0, "y": 156.0, "relative": True},
+            "model_output": '点击 "酒店"',
+            "prompt": {
+                "current_observation": {
+                    "foreground_app": "ctrip.android.view",
+                    "platform": "android",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "content_desc": "酒店",
+                                "resource_id": "ctrip.android.view:id/home_grid_hotel_widget",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[42,324][296,547]",
+                            }
+                        ],
+                    },
+                },
+            },
+            "execution": {
+                "next_observation": {
+                    "foreground_app": "ctrip.android.view",
+                    "platform": "android",
+                    "extra": {"ui_tree": []},
+                },
+            },
+        },
+    ]
+
+    canonicalized = canonicalize_code_actions_from_events(source, events)
+    compiled = compile_code_skills(canonicalized.source)
+
+    assert compiled.errors == []
+    assert [step.target for step in compiled.skills[0].steps] == ["ctrip.android.view", "酒店"]
+    assert canonicalized.report["removed_steps"][0]["target"] == "{{city_name}}"
 
 
 def test_contract_repair_strips_parameterized_input_text_from_precondition() -> None:
@@ -1817,7 +3907,7 @@ def state_navigate_to_my_orders_stale():
 
 
 @pytest.mark.asyncio
-async def test_postrun_writes_graph_projection_source_and_report(tmp_path: Path) -> None:
+async def test_postrun_writes_linear_code_without_graph_projection(tmp_path: Path) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
         trace_path,
@@ -1872,16 +3962,73 @@ async def test_postrun_writes_graph_projection_source_and_report(tmp_path: Path)
     source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
     result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
 
-    assert "@state(" in source
-    assert "@transition(" in source
+    assert "@skill(" in source
+    assert "@state(" not in source
+    assert "@transition(" not in source
     assert result["action_sequence"]["quality"] == "aligned"
-    assert result["graph_projection"]["quality"] == "canonical"
-    assert len(result["graph_projection"]["emitted_transitions"]) == 1
-    assert result["code_graph_synced"] is True
+    assert "graph_projection" not in result
+    assert result["graph_synced"] is False
+    assert result["code_graph_synced"] is False
     graph = SkillGraphStore(store_dir=tmp_path / "store")
-    projected_edge_id = result["graph_projection"]["emitted_transitions"][0]["edge_id"]
-    assert graph.get_edge(projected_edge_id) is not None
-    assert all(node.node_id.startswith("code:") for node in graph.list_nodes())
+    assert graph.list_nodes() == []
+    assert graph.list_edges() == []
+
+
+@pytest.mark.asyncio
+async def test_postrun_extracts_long_trace_as_multiple_segments(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    events = [
+        {
+            "type": "step",
+            "step_index": index,
+            "action": {"action_type": "tap", "target": f"Button {index}"},
+            "observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {
+                    "visible_text": [f"Stable page {stable}" for stable in range(8)],
+                    "resource_ids": ["com.example:id/root"],
+                    "ui_tree": [
+                        {
+                            "text": f"Button {index}",
+                            "resource_id": f"com.example:id/button_{index}",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[0,0][120,120]",
+                        }
+                    ],
+                },
+            },
+        }
+        for index in range(25)
+    ]
+    events.append({"type": "result", "success": True})
+    _write_trace(trace_path, events)
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([
+            _wrapped_code(_single_tap_skill_source("early_prefix", "Button 0")),
+            _wrapped_code(_single_tap_skill_source("middle_prefix", "Button 8")),
+            _wrapped_code(_single_tap_skill_source("late_prefix", "Button 16")),
+        ]),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=True,
+    )
+
+    await processor._extract_skill(trace_path, is_success=True, platform="android")
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+
+    assert result["status"] == "processed_code"
+    assert result["segment_count"] == 3
+    assert result["processed_segment_count"] == 3
+    assert result["segments"][0]["start_step_index"] == 0
+    assert result["segments"][1]["start_step_index"] == 8
+    assert result["segments"][2]["start_step_index"] == 16
+    assert set(result["updated_functions"]) == {"early_prefix", "middle_prefix", "late_prefix"}
+    assert "async def early_prefix" in source
+    assert "async def middle_prefix" in source
+    assert "async def late_prefix" in source
 
 
 @pytest.mark.asyncio

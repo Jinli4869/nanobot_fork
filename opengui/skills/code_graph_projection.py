@@ -21,6 +21,7 @@ from opengui.skills.data import Skill, SkillStep
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.state_contract import normalize_state_contract, state_contract_fingerprint
 from opengui.skills.static_selector_filter import (
+    filter_static_controls,
     filter_static_resource_ids,
     filter_static_texts,
     selector_is_static,
@@ -70,6 +71,7 @@ class _StateSpec:
     skill_id: str
     step_index: int
     role: str
+    retrieval_profile: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +112,7 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
         role: str,
         description: str,
         contract: dict[str, Any] | None,
+        retrieval_profile: dict[str, Any] | None = None,
     ) -> _StateSpec | None:
         normalized = normalize_state_contract(contract)
         if not _is_canonical_contract(normalized):
@@ -132,6 +135,7 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
             skill_id=skill.skill_id,
             step_index=step_index,
             role=role,
+            retrieval_profile=_filter_retrieval_profile_to_contract(retrieval_profile, normalized),
         )
         states_by_fingerprint[fingerprint] = spec
         state_order.append(spec)
@@ -139,13 +143,20 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
 
     for skill in compiled.skills:
         trace_cursor = -1
+        previous_trace_step: _TraceStep | None = None
+        previous_target_state: _StateSpec | None = None
         pending_targetless: list[tuple[SkillStep, int, _StateSpec]] = []
         for index, step in enumerate(skill.steps):
             if step.action_type in _SKIP_TRANSITION_ACTIONS:
+                previous_trace_step = None
+                previous_target_state = None
                 continue
             trace_step = trace.match(step, after=trace_cursor)
             if trace_step is not None:
                 trace_cursor = trace_step.index
+            source_dynamic_values = _dynamic_input_values(trace_step)
+            if index > 0 and _step_has_parameterized_input_text(skill.steps[index - 1]):
+                source_dynamic_values = (*source_dynamic_values, *_dynamic_input_values(previous_trace_step))
             source_contract = step.state_contract
             source_role_description = step.valid_state or step.target or f"{skill.name} step {index} source"
             if trace_step is not None and trace_step.pre_observation is None:
@@ -168,16 +179,34 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
                     or source_contract
                 )
                 source_role_description = f"{skill.name} step {index} source"
-            if _step_has_parameterized_text(step):
-                source_contract = _strip_dynamic_selector_text_from_contract(source_contract)
+            if _step_has_parameterized_input_text(step):
+                source_contract = _strip_dynamic_selector_text_from_contract(
+                    source_contract,
+                    dynamic_values=source_dynamic_values,
+                    drop_identity_text=True,
+                )
+            source_profile = _retrieval_profile_from_observation(
+                trace_step.pre_observation if trace_step is not None else None,
+                dynamic_values=source_dynamic_values,
+                drop_identity_text=_step_has_parameterized_input_text(step),
+            )
             source_state = intern_state(
                 skill=skill,
                 step_index=index,
                 role="src",
                 description=source_role_description,
                 contract=source_contract,
+                retrieval_profile=source_profile,
             )
+            edge_source_state = source_state or previous_target_state
+            if (
+                previous_target_state is not None
+                and source_state is not None
+                and previous_target_state.node_id != source_state.node_id
+            ):
+                edge_source_state = previous_target_state
             if source_state is not None and pending_targetless:
+                resolved_pending = False
                 for pending_step, pending_index, pending_source in pending_targetless:
                     if pending_source.node_id == source_state.node_id:
                         skipped.append(_skip_record(skill, pending_step, pending_index, "no_state_change"))
@@ -203,49 +232,78 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
                         step=pending_step,
                         step_index=pending_index,
                     ))
+                    resolved_pending = True
                 pending_targetless.clear()
+                if resolved_pending:
+                    previous_target_state = source_state
+                    edge_source_state = source_state
+            target_observation = trace.target_observation_for(
+                trace_step,
+                app=skill.app,
+                platform=skill.platform,
+                source_contract=source_contract,
+            )
             target_contract = _contract_from_observation(
-                trace.target_observation_for(
-                    trace_step,
-                    app=skill.app,
-                    platform=skill.platform,
-                    source_contract=source_contract,
-                ),
+                target_observation,
                 app=skill.app,
                 platform=skill.platform,
                 target=None,
             )
-            if _step_has_parameterized_text(step):
-                target_contract = _strip_dynamic_selector_text_from_contract(target_contract)
+            if _step_has_parameterized_input_text(step):
+                target_contract = _strip_dynamic_selector_text_from_contract(
+                    target_contract,
+                    dynamic_values=_dynamic_input_values(trace_step),
+                )
+            elif _next_step_has_parameterized_input_text(skill, index):
+                target_contract = _strip_dynamic_selector_text_from_contract(
+                    target_contract,
+                    drop_identity_text=True,
+                )
+            target_profile = _retrieval_profile_from_observation(
+                target_observation,
+                dynamic_values=_dynamic_input_values(trace_step),
+                drop_identity_text=_next_step_has_parameterized_input_text(skill, index),
+            )
             target_state = intern_state(
                 skill=skill,
                 step_index=index,
                 role="dst",
-                description=step.expected_state or f"{skill.name} step {index} target",
+                description=_target_state_description(skill, step, index),
                 contract=target_contract,
+                retrieval_profile=target_profile,
             )
-            if source_state is None:
+            if edge_source_state is None:
                 skipped.append(_skip_record(skill, step, index, "weak_source_state"))
                 continue
             if target_state is None:
                 if _trace_step_crosses_app(trace_step, app=skill.app, platform=skill.platform):
                     skipped.append(_skip_record(skill, step, index, "cross_app_target_state"))
                 else:
-                    pending_targetless.append((step, index, source_state))
+                    pending_targetless.append((step, index, edge_source_state))
                 continue
-            if source_state.node_id == target_state.node_id:
+            if edge_source_state.node_id == target_state.node_id:
                 skipped.append(_skip_record(skill, step, index, "no_state_change"))
+                previous_target_state = target_state
                 continue
-            edge_key = _hash_key(skill.skill_id, index, source_state.node_id, target_state.node_id, step.action_type, step.target)
+            edge_key = _hash_key(
+                skill.skill_id,
+                index,
+                edge_source_state.node_id,
+                target_state.node_id,
+                step.action_type,
+                step.target,
+            )
             transitions.append(_TransitionSpec(
                 function_name=_safe_identifier(f"transition_{skill.name}_{index}_{step.action_type}"),
                 edge_id=f"code:edge:{edge_key[:16]}",
                 skill_id=skill.skill_id,
-                src=source_state,
+                src=edge_source_state,
                 dst=target_state,
                 step=step,
                 step_index=index,
             ))
+            previous_trace_step = trace_step
+            previous_target_state = target_state
         for pending_step, pending_index, _pending_source in pending_targetless:
             skipped.append(_skip_record(skill, pending_step, pending_index, "weak_target_state"))
 
@@ -721,18 +779,166 @@ def _text_values_from_selectors(selectors: list[dict[str, Any]], target: str | N
     return [*matched, *rest]
 
 
-def _step_has_parameterized_text(step: SkillStep) -> bool:
-    return any(
-        _is_placeholder_value(value)
-        for value in (step.target, step.parameters.get("text"))
-    )
+def _step_has_parameterized_input_text(step: SkillStep) -> bool:
+    return step.action_type == "input_text" and _is_placeholder_value(step.parameters.get("text"))
+
+
+def _next_step_has_parameterized_input_text(skill: Skill, index: int) -> bool:
+    next_index = index + 1
+    if next_index >= len(skill.steps):
+        return False
+    return _step_has_parameterized_input_text(skill.steps[next_index])
+
+
+def _dynamic_input_values(trace_step: _TraceStep | None) -> tuple[str, ...]:
+    if trace_step is None:
+        return ()
+    value = trace_step.action.get("text")
+    if not isinstance(value, str) or not value.strip():
+        return ()
+    return (" ".join(value.split()).strip(),)
+
+
+def _target_state_description(skill: Skill, step: SkillStep, index: int) -> str:
+    if step.expected_state:
+        return step.expected_state
+    description = " ".join((skill.description or "").split()).strip()
+    if description:
+        target = f" {step.target}" if step.target else ""
+        return f"{description} after {step.action_type}{target}".strip()
+    return f"{skill.name} step {index} target"
+
+
+def _retrieval_profile_from_observation(
+    observation: dict[str, Any] | None,
+    *,
+    dynamic_values: tuple[str, ...] = (),
+    drop_identity_text: bool = False,
+) -> dict[str, Any] | None:
+    if not isinstance(observation, dict):
+        return None
+    extra = observation.get("extra") if isinstance(observation.get("extra"), dict) else {}
+    dynamic_value_set = {
+        value.casefold()
+        for value in dynamic_values
+        if value.strip()
+    }
+
+    profile: dict[str, Any] = {}
+    resource_ids = [
+        resource_id
+        for resource_id in filter_static_resource_ids(extra.get("resource_ids"), limit=20)
+        if not _skip_profile_resource_id(resource_id)
+    ]
+    if resource_ids:
+        profile["resource_ids"] = resource_ids
+    stable_controls: list[dict[str, Any]] = []
+    for control in filter_static_controls(extra.get("ui_tree"), limit=12):
+        cleaned = dict(control)
+        resource_id = cleaned.get("resource_id")
+        if isinstance(resource_id, str) and _skip_profile_resource_id(resource_id):
+            continue
+        for key in ("text", "content_desc"):
+            value = cleaned.get(key)
+            if isinstance(value, str):
+                normalized = " ".join(value.split()).strip().casefold()
+                if (
+                    _matches_dynamic_profile_value(normalized, dynamic_value_set)
+                    or (drop_identity_text and cleaned.get("resource_id"))
+                ):
+                    cleaned.pop(key, None)
+        if cleaned.get("resource_id") or cleaned.get("content_desc"):
+            stable_controls.append(cleaned)
+    if stable_controls:
+        profile["stable_controls"] = stable_controls
+    platform = observation.get("platform")
+    if isinstance(platform, str) and platform.strip():
+        profile["platform"] = platform.strip()
+    app = observation.get("foreground_app") or observation.get("app")
+    if isinstance(app, str) and app.strip():
+        profile["foreground_app"] = app.strip()
+    return profile or None
+
+
+def _filter_retrieval_profile_to_contract(
+    profile: dict[str, Any] | None,
+    contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(profile, dict):
+        return None
+    normalized = normalize_state_contract(contract)
+    signature = normalized.get("signature") if isinstance(normalized, dict) else None
+    required = signature.get("required") if isinstance(signature, dict) else None
+    if not isinstance(required, list):
+        return profile
+    allowed_resource_ids: set[str] = set()
+    allowed_content_desc: set[str] = set()
+    allowed_text: set[str] = set()
+    for element in required:
+        selector = element.get("selector") if isinstance(element, dict) else None
+        if not isinstance(selector, dict):
+            continue
+        for key, bucket in (
+            ("resource_id", allowed_resource_ids),
+            ("content_desc", allowed_content_desc),
+            ("text", allowed_text),
+        ):
+            value = selector.get(key)
+            if isinstance(value, str) and value.strip():
+                bucket.add(value.strip())
+    if not (allowed_resource_ids or allowed_content_desc or allowed_text):
+        return profile
+    filtered: dict[str, Any] = {}
+    resource_ids = [
+        value
+        for value in profile.get("resource_ids", [])
+        if isinstance(value, str) and value in allowed_resource_ids
+    ]
+    if resource_ids:
+        filtered["resource_ids"] = resource_ids
+    stable_controls: list[dict[str, Any]] = []
+    for control in profile.get("stable_controls", []):
+        if not isinstance(control, dict):
+            continue
+        resource_id = control.get("resource_id")
+        content_desc = control.get("content_desc")
+        text = control.get("text")
+        if (
+            (isinstance(resource_id, str) and resource_id in allowed_resource_ids)
+            or (isinstance(content_desc, str) and content_desc in allowed_content_desc)
+            or (isinstance(text, str) and text in allowed_text and not resource_id)
+        ):
+            stable_controls.append(control)
+    if stable_controls:
+        filtered["stable_controls"] = stable_controls
+    for key in ("foreground_app", "platform"):
+        value = profile.get(key)
+        if isinstance(value, str) and value.strip():
+            filtered[key] = value
+    return filtered or None
+
+
+def _skip_profile_resource_id(resource_id: str) -> bool:
+    lowered = resource_id.casefold()
+    return "appbar_title" in lowered or "toolbar_title" in lowered or "titlebar" in lowered
+
+
+def _matches_dynamic_profile_value(value: str, dynamic_values: set[str]) -> bool:
+    if not value or not dynamic_values:
+        return False
+    return any(value == dynamic or dynamic in value or value in dynamic for dynamic in dynamic_values)
 
 
 def _is_placeholder_value(value: Any) -> bool:
     return isinstance(value, str) and re.fullmatch(r"\{\{[A-Za-z_]\w*\}\}", value.strip()) is not None
 
 
-def _strip_dynamic_selector_text_from_contract(contract: dict[str, Any] | None) -> dict[str, Any] | None:
+def _strip_dynamic_selector_text_from_contract(
+    contract: dict[str, Any] | None,
+    *,
+    dynamic_values: tuple[str, ...] = (),
+    drop_identity_text: bool = False,
+) -> dict[str, Any] | None:
     normalized = normalize_state_contract(contract)
     if not normalized:
         return normalized
@@ -740,6 +946,11 @@ def _strip_dynamic_selector_text_from_contract(contract: dict[str, Any] | None) 
     required = signature.get("required") if isinstance(signature, dict) else None
     if not isinstance(required, list):
         return normalized
+    dynamic_value_set = {
+        value.casefold()
+        for value in dynamic_values
+        if value.strip()
+    }
     changed = False
     sanitized_required: list[Any] = []
     for element in required:
@@ -750,15 +961,31 @@ def _strip_dynamic_selector_text_from_contract(contract: dict[str, Any] | None) 
         if not isinstance(selector, dict):
             sanitized_required.append(element)
             continue
-        if "text" not in selector or not (selector.get("resource_id") or selector.get("content_desc")):
+        updated_selector = dict(selector)
+        if (
+            drop_identity_text
+            and "text" in updated_selector
+            and (updated_selector.get("resource_id") or updated_selector.get("content_desc"))
+        ):
+            updated_selector.pop("text", None)
+            changed = True
+        for key in ("text", "content_desc"):
+            value = updated_selector.get(key)
+            if (
+                isinstance(value, str)
+                and dynamic_value_set
+                and " ".join(value.split()).strip().casefold() in dynamic_value_set
+            ):
+                updated_selector.pop(key, None)
+                changed = True
+        if updated_selector == selector:
             sanitized_required.append(element)
             continue
+        if not any(updated_selector.get(key) for key in ("resource_id", "content_desc", "text", "class", "xpath")):
+            continue
         updated = dict(element)
-        updated_selector = dict(selector)
-        updated_selector.pop("text", None)
         updated["selector"] = updated_selector
         sanitized_required.append(updated)
-        changed = True
     if not changed:
         return normalized
     sanitized = dict(normalized)
@@ -778,7 +1005,12 @@ def _graph_source_block(states: list[_StateSpec], transitions: list[_TransitionS
             f"node_id={_code_literal(state.node_id)}, "
             f"description={_code_literal(state.description)}, "
             f"skill_ids={_code_literal([state.skill_id])}"
-            ")"
+            + (
+                f", retrieval_profile={_code_literal(state.retrieval_profile)}"
+                if state.retrieval_profile
+                else ""
+            )
+            + ")"
         )
         lines.append(f"def {state.function_name}():")
         lines.append(f"    return C.from_dict({_code_literal(state.contract)})")

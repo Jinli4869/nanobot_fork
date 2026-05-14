@@ -44,6 +44,9 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _POST_ACTION_SETTLE_SECONDS: float = 0.50
+_OPEN_APP_SETTLE_SECONDS: float = 4.00
+_OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
+_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
 _NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
 
 
@@ -386,6 +389,23 @@ def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
         kwargs["pixels"] = int(values["pixels"])
     if "duration_ms" in values:
         kwargs["duration_ms"] = int(values["duration_ms"])
+    if "component" in values:
+        kwargs["component"] = str(values["component"])
+    if "package" in values:
+        kwargs["package"] = str(values["package"])
+    if "intent_action" in values:
+        kwargs["intent_action"] = str(values["intent_action"])
+    if "mime_type" in values:
+        kwargs["mime_type"] = str(values["mime_type"])
+    if "categories" in values:
+        raw_categories = values["categories"]
+        kwargs["categories"] = tuple(str(item) for item in raw_categories) if isinstance(raw_categories, (list, tuple)) else (str(raw_categories),)
+    if "extras" in values:
+        raw_extras = values["extras"]
+        if isinstance(raw_extras, dict):
+            kwargs["extras"] = tuple(raw_extras.items())
+        elif isinstance(raw_extras, (list, tuple)):
+            kwargs["extras"] = tuple(tuple(item) for item in raw_extras)
     if "relative" in values:
         kwargs["relative"] = bool(values["relative"])
     return Action(**kwargs)
@@ -418,13 +438,24 @@ def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str
         "key",
         "pixels",
         "duration_ms",
+        "component",
+        "package",
+        "intent_action",
+        "mime_type",
+        "categories",
+        "extras",
         "relative",
         "status",
         "auto_enter",
     ):
         if key in grounded:
             payload[key] = grounded[key]
-    if "text" not in payload and step.action_type in {"input_text", "open_app", "close_app"}:
+    if "text" not in payload and step.action_type in {
+        "input_text",
+        "open_app",
+        "open_deeplink",
+        "close_app",
+    }:
         payload["text"] = target
     return payload
 
@@ -444,6 +475,23 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
         kwargs["pixels"] = int(payload["pixels"])
     if "duration_ms" in payload:
         kwargs["duration_ms"] = int(payload["duration_ms"])
+    if "component" in payload:
+        kwargs["component"] = str(payload["component"])
+    if "package" in payload:
+        kwargs["package"] = str(payload["package"])
+    if "intent_action" in payload:
+        kwargs["intent_action"] = str(payload["intent_action"])
+    if "mime_type" in payload:
+        kwargs["mime_type"] = str(payload["mime_type"])
+    if "categories" in payload:
+        raw_categories = payload["categories"]
+        kwargs["categories"] = tuple(str(item) for item in raw_categories) if isinstance(raw_categories, (list, tuple)) else (str(raw_categories),)
+    if "extras" in payload:
+        raw_extras = payload["extras"]
+        if isinstance(raw_extras, dict):
+            kwargs["extras"] = tuple(raw_extras.items())
+        elif isinstance(raw_extras, (list, tuple)):
+            kwargs["extras"] = tuple(tuple(item) for item in raw_extras)
     if "relative" in payload:
         kwargs["relative"] = bool(payload["relative"])
     if "status" in payload:
@@ -551,6 +599,9 @@ class SkillExecutor:
         # valid_state strings confirmed by a high-confidence done judgment;
         # subsequent steps sharing the same valid_state skip LLM re-validation.
         confirmed_valid_states: set[str] = set()
+        visual_guarded_skill = "visual_guarded" in {
+            str(tag) for tag in (getattr(skill, "tags", ()) or ())
+        }
 
         if self.trajectory_recorder is not None:
             self.trajectory_recorder.record_event(
@@ -562,11 +613,16 @@ class SkillExecutor:
 
         for i, step in enumerate(skill.steps):
             is_optional = bool(step.parameters.get("optional", False))
+            post_action_contract = (
+                step.action_type in {"open_deeplink", "open_intent"}
+                and step.state_contract is not None
+            )
             step_start = time.monotonic()
             validate_usage: dict[str, int] = {}
             grounding_usage: dict[str, int] = {}
             validate_dur = 0.0
             grounding_dur = 0.0
+            visual_guard_block_reason: str | None = None
 
             # ------------------------------------------------------------------
             # 1. Capture current screenshot
@@ -578,7 +634,23 @@ class SkillExecutor:
             #    Skip when the state was already confirmed via a done judgment
             #    in an earlier recovery within this execution.
             # ------------------------------------------------------------------
-            if step.valid_state and step.valid_state in confirmed_valid_states:
+            visual_guarded_step = (
+                visual_guarded_skill
+                and not post_action_contract
+                and step.action_type not in {"open_app", "open_deeplink", "open_intent", "wait", "done", "request_intervention"}
+            )
+            if visual_guarded_step and not step.valid_state:
+                visual_guard_block_reason = "missing visual valid_state"
+                valid, validate_usage, validate_dur = False, {}, None
+            elif visual_guarded_step and self.state_validator is None:
+                visual_guard_block_reason = "missing state validator"
+                valid, validate_usage, validate_dur = False, {}, None
+            elif visual_guarded_step and screenshot is None:
+                visual_guard_block_reason = "missing screenshot"
+                valid, validate_usage, validate_dur = False, {}, None
+            elif post_action_contract:
+                valid, validate_usage, validate_dur = True, {}, None
+            elif step.valid_state and step.valid_state in confirmed_valid_states:
                 logger.debug(
                     "Step %d: valid_state %r confirmed by prior done judgment, skipping check",
                     i, step.valid_state,
@@ -596,8 +668,21 @@ class SkillExecutor:
             # 3. Recovery subgoal when valid_state fails
             # ------------------------------------------------------------------
             recovery_result: SubgoalResult | None = None
-            if not valid and not _should_skip_validation(step.valid_state):
-                if self.subgoal_runner is not None and screenshot is not None:
+            should_enforce_state = (
+                visual_guarded_step
+                or not post_action_contract
+                and (
+                    step.state_contract is not None
+                    or not _should_skip_validation(step.valid_state)
+                )
+            )
+            if not valid and should_enforce_state and visual_guard_block_reason is None:
+                can_recover_with_subgoal = (
+                    not _should_skip_validation(step.valid_state)
+                    and self.subgoal_runner is not None
+                    and screenshot is not None
+                )
+                if can_recover_with_subgoal:
                     logger.info(
                         "Step %d: valid_state failed, attempting recovery for: %r",
                         i, step.valid_state,
@@ -661,8 +746,9 @@ class SkillExecutor:
             # ------------------------------------------------------------------
             # 4. If still invalid, record failure and decide whether to continue
             # ------------------------------------------------------------------
-            if not valid and not _should_skip_validation(step.valid_state):
+            if not valid and should_enforce_state:
                 step_dur = time.monotonic() - step_start
+                state_description = step.valid_state or visual_guard_block_reason or "state_contract"
                 step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
@@ -671,7 +757,7 @@ class SkillExecutor:
                     valid_state_check=False,
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
-                    error=f"valid_state not reached: {step.valid_state}",
+                    error=f"valid_state not reached: {state_description}",
                     token_usage=dict(validate_usage),
                     duration_s=step_dur,
                     validate_duration_s=validate_dur,
@@ -682,7 +768,7 @@ class SkillExecutor:
                     logger.info("Optional step %d skipped (valid_state not reached)", i)
                     continue
                 overall_state = ExecutionState.FAILED
-                error_msg = f"Step {i} valid_state not reached: {step.valid_state}"
+                error_msg = f"Step {i} valid_state not reached: {state_description}"
                 if self.stop_on_failure:
                     break
                 continue
@@ -698,10 +784,60 @@ class SkillExecutor:
                 result_text = await self.backend.execute(action, timeout=timeout)
                 # Allow the UI to settle before the next step's
                 # screenshot / validate / grounding cycle.
-                if action.action_type == "open_app":
-                    await asyncio.sleep(2.0)
+                if action.action_type in {"open_app", "open_deeplink", "open_intent"}:
+                    await asyncio.sleep(_OPEN_APP_SETTLE_SECONDS)
                 elif action.action_type not in _NO_SETTLE_ACTIONS:
                     await asyncio.sleep(_POST_ACTION_SETTLE_SECONDS)
+                if post_action_contract:
+                    post_valid = False
+                    attempts = (
+                        _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS
+                        if action.action_type in {"open_deeplink", "open_intent"}
+                        else 1
+                    )
+                    for attempt_index in range(attempts):
+                        post_observation, post_screenshot = await self._get_observation_and_screenshot()
+                        post_valid, post_usage, post_dur = await self._validate_state(
+                            step,
+                            post_screenshot,
+                            observation=post_observation,
+                        )
+                        _merge_usage(total_token_usage, post_usage)
+                        _merge_usage(validate_usage, post_usage)
+                        validate_dur = _merge_optional_duration(validate_dur, post_dur)
+                        if post_valid:
+                            break
+                        if attempt_index < attempts - 1:
+                            await asyncio.sleep(_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS)
+                    if not post_valid:
+                        step_dur = time.monotonic() - step_start
+                        state_description = step.valid_state or "state_contract"
+                        step_result = StepResult(
+                            step_index=i,
+                            action=action,
+                            backend_result=result_text,
+                            state=ExecutionState.FAILED,
+                            valid_state_check=False,
+                            grounding_mode=grounding_mode,
+                            recovery_attempted=recovery_result is not None,
+                            recovery_result=recovery_result,
+                            action_summary=f"{action.action_type} on {step.target or 'target'}",
+                            error=f"post-state not reached: {state_description}",
+                            token_usage=dict(validate_usage),
+                            duration_s=step_dur,
+                            validate_duration_s=validate_dur,
+                            grounding_duration_s=grounding_dur,
+                        )
+                        step_results.append(step_result)
+                        self._record_skill_step(skill, step, step_result)
+                        if is_optional:
+                            logger.info("Optional deeplink step %d failed post-state validation", i)
+                            continue
+                        overall_state = ExecutionState.FAILED
+                        error_msg = f"Step {i} post-state not reached: {state_description}"
+                        if self.stop_on_failure:
+                            break
+                        continue
                 step_dur = time.monotonic() - step_start
                 step_token_usage = dict(validate_usage)
                 _merge_usage(step_token_usage, grounding_usage)
@@ -874,9 +1010,6 @@ class SkillExecutor:
         coordinates instead of LLM grounding), not state validation. A fixed
         step with a meaningful ``valid_state`` still requires verification.
         """
-        if _should_skip_validation(step.valid_state):
-            return True, {}, None
-
         contract_result = evaluate_state_contract(
             step.state_contract,
             observation=observation,
@@ -888,6 +1021,15 @@ class SkillExecutor:
                 step.action_type,
             )
             return contract_result, {}, None
+        if step.state_contract is not None:
+            logger.debug(
+                "State contract could not be evaluated for step %s; failing closed",
+                step.action_type,
+            )
+            return False, {}, None
+
+        if _should_skip_validation(step.valid_state):
+            return True, {}, None
 
         if self.state_validator is None:
             logger.debug("No state validator; allowing step %s", step.action_type)

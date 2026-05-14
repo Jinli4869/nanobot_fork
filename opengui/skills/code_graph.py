@@ -52,6 +52,7 @@ class CodeState:
     kind: str = NODE_KIND_STATE
     skill_ids: tuple[str, ...] = ()
     fingerprint: str = ""
+    retrieval_profile: dict[str, Any] | None = None
     source_ref: dict[str, Any] | None = None
     tags: tuple[str, ...] = ()
 
@@ -213,6 +214,7 @@ def state(
     kind: str = NODE_KIND_STATE,
     skill_ids: list[str] | tuple[str, ...] | None = None,
     fingerprint: str = "",
+    retrieval_profile: dict[str, Any] | None = None,
     source_ref: dict[str, Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Mark a function as a graph state declaration."""
@@ -235,6 +237,7 @@ def state(
                 kind=kind,
                 skill_ids=tuple(skill_ids or ()),
                 fingerprint=fingerprint,
+                retrieval_profile=retrieval_profile,
                 source_ref=source_ref,
                 tags=_get_tags(func),
             ),
@@ -823,6 +826,7 @@ def export_graph_to_code(
             f"kind={_code_literal(node.kind)}",
             f"skill_ids={_code_literal(list(node.skill_ids))}",
             f"fingerprint={_code_literal(node.fingerprint)}",
+            f"retrieval_profile={_code_literal(node.retrieval_profile)}",
             f"source_ref={_code_literal(source_ref)}",
         ]
         lines.append(f"@state({', '.join(decorator_parts)})")
@@ -906,6 +910,7 @@ async def compile_code_graph(
             kind=str(meta.get("kind") or NODE_KIND_STATE),
             skill_ids=tuple(str(sid) for sid in (meta.get("skill_ids") or ())),
             fingerprint=str(meta.get("fingerprint") or ""),
+            retrieval_profile=meta.get("retrieval_profile") if isinstance(meta.get("retrieval_profile"), dict) else None,
             source_ref=source_ref,
         ).normalized()
         nodes_by_func[func.name] = node

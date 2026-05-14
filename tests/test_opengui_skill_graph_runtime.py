@@ -97,7 +97,7 @@ def _contract(label: str, *, app: str = "com.example.app", clickable: bool = Fal
         "anchor": {"app_package": app},
         "signature": {
             "required": [
-                {"selector": selector, "state": ["visible"] + (["clickable"] if clickable else [])}
+                {"selector": selector, "state": ["visible"]}
             ],
             "forbidden": [],
         },
@@ -685,11 +685,9 @@ async def test_entry_alignment_uses_app_hint_to_block_cross_app_cursor_reuse(
 
     identified = await runtime.align_entry(observation, platform="android", app_hint="com.other.app")
 
-    assert identified.status == "matched"
-    assert identified.current_node is not None
-    assert identified.current_node.node_id == app_b_home.node_id
-    assert cursor.current_node_id == app_b_home.node_id
-    assert cursor.clear_reason is None
+    assert identified.status == "unknown"
+    assert identified.current_node is None
+    assert cursor.current_node_id is None
 
 
 @pytest.mark.asyncio
@@ -1171,6 +1169,14 @@ async def test_graph_runtime_substitutes_parameterized_edge_text(tmp_path: Path)
                 },
             }),
             fingerprint="fp-bili-results",
+            retrieval_profile={
+                "page_title": "B站搜索结果",
+                "visible_text": ["AI绘画教程", "最多播放", "播放排序"],
+                "resource_ids": [
+                    "tv.danmaku.bili:id/search_fake_text",
+                    "tv.danmaku.bili:id/search_close_btn",
+                ],
+            },
         )
     )
     store.upsert_edge(

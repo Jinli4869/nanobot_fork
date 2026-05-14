@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -23,7 +24,7 @@ import pytest
 
 from opengui.agent import GuiAgent
 from opengui.backends.dry_run import DryRunBackend
-from opengui.interfaces import LLMResponse
+from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
 from opengui.skills import Skill, SkillStep
 from opengui.skills.executor import ExecutionState, SkillExecutor
@@ -35,6 +36,7 @@ from opengui.skills.state_contract import (
     infer_state_contract,
     normalize_state_contract,
 )
+from opengui.trajectory.recorder import TrajectoryRecorder
 
 # ---------------------------------------------------------------------------
 # Shared test helpers
@@ -121,6 +123,31 @@ class _ScriptedLLM:
         return self._responses.pop(0)
 
 
+class _DoneToolLLM:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        del messages, tools, tool_choice, kwargs
+        self.calls += 1
+        return LLMResponse(
+            content="done",
+            tool_calls=[
+                ToolCall(
+                    id="call-done",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )
+            ],
+        )
+
+
 class _FakeValidator:
     """Pops boolean results from a pre-loaded list for per-step validation."""
 
@@ -146,6 +173,21 @@ class _ObservationProvider:
 
     async def get_screenshot(self) -> Path | None:
         return Path(self._observation.screenshot_path) if self._observation.screenshot_path else None
+
+
+class _SequenceObservationProvider:
+    def __init__(self, observations: list[Observation]) -> None:
+        self._observations = list(observations)
+        self.calls = 0
+
+    async def get_observation(self) -> Observation:
+        if not self._observations:
+            raise AssertionError("No observations left")
+        self.calls += 1
+        return self._observations.pop(0)
+
+    async def get_screenshot(self) -> Path | None:
+        return None
 
 
 class _CapturingRecorder:
@@ -197,6 +239,8 @@ class _FakeSkillLibrary:
 
     def __init__(self, results: list[tuple[Skill, float]]) -> None:
         self._results = results
+        self.updated: list[tuple[str, Skill]] = []
+        self.removed: list[str] = []
 
     async def search(
         self,
@@ -205,6 +249,75 @@ class _FakeSkillLibrary:
         top_k: int = 5,
     ) -> list[tuple[Skill, float]]:
         return self._results
+
+    def update(self, skill_id: str, updated_skill: Skill) -> bool:
+        self.updated.append((skill_id, updated_skill))
+        return True
+
+    def remove(self, skill_id: str) -> bool:
+        self.removed.append(skill_id)
+        return True
+
+
+class _StaticSkillReuser:
+    def __init__(self, skill: Skill, score: float = 0.95) -> None:
+        self.skill = skill
+        self.score = score
+
+    async def find(self, *args: Any, **kwargs: Any) -> tuple[Skill, float]:
+        return (self.skill, self.score)
+
+    def drain_usage(self) -> dict[str, int]:
+        return {}
+
+
+class _EntryGateBackend:
+    platform = "android"
+
+    def __init__(self, observation: Observation) -> None:
+        self.observation = observation
+        self.observe_calls = 0
+        self.actions: list[Any] = []
+
+    async def preflight(self) -> None:
+        return None
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        del timeout
+        self.observe_calls += 1
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"png")
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=self.observation.screen_width,
+            screen_height=self.observation.screen_height,
+            foreground_app=self.observation.foreground_app,
+            platform="android",
+            extra=dict(self.observation.extra or {}),
+        )
+
+    async def execute(self, action: Any, timeout: float = 5.0) -> str:
+        del timeout
+        self.actions.append(action)
+        return "ok"
+
+    async def list_apps(self) -> list[str]:
+        return []
+
+
+class _CountingSkillExecutor:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, skill: Skill, params: dict[str, str] | None = None) -> Any:
+        del skill, params
+        self.calls += 1
+        return SimpleNamespace(
+            state=ExecutionState.SUCCEEDED,
+            execution_summary="skill executed",
+            token_usage={},
+            step_results=[],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -754,6 +867,35 @@ async def test_executor_no_validator_skips_check(tmp_path: Path) -> None:
     assert result.state == ExecutionState.SUCCEEDED
 
 
+async def test_executor_visual_guarded_skill_requires_validator(tmp_path: Path) -> None:
+    """Visual-only skills fail closed when no vision validator is available."""
+    step = SkillStep(
+        action_type="scroll",
+        target="Content area",
+        valid_state="The content area is visible and ready to scroll",
+    )
+    skill = Skill(
+        skill_id="exec-visual-no-val",
+        name="Scroll Visual Content",
+        description="Scroll a visually verified content area",
+        app="com.example.reader",
+        platform="android",
+        steps=(step,),
+        tags=("visual_guarded",),
+    )
+
+    executor = SkillExecutor(
+        backend=DryRunBackend(),
+        state_validator=None,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert result.step_results[0].valid_state_check is False
+    assert "valid_state not reached" in (result.error or "")
+
+
 async def test_executor_multi_step_all_pass(tmp_path: Path) -> None:
     """All steps pass state validation → SUCCEEDED with all step results successful."""
     steps = (
@@ -1014,7 +1156,11 @@ async def test_executor_matching_state_contract_skips_llm_validator(tmp_path: Pa
         screen_height=1920,
         foreground_app="com.example.app",
         platform="android",
-        extra={"visible_text": ["Home", "Profile"], "clickable_text": ["Profile"]},
+        extra={
+            "visible_text": ["Home", "Profile"],
+            "clickable_text": ["Profile"],
+            "ui_tree": [{"text": "Profile", "clickable": True}],
+        },
     ))
 
     executor = SkillExecutor(
@@ -1130,6 +1276,335 @@ async def test_executor_failing_state_contract_blocks_before_llm_validator(tmp_p
     assert result.step_results[0].valid_state_check is False
     assert result.step_results[0].validate_duration_s is None
     assert validator._returns == [True]
+
+
+async def test_executor_state_contract_blocks_without_valid_state(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    step = SkillStep(
+        action_type="tap",
+        target="Profile tab",
+        state_contract={"must_exist": [{"text": "Profile", "clickable": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-contract-only-fail",
+        name="Tap Profile",
+        description="Tap profile",
+        app="com.example.app",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={"visible_text": ["Home"], "clickable_text": ["Home"]},
+    ))
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert result.step_results[0].valid_state_check is False
+    assert backend.actions == []
+
+
+async def test_executor_open_deeplink_validates_contract_after_execute(tmp_path: Path) -> None:
+    before = tmp_path / "before.png"
+    after = tmp_path / "after.png"
+    before.write_bytes(b"png")
+    after.write_bytes(b"png")
+    step = SkillStep(
+        action_type="open_deeplink",
+        target="Orders page",
+        fixed=True,
+        fixed_values={
+            "text": "xhh://mall/order",
+            "component": "com.max.xiaoheihe/.RouterActivity",
+        },
+        state_contract={"must_exist": [{"text": "Orders", "visible": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-deeplink-pass",
+        name="Open orders deeplink",
+        description="Open orders",
+        app="com.max.xiaoheihe",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _SequenceObservationProvider([
+        Observation(
+            screenshot_path=str(before),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home"]},
+        ),
+        Observation(
+            screenshot_path=str(after),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home", "Orders"]},
+        ),
+    ])
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert provider.calls == 2
+    assert backend.actions[0].action_type == "open_deeplink"
+    assert backend.actions[0].text == "xhh://mall/order"
+    assert backend.actions[0].component == "com.max.xiaoheihe/.RouterActivity"
+    assert result.step_results[0].valid_state_check is True
+
+
+async def test_executor_open_deeplink_retries_delayed_post_contract(tmp_path: Path) -> None:
+    before = tmp_path / "before.png"
+    loading = tmp_path / "loading.png"
+    after = tmp_path / "after.png"
+    before.write_bytes(b"png")
+    loading.write_bytes(b"png")
+    after.write_bytes(b"png")
+    step = SkillStep(
+        action_type="open_deeplink",
+        target="Orders page",
+        fixed=True,
+        fixed_values={"text": "xhh://mall/order"},
+        state_contract={"must_exist": [{"text": "Orders", "visible": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-deeplink-delayed-pass",
+        name="Open orders deeplink",
+        description="Open orders",
+        app="com.max.xiaoheihe",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _SequenceObservationProvider([
+        Observation(
+            screenshot_path=str(before),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home"]},
+        ),
+        Observation(
+            screenshot_path=str(loading),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Loading"]},
+        ),
+        Observation(
+            screenshot_path=str(after),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Orders"]},
+        ),
+    ])
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert provider.calls == 3
+    assert result.step_results[0].valid_state_check is True
+
+
+async def test_executor_open_deeplink_fails_when_post_contract_missing(tmp_path: Path) -> None:
+    before = tmp_path / "before.png"
+    after = tmp_path / "after.png"
+    before.write_bytes(b"png")
+    after.write_bytes(b"png")
+    step = SkillStep(
+        action_type="open_deeplink",
+        target="Orders page",
+        fixed=True,
+        fixed_values={"text": "xhh://mall/order"},
+        state_contract={"must_exist": [{"text": "Orders", "visible": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-deeplink-fail",
+        name="Open orders deeplink",
+        description="Open orders",
+        app="com.max.xiaoheihe",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _SequenceObservationProvider([
+        Observation(
+            screenshot_path=str(before),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home"]},
+        ),
+        Observation(
+            screenshot_path=str(after),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home"]},
+        ),
+        Observation(
+            screenshot_path=str(after),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home"]},
+        ),
+        Observation(
+            screenshot_path=str(after),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.max.xiaoheihe",
+            platform="android",
+            extra={"visible_text": ["Home"]},
+        ),
+    ])
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert provider.calls == 4
+    assert len(backend.actions) == 1
+    assert result.step_results[0].valid_state_check is False
+    assert result.step_results[0].error == "post-state not reached: state_contract"
+
+
+async def test_executor_unknown_state_contract_blocks_without_valid_state(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    step = SkillStep(
+        action_type="tap",
+        target="Profile tab",
+        state_contract={
+            "anchor": {"app_package": "com.example.app"},
+            "signature": {
+                "required": [
+                    {
+                        "selector": {
+                            "resource_id": "com.example:id/profile_tab",
+                            "text": "Profile",
+                        },
+                        "state": ["visible", "clickable"],
+                    }
+                ],
+                "forbidden": [],
+            },
+        },
+    )
+    skill = Skill(
+        skill_id="exec-contract-only-unknown",
+        name="Tap Profile",
+        description="Tap profile",
+        app="com.example.app",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={},
+    ))
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert result.step_results[0].valid_state_check is False
+    assert backend.actions == []
+
+
+async def test_executor_optional_popup_step_skips_when_contract_absent(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    optional_close = SkillStep(
+        action_type="tap",
+        target="Close ad",
+        parameters={"optional": True},
+        state_contract={"must_exist": [{"text": "Close ad", "clickable": True}]},
+        fixed=True,
+        fixed_values={"x": 900.0, "y": 120.0, "relative": True},
+    )
+    continue_step = SkillStep(
+        action_type="tap",
+        target="Orders",
+        fixed=True,
+        fixed_values={"x": 500.0, "y": 500.0, "relative": True},
+    )
+    skill = Skill(
+        skill_id="exec-optional-popup",
+        name="Open Orders",
+        description="Dismiss ad if present, then open orders",
+        app="com.example.app",
+        platform="android",
+        steps=(optional_close, continue_step),
+    )
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={"visible_text": ["Home", "Orders"], "clickable_text": ["Orders"]},
+    ))
+    backend = _CapturingAndroidBackend()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert len(backend.actions) == 1
+    assert backend.actions[0].action_type == "tap"
+    assert result.step_results[0].state == ExecutionState.FAILED
+    assert result.step_results[1].state == ExecutionState.SUCCEEDED
 
 
 # ---------------------------------------------------------------------------
@@ -1619,7 +2094,6 @@ async def test_skill_extractor_preserves_selector_grounding_over_llm_identity() 
             {
                 "selector": {
                     "resource_id": "tv.danmaku.bili:id/open_settings",
-                    "content_desc": "Open settings",
                 },
                 "state": ["visible", "clickable"],
             }
@@ -1634,7 +2108,7 @@ def test_infer_state_contract_uses_direct_ui_tree_selector_metadata() -> None:
             "target": "黑盒商城",
             "valid_state": "Black Box Mall page is visible",
         },
-        trajectory={
+        observation_extra={
             "ui_tree": {
                 "resource_ids": ["com.max.xiaoheihe:id/mall_entry"],
                 "content_desc": ["黑盒商城"],
@@ -1648,8 +2122,7 @@ def test_infer_state_contract_uses_direct_ui_tree_selector_metadata() -> None:
     assert contract is not None
     assert contract["anchor"]["app_package"] == "com.max.xiaoheihe"
     selector = contract["signature"]["required"][0]["selector"]
-    assert selector["resource_id"] == "com.max.xiaoheihe:id/mall_entry"
-    assert selector["content_desc"] == "黑盒商城"
+    assert selector == {"content_desc": "黑盒商城"}
 
 
 async def test_skill_extractor_omits_state_contract_when_ui_tree_is_uncertain() -> None:
@@ -1732,34 +2205,163 @@ def test_state_contract_scrollable_present_works_without_full_ui_tree() -> None:
     ) is False
 
 
-async def test_skill_reuser_auto_accept_threshold_short_circuits_judge() -> None:
-    """High-confidence candidate returns before LLM judging is invoked."""
-    judge_llm = _ScriptedLLM(["{\"applicable\": true}"])
+async def test_gui_agent_rejects_midflow_skill_when_entry_contract_misses(tmp_path: Path) -> None:
+    skill = Skill(
+        skill_id="midflow",
+        name="tap_ready",
+        description="Tap Ready",
+        app="com.example.app",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="Ready",
+                state_contract={
+                    "anchor": {"app_package": "com.example.app"},
+                    "signature": {
+                        "required": [{"selector": {"text": "Ready"}, "state": ["visible"]}],
+                        "forbidden": [],
+                    },
+                    "mask_rules": [],
+                },
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.other.app",
+        platform="android",
+        extra={"visible_text": ["Home"], "ui_tree": [{"text": "Home"}]},
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="tap ready", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(skill),
+    )
+
+    result = await agent.run("tap ready", max_retries=1)
+
+    assert result.success
+    assert executor.calls == 0
+    rejected = [event for event in events if event.get("type") == "skill_entry_rejected"]
+    assert rejected
+    assert rejected[0]["reason"] == "state_contract_failed"
+    assert library.updated == []
+
+
+async def test_gui_agent_allows_midflow_skill_when_entry_contract_matches(tmp_path: Path) -> None:
+    skill = Skill(
+        skill_id="midflow",
+        name="tap_ready",
+        description="Tap Ready",
+        app="com.example.app",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="Ready",
+                state_contract={
+                    "anchor": {"app_package": "com.example.app"},
+                    "signature": {
+                        "required": [{"selector": {"text": "Ready"}, "state": ["visible"]}],
+                        "forbidden": [],
+                    },
+                    "mask_rules": [],
+                },
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={"visible_text": ["Ready"], "ui_tree": [{"text": "Ready", "visible": True}]},
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="tap ready", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(skill),
+    )
+
+    result = await agent.run("tap ready", max_retries=1)
+
+    assert result.success
+    assert executor.calls == 1
+    accepted = [event for event in events if event.get("type") == "skill_entry_accepted"]
+    assert accepted
+    assert accepted[0]["reason"] == "state_contract_matched"
+    assert library.updated[0][0] == "midflow"
+
+
+async def test_skill_reuser_sends_top_k_once_and_truncates_selected_prefix() -> None:
+    """Top-k candidates are judged in one LLM call and can be prefix-truncated."""
+    judge_llm = _ScriptedLLM([
+        '{"selected_skill_id": "skill-1", "end_step": 2, "reason": "orders prefix"}'
+    ])
     reuser = SkillReuser(
         llm=judge_llm,
         threshold=0.1,
         auto_accept_threshold=0.98,
     )
     library = _FakeSkillLibrary([
-        (_make_skill("auto-1", "High Confidence", "Confident match"), 0.99),
-        (_make_skill("auto-2", "Low Confidence", "Lower match"), 0.50),
+        (
+            _make_skill(
+                "skill-1",
+                "Open Orders",
+                "Open the order list.",
+                action_types=["open_app", "tap", "tap"],
+            ),
+            0.99,
+        ),
+        (
+            _make_skill(
+                "skill-2",
+                "Open Wallet",
+                "Open the wallet page.",
+                action_types=["open_app", "tap"],
+            ),
+            0.50,
+        ),
     ])
 
-    result = await reuser.find("open app", library, platform="android")
+    result = await reuser.find("open orders", library, platform="android")
 
     assert result is not None
     skill, score = result
-    assert skill.skill_id == "auto-1"
+    assert skill.skill_id == "skill-1"
     assert score == 0.99
-    assert judge_llm.messages == []
+    assert len(skill.steps) == 2
+    assert len(judge_llm.messages) == 1
+    prompt = judge_llm.messages[0][0]["content"]
+    assert "Open Orders" in prompt
+    assert "Open Wallet" in prompt
 
 
-async def test_skill_reuser_low_confidence_still_uses_judge_in_order() -> None:
-    """Fallback path keeps ordered LLM judging when confidence is below threshold."""
-    judge_llm = _ScriptedLLM([
-        '{"applicable": false}',
-        '{"applicable": true}',
-    ])
+async def test_skill_reuser_rejects_when_selector_returns_null() -> None:
+    """LLM null selection falls back to normal GUI execution."""
+    judge_llm = _ScriptedLLM(['{"selected_skill_id": null, "end_step": null, "reason": "none"}'])
     reuser = SkillReuser(
         llm=judge_llm,
         threshold=0.5,
@@ -1772,13 +2374,10 @@ async def test_skill_reuser_low_confidence_still_uses_judge_in_order() -> None:
 
     result = await reuser.find("open app", library, platform="android")
 
-    assert result is not None
-    skill, score = result
-    assert skill.skill_id == "low-2"
-    assert score == 0.55
-    assert len(judge_llm.messages) == 2
+    assert result is None
+    assert len(judge_llm.messages) == 1
     assert "Candidate One" in judge_llm.messages[0][0]["content"]
-    assert "Candidate Two" in judge_llm.messages[1][0]["content"]
+    assert "Candidate Two" in judge_llm.messages[0][0]["content"]
 
 
 @pytest.mark.asyncio

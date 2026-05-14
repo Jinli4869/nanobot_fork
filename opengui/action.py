@@ -23,7 +23,7 @@ import typing
 VALID_ACTION_TYPES: frozenset[str] = frozenset({
     "tap", "long_press", "double_tap", "drag", "swipe", "scroll",
     "input_text", "hotkey", "screenshot", "wait",
-    "open_app", "close_app", "back", "home", "enter", "app_switch", "done",
+    "open_app", "open_deeplink", "open_intent", "close_app", "back", "home", "enter", "app_switch", "done",
     "request_intervention",
 })
 
@@ -74,6 +74,12 @@ class Action:
     key: list[str] | None = None
     pixels: int | None = None
     duration_ms: int | None = None
+    component: str | None = None
+    package: str | None = None
+    intent_action: str | None = None
+    mime_type: str | None = None
+    categories: tuple[str, ...] = ()
+    extras: tuple[tuple[str, typing.Any], ...] = ()
     relative: bool = False
     status: str | None = None
     auto_enter: bool = True
@@ -134,17 +140,26 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     key = _parse_key(payload.get("key"), action_type)
     pixels = _optional_int(payload, "pixels", action_type)
     duration_ms = _optional_int(payload, "duration_ms", action_type)
+    component = _optional_str(payload, "component")
+    package = _optional_str(payload, "package")
+    intent_action = _optional_str(payload, "intent_action")
+    mime_type = _optional_str(payload, "mime_type")
+    categories = _parse_str_tuple(payload.get("categories"), action_type, "categories")
+    extras = _parse_extras(payload.get("extras"), action_type)
     relative = bool(payload.get("relative", False))
     status = _optional_str(payload, "status")
     auto_enter = bool(payload.get("auto_enter", True))
 
     # 5. Validate
     _validate(action_type=action_type, x=x, y=y, x2=x2, y2=y2,
-              text=text, key=key, pixels=pixels)
+              text=text, key=key, pixels=pixels, intent_action=intent_action)
 
     return Action(
         action_type=action_type, x=x, y=y, x2=x2, y2=y2,
         text=text, key=key, pixels=pixels, duration_ms=duration_ms,
+        component=component, package=package,
+        intent_action=intent_action, mime_type=mime_type,
+        categories=categories, extras=extras,
         relative=relative, status=status, auto_enter=auto_enter,
     )
 
@@ -172,6 +187,16 @@ def describe_action(action: Action) -> str:
         return f"hotkey {'+'.join(action.key or [])}"
     if t == "open_app":
         return f"open app {action.text!r}"
+    if t == "open_deeplink":
+        preview = (action.text or "")[:80]
+        if len(action.text or "") > 80:
+            preview += "..."
+        target = f" via {action.component}" if action.component else ""
+        return f"open deeplink {preview!r}{target}"
+    if t == "open_intent":
+        action_name = action.intent_action or "?"
+        target = f" via {action.component}" if action.component else ""
+        return f"open intent {action_name!r}{target}"
     if t == "close_app":
         return f"close app {action.text!r}"
     if t == "request_intervention":
@@ -367,6 +392,56 @@ def _optional_str(payload: dict, key: str) -> str | None:
     return str(v) if v is not None else None
 
 
+def _parse_str_tuple(raw: typing.Any, action_type: str, key: str) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        return (raw.strip(),) if raw.strip() else ()
+    if isinstance(raw, (list, tuple)):
+        values: list[str] = []
+        for item in raw:
+            if not isinstance(item, str):
+                raise ActionError(
+                    f"Action {action_type!r}: {key!r} must contain only strings."
+                )
+            if item.strip():
+                values.append(item.strip())
+        return tuple(values)
+    raise ActionError(
+        f"Action {action_type!r}: {key!r} must be str or list, got {type(raw).__name__!r}."
+    )
+
+
+def _parse_extras(raw: typing.Any, action_type: str) -> tuple[tuple[str, typing.Any], ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, dict):
+        items = raw.items()
+    elif isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        raise ActionError(
+            f"Action {action_type!r}: 'extras' must be object or list of pairs."
+        )
+    extras: list[tuple[str, typing.Any]] = []
+    for item in items:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise ActionError(
+                f"Action {action_type!r}: 'extras' entries must be key/value pairs."
+            )
+        key, value = item
+        key_text = str(key).strip()
+        if not key_text:
+            raise ActionError(f"Action {action_type!r}: 'extras' key must be non-empty.")
+        if not isinstance(value, (str, int, float, bool)) and value is not None:
+            raise ActionError(
+                f"Action {action_type!r}: extra {key_text!r} has unsupported value type "
+                f"{type(value).__name__!r}."
+            )
+        extras.append((key_text, value))
+    return tuple(extras)
+
+
 def _parse_key(raw: typing.Any, action_type: str) -> list[str] | None:
     if raw is None:
         return None
@@ -385,7 +460,7 @@ def _parse_key(raw: typing.Any, action_type: str) -> list[str] | None:
 def _validate(
     *, action_type: str, x: float | None, y: float | None,
     x2: float | None, y2: float | None, text: str | None,
-    key: list[str] | None, pixels: int | None,
+    key: list[str] | None, pixels: int | None, intent_action: str | None,
 ) -> None:
     if action_type in _XY_REQUIRED and (x is None or y is None):
         raise ActionError(f"Action {action_type!r} requires both 'x' and 'y' coordinates.")
@@ -413,3 +488,7 @@ def _validate(
             )
     if action_type in ("open_app", "close_app") and not text:
         raise ActionError(f"Action {action_type!r} requires the 'text' field (app name).")
+    if action_type == "open_deeplink" and not text:
+        raise ActionError("Action 'open_deeplink' requires the 'text' field (URI).")
+    if action_type == "open_intent" and not intent_action:
+        raise ActionError("Action 'open_intent' requires the 'intent_action' field.")

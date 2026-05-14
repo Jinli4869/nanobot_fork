@@ -17,6 +17,7 @@ import heapq
 import json
 import logging
 import math
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field, replace
@@ -61,6 +62,7 @@ REFRESH_ALLOWED_OUTPUTS = ("patch_contract", "spawn_version", "add_edge")
 
 _GOAL_CONFIDENCE_THRESHOLD = 0.45
 _GOAL_MARGIN_THRESHOLD = 0.03
+_PREFIX_RELEVANCE_THRESHOLD = 0.15
 _STATE_IDENTIFICATION_THRESHOLD = 0.72
 _STATE_MARGIN_THRESHOLD = 0.05
 _VERSION_OVERLAP_THRESHOLD = 0.58
@@ -2178,7 +2180,7 @@ class PathCompiler:
         platform: str,
         app: str,
         max_depth: int = 6,
-        min_relevance: float = _GOAL_CONFIDENCE_THRESHOLD,
+        min_relevance: float = _PREFIX_RELEVANCE_THRESHOLD,
     ) -> PathCompilation:
         current_node = self.store.get_node(current_node_id)
         if current_node is None:
@@ -2346,11 +2348,15 @@ def _is_canonical_state_contract(contract: dict[str, Any] | None) -> bool:
 
 
 def _prefix_relevance_score(intent: str, node: GraphNode) -> float:
+    base_score = max(
+        _token_similarity(intent, node.description),
+        _profile_recall_score(intent, node.retrieval_profile),
+    )
+    explicit_app = infer_explicit_app_hint_from_task(intent, platform=node.platform)
+    if explicit_app is not None and normalize_app_identifier(node.platform, explicit_app) == node.app:
+        base_score = max(base_score, 0.25)
     return _rerank_goal_score(
-        max(
-            _token_similarity(intent, node.description),
-            _profile_recall_score(intent, node.retrieval_profile),
-        ),
+        base_score,
         node,
     )
 
@@ -2999,10 +3005,49 @@ def _best_text_score(needle: str, haystack: list[str]) -> float:
 
 
 def _profile_recall_score(query: str, profile: dict[str, Any] | None) -> float:
-    texts = _profile_texts(profile)
-    if not texts:
+    normalized = _normalize_retrieval_profile(profile)
+    if not normalized:
         return 0.0
-    return max((_best_text_score(query, [text]) for text in texts), default=0.0)
+    texts: list[str] = []
+    for key in ("page_title", "page_summary", "visible_text", "clickable_text", "content_desc"):
+        value = normalized.get(key)
+        if isinstance(value, str) and value.strip():
+            texts.append(value.strip())
+        elif isinstance(value, list):
+            texts.extend(str(item).strip() for item in value if isinstance(item, str) and item.strip())
+    resources: list[str] = []
+    values = normalized.get("resource_ids")
+    if isinstance(values, list):
+        resources.extend(str(item).strip() for item in values if isinstance(item, str) and item.strip())
+    controls = normalized.get("stable_controls")
+    if isinstance(controls, list):
+        for control in controls:
+            if not isinstance(control, dict):
+                continue
+            for key in ("text", "content_desc"):
+                value = control.get(key)
+                if isinstance(value, str) and value.strip():
+                    texts.append(value.strip())
+            value = control.get("resource_id")
+            if isinstance(value, str) and value.strip():
+                resources.append(value.strip())
+    text_score = max((_best_text_score(query, [text]) for text in texts), default=0.0)
+    return max(text_score, _resource_profile_exact_score(query, resources))
+
+
+def _resource_profile_exact_score(query: str, resource_ids: list[str]) -> float:
+    if not query.strip() or not resource_ids:
+        return 0.0
+    query_parts = {
+        item.strip().casefold()
+        for item in re.split(r"\s+", query)
+        if item.strip()
+    }
+    for resource_id in resource_ids:
+        resource_norm = resource_id.strip().casefold()
+        if resource_norm and resource_norm in query_parts:
+            return 1.0
+    return 0.0
 
 
 def _observation_profile_query_text(
@@ -3282,7 +3327,16 @@ def _token_similarity(a: str, b: str) -> float:
 def _tokens(text: str) -> list[str]:
     import re
 
-    return re.findall(r"\w+", text.lower())
+    tokens = re.findall(r"\w+", text.lower())
+    expanded = list(tokens)
+    for token in tokens:
+        if not re.search(r"[\u4e00-\u9fff]", token):
+            continue
+        expanded.extend(
+            token[index:index + 2]
+            for index in range(max(0, len(token) - 1))
+        )
+    return expanded
 
 
 def _normalize_description(value: str) -> str:

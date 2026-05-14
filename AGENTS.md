@@ -185,6 +185,13 @@ Test files:
 
 ---
 
+## Debugging and Experimentation
+
+- When OpenGUI, skill extraction, skill reuse, or mobile task experiments fail, diagnose from first principles before adding a workaround. Look past the visible symptom and inspect broader causes such as state initialization, app session persistence, observation evidence quality, trace/action alignment, selector and state-contract determinism, retrieval/LLM selection, runtime fallback boundaries, timing, and device/provider variance.
+- Prefer fixes that improve general system behavior across apps and pages. Avoid page-specific or phenomenon-specific patches unless the root cause is demonstrably local to that page.
+
+---
+
 ## Key Conventions
 
 - `opengui` must not import from `nanobot`. Dependency direction: `nanobot → opengui`.

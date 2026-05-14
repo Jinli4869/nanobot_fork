@@ -44,6 +44,7 @@ from opengui.interfaces import (
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.state_contract import evaluate_state_contract
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from opengui.trajectory.summarizer import build_state_note, is_state_note
 
@@ -983,24 +984,10 @@ class GuiAgent:
         memory_context = await self._retrieve_memory(task)
 
         skill_context: str | None = None
-        graph_result = await self._try_graph_runtime(task, app_hint=app_hint)
-        graph_executed = False
-        if graph_result is not None:
-            graph_summary = getattr(graph_result, "execution_summary", None)
-            if isinstance(graph_summary, str) and graph_summary.strip():
-                skill_context = graph_summary
-            graph_state = getattr(graph_result, "state", None)
-            graph_executed = bool(
-                graph_state is not None
-                and graph_state.value == "succeeded"
-                and not getattr(graph_result, "prefix_only", False)
-            )
 
         # 3. Search skill library (once); LLM-gated when SkillReuser is available.
         reuser_usage: dict[str, int] = {}
-        if graph_executed:
-            skill_match = None
-        elif self._skill_reuser is not None and self._skill_library is not None:
+        if self._skill_reuser is not None and self._skill_library is not None:
             skill_match = await self._skill_reuser.find(
                 task,
                 self._skill_library,
@@ -1013,16 +1000,26 @@ class GuiAgent:
 
         matched_skill: Any | None = None
         final_score: float | None = None
+        skill_match_for_maintenance: Any | None = skill_match
         if skill_match is not None:
             if hasattr(skill_match, "layer"):
                 matched_skill = skill_match.skill
                 final_score = skill_match.score
             else:
                 matched_skill, final_score = skill_match
-            memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
 
         # 4. If skill matched, attempt skill execution first.
         skill_result: Any | None = None
+        if matched_skill is not None and self._skill_executor is not None and final_score is not None:
+            entry_allowed = await self._skill_entry_allows_current_state(matched_skill)
+            if not entry_allowed:
+                skill_match_for_maintenance = None
+                matched_skill = None
+            else:
+                memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
+        elif matched_skill is not None:
+            memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
+
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             self._trajectory_recorder.set_phase(
                 ExecutionPhase.SKILL,
@@ -1204,7 +1201,7 @@ class GuiAgent:
             if agent_steps > skill_step_count + 1:
                 skill_exec_success = False
 
-        await self._skill_maintenance(skill_match, skill_exec_success)
+        await self._skill_maintenance(skill_match_for_maintenance, skill_exec_success)
 
         return result
 
@@ -2476,6 +2473,7 @@ class GuiAgent:
                 step_index=step_index,
                 app_hint=app_hint,
                 coordinate_instruction=coord_inst,
+                include_extra=False,
             ),
         })
         if observation.screenshot_path and Path(observation.screenshot_path).exists():
@@ -3224,6 +3222,82 @@ class GuiAgent:
             threshold=self._skill_threshold,
         )
         return None
+
+    async def _skill_entry_allows_current_state(self, skill: Any) -> bool:
+        """Fail closed on mid-flow skills unless their first contract matches now."""
+        steps = tuple(getattr(skill, "steps", ()) or ())
+        skill_id = str(getattr(skill, "skill_id", "") or "")
+        skill_name = str(getattr(skill, "name", "") or "")
+        if not steps:
+            self._trajectory_recorder.record_event(
+                "skill_entry_rejected",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                reason="empty_skill",
+            )
+            return False
+
+        first_step = steps[0]
+        first_action = str(getattr(first_step, "action_type", "") or "")
+        if first_action in {"open_app", "open_deeplink", "open_intent"}:
+            self._trajectory_recorder.record_event(
+                "skill_entry_accepted",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                first_action=first_action,
+                reason="entry_action",
+            )
+            return True
+
+        contract = getattr(first_step, "state_contract", None)
+        if contract is None:
+            self._trajectory_recorder.record_event(
+                "skill_entry_rejected",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                first_action=first_action,
+                reason="missing_first_step_state_contract",
+            )
+            return False
+
+        screenshot_path = self.artifacts_root / "skill_entry_gate" / "current.png"
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            observation = await self.backend.observe(
+                screenshot_path,
+                timeout=self.step_timeout,
+            )
+        except Exception as exc:
+            logger.warning("Skill entry observation failed for %s: %s", skill_name, exc)
+            self._trajectory_recorder.record_event(
+                "skill_entry_rejected",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                first_action=first_action,
+                reason="observe_failed",
+                error=str(exc),
+            )
+            return False
+
+        contract_result = evaluate_state_contract(contract, observation=observation)
+        if contract_result is True:
+            self._trajectory_recorder.record_event(
+                "skill_entry_accepted",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                first_action=first_action,
+                reason="state_contract_matched",
+            )
+            return True
+
+        self._trajectory_recorder.record_event(
+            "skill_entry_rejected",
+            skill_id=skill_id,
+            skill_name=skill_name,
+            first_action=first_action,
+            reason="state_contract_unevaluable" if contract_result is None else "state_contract_failed",
+        )
+        return False
 
     async def _inject_skill_memory_context(
         self,

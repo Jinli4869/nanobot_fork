@@ -46,6 +46,8 @@ _SELECTOR_KEYS = frozenset({
 _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
 _STATE_FLAG_SET = frozenset(_STATE_FLAGS)
 _SELECTOR_MATCH_THRESHOLD = 0.72
+_SELECTOR_SOLID_CONFIDENCE = 0.80
+_SELECTOR_SUPPORTED_CONFIDENCE = 0.70
 _EXTRA_HINT_KEYS = frozenset({
     "visible_text",
     "content_desc",
@@ -62,6 +64,29 @@ _EXTRA_HINT_KEYS = frozenset({
     "scrollable_present",
     "enabled_present",
 })
+
+
+@dataclass(frozen=True)
+class ContractEvalResult:
+    """Detailed state-contract evaluation result for trace diagnostics."""
+
+    passed: bool | None
+    score: float
+    failed_required: list[dict[str, Any]] = field(default_factory=list)
+    matched_required: list[dict[str, Any]] = field(default_factory=list)
+    unknown_required: list[dict[str, Any]] = field(default_factory=list)
+    failed_forbidden: list[dict[str, Any]] = field(default_factory=list)
+    unknown_forbidden: list[dict[str, Any]] = field(default_factory=list)
+    evidence_coverage: float = 0.0
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class _SelectorCandidate:
+    selector: dict[str, Any]
+    confidence: float
+    support: int = 1
+    method: str = "unknown"
 
 
 def normalize_state_contract(contract: Any) -> dict[str, Any] | None:
@@ -168,9 +193,35 @@ def score_state_contract(
     Returns ``None`` when there is not enough structured evidence, ``0.0`` for
     deterministic mismatch, otherwise a confidence score in ``[0, 1]``.
     """
+    result = evaluate_state_contract_detail(
+        contract,
+        observation=observation,
+        foreground_app=foreground_app,
+        observation_extra=observation_extra,
+        selector_threshold=selector_threshold,
+    )
+    if result.passed is None:
+        return None
+    return result.score
+
+
+def evaluate_state_contract_detail(
+    contract: Any,
+    *,
+    observation: Any | None = None,
+    foreground_app: str | None = None,
+    observation_extra: dict[str, Any] | None = None,
+    selector_threshold: float = _SELECTOR_MATCH_THRESHOLD,
+) -> ContractEvalResult:
+    """Evaluate a state contract and return explainable match diagnostics."""
     normalized = normalize_state_contract(contract)
     if not normalized:
-        return None
+        return ContractEvalResult(
+            passed=None,
+            score=0.0,
+            evidence_coverage=0.0,
+            reason="invalid_or_empty_contract",
+        )
 
     actual_app = (
         foreground_app
@@ -185,59 +236,145 @@ def score_state_contract(
         or _dict_get(observation, "extra")
         or {}
     )
-    index = _UiIndex.from_extra(extra if isinstance(extra, dict) else {})
+    extra_dict = extra if isinstance(extra, dict) else {}
+    index = _UiIndex.from_extra(extra_dict)
 
     checked: list[float] = []
-    unknown = False
+    matched_required: list[dict[str, Any]] = []
+    failed_required: list[dict[str, Any]] = []
+    unknown_required: list[dict[str, Any]] = []
+    failed_forbidden: list[dict[str, Any]] = []
+    unknown_forbidden: list[dict[str, Any]] = []
+    total_checks = 0
 
     anchor = normalized.get("anchor", {})
     expected_app = _clean_string(anchor.get("app_package"))
     if expected_app:
-        if actual_app:
-            if _normalize_app(actual_app) != _normalize_app(expected_app):
-                return 0.0
+        total_checks += 1
+        if not actual_app:
+            unknown_required.append({
+                "anchor": {"app_package": expected_app},
+                "reason": "missing_foreground_app",
+            })
+        elif _normalize_app(actual_app) != _normalize_app(expected_app):
+            failed_required.append({
+                "anchor": {"app_package": expected_app},
+                "actual": actual_app,
+                "reason": "app_package_mismatch",
+            })
+        else:
             checked.append(1.0)
+            matched_required.append({"anchor": {"app_package": expected_app}})
 
     for key in ("activity_class", "fragment_class"):
         expected = _clean_string(anchor.get(key))
         if not expected:
             continue
         actual = _clean_string(
-            _dict_get(extra, key)
-            or _dict_get(extra, key.replace("_class", ""))
+            _dict_get(extra_dict, key)
+            or _dict_get(extra_dict, key.replace("_class", ""))
             or _dict_get(observation, key)
         )
-        if actual:
-            if _normalize_text(actual) != _normalize_text(expected):
-                return 0.0
+        if actual and _normalize_text(actual) != _normalize_text(expected):
+            failed_required.append({
+                "anchor": {key: expected},
+                "actual": actual,
+                "reason": f"{key}_mismatch",
+            })
+        elif actual:
             checked.append(1.0)
-        else:
-            unknown = True
+            matched_required.append({"anchor": {key: expected}})
 
     signature = normalized.get("signature", {})
     for element in signature.get("required", []):
+        total_checks += 1
         score = _element_score(element, index)
         if score is None:
-            unknown = True
+            unknown_required.append({
+                "element": element,
+                "reason": "selector_or_state_evidence_missing",
+            })
             continue
         if score < selector_threshold:
-            return 0.0
+            failed_required.append({
+                "element": element,
+                "score": score,
+                "reason": "required_element_mismatch",
+            })
+            continue
         checked.append(score)
+        matched_required.append({"element": element, "score": score})
 
     for element in signature.get("forbidden", []):
+        total_checks += 1
         score = _element_score(element, index)
         if score is None:
-            unknown = True
+            unknown_forbidden.append({
+                "element": element,
+                "reason": "selector_or_state_evidence_missing",
+            })
             continue
         if score >= selector_threshold:
-            return 0.0
+            failed_forbidden.append({
+                "element": element,
+                "score": score,
+                "reason": "forbidden_element_present",
+            })
+            continue
         checked.append(1.0)
 
-    if unknown:
-        return None
+    score_value = sum(checked) / len(checked) if checked else 0.0
+    coverage = len(checked) / total_checks if total_checks else 0.0
+
+    if failed_required or failed_forbidden:
+        reason = "failed_required" if failed_required else "failed_forbidden"
+        return ContractEvalResult(
+            passed=False,
+            score=0.0,
+            failed_required=failed_required,
+            matched_required=matched_required,
+            unknown_required=unknown_required,
+            failed_forbidden=failed_forbidden,
+            unknown_forbidden=unknown_forbidden,
+            evidence_coverage=coverage,
+            reason=reason,
+        )
+    if unknown_required or unknown_forbidden:
+        reason = "unknown_required" if unknown_required else "unknown_forbidden"
+        return ContractEvalResult(
+            passed=None,
+            score=score_value,
+            failed_required=failed_required,
+            matched_required=matched_required,
+            unknown_required=unknown_required,
+            failed_forbidden=failed_forbidden,
+            unknown_forbidden=unknown_forbidden,
+            evidence_coverage=coverage,
+            reason=reason,
+        )
     if checked:
-        return sum(checked) / len(checked)
-    return None
+        return ContractEvalResult(
+            passed=True,
+            score=score_value,
+            failed_required=failed_required,
+            matched_required=matched_required,
+            unknown_required=unknown_required,
+            failed_forbidden=failed_forbidden,
+            unknown_forbidden=unknown_forbidden,
+            evidence_coverage=coverage,
+            reason="matched",
+        )
+    return ContractEvalResult(
+        passed=None,
+        score=0.0,
+        failed_required=failed_required,
+        matched_required=matched_required,
+        unknown_required=unknown_required,
+        failed_forbidden=failed_forbidden,
+        unknown_forbidden=unknown_forbidden,
+        evidence_coverage=coverage,
+        reason="no_checks",
+    )
 
 
 def evaluate_state_contract(
@@ -254,22 +391,22 @@ def evaluate_state_contract(
         ``False`` when any deterministic check fails.
         ``None`` when there is not enough structured evidence.
     """
-    score = score_state_contract(
+    result = evaluate_state_contract_detail(
         contract,
         observation=observation,
         foreground_app=foreground_app,
         observation_extra=observation_extra,
     )
-    if score is None:
-        return None
-    return score >= _SELECTOR_MATCH_THRESHOLD
+    return result.passed
 
 
 def infer_state_contract(
     step_payload: dict[str, Any],
     *,
+    observation_extra: dict[str, Any] | None = None,
     trajectory: dict[str, Any] | None = None,
     app: str | None = None,
+    window: int = 0,
 ) -> dict[str, Any] | None:
     """Infer a conservative canonical contract from observed UI metadata."""
     action_type = str(step_payload.get("action_type") or "").strip().lower()
@@ -284,18 +421,28 @@ def infer_state_contract(
     if clean_app and clean_app.lower() not in {"unknown", "app_package_or_name"}:
         anchor["app_package"] = clean_app
 
-    selector = _find_selector_for_step(
+    extras = _inference_extras(
         step_payload,
-        trajectory=trajectory or {},
+        observation_extra=observation_extra,
+        trajectory=trajectory,
+        window=window,
+    )
+    if not extras:
+        return None
+
+    selector_candidate = _find_selector_for_step(
+        step_payload,
+        extras=extras,
         action_type=action_type,
     )
     required: list[dict[str, Any]] = []
-    if selector:
+    if selector_candidate:
+        selector = selector_candidate.selector
         state = ["visible"]
         if action_type in {"tap", "long_press", "double_tap"}:
             state.append("clickable")
         if action_type == "input_text":
-            state.append("focused")
+            state.append("enabled")
         required.append({
             "selector": {k: v for k, v in selector.items() if k in _SELECTOR_KEYS},
             "state": state,
@@ -307,7 +454,7 @@ def infer_state_contract(
     return normalize_state_contract({
         "anchor": anchor,
         "signature": {"required": required, "forbidden": []},
-        "mask_rules": _infer_mask_rules(trajectory or {}),
+        "mask_rules": _infer_mask_rules_from_extras(extras),
     })
 
 
@@ -517,7 +664,7 @@ def _element_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
         lval = _clean_string(lsel.get(key))
         rval = _clean_string(rsel.get(key))
         if lval and rval:
-            selector_score = max(selector_score, _best_text_score(lval, [rval]))
+            selector_score = max(selector_score, _selector_text_score(key, lval, [rval]))
     lstates = set(left.get("state") or [])
     rstates = set(right.get("state") or [])
     state_score = 1.0 if not lstates and not rstates else (
@@ -538,40 +685,30 @@ def _element_score(element: dict[str, Any], index: "_UiIndex") -> float | None:
 
     selector = element.get("selector") if isinstance(element.get("selector"), dict) else {}
     states = set(element.get("state") or [])
-    scores: list[float] = []
+    fields = _selector_fields(selector)
+
+    node_score = _selector_node_state_score(fields, states, index)
+    if node_score is not None:
+        return node_score
+
+    if any(state in states for state in ("clickable", "focused", "enabled")):
+        return None
+    if "scrollable" in states and not fields:
+        return 1.0 if index.has_scrollable else 0.0
 
     selector_score = _selector_value_score(selector, index)
-    if selector:
-        if selector_score is None:
-            return None
-        scores.append(selector_score)
-
-    for state in states:
-        if state == "visible":
-            scores.append(selector_score if selector else 1.0)
-        elif state == "clickable":
-            score = _state_text_score(selector, index.clickable_text, index)
-            if score is None:
-                return None
-            scores.append(score)
-        elif state == "focused":
-            score = _state_text_score(selector, index.focused_text, index)
-            if score is None:
-                return None
-            scores.append(score)
-        elif state == "scrollable":
-            scores.append(1.0 if index.has_scrollable else 0.0)
-        elif state == "enabled":
-            if not index.has_enabled_evidence:
-                return None
-            score = _state_text_score(selector, index.enabled_text, index)
-            if score is None:
-                return None
-            scores.append(score)
-
-    if not scores:
+    if selector and selector_score is None:
         return None
-    return min(scores)
+
+    scores: list[float] = []
+    if selector:
+        scores.append(selector_score or 0.0)
+    if "visible" in states:
+        scores.append(selector_score if selector else 1.0)
+    if "scrollable" in states:
+        scores.append(1.0 if index.has_scrollable else 0.0)
+
+    return min(scores) if scores else None
 
 
 def _selector_value_score(selector: dict[str, Any], index: "_UiIndex") -> float | None:
@@ -592,22 +729,6 @@ def _selector_value_score(selector: dict[str, Any], index: "_UiIndex") -> float 
     return min(scores) if scores else 1.0
 
 
-def _state_text_score(
-    selector: dict[str, Any],
-    state_haystack: list[str],
-    index: "_UiIndex",
-) -> float | None:
-    if not selector:
-        return 1.0 if state_haystack or index.has_scrollable else 0.0
-    best = 0.0
-    for key in ("text", "content_desc", "resource_id", "class", "xpath"):
-        needle = _clean_string(selector.get(key))
-        if not needle:
-            continue
-        best = max(best, _best_text_score(needle, state_haystack))
-    return best
-
-
 def _selector_fields(selector: dict[str, Any]) -> list[tuple[str, str]]:
     fields: list[tuple[str, str]] = []
     for key in ("resource_id", "content_desc", "text", "class", "xpath"):
@@ -617,31 +738,80 @@ def _selector_fields(selector: dict[str, Any]) -> list[tuple[str, str]]:
     return fields
 
 
+def _selector_node_state_score(
+    fields: list[tuple[str, str]],
+    states: set[str],
+    index: "_UiIndex",
+) -> float | None:
+    if not index.ui_nodes:
+        return None
+
+    if not fields:
+        if "scrollable" in states:
+            return 1.0 if index.has_scrollable else 0.0
+        return None
+
+    best = 0.0
+    saw_state_unknown = False
+    saw_state_known = False
+    for node in index.ui_nodes:
+        selector_score = _score_node_fields(node, fields)
+        if selector_score <= 0:
+            continue
+        state_score = _score_node_states(node, states)
+        if state_score is None:
+            saw_state_unknown = True
+            continue
+        saw_state_known = True
+        best = max(best, min(selector_score, state_score))
+
+    if best > 0:
+        return best
+    if saw_state_known:
+        return 0.0
+    return None if saw_state_unknown else 0.0
+
+
 def _selector_node_score(fields: list[tuple[str, str]], index: "_UiIndex") -> float | None:
     if not index.ui_nodes:
         return None
     best = 0.0
     for node in index.ui_nodes:
-        scores: list[float] = []
-        for key, value in fields:
-            if key in {"resource_id", "class", "xpath"}:
-                score = _exact_selector_score(value, [_clean_string(node.get(key))])
-            else:
-                score = _best_text_score(value, [_clean_string(node.get(key))])
-            if score <= 0:
-                scores = []
-                break
-            scores.append(score)
-        if scores:
-            best = max(best, min(scores))
+        best = max(best, _score_node_fields(node, fields))
     return best
+
+
+def _score_node_fields(node: dict[str, Any], fields: list[tuple[str, str]]) -> float:
+    scores: list[float] = []
+    for key, value in fields:
+        score = _selector_text_score(key, value, [_clean_string(node.get(key))])
+        if score <= 0:
+            return 0.0
+        scores.append(score)
+    return min(scores) if scores else 1.0
+
+
+def _score_node_states(node: dict[str, Any], states: set[str]) -> float | None:
+    scores: list[float] = []
+    for state in states:
+        if state == "visible":
+            scores.append(1.0)
+        elif state == "scrollable":
+            if "scrollable" not in node:
+                return None
+            scores.append(1.0 if _truthy(node.get("scrollable")) else 0.0)
+        elif state in {"clickable", "focused", "enabled"}:
+            if state not in node:
+                return None
+            scores.append(1.0 if _truthy(node.get(state)) else 0.0)
+    return min(scores) if scores else 1.0
 
 
 def _selector_field_score(key: str, value: str, index: "_UiIndex") -> float | None:
     if key == "text":
-        return _best_text_score(value, index.visible_text + index.all_text)
+        return _selector_text_score(key, value, index.visible_text + index.all_text)
     if key == "content_desc":
-        return _best_text_score(value, index.content_desc + index.all_text)
+        return _selector_text_score(key, value, index.content_desc + index.all_text)
     if key == "resource_id":
         return _exact_selector_score(value, index.resource_ids)
     if key == "class":
@@ -661,20 +831,42 @@ def _exact_selector_score(needle: str, haystack: list[str]) -> float:
     return 0.0
 
 
-def _best_text_score(needle: str, haystack: list[str]) -> float:
+def _selector_text_score(key: str, needle: str, haystack: list[str]) -> float:
+    if key in {"resource_id", "xpath", "class"}:
+        return _exact_selector_score(needle, haystack)
+    if key == "content_desc":
+        return _best_text_score(needle, haystack, allow_fuzzy=True)
+    if key == "text":
+        return _best_text_score(needle, haystack, allow_fuzzy=True)
+    return 0.0
+
+
+def _best_text_score(
+    needle: str,
+    haystack: list[str],
+    *,
+    allow_fuzzy: bool = False,
+) -> float:
     needle_norm = _normalize_text(needle)
     if not needle_norm:
         return 0.0
     best = 0.0
-    needle_tokens = set(re.findall(r"\w+", needle_norm))
     for item in haystack:
         item_norm = _normalize_text(item)
         if not item_norm:
             continue
         if needle_norm == item_norm:
             return 1.0
+    if not allow_fuzzy or len(needle_norm) < 4:
+        return 0.0
+
+    needle_tokens = set(re.findall(r"\w+", needle_norm))
+    for item in haystack:
+        item_norm = _normalize_text(item)
+        if not item_norm:
+            continue
         if needle_norm in item_norm or item_norm in needle_norm:
-            if min(len(needle_norm), len(item_norm)) >= 2:
+            if min(len(needle_norm), len(item_norm)) >= 4:
                 best = max(best, 0.92)
             continue
         item_tokens = set(re.findall(r"\w+", item_norm))
@@ -688,30 +880,30 @@ def _best_text_score(needle: str, haystack: list[str]) -> float:
 def _find_selector_for_step(
     step_payload: dict[str, Any],
     *,
-    trajectory: dict[str, Any],
+    extras: list[dict[str, Any]],
     action_type: str,
-) -> dict[str, Any] | None:
+) -> _SelectorCandidate | None:
     target_norm = _normalize_text(step_payload.get("target"))
     if len(target_norm) < 2:
         return None
 
-    selector = _vote_for_selectors(
+    selector = _rank_selector_candidates(
         _candidate_selectors(target_norm, extra, action_type)
-        for extra in _iter_observation_extras(trajectory)
+        for extra in extras
     )
     if selector:
         return selector
 
-    selector = _vote_for_selectors(
+    selector = _rank_selector_candidates(
         _context_grounded_selectors(step_payload, extra, action_type)
-        for extra in _iter_observation_extras(trajectory)
+        for extra in extras
     )
     if selector:
         return selector
 
-    return _vote_for_selectors(
+    return _rank_selector_candidates(
         _coordinate_grounded_selectors(step_payload, extra, action_type)
-        for extra in _iter_observation_extras(trajectory)
+        for extra in extras
     )
 
 
@@ -724,39 +916,61 @@ def _find_selector_for_target(
     target_norm = _normalize_text(target)
     if len(target_norm) < 2:
         return None
-    return _vote_for_selectors(
+    candidate = _rank_selector_candidates(
         _candidate_selectors(target_norm, extra, action_type)
         for extra in _iter_observation_extras(trajectory)
     )
+    return candidate.selector if candidate else None
 
 
-def _vote_for_selectors(selector_groups: Any) -> dict[str, Any] | None:
-    votes: dict[tuple[tuple[str, Any], ...], tuple[int, dict[str, Any]]] = {}
+def _rank_selector_candidates(selector_groups: Any) -> _SelectorCandidate | None:
+    ranked: dict[tuple[tuple[str, Any], ...], _SelectorCandidate] = {}
     for selectors in selector_groups:
-        selectors = [selector for selector in selectors if selector_is_static(selector)]
-        group_keys = {_selector_identity_key(selector) for selector in selectors}
-        if len(group_keys) > 1:
-            continue
-        for selector in selectors:
-            marker = _selector_identity_key(selector)
-            count, _ = votes.get(marker, (0, selector))
-            votes[marker] = (count + 1, selector)
+        for candidate in selectors:
+            if not selector_is_static(candidate.selector):
+                continue
+            marker = _selector_identity_key(candidate.selector)
+            previous = ranked.get(marker)
+            if previous is None:
+                ranked[marker] = candidate
+                continue
+            ranked[marker] = _SelectorCandidate(
+                selector=previous.selector,
+                confidence=max(previous.confidence, candidate.confidence),
+                support=previous.support + candidate.support,
+                method=previous.method if previous.confidence >= candidate.confidence else candidate.method,
+            )
 
-    if not votes:
+    accepted = [
+        candidate
+        for candidate in ranked.values()
+        if (
+            candidate.confidence >= _SELECTOR_SOLID_CONFIDENCE - 1e-9
+            or (
+                candidate.support >= 2
+                and candidate.confidence >= _SELECTOR_SUPPORTED_CONFIDENCE - 1e-9
+            )
+        )
+    ]
+    if not accepted:
         return None
-    best_count = max(count for count, _ in votes.values())
-    winners = [selector for count, selector in votes.values() if count == best_count]
-    if len({_selector_identity_key(selector) for selector in winners}) != 1:
-        return None
-    return winners[0]
+    accepted.sort(
+        key=lambda item: (
+            -item.confidence,
+            -item.support,
+            -_selector_specificity(item.selector),
+            _selector_key(item.selector),
+        )
+    )
+    return accepted[0]
 
 
 def _candidate_selectors(
     target_norm: str,
     extra: dict[str, Any],
     action_type: str,
-) -> list[dict[str, Any]]:
-    candidates: list[dict[str, Any]] = []
+) -> list[_SelectorCandidate]:
+    candidates: list[_SelectorCandidate] = []
     node_candidates = _node_selectors_for_target(target_norm, extra)
     if node_candidates:
         return node_candidates
@@ -767,33 +981,20 @@ def _candidate_selectors(
 
     resource_match = _exact_target_match(target_norm, resource_ids)
     if resource_match:
-        selector: dict[str, Any] = {"resource_id": resource_match}
-        if len(content_desc) == 1:
-            selector["content_desc"] = content_desc[0]
-        return [selector]
+        return [_selector_candidate({"resource_id": resource_match}, "flat_resource_id_match")]
 
     content_match = _exact_target_match(target_norm, content_desc)
     if content_match:
-        selector = {"content_desc": content_match}
-        if len(resource_ids) == 1:
-            selector["resource_id"] = resource_ids[0]
-        if action_type in {"tap", "long_press", "double_tap"} and content_match in clickable_text:
-            selector["clickable"] = True
-        return [selector]
+        return [_selector_candidate({"content_desc": content_match}, "flat_content_desc_match")]
 
     match = _exact_target_match(target_norm, visible_text)
     if match:
-        selector = {"text": match}
-        if len(resource_ids) == 1:
-            selector["resource_id"] = resource_ids[0]
-        if action_type in {"tap", "long_press", "double_tap"} and match in clickable_text:
-            selector["clickable"] = True
-        return [selector]
+        return [_selector_candidate({"text": match}, "flat_text_match")]
 
     if action_type in {"tap", "long_press", "double_tap"}:
         clickable_match = _exact_target_match(target_norm, clickable_text)
         if clickable_match:
-            candidates.append({"text": clickable_match, "clickable": True})
+            candidates.append(_selector_candidate({"text": clickable_match}, "flat_clickable_text_match"))
     return candidates
 
 
@@ -801,14 +1002,14 @@ def _context_grounded_selectors(
     step_payload: dict[str, Any],
     extra: dict[str, Any],
     action_type: str,
-) -> list[dict[str, Any]]:
+) -> list[_SelectorCandidate]:
     context = _step_context_text(step_payload)
     if not context:
         return []
-    selectors: list[dict[str, Any]] = []
+    selectors: list[_SelectorCandidate] = []
     for selector, labels in _structured_selector_labels(extra, action_type):
         if any(_context_mentions_label(context, label) for label in labels):
-            selectors.append(selector)
+            selectors.append(_selector_candidate(selector, "context_grounded_match"))
     return selectors
 
 
@@ -816,7 +1017,7 @@ def _coordinate_grounded_selectors(
     step_payload: dict[str, Any],
     extra: dict[str, Any],
     action_type: str,
-) -> list[dict[str, Any]]:
+) -> list[_SelectorCandidate]:
     if action_type not in {"tap", "long_press", "double_tap"}:
         return []
     point = _step_point(step_payload, extra)
@@ -847,7 +1048,7 @@ def _coordinate_grounded_selectors(
     smallest = [selector for area, selector in matches if area == smallest_area]
     if len({_selector_key(selector) for selector in smallest}) != 1:
         return []
-    return smallest
+    return [_selector_candidate(selector, "coordinate_grounded_match") for selector in smallest]
 
 
 def _structured_selector_labels(
@@ -973,8 +1174,8 @@ def _float_value(value: Any) -> float | None:
         return None
 
 
-def _node_selectors_for_target(target_norm: str, extra: dict[str, Any]) -> list[dict[str, Any]]:
-    selectors: list[dict[str, Any]] = []
+def _node_selectors_for_target(target_norm: str, extra: dict[str, Any]) -> list[_SelectorCandidate]:
+    selectors: list[_SelectorCandidate] = []
     ui_tree = extra.get("ui_tree")
     if not isinstance(ui_tree, list):
         return selectors
@@ -987,10 +1188,50 @@ def _node_selectors_for_target(target_norm: str, extra: dict[str, Any]) -> list[
         xpath = _clean_string(node.get("xpath"))
         if not any(_normalize_text(value) == target_norm for value in (text, content_desc, resource_id, xpath)):
             continue
-        selector = static_selector_from_node(node)
+        selector = _selector_from_node(node)
         if selector:
-            selectors.append(selector)
+            selectors.append(_selector_candidate(selector, "ui_tree_node_exact"))
     return selectors
+
+
+def _selector_candidate(selector: dict[str, Any], method: str) -> _SelectorCandidate:
+    return _SelectorCandidate(
+        selector=selector,
+        confidence=_selector_confidence(selector, method),
+        method=method,
+    )
+
+
+def _selector_confidence(selector: dict[str, Any], method: str) -> float:
+    specificity = _selector_specificity(selector)
+    method_bonus = {
+        "ui_tree_node_exact": 0.18,
+        "coordinate_grounded_match": 0.14,
+        "context_grounded_match": 0.10,
+        "flat_resource_id_match": 0.10,
+        "flat_content_desc_match": 0.08,
+        "flat_text_match": 0.12,
+        "flat_clickable_text_match": 0.12,
+    }.get(method, 0.0)
+    return min(0.99, specificity + method_bonus)
+
+
+def _selector_specificity(selector: dict[str, Any]) -> float:
+    score = 0.0
+    if _clean_string(selector.get("resource_id")):
+        score += 0.78
+    if _clean_string(selector.get("content_desc")):
+        score += 0.72
+    if _clean_string(selector.get("text")):
+        score += 0.68
+    if _clean_string(selector.get("xpath")):
+        score += 0.30
+    if _clean_string(selector.get("class")):
+        score += 0.16
+    fields = sum(1 for key in _SELECTOR_KEYS if _clean_string(selector.get(key)))
+    if fields > 1:
+        score += 0.08
+    return min(0.86, score)
 
 
 def _iter_observation_extras(trajectory: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1022,6 +1263,31 @@ def _iter_observation_extras(trajectory: dict[str, Any]) -> list[dict[str, Any]]
     return extras
 
 
+def _inference_extras(
+    step_payload: dict[str, Any],
+    *,
+    observation_extra: dict[str, Any] | None,
+    trajectory: dict[str, Any] | None,
+    window: int,
+) -> list[dict[str, Any]]:
+    extras: list[dict[str, Any]] = []
+    step_extra = _extra_from_mapping(step_payload.get("observation"))
+    if step_extra:
+        extras.append(step_extra)
+    elif observation_extra:
+        explicit = _extra_from_mapping(observation_extra) or observation_extra
+        if isinstance(explicit, dict):
+            extras.append(explicit)
+
+    if extras or not trajectory or window <= 0:
+        return extras
+
+    trajectory_extras = _iter_observation_extras(trajectory)
+    if not trajectory_extras:
+        return []
+    return trajectory_extras[: max(1, (2 * window) + 1)]
+
+
 def _extra_from_mapping(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
@@ -1042,8 +1308,12 @@ def _extra_from_mapping(value: Any) -> dict[str, Any] | None:
 
 
 def _infer_mask_rules(trajectory: dict[str, Any]) -> list[str]:
+    return _infer_mask_rules_from_extras(_iter_observation_extras(trajectory))
+
+
+def _infer_mask_rules_from_extras(extras: list[dict[str, Any]]) -> list[str]:
     rules: set[str] = set()
-    for extra in _iter_observation_extras(trajectory):
+    for extra in extras:
         values: list[str] = []
         for key in ("visible_text", "content_desc", "clickable_text", "focused_text"):
             values.extend(_string_list(extra.get(key)))
@@ -1070,7 +1340,7 @@ class _UiIndex:
     enabled_text: list[str] = field(default_factory=list)
     class_names: list[str] = field(default_factory=list)
     xpath_values: list[str] = field(default_factory=list)
-    ui_nodes: list[dict[str, str]] = field(default_factory=list)
+    ui_nodes: list[dict[str, Any]] = field(default_factory=list)
     all_text: list[str] = field(default_factory=list)
     has_scrollable: bool = False
     has_enabled_evidence: bool = False
@@ -1120,6 +1390,9 @@ class _UiIndex:
                 )
                 if value
             }
+            for state_key in ("clickable", "focused", "enabled", "scrollable"):
+                if state_key in node:
+                    ui_node[state_key] = bool(node.get(state_key))
             if ui_node:
                 index.ui_nodes.append(ui_node)
             if text:
@@ -1151,7 +1424,7 @@ class _UiIndex:
         index.enabled_text = _dedupe(index.enabled_text)
         index.class_names = _dedupe(index.class_names)
         index.xpath_values = _dedupe(index.xpath_values)
-        index.ui_nodes = _dedupe_dicts(index.ui_nodes)
+        index.ui_nodes = _dedupe_node_dicts(index.ui_nodes)
         index.all_text = _dedupe(
             index.all_text
             + index.visible_text
@@ -1238,18 +1511,21 @@ def _dedupe(values: Any) -> list[str]:
     return out
 
 
-def _dedupe_dicts(values: Any) -> list[dict[str, str]]:
-    out: list[dict[str, str]] = []
-    seen: set[tuple[tuple[str, str], ...]] = set()
+def _dedupe_node_dicts(values: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for value in values:
         if not isinstance(value, dict):
             continue
-        item = {
-            str(key): text
-            for key, raw in value.items()
-            if (text := _clean_string(raw))
-        }
-        marker = tuple(sorted((key, value.casefold()) for key, value in item.items()))
+        item: dict[str, Any] = {}
+        for key, raw in value.items():
+            if key in _STATE_FLAG_SET:
+                item[str(key)] = bool(raw)
+                continue
+            text = _clean_string(raw)
+            if text:
+                item[str(key)] = text
+        marker = _canonical_json(item)
         if not item or marker in seen:
             continue
         out.append(item)
@@ -1273,4 +1549,11 @@ def _should_skip_valid_state(valid_state: Any) -> bool:
     text = _normalize_text(valid_state)
     if not text:
         return True
-    return any(hint in text for hint in ("no need to verify", "return true", "skip", "none", "n/a"))
+    patterns = (
+        r"^\s*none\s*$",
+        r"^\s*n/?a\s*$",
+        r"\bno need to verify\b",
+        r"\bskip verification\b",
+        r"^\s*return true\s*$",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)

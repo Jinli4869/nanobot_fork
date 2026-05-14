@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import inspect
 import importlib.resources
+import inspect
 import logging
 import os
 import re
+import shlex
 import struct
 import tempfile
 import threading
@@ -100,6 +101,13 @@ _KEYCOMBINATION_UNSUPPORTED_MARKERS = (
     "unknown command: keycombination",
     "invalid arguments for command: keycombination",
 )
+_ANDROID_PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
+_ANDROID_COMPONENT_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+/"
+    r"(?:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)$"
+)
+_ANDROID_INTENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]*$")
+_ANDROID_EXTRA_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
 
 
 def _read_png_size(path: Path) -> tuple[int, int] | None:
@@ -377,12 +385,12 @@ def _escape_shell_text(text: str) -> str:
     # Android's `input text` command treats `%s` as a space placeholder.
     # We are not invoking a shell here, so `\ ` would be passed literally and
     # can cause whitespace truncation on device-side parsing.
-    _SPECIAL = frozenset(r'\`$"!&|<>(){}[];#~*?^')
+    special_chars = frozenset(r'\`$"!&|<>(){}[];#~*?^')
     escaped: list[str] = []
     for ch in text:
         if ch == " ":
             escaped.append("%s")
-        elif ch in _SPECIAL:
+        elif ch in special_chars:
             escaped.append("\\" + ch)
         else:
             escaped.append(ch)
@@ -574,7 +582,7 @@ class AdbBackend:
             if not serial_ready:
                 raise AdbError(f"Device {self._serial!r} not found in 'adb devices'.")
         else:
-            ready = [l for l in device_lines if l.split("\t", 1)[-1].strip() == "device"]
+            ready = [line for line in device_lines if line.split("\t", 1)[-1].strip() == "device"]
             if not ready:
                 raise AdbError("No Android device found. Connect a device or start an emulator.")
 
@@ -592,7 +600,7 @@ class AdbBackend:
         small set of commonly-used system packages so the LLM can resolve
         human-readable names like "Settings" to ``com.android.settings``.
         """
-        _COMMON_SYSTEM_PACKAGES = [
+        common_system_packages = [
             "com.android.settings",
             "com.android.contacts",
             "com.android.dialer",
@@ -617,7 +625,7 @@ class AdbBackend:
         try:
             output = await self._run("shell", "pm", "list", "packages", "-3", timeout=10.0)
         except (AdbError, TimeoutError):
-            return list(_COMMON_SYSTEM_PACKAGES)
+            return list(common_system_packages)
 
         packages: list[str] = []
         for line in output.splitlines():
@@ -626,7 +634,7 @@ class AdbBackend:
                 packages.append(line[len("package:"):])
         # Merge common system packages (deduplicated, order preserved)
         seen = set(packages)
-        for pkg in _COMMON_SYSTEM_PACKAGES:
+        for pkg in common_system_packages:
             if pkg not in seen:
                 packages.append(pkg)
                 seen.add(pkg)
@@ -1113,6 +1121,12 @@ class AdbBackend:
                     timeout=timeout,
                 )
 
+        elif t == "open_deeplink":
+            await self._open_deeplink(action, timeout=timeout)
+
+        elif t == "open_intent":
+            await self._open_intent(action, timeout=timeout)
+
         elif t == "close_app":
             pkg = action.text or ""
             if pkg:
@@ -1122,6 +1136,93 @@ class AdbBackend:
             raise ValueError(f"Unsupported action type: {t!r}")
 
         return describe_action(action)
+
+    async def _open_deeplink(self, action: Action, *, timeout: float) -> str:
+        uri = action.text or ""
+        if not uri:
+            raise ValueError("open_deeplink requires a URI in action.text")
+        if "\x00" in uri:
+            raise ValueError("open_deeplink URI must not contain NUL bytes")
+        remote_args = [
+            "am", "start", "-W",
+            "-a", "android.intent.action.VIEW",
+            "-d", uri,
+        ]
+        if action.component:
+            if not _ANDROID_COMPONENT_RE.match(action.component):
+                raise ValueError(f"Invalid Android component for open_deeplink: {action.component!r}")
+            remote_args.extend(["-n", action.component])
+        if action.package:
+            if not _ANDROID_PACKAGE_RE.match(action.package):
+                raise ValueError(f"Invalid Android package for open_deeplink: {action.package!r}")
+            remote_args.extend(["-p", action.package])
+        # `adb shell` still routes through the device shell. Quote each
+        # fixed-position argument so URI query separators cannot split the
+        # restricted am-start command or swallow later -n/-p arguments.
+        remote_cmd = " ".join(shlex.quote(arg) for arg in remote_args)
+        output = await self._run("shell", remote_cmd, timeout=timeout)
+        lowered = output.lower()
+        if (
+            "error:" in lowered
+            or "exception" in lowered
+            or "unable to resolve intent" in lowered
+            or "activity not started" in lowered
+        ):
+            raise AdbError(f"open_deeplink failed: {output}")
+        return output
+
+    async def _open_intent(self, action: Action, *, timeout: float) -> str:
+        intent_action = action.intent_action or ""
+        if not intent_action:
+            raise ValueError("open_intent requires action.intent_action")
+        if not _ANDROID_INTENT_NAME_RE.match(intent_action):
+            raise ValueError(f"Invalid Android intent action for open_intent: {intent_action!r}")
+        remote_args = ["am", "start", "-W", "-a", intent_action]
+        if action.text:
+            if "\x00" in action.text:
+                raise ValueError("open_intent data URI must not contain NUL bytes")
+            remote_args.extend(["-d", action.text])
+        if action.mime_type:
+            if "\x00" in action.mime_type:
+                raise ValueError("open_intent MIME type must not contain NUL bytes")
+            remote_args.extend(["-t", action.mime_type])
+        for category in action.categories:
+            if not _ANDROID_INTENT_NAME_RE.match(category):
+                raise ValueError(f"Invalid Android intent category for open_intent: {category!r}")
+            remote_args.extend(["-c", category])
+        if action.component:
+            if not _ANDROID_COMPONENT_RE.match(action.component):
+                raise ValueError(f"Invalid Android component for open_intent: {action.component!r}")
+            remote_args.extend(["-n", action.component])
+        if action.package:
+            if not _ANDROID_PACKAGE_RE.match(action.package):
+                raise ValueError(f"Invalid Android package for open_intent: {action.package!r}")
+            remote_args.extend(["-p", action.package])
+        for key, value in action.extras:
+            if not _ANDROID_EXTRA_KEY_RE.match(key):
+                raise ValueError(f"Invalid Android extra key for open_intent: {key!r}")
+            if isinstance(value, bool):
+                remote_args.extend(["--ez", key, "true" if value else "false"])
+            elif isinstance(value, int) and not isinstance(value, bool):
+                remote_args.extend(["--ei", key, str(value)])
+            elif isinstance(value, float):
+                remote_args.extend(["--ef", key, str(value)])
+            else:
+                text_value = "" if value is None else str(value)
+                if "\x00" in text_value:
+                    raise ValueError(f"open_intent extra {key!r} must not contain NUL bytes")
+                remote_args.extend(["--es", key, text_value])
+        remote_cmd = " ".join(shlex.quote(arg) for arg in remote_args)
+        output = await self._run("shell", remote_cmd, timeout=timeout)
+        lowered = output.lower()
+        if (
+            "error:" in lowered
+            or "exception" in lowered
+            or "unable to resolve intent" in lowered
+            or "activity not started" in lowered
+        ):
+            raise AdbError(f"open_intent failed: {output}")
+        return output
 
     def _resolve_x(self, value: float, *, relative: bool) -> int:
         if relative:
