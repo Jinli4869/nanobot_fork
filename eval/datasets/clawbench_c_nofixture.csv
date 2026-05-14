@@ -1,0 +1,12 @@
+task_id,instruction,instruction_ch
+SetAlarmTask,"Set a weekend alarm for 8:25 a.m. with the ringtone ""beebeep"" and vibration off.","Set a weekend alarm for 8:25 a.m. with the ringtone ""beebeep"" and vibration off."
+SetAlarmTaskAskUser1,Please set a wake-up alarm for me on Friday.,Please set a wake-up alarm for me on Friday.
+SetAlarmTaskAskUser2,"Please set a wake-up alarm for my weekend, and choose my favorite ringtone.","Please set a wake-up alarm for my weekend, and choose my favorite ringtone."
+SetAlarmTaskAskUser3,Please set a morning wake-up alarm for my weekend at 9:45 p.m. Choose the ringtone 'beebeep' for the alarm.,Please set a morning wake-up alarm for my weekend at 9:45 p.m. Choose the ringtone 'beebeep' for the alarm.
+TakeSelfieTask,Take a photo.,Take a photo.
+AdjustBrightnessMaximumTask,Set the brightness to the maximum level.,Set the brightness to the maximum level.
+AdjustBrightnessMinimumTask,Set the brightness to the minimum level.,Set the brightness to the minimum level.
+AdjustFontIconMaximumTask,Increase the font size and icons on my phone to the maximum setting.,Increase the font size and icons on my phone to the maximum setting.
+AdjustFontIconMinimumTask,Decrease the font size and icons on my phone to the minimum setting.,Decrease the font size and icons on my phone to the minimum setting.
+ChangeWallpaperTask,从网上找一张高清的向日葵壁纸保存到手机里，Change the wallpaper to a photo from the album that features sunflowers.,从网上找一张高清的向日葵壁纸保存到手机里，Change the wallpaper to a photo from the album that features sunflowers.
+CloseFlightModeTask,Turn off device flight mode,Turn off device flight mode
