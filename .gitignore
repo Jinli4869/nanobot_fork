@@ -107,3 +107,6 @@ nanobot/tui/web/coverage/
 .opengui
 gui_runs/
 
+
+# Eval run outputs
+eval/results/

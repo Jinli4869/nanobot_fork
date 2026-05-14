@@ -230,8 +230,21 @@ class ChannelManager:
                     msg, extra_pending = self._coalesce_stream_deltas(msg)
                     pending.extend(extra_pending)
 
-                channel = self.channels.get(msg.channel)
+                # Resolve channel aliases (e.g. LLM may say "wechat" but key is "weixin")
+                _CHANNEL_ALIASES = {"wechat": "weixin", "wx": "weixin"}
+                channel_name = _CHANNEL_ALIASES.get(msg.channel, msg.channel)
+                channel = self.channels.get(channel_name)
                 if channel:
+                    if channel_name != msg.channel:
+                        msg = OutboundMessage(
+                            channel=channel_name,
+                            chat_id=msg.chat_id,
+                            content=msg.content,
+                            reply_to=msg.reply_to,
+                            media=msg.media,
+                            metadata=msg.metadata,
+                            buttons=msg.buttons,
+                        )
                     await self._send_with_retry(channel, msg)
                 else:
                     logger.warning("Unknown channel: {}", msg.channel)

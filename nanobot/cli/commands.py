@@ -707,6 +707,24 @@ def _run_gateway(
         msg: OutboundMessage, *, record: bool = False, session_key: str | None = None,
     ) -> None:
         """Publish a user-visible message and mirror it into that channel's session."""
+        # Resolve channel aliases before validation
+        _CHANNEL_ALIASES = {"wechat": "weixin", "wx": "weixin"}
+        resolved_channel = _CHANNEL_ALIASES.get(msg.channel, msg.channel)
+        if resolved_channel not in channels.channels:
+            raise ValueError(
+                f"Channel '{msg.channel}' is not available. "
+                "To send a WeChat message, use gui_task to open the WeChat app on the phone and send manually."
+            )
+        if resolved_channel != msg.channel:
+            msg = OutboundMessage(
+                channel=resolved_channel,
+                chat_id=msg.chat_id,
+                content=msg.content,
+                reply_to=msg.reply_to,
+                media=msg.media,
+                metadata=msg.metadata,
+                buttons=msg.buttons,
+            )
         metadata = dict(msg.metadata or {})
         record = record or bool(metadata.pop("_record_channel_delivery", False))
         if metadata != (msg.metadata or {}):

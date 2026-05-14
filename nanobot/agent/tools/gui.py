@@ -723,6 +723,7 @@ class GuiSubagentTool(Tool):
                 scrcpy_frame_timeout_ms=self._gui_config.scrcpy.frame_timeout_ms,
                 scrcpy_max_frame_age_ms=self._gui_config.scrcpy.max_frame_age_ms,
                 on_jpeg_frame=self._gui_frame_callback,
+                use_scrcpy=False,
             )
 
         if backend_name == "ios":
