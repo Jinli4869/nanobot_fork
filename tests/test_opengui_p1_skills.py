@@ -241,6 +241,8 @@ class _FakeSkillLibrary:
         self._results = results
         self.updated: list[tuple[str, Skill]] = []
         self.removed: list[str] = []
+        self.list_all_calls = 0
+        self.list_all_kwargs: list[dict[str, str | None]] = []
 
     async def search(
         self,
@@ -249,6 +251,22 @@ class _FakeSkillLibrary:
         top_k: int = 5,
     ) -> list[tuple[Skill, float]]:
         return self._results
+
+    def list_all(
+        self,
+        *,
+        platform: str | None = None,
+        app: str | None = None,
+    ) -> list[Skill]:
+        self.list_all_calls += 1
+        self.list_all_kwargs.append({"platform": platform, "app": app})
+        skills = [skill for skill, _score in self._results]
+        return [
+            skill
+            for skill in skills
+            if (platform is None or skill.platform == platform)
+            and (app is None or skill.app == app)
+        ]
 
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         self.updated.append((skill_id, updated_skill))
@@ -305,16 +323,39 @@ class _EntryGateBackend:
         return []
 
 
+class _FailingFirstObserveBackend(_EntryGateBackend):
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        if self.observe_calls == 0:
+            del screenshot_path, timeout
+            self.observe_calls += 1
+            raise RuntimeError("observe failed")
+        return await super().observe(screenshot_path, timeout=timeout)
+
+
 class _CountingSkillExecutor:
     def __init__(self) -> None:
         self.calls = 0
+        self.executed_skill_names: list[str] = []
+        self.fail_skill_names: set[str] = set()
+        self.raise_skill_names: set[str] = set()
 
     async def execute(self, skill: Skill, params: dict[str, str] | None = None) -> Any:
-        del skill, params
+        del params
         self.calls += 1
+        self.executed_skill_names.append(skill.name)
+        if skill.name in self.raise_skill_names:
+            raise RuntimeError(f"{skill.name} exploded")
+        if skill.name in self.fail_skill_names:
+            return SimpleNamespace(
+                state=ExecutionState.FAILED,
+                execution_summary=f"{skill.name} failed",
+                error="forced failure",
+                token_usage={},
+                step_results=[],
+            )
         return SimpleNamespace(
             state=ExecutionState.SUCCEEDED,
-            execution_summary="skill executed",
+            execution_summary=f"{skill.name} executed",
             token_usage={},
             step_results=[],
         )
@@ -352,6 +393,24 @@ def _make_skill(
         tags=tags,
         created_at=1_700_000_000.0,
     )
+
+
+def _test_state_contract(
+    text: str,
+    *,
+    app: str = "com.example.contacts",
+    clickable: bool = True,
+) -> dict[str, Any]:
+    state = ["visible"]
+    if clickable:
+        state.append("clickable")
+    return normalize_state_contract({
+        "anchor": {"app_package": app},
+        "signature": {
+            "required": [{"selector": {"text": text}, "state": state}],
+            "forbidden": [],
+        },
+    })
 
 
 def test_skill_step_state_contract_round_trips() -> None:
@@ -1316,6 +1375,47 @@ async def test_executor_state_contract_blocks_without_valid_state(tmp_path: Path
     assert backend.actions == []
 
 
+async def test_executor_relaxes_volatile_state_flags_when_selector_is_visible(tmp_path: Path) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    step = SkillStep(
+        action_type="tap",
+        target="Profile tab",
+        state_contract={"must_exist": [{"text": "Profile", "clickable": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-contract-relaxed",
+        name="Tap Profile",
+        description="Tap profile",
+        app="com.example.app",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _ObservationProvider(Observation(
+        screenshot_path=str(screenshot),
+        screen_width=1080,
+        screen_height=1920,
+        foreground_app="com.example.app",
+        platform="android",
+        extra={"visible_text": ["Home", "Profile"]},
+    ))
+    backend = _CapturingAndroidBackend()
+    recorder = _CapturingRecorder()
+
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        trajectory_recorder=recorder,
+        stop_on_failure=True,
+    )
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert len(backend.actions) == 1
+    assert result.step_results[0].valid_state_check is True
+    assert any(event == "skill_state_contract_relaxed" for event, _ in recorder.events)
+
+
 async def test_executor_open_deeplink_validates_contract_after_execute(tmp_path: Path) -> None:
     before = tmp_path / "before.png"
     after = tmp_path / "after.png"
@@ -1504,6 +1604,74 @@ async def test_executor_open_deeplink_fails_when_post_contract_missing(tmp_path:
     assert len(backend.actions) == 1
     assert result.step_results[0].valid_state_check is False
     assert result.step_results[0].error == "post-state not reached: state_contract"
+
+
+async def test_executor_open_intent_timeout_succeeds_when_post_contract_matches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("opengui.skills.executor._OPEN_APP_SETTLE_SECONDS", 0.0)
+    before = tmp_path / "before.png"
+    after = tmp_path / "after.png"
+    before.write_bytes(b"png")
+    after.write_bytes(b"png")
+    step = SkillStep(
+        action_type="open_intent",
+        target="insert contact",
+        fixed=True,
+        fixed_values={
+            "intent_action": "android.intent.action.INSERT",
+            "mime_type": "vnd.android.cursor.dir/contact",
+        },
+        state_contract={"must_exist": [{"text": "First name", "visible": True}]},
+    )
+    skill = Skill(
+        skill_id="exec-open-intent-timeout-post-ok",
+        name="Open insert contact",
+        description="Open contact insert form",
+        app="com.google.android.contacts",
+        platform="android",
+        steps=(step,),
+    )
+    provider = _SequenceObservationProvider([
+        Observation(
+            screenshot_path=str(before),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.google.android.contacts",
+            platform="android",
+            extra={"visible_text": ["Contacts"]},
+        ),
+        Observation(
+            screenshot_path=str(after),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app="com.google.android.contacts",
+            platform="android",
+            extra={"visible_text": ["First name", "Last name"]},
+        ),
+    ])
+
+    class _TimeoutBackend(_CapturingAndroidBackend):
+        async def execute(self, action: Any, timeout: float = 5.0) -> str:
+            self.actions.append(action)
+            raise TimeoutError("am start -W timed out")
+
+    recorder = _CapturingRecorder()
+    backend = _TimeoutBackend()
+    executor = SkillExecutor(
+        backend=backend,
+        screenshot_provider=provider,
+        trajectory_recorder=recorder,
+        stop_on_failure=True,
+    )
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert backend.actions[0].action_type == "open_intent"
+    assert result.step_results[0].backend_result == "am start -W timed out"
+    assert any(event == "skill_action_error_post_state_ok" for event, _ in recorder.events)
 
 
 async def test_executor_unknown_state_contract_blocks_without_valid_state(tmp_path: Path) -> None:
@@ -2260,6 +2428,35 @@ async def test_gui_agent_rejects_midflow_skill_when_entry_contract_misses(tmp_pa
     assert library.updated == []
 
 
+async def test_gui_agent_rejects_launcher_open_app_skill_entry() -> None:
+    skill = Skill(
+        skill_id="launcher-prefix",
+        name="open_app_drawer_for_clock",
+        description="Open launcher drawer",
+        app="com.google.android.apps.nexuslauncher",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="open_app",
+                target="com.google.android.apps.nexuslauncher",
+            ),
+            SkillStep(action_type="swipe", target="screen"),
+        ),
+    )
+
+    class _DummyAgent:
+        def __init__(self) -> None:
+            self._trajectory_recorder = _CapturingRecorder()
+
+    agent = _DummyAgent()
+
+    allowed = await GuiAgent._skill_entry_allows_current_state(agent, skill)
+
+    assert allowed is False
+    assert agent._trajectory_recorder.events[0][0] == "skill_entry_rejected"
+    assert agent._trajectory_recorder.events[0][1]["reason"] == "launcher_entry_package"
+
+
 async def test_gui_agent_allows_midflow_skill_when_entry_contract_matches(tmp_path: Path) -> None:
     skill = Skill(
         skill_id="midflow",
@@ -2313,6 +2510,460 @@ async def test_gui_agent_allows_midflow_skill_when_entry_contract_matches(tmp_pa
     assert accepted
     assert accepted[0]["reason"] == "state_contract_matched"
     assert library.updated[0][0] == "midflow"
+
+
+async def test_gui_agent_executes_matching_skill_continuation_after_success(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-form",
+        name="open_contact_insert_form",
+        description="Open contact insert form",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="open_intent",
+                target="insert contact",
+                state_contract=normalize_state_contract({
+                    "anchor": {"app_package": "com.example.contacts"},
+                    "signature": {
+                        "required": [{"selector": {"text": "First name"}, "state": ["visible"]}],
+                        "forbidden": [],
+                    },
+                }),
+            ),
+        ),
+    )
+    details_skill = Skill(
+        skill_id="enter-details",
+        name="enter_contact_details",
+        description="Enter contact details",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="First name",
+                state_contract=normalize_state_contract({
+                    "anchor": {"app_package": "com.example.contacts"},
+                    "signature": {
+                        "required": [{"selector": {"text": "First name"}, "state": ["visible", "clickable"]}],
+                        "forbidden": [],
+                    },
+                }),
+            ),
+            SkillStep(action_type="input_text", target="{{name}}"),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.contacts",
+        platform="android",
+        extra={
+            "visible_text": ["First name"],
+            "ui_tree": [{"text": "First name", "clickable": True, "visible": True}],
+        },
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (details_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add contact", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+    )
+
+    result = await agent.run("add contact Alice", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_contact_insert_form", "enter_contact_details"]
+    assert library.list_all_calls == 1
+    assert library.list_all_kwargs == [{"platform": "android", "app": None}]
+    assert (tmp_path / "runs" / "skill_continuation_gate" / "continuation_0.png").exists()
+    assert (tmp_path / "runs" / "skill_continuation_gate" / "continuation_1.png").exists()
+    selected = [event for event in events if event.get("type") == "skill_continuation_selected"]
+    assert selected
+    assert selected[0]["source_skill_id"] == "enter-details"
+    assert selected[0]["start_step"] == 0
+    continuation_results = [
+        event for event in events if event.get("type") == "skill_continuation_result"
+    ]
+    assert continuation_results
+    assert continuation_results[0]["state"] == "succeeded"
+
+
+async def test_gui_agent_rejects_skill_continuation_when_contract_misses(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-form",
+        name="open_contact_insert_form",
+        description="Open contact insert form",
+        app="com.example.contacts",
+        platform="android",
+        steps=(SkillStep(action_type="open_intent", target="insert contact"),),
+    )
+    details_skill = Skill(
+        skill_id="enter-details",
+        name="enter_contact_details",
+        description="Enter contact details",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="Last name",
+                state_contract=normalize_state_contract({
+                    "anchor": {"app_package": "com.example.contacts"},
+                    "signature": {
+                        "required": [{"selector": {"text": "Last name"}, "state": ["visible", "clickable"]}],
+                        "forbidden": [],
+                    },
+                }),
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.contacts",
+        platform="android",
+        extra={
+            "visible_text": ["First name"],
+            "ui_tree": [{"text": "First name", "clickable": True, "visible": True}],
+        },
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (details_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add contact", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+    )
+
+    result = await agent.run("add contact Alice", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_contact_insert_form"]
+    rejected = [event for event in events if event.get("type") == "skill_continuation_rejected"]
+    assert rejected
+    assert rejected[0]["reason"] == "no_matching_contract"
+
+
+async def test_gui_agent_records_failed_skill_continuation_and_falls_back(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-form",
+        name="open_contact_insert_form",
+        description="Open contact insert form",
+        app="com.example.contacts",
+        platform="android",
+        steps=(SkillStep(action_type="open_intent", target="insert contact"),),
+    )
+    details_skill = Skill(
+        skill_id="enter-details",
+        name="enter_contact_details",
+        description="Enter contact details",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="First name",
+                state_contract=normalize_state_contract({
+                    "anchor": {"app_package": "com.example.contacts"},
+                    "signature": {
+                        "required": [{"selector": {"text": "First name"}, "state": ["visible", "clickable"]}],
+                        "forbidden": [],
+                    },
+                }),
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.contacts",
+        platform="android",
+        extra={
+            "visible_text": ["First name"],
+            "ui_tree": [{"text": "First name", "clickable": True, "visible": True}],
+        },
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    executor.fail_skill_names.add("enter_contact_details")
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (details_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add contact", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+    )
+
+    result = await agent.run("add contact Alice", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_contact_insert_form", "enter_contact_details"]
+    continuation_results = [
+        event for event in events if event.get("type") == "skill_continuation_result"
+    ]
+    assert continuation_results
+    assert continuation_results[0]["state"] == "failed"
+    assert continuation_results[0]["error"] == "forced failure"
+
+
+async def test_gui_agent_uses_observed_app_for_skill_continuation(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-cross-app",
+        name="open_cross_app_form",
+        description="Open another app form",
+        app="com.source.app",
+        platform="android",
+        steps=(SkillStep(action_type="open_intent", target="insert item"),),
+    )
+    continuation_skill = Skill(
+        skill_id="target-details",
+        name="enter_target_details",
+        description="Enter target details",
+        app="com.target.app",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="First name",
+                state_contract=_test_state_contract("First name", app="com.target.app"),
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.target.app",
+        platform="android",
+        extra={
+            "visible_text": ["First name"],
+            "ui_tree": [{"text": "First name", "clickable": True, "visible": True}],
+        },
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (continuation_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add target", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+    )
+
+    result = await agent.run("add target", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_cross_app_form", "enter_target_details"]
+    selected = [event for event in events if event.get("type") == "skill_continuation_selected"]
+    assert selected
+    assert selected[0]["app"] == "com.target.app"
+    assert selected[0]["skill_app"] == "com.source.app"
+    assert selected[0]["observed_app"] == "com.target.app"
+
+
+async def test_gui_agent_max_skill_continuations_zero_disables_search(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-form",
+        name="open_contact_insert_form",
+        description="Open contact insert form",
+        app="com.example.contacts",
+        platform="android",
+        steps=(SkillStep(action_type="open_intent", target="insert contact"),),
+    )
+    details_skill = Skill(
+        skill_id="enter-details",
+        name="enter_contact_details",
+        description="Enter contact details",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="First name",
+                state_contract=_test_state_contract("First name"),
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.contacts",
+        platform="android",
+        extra={
+            "visible_text": ["First name"],
+            "ui_tree": [{"text": "First name", "clickable": True, "visible": True}],
+        },
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (details_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add contact", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+        max_skill_continuations=0,
+    )
+
+    result = await agent.run("add contact Alice", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_contact_insert_form"]
+    assert library.list_all_calls == 0
+    assert not [event for event in events if event.get("type") == "skill_continuation_selected"]
+
+
+async def test_gui_agent_records_skill_continuation_exception_and_falls_back(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-form",
+        name="open_contact_insert_form",
+        description="Open contact insert form",
+        app="com.example.contacts",
+        platform="android",
+        steps=(SkillStep(action_type="open_intent", target="insert contact"),),
+    )
+    details_skill = Skill(
+        skill_id="enter-details",
+        name="enter_contact_details",
+        description="Enter contact details",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="First name",
+                state_contract=_test_state_contract("First name"),
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.contacts",
+        platform="android",
+        extra={
+            "visible_text": ["First name"],
+            "ui_tree": [{"text": "First name", "clickable": True, "visible": True}],
+        },
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    executor.raise_skill_names.add("enter_contact_details")
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (details_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _EntryGateBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add contact", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+    )
+
+    result = await agent.run("add contact Alice", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_contact_insert_form", "enter_contact_details"]
+    continuation_results = [
+        event for event in events if event.get("type") == "skill_continuation_result"
+    ]
+    assert continuation_results
+    assert continuation_results[0]["state"] == "failed"
+    assert continuation_results[0]["exception_type"] == "RuntimeError"
+
+
+async def test_gui_agent_records_observe_failure_during_skill_continuation(tmp_path: Path) -> None:
+    entry_skill = Skill(
+        skill_id="open-form",
+        name="open_contact_insert_form",
+        description="Open contact insert form",
+        app="com.example.contacts",
+        platform="android",
+        steps=(SkillStep(action_type="open_intent", target="insert contact"),),
+    )
+    details_skill = Skill(
+        skill_id="enter-details",
+        name="enter_contact_details",
+        description="Enter contact details",
+        app="com.example.contacts",
+        platform="android",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="First name",
+                state_contract=_test_state_contract("First name"),
+            ),
+        ),
+    )
+    observation = Observation(
+        screenshot_path="",
+        screen_width=1000,
+        screen_height=1000,
+        foreground_app="com.example.contacts",
+        platform="android",
+        extra={},
+    )
+    events: list[dict[str, Any]] = []
+    executor = _CountingSkillExecutor()
+    library = _FakeSkillLibrary([(entry_skill, 0.95), (details_skill, 0.9)])
+    agent = GuiAgent(
+        _DoneToolLLM(),
+        _FailingFirstObserveBackend(observation),
+        TrajectoryRecorder(tmp_path / "traj", task="add contact", platform="android", event_callback=events.append),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=library,
+        skill_executor=executor,
+        skill_reuser=_StaticSkillReuser(entry_skill),
+    )
+
+    result = await agent.run("add contact Alice", max_retries=1)
+
+    assert result.success
+    assert executor.executed_skill_names == ["open_contact_insert_form"]
+    rejected = [event for event in events if event.get("type") == "skill_continuation_rejected"]
+    assert rejected
+    assert rejected[0]["reason"] == "observe_failed"
 
 
 async def test_skill_reuser_sends_top_k_once_and_truncates_selected_prefix() -> None:
@@ -2444,3 +3095,54 @@ async def test_extract_skill_params_deterministically_parses_city_location() -> 
 )
 def test_guess_skill_param_handles_quotes_and_accounts(task: str, expected: str) -> None:
     assert GuiAgent._guess_skill_param(task, "query") == expected
+
+
+def test_guess_skill_param_handles_amount_phone_and_name() -> None:
+    assert GuiAgent._guess_skill_param("Create expense with amount 42.50 for lunch", "amount") == "42.50"
+    assert GuiAgent._guess_skill_param("新增联系人，姓名是 Grace Taylor，电话 799-802-1530", "name") == "Grace Taylor"
+    assert GuiAgent._guess_skill_param("新增联系人，姓名是 Grace Taylor，电话 799-802-1530", "phone") == "799-802-1530"
+
+
+@pytest.mark.asyncio
+async def test_execute_skill_with_params_rejects_missing_required_param() -> None:
+    class _NeverExecutor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def execute(self, skill: Skill, params: dict[str, str]) -> Any:
+            del skill, params
+            self.calls += 1
+            raise AssertionError("executor should not run with missing params")
+
+    class _DummyAgent:
+        def __init__(self) -> None:
+            self._skill_executor = _NeverExecutor()
+            self._trajectory_recorder = _CapturingRecorder()
+
+        async def _extract_skill_params(self, task: str, skill: Skill) -> dict[str, str]:
+            del task, skill
+            return {}
+
+    skill = Skill(
+        skill_id="param-missing",
+        name="Search",
+        description="Search by query",
+        app="com.example",
+        platform="android",
+        parameters=("query",),
+        steps=(
+            SkillStep(
+                action_type="input_text",
+                target="search field",
+                fixed=True,
+                fixed_values={"text": "{{query}}"},
+            ),
+        ),
+    )
+    agent = _DummyAgent()
+
+    with pytest.raises(RuntimeError, match="missing required skill params: query"):
+        await GuiAgent._execute_skill_with_params(agent, "search something ambiguous", skill)
+
+    assert agent._skill_executor.calls == 0
+    assert any(event == "skill_param_extraction_failed" for event, _ in agent._trajectory_recorder.events)

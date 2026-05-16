@@ -871,8 +871,96 @@ def _clean_inferred_param(value: str) -> str:
     return value.strip().strip('`"\'“”‘’').strip()
 
 
+def _clean_observed_app(value: Any) -> str | None:
+    app = str(value or "").strip()
+    if not app or app.lower() in {"unknown", "none", "null"}:
+        return None
+    return app
+
+
 def _looks_like_date_param(value: str) -> bool:
     return bool(re.search(r"\d+\s*(?:月|号|日|/|-)", value))
+
+
+_SKILL_PARAM_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+_ANDROID_LAUNCHER_PACKAGES = frozenset({
+    "com.android.launcher",
+    "com.android.launcher3",
+    "com.google.android.apps.nexuslauncher",
+    "com.miui.home",
+})
+
+
+def _skill_param_names(skill: Any) -> list[str]:
+    return [
+        str(name).strip()
+        for name in (getattr(skill, "parameters", None) or ())
+        if str(name).strip()
+    ]
+
+
+def _skill_required_param_names(skill: Any) -> list[str]:
+    names = _skill_param_names(skill)
+    if not names:
+        return []
+    placeholders: set[str] = set()
+    for step in tuple(getattr(skill, "steps", ()) or ()):
+        placeholders.update(_extract_template_placeholders(getattr(step, "target", None)))
+        placeholders.update(_extract_template_placeholders(getattr(step, "valid_state", None)))
+        placeholders.update(_extract_template_placeholders(getattr(step, "parameters", None)))
+        placeholders.update(_extract_template_placeholders(getattr(step, "fixed_values", None)))
+        placeholders.update(_extract_template_placeholders(getattr(step, "state_contract", None)))
+    required = [name for name in names if name in placeholders]
+    return required or names
+
+
+def _missing_skill_params(skill: Any, params: dict[str, str]) -> list[str]:
+    missing: list[str] = []
+    for name in _skill_required_param_names(skill):
+        value = params.get(name)
+        if value is None or not str(value).strip():
+            missing.append(name)
+    return missing
+
+
+def _extract_template_placeholders(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {match.group(1) for match in _SKILL_PARAM_PLACEHOLDER_RE.finditer(value)}
+    if isinstance(value, dict):
+        found: set[str] = set()
+        for key, item in value.items():
+            found.update(_extract_template_placeholders(key))
+            found.update(_extract_template_placeholders(item))
+        return found
+    if isinstance(value, (list, tuple, set)):
+        found: set[str] = set()
+        for item in value:
+            found.update(_extract_template_placeholders(item))
+        return found
+    return set()
+
+
+def _skill_entry_targets_android_launcher(skill: Any, first_step: Any) -> bool:
+    platform = str(getattr(skill, "platform", "") or "").strip().lower()
+    if platform != "android":
+        return False
+    candidates: list[str] = [
+        str(getattr(skill, "app", "") or ""),
+        str(getattr(first_step, "target", "") or ""),
+    ]
+    fixed_values = getattr(first_step, "fixed_values", None)
+    if isinstance(fixed_values, dict):
+        for key in ("text", "package", "app", "target"):
+            value = fixed_values.get(key)
+            if value:
+                candidates.append(str(value))
+    for candidate in candidates:
+        normalized = normalize_app_identifier("android", candidate)
+        if normalized in _ANDROID_LAUNCHER_PACKAGES:
+            return True
+    return False
 
 
 class GuiAgent:
@@ -925,6 +1013,7 @@ class GuiAgent:
         image_scale_ratio: float = 0.5,
         stagnation_limit: int = 0,
         graph_session_cursor: Any = None,
+        max_skill_continuations: int = 2,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -959,6 +1048,11 @@ class GuiAgent:
         except (TypeError, ValueError):
             parsed_stagnation_limit = 0
         self.stagnation_limit = max(0, parsed_stagnation_limit)
+        try:
+            parsed_max_skill_continuations = int(max_skill_continuations)
+        except (TypeError, ValueError):
+            parsed_max_skill_continuations = 2
+        self.max_skill_continuations = max(0, parsed_max_skill_continuations)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1010,6 +1104,7 @@ class GuiAgent:
 
         # 4. If skill matched, attempt skill execution first.
         skill_result: Any | None = None
+        continuation_usage: dict[str, int] = {}
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             entry_allowed = await self._skill_entry_allows_current_state(matched_skill)
             if not entry_allowed:
@@ -1026,16 +1121,27 @@ class GuiAgent:
                 reason=f"Matched skill: {matched_skill.name} (score={final_score:.2f})",
             )
             try:
-                skill_params: dict[str, str] = {}
-                if matched_skill.parameters:
-                    skill_params = await self._extract_skill_params(task, matched_skill)
-                skill_result = await self._skill_executor.execute(matched_skill, params=skill_params)
+                skill_result = await self._execute_skill_with_params(task, matched_skill)
                 execution_summary = getattr(skill_result, "execution_summary", None)
                 skill_context = execution_summary if isinstance(execution_summary, str) else None
                 if skill_result.state.value == "succeeded":
+                    continuation_summary, continuation_usage = await self._try_execute_skill_continuations(
+                        task,
+                        matched_skill,
+                        max_continuations=self.max_skill_continuations,
+                    )
+                    if continuation_summary:
+                        skill_context = "\n".join(
+                            part for part in (skill_context, continuation_summary) if part
+                        )
                     # Skill succeeded — fall through to agent for confirmation
                     self._trajectory_recorder.set_phase(
-                        ExecutionPhase.AGENT, reason="Skill complete, agent confirms"
+                        ExecutionPhase.AGENT,
+                        reason=(
+                            "Skill continuation complete, agent confirms"
+                            if continuation_summary
+                            else "Skill complete, agent confirms"
+                        ),
                     )
                 else:
                     # Skill partially succeeded — agent completes the rest
@@ -1061,6 +1167,8 @@ class GuiAgent:
             raw_skill_token_usage = getattr(skill_result, "token_usage", None)
             if isinstance(raw_skill_token_usage, dict):
                 skill_token_usage = dict(raw_skill_token_usage)
+        for k, v in continuation_usage.items():
+            skill_token_usage[k] = skill_token_usage.get(k, 0) + v
         total_usage: dict[str, int] = dict(skill_token_usage)
         for k, v in reuser_usage.items():
             total_usage[k] = total_usage.get(k, 0) + v
@@ -3223,6 +3331,248 @@ class GuiAgent:
         )
         return None
 
+    async def _execute_skill_with_params(self, task: str, skill: Any) -> Any:
+        """Execute a skill, extracting task parameters only when needed."""
+        if self._skill_executor is None:
+            raise RuntimeError("skill executor is not configured")
+        skill_params: dict[str, str] = {}
+        if getattr(skill, "parameters", None):
+            skill_params = await self._extract_skill_params(task, skill)
+            missing_params = _missing_skill_params(skill, skill_params)
+            if missing_params:
+                recorder = getattr(self, "_trajectory_recorder", None)
+                if recorder is not None:
+                    recorder.record_event(
+                        "skill_param_extraction_failed",
+                        skill_id=str(getattr(skill, "skill_id", "") or ""),
+                        skill_name=str(getattr(skill, "name", "") or ""),
+                        reason="missing_required_params",
+                        missing_params=missing_params,
+                        extracted_params=dict(skill_params),
+                    )
+                raise RuntimeError(
+                    "missing required skill params: " + ", ".join(missing_params)
+                )
+        return await self._skill_executor.execute(skill, params=skill_params)
+
+    async def _try_execute_skill_continuations(
+        self,
+        task: str,
+        initial_skill: Any,
+        *,
+        max_continuations: int = 2,
+    ) -> tuple[str | None, dict[str, int]]:
+        """Execute locally matched suffix skills after a successful skill."""
+        summaries: list[str] = []
+        token_usage: dict[str, int] = {}
+        current_skill = initial_skill
+        seen: set[tuple[str, int]] = set()
+        executed_skill_ids: set[str] = {
+            str(getattr(initial_skill, "skill_id", "") or "")
+        }
+        continuation_limit = max(0, int(max_continuations))
+        if continuation_limit <= 0:
+            return None, {}
+        if self._skill_library is None:
+            self._trajectory_recorder.record_event(
+                "skill_continuation_rejected",
+                current_skill_id=str(getattr(initial_skill, "skill_id", "") or ""),
+                current_skill_name=str(getattr(initial_skill, "name", "") or ""),
+                reason="no_library",
+                platform=getattr(self.backend, "platform", None),
+                app=str(getattr(initial_skill, "app", "") or "") or None,
+            )
+            return None, {}
+        try:
+            from opengui.skills.continuation import CodeSkillContinuationIndex
+
+            continuation_index = await CodeSkillContinuationIndex.from_library(
+                self._skill_library,
+                platform=getattr(self.backend, "platform", None),
+            )
+        except Exception as exc:
+            self._trajectory_recorder.record_event(
+                "skill_continuation_rejected",
+                current_skill_id=str(getattr(initial_skill, "skill_id", "") or ""),
+                current_skill_name=str(getattr(initial_skill, "name", "") or ""),
+                reason="index_build_failed",
+                error=str(exc),
+                exception_type=type(exc).__name__,
+                platform=getattr(self.backend, "platform", None),
+                app=str(getattr(initial_skill, "app", "") or "") or None,
+            )
+            return None, {}
+        if not tuple(getattr(continuation_index, "candidates", ()) or ()):
+            self._trajectory_recorder.record_event(
+                "skill_continuation_rejected",
+                current_skill_id=str(getattr(initial_skill, "skill_id", "") or ""),
+                current_skill_name=str(getattr(initial_skill, "name", "") or ""),
+                reason="no_candidates",
+                checked_count=0,
+                platform=getattr(self.backend, "platform", None),
+                app=str(getattr(initial_skill, "app", "") or "") or None,
+            )
+            return None, {}
+
+        for hop_index in range(continuation_limit):
+            suffix_skill = await self._find_skill_continuation(
+                current_skill,
+                continuation_index=continuation_index,
+                hop_index=hop_index,
+                excluded_skill_ids=executed_skill_ids,
+            )
+            if suffix_skill is None:
+                break
+
+            skill_id = str(getattr(suffix_skill, "skill_id", "") or "")
+            skill_name = str(getattr(suffix_skill, "name", "") or "")
+            cycle_key = (skill_id, len(tuple(getattr(suffix_skill, "steps", ()) or ())))
+            if cycle_key in seen:
+                self._trajectory_recorder.record_event(
+                    "skill_continuation_rejected",
+                    current_skill_id=str(getattr(current_skill, "skill_id", "") or ""),
+                    current_skill_name=str(getattr(current_skill, "name", "") or ""),
+                    skill_id=skill_id,
+                    skill_name=skill_name,
+                    reason="cycle_detected",
+                )
+                break
+            seen.add(cycle_key)
+
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.SKILL,
+                reason=f"Skill continuation: {skill_name}",
+            )
+            try:
+                result = await self._execute_skill_with_params(task, suffix_skill)
+            except Exception as exc:
+                self._trajectory_recorder.record_event(
+                    "skill_continuation_result",
+                    skill_id=skill_id,
+                    skill_name=skill_name,
+                    state="failed",
+                    error=str(exc),
+                    exception_type=type(exc).__name__,
+                )
+                self._trajectory_recorder.set_phase(
+                    ExecutionPhase.AGENT,
+                    reason="Skill continuation failed, agent completes",
+                )
+                break
+
+            raw_usage = getattr(result, "token_usage", None)
+            if isinstance(raw_usage, dict):
+                for key, value in raw_usage.items():
+                    token_usage[key] = token_usage.get(key, 0) + value
+
+            state_value = getattr(getattr(result, "state", None), "value", None) or str(
+                getattr(result, "state", "")
+            )
+            execution_summary = getattr(result, "execution_summary", None)
+            self._trajectory_recorder.record_event(
+                "skill_continuation_result",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                state=state_value,
+                execution_summary=execution_summary if isinstance(execution_summary, str) else None,
+                error=getattr(result, "error", None),
+                step_count=len(tuple(getattr(suffix_skill, "steps", ()) or ())),
+            )
+            if state_value != "succeeded":
+                self._trajectory_recorder.set_phase(
+                    ExecutionPhase.AGENT,
+                    reason="Skill continuation partially succeeded, agent completes",
+                )
+                break
+
+            if isinstance(execution_summary, str) and execution_summary:
+                summaries.append(execution_summary)
+            current_skill = suffix_skill
+            if skill_id:
+                executed_skill_ids.add(skill_id)
+
+        return ("\n".join(summaries) if summaries else None), token_usage
+
+    async def _find_skill_continuation(
+        self,
+        current_skill: Any,
+        *,
+        continuation_index: Any,
+        hop_index: int,
+        excluded_skill_ids: set[str] | None = None,
+    ) -> Any | None:
+        """Find a suffix skill whose first state contract matches the current page."""
+        current_skill_id = str(getattr(current_skill, "skill_id", "") or "")
+        current_skill_name = str(getattr(current_skill, "name", "") or "")
+        current_app = str(getattr(current_skill, "app", "") or "") or None
+        screenshot_path = (
+            self.artifacts_root
+            / "skill_continuation_gate"
+            / f"continuation_{max(0, int(hop_index))}.png"
+        )
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            observation = await self.backend.observe(
+                screenshot_path,
+                timeout=self.step_timeout,
+            )
+        except Exception as exc:
+            logger.warning("Skill continuation observation failed for %s: %s", current_skill_name, exc)
+            self._trajectory_recorder.record_event(
+                "skill_continuation_rejected",
+                current_skill_id=current_skill_id,
+                current_skill_name=current_skill_name,
+                reason="observe_failed",
+                error=str(exc),
+                platform=getattr(self.backend, "platform", None),
+                app=current_app,
+            )
+            return None
+        observed_app = _clean_observed_app(getattr(observation, "foreground_app", None))
+        effective_app = observed_app or current_app
+        decision = continuation_index.find_next(
+            observation,
+            current_skill_id=current_skill_id,
+            excluded_skill_ids=excluded_skill_ids,
+            app=effective_app,
+        )
+        if decision.candidate is None:
+            self._trajectory_recorder.record_event(
+                "skill_continuation_rejected",
+                current_skill_id=current_skill_id,
+                current_skill_name=current_skill_name,
+                reason=decision.reason,
+                checked_count=decision.checked_count,
+                failed_count=decision.failed_count,
+                unevaluable_count=decision.unevaluable_count,
+                platform=getattr(self.backend, "platform", None),
+                app=effective_app,
+                skill_app=current_app,
+                observed_app=observed_app,
+            )
+            return None
+
+        candidate = decision.candidate
+        suffix_skill = candidate.suffix_skill
+        self._trajectory_recorder.record_event(
+            "skill_continuation_selected",
+            skill_id=suffix_skill.skill_id,
+            skill_name=suffix_skill.name,
+            source_skill_id=candidate.source_skill.skill_id,
+            source_skill_name=candidate.source_skill.name,
+            start_step=candidate.start_step,
+            remaining_steps=len(suffix_skill.steps),
+            reason=decision.reason,
+            checked_count=decision.checked_count,
+            failed_count=decision.failed_count,
+            unevaluable_count=decision.unevaluable_count,
+            platform=getattr(self.backend, "platform", None),
+            app=effective_app,
+            skill_app=current_app,
+            observed_app=observed_app,
+        )
+        return suffix_skill
+
     async def _skill_entry_allows_current_state(self, skill: Any) -> bool:
         """Fail closed on mid-flow skills unless their first contract matches now."""
         steps = tuple(getattr(skill, "steps", ()) or ())
@@ -3239,6 +3589,17 @@ class GuiAgent:
 
         first_step = steps[0]
         first_action = str(getattr(first_step, "action_type", "") or "")
+        if first_action == "open_app" and _skill_entry_targets_android_launcher(skill, first_step):
+            self._trajectory_recorder.record_event(
+                "skill_entry_rejected",
+                skill_id=skill_id,
+                skill_name=skill_name,
+                first_action=first_action,
+                reason="launcher_entry_package",
+                app=str(getattr(skill, "app", "") or "") or None,
+                target=str(getattr(first_step, "target", "") or "") or None,
+            )
+            return False
         if first_action in {"open_app", "open_deeplink", "open_intent"}:
             self._trajectory_recorder.record_event(
                 "skill_entry_accepted",
@@ -3318,7 +3679,7 @@ class GuiAgent:
         LLM to pull matching values from the task string.  Returns partial
         values when some parameters can be inferred deterministically.
         """
-        param_names: list[str] = list(skill.parameters)
+        param_names: list[str] = _skill_param_names(skill)
         if not param_names:
             return {}
         params = {
@@ -3343,6 +3704,18 @@ class GuiAgent:
             )
         except Exception as exc:
             logger.warning("Skill param extraction LLM call failed: %s", exc)
+            recorder = getattr(self, "_trajectory_recorder", None)
+            if recorder is not None:
+                recorder.record_event(
+                    "skill_param_extraction_failed",
+                    skill_id=str(getattr(skill, "skill_id", "") or ""),
+                    skill_name=str(getattr(skill, "name", "") or ""),
+                    reason="llm_call_failed",
+                    error=str(exc),
+                    exception_type=type(exc).__name__,
+                    missing_params=[name for name in param_names if name not in params],
+                    extracted_params=dict(params),
+                )
             return params
         text = (response.content or "").strip()
         match = re.search(r"\{.*\}", text, flags=re.DOTALL)
@@ -3358,6 +3731,17 @@ class GuiAgent:
             except json.JSONDecodeError:
                 pass
         logger.warning("Could not parse skill param extraction response: %r", text[:120])
+        recorder = getattr(self, "_trajectory_recorder", None)
+        if recorder is not None:
+            recorder.record_event(
+                "skill_param_extraction_failed",
+                skill_id=str(getattr(skill, "skill_id", "") or ""),
+                skill_name=str(getattr(skill, "name", "") or ""),
+                reason="parse_failed",
+                response=text[:240],
+                missing_params=[name for name in param_names if name not in params],
+                extracted_params=dict(params),
+            )
         return params
 
     @staticmethod
@@ -3367,8 +3751,69 @@ class GuiAgent:
         if not normalized:
             return None
         quoted = re.search(r"[“\"']([^”\"']{1,80})[”\"']", normalized)
-        if quoted is not None and name in {"search_query", "search_term", "query", "keyword"}:
+        text_like_names = {
+            "search_query",
+            "search_term",
+            "query",
+            "keyword",
+            "title",
+            "subject",
+            "note",
+            "memo",
+            "message",
+            "description",
+            "text",
+            "name",
+            "contact_name",
+            "person",
+            "item",
+        }
+        if quoted is not None and name in text_like_names:
             return quoted.group(1).strip()
+        if name in {"phone", "phone_number", "mobile", "mobile_phone", "tel", "telephone"}:
+            for pattern in (
+                r"(?:手机号|电话号码|联系电话|电话)\s*(?:是|为|:|：)?\s*([+()0-9][0-9()+\-\s]{5,24})",
+                r"(?:phone|mobile|tel(?:ephone)?)\s*(?:number)?\s*(?:is|:)?\s*([+()0-9][0-9()+\-\s]{5,24})",
+            ):
+                match = re.search(pattern, normalized, flags=re.IGNORECASE)
+                if match is not None:
+                    value = re.sub(r"\s+", "", match.group(1)).strip(".,;，。；")
+                    if value:
+                        return value
+            return None
+        if name in {"amount", "price", "cost", "total", "value", "money"}:
+            for pattern in (
+                r"(?:金额|价格|花费|费用|总额|支出)\s*(?:是|为|:|：)?\s*(?:¥|￥|\$)?\s*([0-9]+(?:\.[0-9]+)?)",
+                r"(?:amount|price|cost|total|value)\s*(?:is|:)?\s*(?:\$)?\s*([0-9]+(?:\.[0-9]+)?)",
+                r"(?:¥|￥|\$)\s*([0-9]+(?:\.[0-9]+)?)",
+            ):
+                match = re.search(pattern, normalized, flags=re.IGNORECASE)
+                if match is not None:
+                    return match.group(1).strip()
+            return None
+        if name in {"date", "day"}:
+            match = re.search(
+                r"(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}\s*月\s*\d{1,2}\s*(?:日|号)?|\d{1,2}[-/]\d{1,2})",
+                normalized,
+            )
+            return _clean_inferred_param(match.group(1)) if match else None
+        if name in {"time", "clock_time"}:
+            match = re.search(
+                r"(\d{1,2}\s*[:：]\s*\d{2}(?:\s*(?:AM|PM|am|pm))?|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分?)?)",
+                normalized,
+            )
+            return _clean_inferred_param(match.group(1)) if match else None
+        if name in {"name", "contact_name", "person"}:
+            for pattern in (
+                r"(?:联系人|姓名|名字)\s*(?:是|为|叫|:|：)?\s*([^，,。.!?；;、]{1,40})",
+                r"(?:named|called|name(?:d)?\s+is)\s+([^,.;]{1,60})",
+            ):
+                match = re.search(pattern, normalized, flags=re.IGNORECASE)
+                if match is not None:
+                    value = _clean_inferred_param(match.group(1))
+                    if value:
+                        return value
+            return None
         if name in {"city", "location", "destination", "place", "area"}:
             for pattern in (
                 r"(?:搜索一下|搜一下|搜索|查找|找一下)\s*([^，,。.!?；;、]{2,30}?)(?:周边|附近|的酒店|酒店|民宿)",

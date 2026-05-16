@@ -610,6 +610,40 @@ async def test_adb_backend_open_deeplink_rejects_am_start_error(
 
 
 @pytest.mark.asyncio
+async def test_adb_backend_open_deeplink_retries_without_component(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        "Error: Activity not started, unable to resolve Intent",
+        "Error: Activity not started, unable to resolve Intent",
+        "Status: ok",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    await backend.execute(Action(
+        action_type="open_deeplink",
+        text="xhh://mall/order",
+        component="com.max.xiaoheihe/.RouterActivity",
+    ))
+
+    assert run_mock.await_args_list[0].args == (
+        "shell",
+        "am start -W -a android.intent.action.VIEW -d xhh://mall/order "
+        "-n com.max.xiaoheihe/.RouterActivity",
+    )
+    assert run_mock.await_args_list[1].args == (
+        "shell",
+        "am start -a android.intent.action.VIEW -d xhh://mall/order "
+        "-n com.max.xiaoheihe/.RouterActivity",
+    )
+    assert run_mock.await_args_list[2].args == (
+        "shell",
+        "am start -W -a android.intent.action.VIEW -d xhh://mall/order",
+    )
+
+
+@pytest.mark.asyncio
 async def test_adb_backend_open_intent_uses_restricted_am_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -653,6 +687,33 @@ async def test_adb_backend_open_intent_rejects_invalid_action(
             intent_action="android.intent.action.VIEW;rm -rf /",
         ))
     run_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_adb_backend_open_intent_retries_without_wait_on_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = AdbBackend()
+    run_mock = AsyncMock(side_effect=[
+        asyncio.TimeoutError("timed out"),
+        "Status: ok",
+    ])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    await backend.execute(Action(
+        action_type="open_intent",
+        intent_action="android.intent.action.INSERT",
+        mime_type="vnd.android.cursor.dir/contact",
+    ))
+
+    assert run_mock.await_args_list[0].args == (
+        "shell",
+        "am start -W -a android.intent.action.INSERT -t vnd.android.cursor.dir/contact",
+    )
+    assert run_mock.await_args_list[1].args == (
+        "shell",
+        "am start -a android.intent.action.INSERT -t vnd.android.cursor.dir/contact",
+    )
 
 
 @pytest.mark.asyncio

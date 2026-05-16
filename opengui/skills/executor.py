@@ -35,7 +35,10 @@ from opengui.interfaces import DeviceBackend
 from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.normalization import normalize_app_identifier
-from opengui.skills.state_contract import evaluate_state_contract
+from opengui.skills.state_contract import (
+    evaluate_state_contract_detail,
+    normalize_state_contract,
+)
 
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
@@ -302,6 +305,58 @@ def _should_skip_validation(valid_state: str | None) -> bool:
     lowered = valid_state.strip().lower()
     skip_hints = ("no need to verify", "return true", "skip", "none", "n/a")
     return any(hint in lowered for hint in skip_hints)
+
+
+_VOLATILE_CONTRACT_STATE_FLAGS: frozenset[str] = frozenset({"clickable", "enabled", "focused"})
+
+
+def _can_relax_contract_failure(detail: Any) -> bool:
+    """Allow relaxation only for selector state evidence, never identity anchors."""
+    failed_required = list(getattr(detail, "failed_required", []) or [])
+    unknown_required = list(getattr(detail, "unknown_required", []) or [])
+    for item in failed_required + unknown_required:
+        if isinstance(item, dict) and "anchor" in item:
+            return False
+    return bool(failed_required or unknown_required)
+
+
+def _relax_state_contract_flags(contract: Any) -> dict[str, Any] | None:
+    """Strip volatile UI state flags while preserving app and selector anchors."""
+    normalized = normalize_state_contract(contract)
+    if not normalized:
+        return None
+
+    signature = normalized.get("signature", {})
+    required: list[dict[str, Any]] = []
+    changed = False
+    for element in signature.get("required", []) or []:
+        selector = element.get("selector") if isinstance(element.get("selector"), dict) else {}
+        states = [str(state) for state in (element.get("state") or []) if str(state)]
+        if not selector:
+            required.append(dict(element))
+            continue
+        relaxed_states = [
+            state for state in states if state not in _VOLATILE_CONTRACT_STATE_FLAGS
+        ]
+        if "visible" not in relaxed_states:
+            relaxed_states.append("visible")
+        if relaxed_states != states:
+            changed = True
+        required.append({
+            "selector": dict(selector),
+            "state": relaxed_states,
+        })
+
+    if not changed:
+        return None
+    return normalize_state_contract({
+        "anchor": dict(normalized.get("anchor", {})),
+        "signature": {
+            "required": required,
+            "forbidden": list(signature.get("forbidden", []) or []),
+        },
+        "mask_rules": list(normalized.get("mask_rules", []) or []),
+    })
 
 
 def _normalize_image_scale_ratio(scale_ratio: float | None) -> float:
@@ -781,7 +836,20 @@ class SkillExecutor:
                     step, screenshot, params
                 )
                 _merge_usage(total_token_usage, grounding_usage)
-                result_text = await self.backend.execute(action, timeout=timeout)
+                execution_error: Exception | None = None
+                try:
+                    result_text = await self.backend.execute(action, timeout=timeout)
+                except Exception as exc:
+                    if not post_action_contract:
+                        raise
+                    execution_error = exc
+                    result_text = str(exc)
+                    logger.warning(
+                        "Step %d %s raised %s; validating post-state before failing",
+                        i,
+                        action.action_type,
+                        type(exc).__name__,
+                    )
                 # Allow the UI to settle before the next step's
                 # screenshot / validate / grounding cycle.
                 if action.action_type in {"open_app", "open_deeplink", "open_intent"}:
@@ -809,9 +877,25 @@ class SkillExecutor:
                             break
                         if attempt_index < attempts - 1:
                             await asyncio.sleep(_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS)
+                    if post_valid and execution_error is not None and self.trajectory_recorder is not None:
+                        self.trajectory_recorder.record_event(
+                            "skill_action_error_post_state_ok",
+                            skill_id=skill.skill_id,
+                            skill_name=skill.name,
+                            step_index=i,
+                            action_type=action.action_type,
+                            error=str(execution_error),
+                            exception_type=type(execution_error).__name__,
+                        )
                     if not post_valid:
                         step_dur = time.monotonic() - step_start
                         state_description = step.valid_state or "state_contract"
+                        error_text = f"post-state not reached: {state_description}"
+                        if execution_error is not None:
+                            error_text = (
+                                f"execution failed and post-state not reached: "
+                                f"{state_description}: {execution_error}"
+                            )
                         step_result = StepResult(
                             step_index=i,
                             action=action,
@@ -822,7 +906,7 @@ class SkillExecutor:
                             recovery_attempted=recovery_result is not None,
                             recovery_result=recovery_result,
                             action_summary=f"{action.action_type} on {step.target or 'target'}",
-                            error=f"post-state not reached: {state_description}",
+                            error=error_text,
                             token_usage=dict(validate_usage),
                             duration_s=step_dur,
                             validate_duration_s=validate_dur,
@@ -1010,18 +1094,57 @@ class SkillExecutor:
         coordinates instead of LLM grounding), not state validation. A fixed
         step with a meaningful ``valid_state`` still requires verification.
         """
-        contract_result = evaluate_state_contract(
+        contract_detail = evaluate_state_contract_detail(
             step.state_contract,
             observation=observation,
         )
-        if contract_result is not None:
+        if contract_detail.passed is not None:
+            if contract_detail.passed is False:
+                relaxed_contract = _relax_state_contract_flags(step.state_contract)
+                if relaxed_contract is not None and _can_relax_contract_failure(contract_detail):
+                    relaxed_detail = evaluate_state_contract_detail(
+                        relaxed_contract,
+                        observation=observation,
+                    )
+                    if relaxed_detail.passed is True:
+                        logger.debug(
+                            "State contract relaxed volatile flags for step %s",
+                            step.action_type,
+                        )
+                        if self.trajectory_recorder is not None:
+                            self.trajectory_recorder.record_event(
+                                "skill_state_contract_relaxed",
+                                action_type=step.action_type,
+                                original_reason=contract_detail.reason,
+                                relaxed_score=round(relaxed_detail.score, 3),
+                            )
+                        return True, {}, None
             logger.debug(
                 "State contract %s for step %s",
-                "passed" if contract_result else "failed",
+                "passed" if contract_detail.passed else "failed",
                 step.action_type,
             )
-            return contract_result, {}, None
+            return bool(contract_detail.passed), {}, None
         if step.state_contract is not None:
+            relaxed_contract = _relax_state_contract_flags(step.state_contract)
+            if relaxed_contract is not None and _can_relax_contract_failure(contract_detail):
+                relaxed_detail = evaluate_state_contract_detail(
+                    relaxed_contract,
+                    observation=observation,
+                )
+                if relaxed_detail.passed is True:
+                    logger.debug(
+                        "State contract relaxed unevaluable volatile flags for step %s",
+                        step.action_type,
+                    )
+                    if self.trajectory_recorder is not None:
+                        self.trajectory_recorder.record_event(
+                            "skill_state_contract_relaxed",
+                            action_type=step.action_type,
+                            original_reason=contract_detail.reason,
+                            relaxed_score=round(relaxed_detail.score, 3),
+                        )
+                    return True, {}, None
             logger.debug(
                 "State contract could not be evaluated for step %s; failing closed",
                 step.action_type,

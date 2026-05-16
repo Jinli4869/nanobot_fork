@@ -1325,6 +1325,7 @@ async def test_postrun_code_first_extraction_writes_code_not_graph_or_skill_json
 
     result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
     assert result["status"] == "processed_code"
+    assert result["learning_mode"] == "failure_prefix"
     assert result["compiled_skill_ids"] == [skill_id]
     assert "open_orders" in result["updated_functions"]
     assert (tmp_path / "store" / "skill_graph_code.py").exists()
@@ -1388,7 +1389,7 @@ async def test_postrun_runs_deeplink_before_code_extraction_after_evaluation(tmp
 
 
 @pytest.mark.asyncio
-async def test_postrun_skips_code_extraction_when_agent_did_not_succeed(tmp_path: Path) -> None:
+async def test_postrun_extracts_flat_prefix_when_agent_did_not_succeed(tmp_path: Path) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(trace_path, [{"type": "result", "success": False, "error": "max_steps"}])
     processor = PostRunProcessor(
@@ -1419,8 +1420,17 @@ async def test_postrun_skips_code_extraction_when_agent_did_not_succeed(tmp_path
         order.append("deeplink")
         return {"status": "skipped", "reason": "task_not_successful"}
 
-    async def extract(*args: Any, **kwargs: Any) -> None:
-        raise AssertionError("code extraction should not run for agent-failed trajectories")
+    async def extract(
+        path: Path,
+        is_success: bool,
+        platform: str,
+        **kwargs: Any,
+    ) -> None:
+        assert path == trace_path
+        assert is_success is False
+        assert platform == "android"
+        assert kwargs["agent_success"] is False
+        order.append("skill")
 
     processor._summarize_trajectory = summarize  # type: ignore[method-assign]
     processor._run_evaluation = evaluate  # type: ignore[method-assign]
@@ -1429,11 +1439,7 @@ async def test_postrun_skips_code_extraction_when_agent_did_not_succeed(tmp_path
 
     await processor._run_all(trace_path, is_success=False, platform="android", task="open profile")
 
-    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
-    assert order == ["deeplink"]
-    assert result["status"] == "skipped"
-    assert result["reason"] == "agent_not_successful"
-    assert result["agent_success"] is False
+    assert order == ["deeplink", "skill"]
 
 
 @pytest.mark.asyncio
@@ -2805,6 +2811,41 @@ async def open_orders(device):
     assert [step.action_type for step in compiled.skills[0].steps] == ["open_deeplink", "tap"]
     assert normalized.report["entrypoint_normalized_functions"] == []
     assert normalized.source.count("open_app") == 0
+
+
+def test_entrypoint_normalization_does_not_open_launcher_package() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.apps.nexuslauncher", platform="android")
+async def open_app_drawer_for_clock(device):
+    await action("swipe", target="screen", state_contract=C(app="com.google.android.apps.nexuslauncher", required=[R(visible=True)]))
+'''
+
+    normalized = normalize_code_skill_entrypoints(source)
+    compiled = compile_code_skills(normalized.source)
+
+    assert compiled.errors == []
+    assert [step.action_type for step in compiled.skills[0].steps] == ["swipe"]
+    assert normalized.report["entrypoint_normalized_functions"] == []
+    assert "await action('open_app'" not in normalized.source
+
+
+def test_code_skill_repository_does_not_index_launcher_package_skills(tmp_path: Path) -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.apps.nexuslauncher", platform="android")
+async def open_app_drawer_for_clock(device):
+    await action("swipe", target="screen", state_contract=C(app="com.google.android.apps.nexuslauncher", required=[R(visible=True)]))
+'''
+
+    repository = CodeSkillRepository(tmp_path)
+    update = repository.add_code(source)
+
+    assert update.errors == ()
+    assert update.skills == ()
+    assert repository.list_all(platform="android") == []
 
 
 def test_entrypoint_normalization_strips_open_app_state_contract() -> None:

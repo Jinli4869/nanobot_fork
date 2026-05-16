@@ -1,6 +1,11 @@
 """opengui.skills — skill extraction, retrieval, and execution."""
 
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.continuation import (
+    CodeSkillContinuationIndex,
+    SkillContinuationCandidate,
+    SkillContinuationDecision,
+)
 from opengui.skills.executor import (
     ExecutionState,
     LLMStateValidator,
@@ -30,6 +35,7 @@ from opengui.skills.library import SkillLibrary
 
 __all__ = [
     "EdgeStats",
+    "CodeSkillContinuationIndex",
     "ExecutionState",
     "GoalNodeResolver",
     "GraphEdge",
@@ -41,6 +47,8 @@ __all__ = [
     "NodeStats",
     "PathCompiler",
     "Skill",
+    "SkillContinuationCandidate",
+    "SkillContinuationDecision",
     "SkillExecutionResult",
     "SkillExecutor",
     "SkillExtractor",

@@ -108,6 +108,35 @@ _ANDROID_COMPONENT_RE = re.compile(
 )
 _ANDROID_INTENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]*$")
 _ANDROID_EXTRA_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_AM_START_FAILURE_MARKERS = (
+    "error:",
+    "exception",
+    "unable to resolve intent",
+    "activity not started",
+)
+
+
+def _am_start_output_failed(output: str) -> bool:
+    lowered = (output or "").lower()
+    return any(marker in lowered for marker in _AM_START_FAILURE_MARKERS)
+
+
+def _without_am_start_wait(remote_args: list[str]) -> list[str]:
+    return [arg for arg in remote_args if arg != "-W"]
+
+
+def _without_am_start_option(remote_args: list[str], option: str) -> list[str]:
+    trimmed: list[str] = []
+    skip_next = False
+    for arg in remote_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == option:
+            skip_next = True
+            continue
+        trimmed.append(arg)
+    return trimmed
 
 
 def _read_png_size(path: Path) -> tuple[int, int] | None:
@@ -253,11 +282,16 @@ class ScrcpyFrameSource:
         if initial_frame is not None:
             self._set_latest_frame(initial_frame)
 
-        listener = getattr(client, "start_frame_listener", None)
-        if callable(listener):
-            self._listener = listener(self._on_frame)
-        else:
-            threading.Thread(target=self._listen_forever, daemon=True).start()
+        # py-scrcpy-sdk's helper listener lets thread exceptions escape to
+        # stderr. Keep the listener under our control so reader failures are
+        # surfaced through save_latest(), where AdbBackend can restart or
+        # fall back to adb screencap.
+        self._listener = threading.Thread(
+            target=self._listen_forever,
+            name="opengui-scrcpy-frame-listener",
+            daemon=True,
+        )
+        self._listener.start()
 
         self._started = True
 
@@ -328,10 +362,10 @@ class ScrcpyFrameSource:
                 ts = self._latest_ts
                 reader_error = self._reader_error
                 now = time.time()
-                if frame is not None and (max_age_s <= 0 or now - ts <= max_age_s):
-                    break
                 if reader_error is not None:
                     raise RuntimeError("scrcpy frame reader failed") from reader_error
+                if frame is not None and (max_age_s <= 0 or now - ts <= max_age_s):
+                    break
                 remaining = deadline - now
                 if remaining <= 0:
                     break
@@ -587,7 +621,11 @@ class AdbBackend:
                 raise AdbError("No Android device found. Connect a device or start an emulator.")
 
         if self._use_scrcpy:
-            await self._ensure_scrcpy_started()
+            try:
+                await self._ensure_scrcpy_started()
+            except Exception as exc:
+                logger.warning("ADB scrcpy preflight failed; falling back to screencap: %s", exc)
+                self._use_scrcpy = False
 
     # ------------------------------------------------------------------
     # App discovery
@@ -650,7 +688,11 @@ class AdbBackend:
         return await self._observe_via_screencap(screenshot_path, timeout=timeout)
 
     async def _observe_via_scrcpy(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
-        await self._ensure_scrcpy_started()
+        try:
+            await self._ensure_scrcpy_started()
+        except Exception as exc:
+            logger.warning("ADB scrcpy capture unavailable; falling back to screencap: %s", exc)
+            return await self._observe_via_screencap(screenshot_path, timeout=timeout)
         if self._frame_source is None:
             raise AdbError("ADB scrcpy capture is enabled but no frame source is configured.")
 
@@ -1156,20 +1198,11 @@ class AdbBackend:
             if not _ANDROID_PACKAGE_RE.match(action.package):
                 raise ValueError(f"Invalid Android package for open_deeplink: {action.package!r}")
             remote_args.extend(["-p", action.package])
-        # `adb shell` still routes through the device shell. Quote each
-        # fixed-position argument so URI query separators cannot split the
-        # restricted am-start command or swallow later -n/-p arguments.
-        remote_cmd = " ".join(shlex.quote(arg) for arg in remote_args)
-        output = await self._run("shell", remote_cmd, timeout=timeout)
-        lowered = output.lower()
-        if (
-            "error:" in lowered
-            or "exception" in lowered
-            or "unable to resolve intent" in lowered
-            or "activity not started" in lowered
-        ):
-            raise AdbError(f"open_deeplink failed: {output}")
-        return output
+        return await self._run_am_start_with_fallbacks(
+            remote_args,
+            timeout=timeout,
+            label="open_deeplink",
+        )
 
     async def _open_intent(self, action: Action, *, timeout: float) -> str:
         intent_action = action.intent_action or ""
@@ -1212,17 +1245,55 @@ class AdbBackend:
                 if "\x00" in text_value:
                     raise ValueError(f"open_intent extra {key!r} must not contain NUL bytes")
                 remote_args.extend(["--es", key, text_value])
-        remote_cmd = " ".join(shlex.quote(arg) for arg in remote_args)
-        output = await self._run("shell", remote_cmd, timeout=timeout)
-        lowered = output.lower()
-        if (
-            "error:" in lowered
-            or "exception" in lowered
-            or "unable to resolve intent" in lowered
-            or "activity not started" in lowered
-        ):
-            raise AdbError(f"open_intent failed: {output}")
-        return output
+        return await self._run_am_start_with_fallbacks(
+            remote_args,
+            timeout=timeout,
+            label="open_intent",
+        )
+
+    async def _run_am_start_with_fallbacks(
+        self,
+        remote_args: list[str],
+        *,
+        timeout: float,
+        label: str,
+    ) -> str:
+        """Run ``am start`` with conservative fallbacks for fragile launchers."""
+        variants: list[tuple[str, list[str]]] = []
+
+        def add_variant(name: str, args: list[str]) -> None:
+            key = tuple(args)
+            if any(tuple(existing) == key for _, existing in variants):
+                return
+            variants.append((name, args))
+
+        add_variant("primary", list(remote_args))
+        add_variant("no_wait", _without_am_start_wait(remote_args))
+        if "-n" in remote_args:
+            implicit_args = _without_am_start_option(remote_args, "-n")
+            add_variant("implicit", implicit_args)
+            add_variant("implicit_no_wait", _without_am_start_wait(implicit_args))
+
+        errors: list[str] = []
+        for variant_name, args in variants:
+            # `adb shell` still routes through the device shell. Quote each
+            # fixed-position argument so URI query separators cannot split the
+            # restricted am-start command or swallow later -n/-p arguments.
+            remote_cmd = " ".join(shlex.quote(arg) for arg in args)
+            try:
+                output = await self._run("shell", remote_cmd, timeout=timeout)
+            except (AdbError, TimeoutError, asyncio.TimeoutError) as exc:
+                errors.append(f"{variant_name}: {type(exc).__name__}: {exc}")
+                continue
+            if _am_start_output_failed(output):
+                errors.append(f"{variant_name}: {output}")
+                continue
+            if variant_name != "primary":
+                logger.info("%s succeeded via %s fallback", label, variant_name)
+            return output
+
+        detail = " | ".join(errors) if errors else "no launch variants attempted"
+        raise AdbError(f"{label} failed: {detail}")
 
     def _resolve_x(self, value: float, *, relative: bool) -> int:
         if relative:

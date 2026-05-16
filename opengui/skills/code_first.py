@@ -2102,6 +2102,12 @@ def _direct_action_type(stmt: ast.stmt) -> str:
 
 
 _ENTRY_ACTION_TYPES = frozenset({"open_app", "open_deeplink", "open_intent"})
+_ANDROID_LAUNCHER_PACKAGES = frozenset({
+    "com.android.launcher",
+    "com.android.launcher3",
+    "com.google.android.apps.nexuslauncher",
+    "com.miui.home",
+})
 
 
 def _should_normalize_android_skill_entrypoint(skill: Skill) -> bool:
@@ -2109,6 +2115,8 @@ def _should_normalize_android_skill_entrypoint(skill: Skill) -> bool:
     if platform != "android":
         return False
     normalized_app = normalize_app_identifier(platform, str(getattr(skill, "app", "") or ""))
+    if normalized_app in _ANDROID_LAUNCHER_PACKAGES:
+        return False
     return bool(normalized_app and normalized_app != "unknown" and "." in normalized_app)
 
 
@@ -3788,6 +3796,8 @@ def _normalize_compiled_skills(skills: list[Skill]) -> list[Skill]:
     normalized: list[Skill] = []
     for skill in skills:
         skill = normalize_skill_app(skill)
+        if _is_android_launcher_skill(skill):
+            continue
         steps = []
         for step in skill.steps:
             state_contract = normalize_state_contract(step.state_contract)
@@ -3798,6 +3808,31 @@ def _normalize_compiled_skills(skills: list[Skill]) -> list[Skill]:
             skill = replace(skill, steps=tuple(steps))
         normalized.append(skill)
     return normalized
+
+
+def _is_android_launcher_skill(skill: Skill) -> bool:
+    platform = str(getattr(skill, "platform", "") or "").strip().lower()
+    if platform != "android":
+        return False
+    app = normalize_app_identifier(platform, str(getattr(skill, "app", "") or ""))
+    if app not in _ANDROID_LAUNCHER_PACKAGES:
+        return False
+    steps = tuple(getattr(skill, "steps", ()) or ())
+    if not steps:
+        return True
+    first_step = steps[0]
+    first_action = str(getattr(first_step, "action_type", "") or "")
+    if first_action != "open_app":
+        return True
+    target = normalize_app_identifier(platform, str(getattr(first_step, "target", "") or ""))
+    fixed_values = getattr(first_step, "fixed_values", None)
+    if isinstance(fixed_values, dict):
+        for key in ("text", "package", "app", "target"):
+            value = fixed_values.get(key)
+            if value:
+                target = normalize_app_identifier(platform, str(value))
+                break
+    return target in _ANDROID_LAUNCHER_PACKAGES
 
 
 def _normalize_app_filter(platform: str | None, app: str | None) -> str | None:

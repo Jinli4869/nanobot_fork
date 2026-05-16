@@ -344,6 +344,10 @@ def _short_page_summary(profile: dict[str, Any]) -> str | None:
     return " | ".join(parts)[:220]
 
 
+def _learning_mode(is_success: bool) -> str:
+    return "success_full" if is_success else "failure_prefix"
+
+
 @dataclass
 class EvaluationConfig:
     """Mirrors the evaluation subset of the host config."""
@@ -452,23 +456,6 @@ class PostRunProcessor:
             evaluation_result=evaluation_result,
             agent_success=is_success,
         )
-        if is_success is False:
-            self._write_extraction_result(trace_path, {
-                "status": "skipped",
-                "reason": "agent_not_successful",
-                "trace": str(trace_path),
-                "is_success": effective_success,
-                "agent_success": is_success,
-                "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
-                "platform": platform,
-                "updated_functions": [],
-                "compiled_skill_ids": [],
-                "graph_synced": False,
-                "code_graph_synced": False,
-            })
-            if summary:
-                logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
-            return
         await self._extract_skill(
             trace_path,
             effective_success,
@@ -515,6 +502,7 @@ class PostRunProcessor:
             return None
         if not trace_path.exists():
             return None
+        learning_mode = _learning_mode(is_success)
 
         # Skip runs cut short by a detector or infra fault — stagnation (repeat
         # action/screen), step timeout, intervention cancel, preflight error.
@@ -533,6 +521,7 @@ class PostRunProcessor:
                 "trace": str(trace_path),
                 "is_success": is_success,
                 "platform": platform,
+                "learning_mode": learning_mode,
                 "reason": reason,
                 "total_steps": result_event.get("total_steps"),
             })
@@ -552,6 +541,7 @@ class PostRunProcessor:
                 "agent_success": agent_success,
                 "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                 "platform": platform,
+                "learning_mode": learning_mode,
                 **completed_reuse,
             })
             return None
@@ -561,8 +551,8 @@ class PostRunProcessor:
             CodeSkillLibrary,
             CodeSkillRepository,
             TraceSegmenter,
-            build_visual_guarded_code_fallback,
             _load_events,
+            build_visual_guarded_code_fallback,
             canonicalize_code_actions_from_events,
             filter_code_to_contract_complete,
             normalize_code_skill_entrypoints,
@@ -583,6 +573,7 @@ class PostRunProcessor:
                     "agent_success": agent_success,
                     "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                     "platform": platform,
+                    "learning_mode": learning_mode,
                     "updated_functions": [],
                     "compiled_skill_ids": [],
                     "graph_synced": False,
@@ -620,6 +611,7 @@ class PostRunProcessor:
                         "screenshots_used": [],
                         "action_sequence": {},
                         "contract_quality": {},
+                        "learning_mode": learning_mode,
                         "rejected_reason": None,
                     })
 
@@ -817,6 +809,7 @@ class PostRunProcessor:
                     "agent_success": agent_success,
                     "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                     "platform": platform,
+                    "learning_mode": learning_mode,
                     "attempts": all_attempts,
                     "updated_functions": [],
                     "compiled_skill_ids": [],
@@ -838,6 +831,7 @@ class PostRunProcessor:
                 "agent_success": agent_success,
                 "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                 "platform": platform,
+                "learning_mode": learning_mode,
                 "updated_functions": updated_functions,
                 "compiled_skill_ids": compiled_skill_ids,
                 "graph_synced": graph_synced,
@@ -862,6 +856,7 @@ class PostRunProcessor:
                 "agent_success": agent_success,
                 "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                 "platform": platform,
+                "learning_mode": learning_mode,
             })
             return None
 
@@ -985,6 +980,7 @@ class PostRunProcessor:
                 "agent_success": agent_success,
                 "evaluation_success": evaluation_result.get("success") if isinstance(evaluation_result, dict) else None,
                 "platform": platform,
+                "learning_mode": _learning_mode(is_success),
                 "updated_functions": [],
                 "compiled_skill_ids": [],
                 "graph_synced": False,
