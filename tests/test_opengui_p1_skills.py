@@ -237,8 +237,14 @@ class _CapturingIOSBackend:
 class _FakeSkillLibrary:
     """Minimal fake SkillLibrary exposing only search() for reuser tests."""
 
-    def __init__(self, results: list[tuple[Skill, float]]) -> None:
+    def __init__(
+        self,
+        results: list[tuple[Skill, float]],
+        *,
+        feedback_by_id: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
         self._results = results
+        self._feedback_by_id = feedback_by_id or {}
         self.updated: list[tuple[str, Skill]] = []
         self.removed: list[str] = []
         self.list_all_calls = 0
@@ -271,6 +277,9 @@ class _FakeSkillLibrary:
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         self.updated.append((skill_id, updated_skill))
         return True
+
+    def feedback_for_skill(self, skill_id: str) -> dict[str, Any]:
+        return dict(self._feedback_by_id.get(skill_id, {}))
 
     def remove(self, skill_id: str) -> bool:
         self.removed.append(skill_id)
@@ -1322,11 +1331,13 @@ async def test_executor_failing_state_contract_blocks_before_llm_validator(tmp_p
         platform="android",
         extra={"visible_text": ["Home", "Settings"], "clickable_text": ["Settings"]},
     ))
+    recorder = _CapturingRecorder()
 
     executor = SkillExecutor(
         backend=DryRunBackend(),
         state_validator=validator,
         screenshot_provider=provider,
+        trajectory_recorder=recorder,
         stop_on_failure=True,
     )
     result = await executor.execute(skill)
@@ -1335,6 +1346,17 @@ async def test_executor_failing_state_contract_blocks_before_llm_validator(tmp_p
     assert result.step_results[0].valid_state_check is False
     assert result.step_results[0].validate_duration_s is None
     assert validator._returns == [True]
+    failure_event = next(payload for event, payload in recorder.events if event == "skill_step")
+    assert failure_event["observation"]["foreground_app"] == "com.example.app"
+    assert failure_event["screenshot_path"] == str(screenshot)
+    assert failure_event["contract_eval_detail"]["reason"] in {
+        "failed_required",
+        "unknown_required",
+    }
+    assert (
+        failure_event["contract_eval_detail"]["failed_required"]
+        or failure_event["contract_eval_detail"]["unknown_required"]
+    )
 
 
 async def test_executor_state_contract_blocks_without_valid_state(tmp_path: Path) -> None:
@@ -3029,6 +3051,43 @@ async def test_skill_reuser_rejects_when_selector_returns_null() -> None:
     assert len(judge_llm.messages) == 1
     assert "Candidate One" in judge_llm.messages[0][0]["content"]
     assert "Candidate Two" in judge_llm.messages[0][0]["content"]
+
+
+async def test_skill_reuser_prompts_and_rejects_negative_feedback() -> None:
+    judge_llm = _ScriptedLLM([
+        '{"selected_skill_id": "pause-stopwatch", "end_step": 1, "reason": "looks close"}'
+    ])
+    reuser = SkillReuser(
+        llm=judge_llm,
+        threshold=0.1,
+        auto_accept_threshold=0.98,
+    )
+    library = _FakeSkillLibrary(
+        [
+            (
+                _make_skill(
+                    "pause-stopwatch",
+                    "Pause Stopwatch",
+                    "Pause a running stopwatch.",
+                    action_types=["open_app", "tap"],
+                ),
+                0.99,
+            ),
+        ],
+        feedback_by_id={
+            "pause-stopwatch": {
+                "negative_tasks": ["Run the stopwatch"],
+                "failure_counts": {"wrong_skill_selected": 1},
+            }
+        },
+    )
+
+    result = await reuser.find("Run the stopwatch", library, platform="android")
+
+    assert result is None
+    prompt = judge_llm.messages[0][0]["content"]
+    assert "negative_tasks=Run the stopwatch" in prompt
+    assert "wrong_skill_selected:1" in prompt
 
 
 @pytest.mark.asyncio

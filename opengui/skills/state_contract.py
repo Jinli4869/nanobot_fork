@@ -691,6 +691,10 @@ def _element_score(element: dict[str, Any], index: "_UiIndex") -> float | None:
     if node_score is not None:
         return node_score
 
+    flat_state_score = _selector_flat_state_score(fields, states, index)
+    if flat_state_score is not None:
+        return flat_state_score
+
     if any(state in states for state in ("clickable", "focused", "enabled")):
         return None
     if "scrollable" in states and not fields:
@@ -779,6 +783,74 @@ def _selector_node_score(fields: list[tuple[str, str]], index: "_UiIndex") -> fl
     for node in index.ui_nodes:
         best = max(best, _score_node_fields(node, fields))
     return best
+
+
+def _selector_flat_state_score(
+    fields: list[tuple[str, str]],
+    states: set[str],
+    index: "_UiIndex",
+) -> float | None:
+    if not fields or not states:
+        return None
+    if any(state == "scrollable" for state in states):
+        return None
+
+    selector_score = _selector_value_score_without_nodes(fields, index)
+    if selector_score is None or selector_score <= 0:
+        return None
+
+    scores = [selector_score]
+    for state in states:
+        if state == "visible":
+            scores.append(selector_score)
+        elif state == "clickable":
+            state_score = _selector_flat_text_score(fields, index.clickable_text)
+            if state_score is None:
+                return None
+            scores.append(state_score)
+        elif state == "focused":
+            state_score = _selector_flat_text_score(fields, index.focused_text)
+            if state_score is None:
+                return None
+            scores.append(state_score)
+        elif state == "enabled":
+            if not index.has_enabled_evidence:
+                return None
+            state_score = _selector_flat_text_score(fields, index.enabled_text)
+            if state_score is None:
+                return None
+            scores.append(state_score)
+    return min(scores)
+
+
+def _selector_value_score_without_nodes(
+    fields: list[tuple[str, str]],
+    index: "_UiIndex",
+) -> float | None:
+    scores: list[float] = []
+    for key, value in fields:
+        score = _selector_field_score(key, value, index)
+        if score is None:
+            return None
+        scores.append(score)
+    return min(scores) if scores else 1.0
+
+
+def _selector_flat_text_score(fields: list[tuple[str, str]], labels: list[str]) -> float | None:
+    if not labels:
+        return None
+    scores: list[float] = []
+    for key, value in fields:
+        if key in {"text", "content_desc"}:
+            score = _selector_text_score(key, value, labels)
+        elif key in {"resource_id", "class", "xpath"}:
+            score = _exact_selector_score(value, labels)
+        else:
+            score = 0.0
+        if score <= 0:
+            return None
+        scores.append(score)
+    return min(scores) if scores else None
 
 
 def _score_node_fields(node: dict[str, Any], fields: list[tuple[str, str]]) -> float:

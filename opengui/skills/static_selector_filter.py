@@ -52,6 +52,7 @@ _STRUCTURAL_TEXTS = {
 
 _STRUCTURAL_RESOURCE_RE = re.compile(
     r"(^|_)(nav|tab|tabs|toolbar|appbar|actionbar|menu|btn|button|search|"
+    r"digit|digits|key|keys|keypad|keyboard|number|num|"
     r"hotel|htl|query|querybox|keyword|keybox|city|date|filter|"
     r"settings|home|profile|mine|me|order|orders|cart|mall|back|close|"
     r"bottom|top|rb|rg|radio|checkbox|switch|edit|input|wifi|wi_fi|network)($|_)",

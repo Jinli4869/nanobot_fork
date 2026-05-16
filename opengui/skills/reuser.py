@@ -24,6 +24,8 @@ import typing
 from dataclasses import replace
 from typing import Any
 
+from opengui.skills.evolution import feedback_summary_for_prompt, feedback_task_similarity
+
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
     from opengui.trajectory.recorder import TrajectoryRecorder
@@ -45,6 +47,8 @@ Rules:
 - end_step is 1-based and inclusive. Use the full step count only when every step is relevant.
 - If the task has no app-specific requirement, return null to avoid false positives.
 - Do not choose a candidate only because it shares generic words such as open, search, tap, or settings.
+- Do not choose a candidate when feedback marks a similar task as negative for that skill.
+- Prefer candidates marked preferred for a similar task when their steps are relevant.
 
 Reply with JSON only:
 {{"selected_skill_id": "skill-id-or-null", "end_step": 1, "reason": "short reason"}}
@@ -112,7 +116,8 @@ class SkillReuser:
                     threshold=self._threshold)
             return None
 
-        selection = await self._select(task, candidates)
+        feedback_by_id = _feedback_by_skill_id(library, candidates)
+        selection = await self._select(task, candidates, feedback_by_id=feedback_by_id)
         selection_timing = dict(self._last_selection_timing)
         if selection is None:
             _record(trajectory_recorder, "skill_search",
@@ -133,6 +138,16 @@ class SkillReuser:
             return None
 
         skill, score = selected
+        selected_feedback = feedback_by_id.get(selected_skill_id, {})
+        if (
+            feedback_task_similarity(task, selected_feedback.get("negative_tasks")) >= 0.72
+            and feedback_task_similarity(task, selected_feedback.get("preferred_for_tasks")) < 0.72
+        ):
+            _record(trajectory_recorder, "skill_search",
+                    source="reuser", matched=False, reason="negative_feedback_rejected",
+                    selected_skill_id=selected_skill_id,
+                    candidates_checked=len(candidates))
+            return None
         step_count = len(getattr(skill, "steps", ()) or ())
         if step_count > 0:
             end_step = max(1, min(end_step or step_count, step_count))
@@ -169,14 +184,20 @@ class SkillReuser:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _select(self, task: str, candidates: list[tuple[Any, float]]) -> tuple[str, int | None, str] | None:
+    async def _select(
+        self,
+        task: str,
+        candidates: list[tuple[Any, float]],
+        *,
+        feedback_by_id: dict[str, dict[str, Any]] | None = None,
+    ) -> tuple[str, int | None, str] | None:
         """Ask the LLM to choose one candidate prefix.
 
         Returns ``(skill_id, end_step, reason)`` or ``None`` on rejection/error.
         """
         prompt = _SELECTION_PROMPT.format(
             task=task,
-            candidates=_format_candidates(candidates),
+            candidates=_format_candidates(candidates, feedback_by_id=feedback_by_id or {}),
         )
         messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
         self._last_selection_timing = {}
@@ -215,14 +236,21 @@ class SkillReuser:
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-def _format_candidates(candidates: list[tuple[Any, float]]) -> str:
+def _format_candidates(
+    candidates: list[tuple[Any, float]],
+    *,
+    feedback_by_id: dict[str, dict[str, Any]] | None = None,
+) -> str:
     lines: list[str] = []
     for index, (skill, score) in enumerate(candidates, 1):
         parameters = tuple(getattr(skill, "parameters", ()) or ())
         parameter_text = ", ".join(parameters) if parameters else "(none)"
+        skill_id = getattr(skill, "skill_id", "")
+        feedback = (feedback_by_id or {}).get(skill_id, {})
+        feedback_text = feedback_summary_for_prompt(feedback)
         lines.extend([
             f"Candidate {index}:",
-            f"  skill_id: {getattr(skill, 'skill_id', '')}",
+            f"  skill_id: {skill_id}",
             f"  score: {score:.4f}",
             f"  name: {getattr(skill, 'name', '')}",
             f"  app: {getattr(skill, 'app', '')}",
@@ -231,7 +259,28 @@ def _format_candidates(candidates: list[tuple[Any, float]]) -> str:
             "  steps:",
             _format_steps(skill),
         ])
+        if feedback_text:
+            lines.append(f"  feedback: {feedback_text}")
     return "\n".join(lines)
+
+
+def _feedback_by_skill_id(library: Any, candidates: list[tuple[Any, float]]) -> dict[str, dict[str, Any]]:
+    get_feedback = getattr(library, "feedback_for_skill", None)
+    if not callable(get_feedback):
+        return {}
+    feedback: dict[str, dict[str, Any]] = {}
+    for skill, _score in candidates:
+        skill_id = getattr(skill, "skill_id", "")
+        if not skill_id:
+            continue
+        try:
+            value = get_feedback(skill_id)
+        except Exception:
+            logger.debug("SkillReuser: feedback lookup failed for %s", skill_id, exc_info=True)
+            continue
+        if isinstance(value, dict) and value:
+            feedback[str(skill_id)] = value
+    return feedback
 
 
 def _format_steps(skill: Any) -> str:

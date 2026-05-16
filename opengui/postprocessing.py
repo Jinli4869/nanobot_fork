@@ -30,7 +30,7 @@ import asyncio
 import json
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -383,7 +383,7 @@ class PostRunProcessor:
         enable_skill_extraction: bool = False,
         enable_deeplink_skill_extraction: bool = False,
         deeplink_probe_backend: Any | None = None,
-        evaluation: EvaluationConfig = field(default_factory=EvaluationConfig),
+        evaluation: EvaluationConfig | None = None,
     ) -> None:
         self._llm = llm
         self._merge_llm = merge_llm
@@ -393,7 +393,7 @@ class PostRunProcessor:
         self._enable_skill_extraction = enable_skill_extraction
         self._enable_deeplink_skill_extraction = enable_deeplink_skill_extraction
         self._deeplink_probe_backend = deeplink_probe_backend
-        self._evaluation = evaluation
+        self._evaluation = evaluation or EvaluationConfig()
         self._pending: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
@@ -456,6 +456,18 @@ class PostRunProcessor:
             evaluation_result=evaluation_result,
             agent_success=is_success,
         )
+        evolution_result = await self._evolve_failed_skill(
+            trace_path,
+            effective_success,
+            platform,
+            task=task,
+            evaluation_result=evaluation_result,
+            agent_success=is_success,
+        )
+        if evolution_result is not None and evolution_result.get("status") != "no_failure_case":
+            if summary:
+                logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
+            return
         await self._extract_skill(
             trace_path,
             effective_success,
@@ -559,6 +571,7 @@ class PostRunProcessor:
             repair_code_contracts_from_events,
         )
         from opengui.skills.code_graph import compile_code_skills
+        from opengui.skills.code_graph_projection import project_graph_code_from_events
 
         try:
             extractor = CodeSkillExtractor(llm=self._llm)
@@ -733,8 +746,27 @@ class PostRunProcessor:
                             segment_results.append(segment_record)
                             continue
                         used_visual_guarded_fallback = True
+
+                    repository_source = normalized.source
+                    if filtered_compile.skills:
+                        projection = project_graph_code_from_events(
+                            repository_source,
+                            list(segment.events),
+                        )
+                        if projection.emitted_transitions:
+                            repository_source = projection.source
+                            projection_report = projection.to_dict()
+                            segment_record["contract_quality"] = {
+                                **segment_record["contract_quality"],
+                                "graph_projection": projection_report,
+                            }
+                            segment_record["action_sequence"] = {
+                                **segment_record["action_sequence"],
+                                "graph_projection_emitted_states": len(projection.emitted_states),
+                                "graph_projection_emitted_transitions": len(projection.emitted_transitions),
+                            }
                     update = repository.add_code(
-                        normalized.source,
+                        repository_source,
                         description_hint=task,
                     )
                     if update.errors:
@@ -859,6 +891,94 @@ class PostRunProcessor:
                 "learning_mode": learning_mode,
             })
             return None
+
+    async def _evolve_failed_skill(
+        self,
+        trace_path: Path,
+        is_success: bool,
+        platform: str,
+        *,
+        task: str | None = None,
+        evaluation_result: dict[str, Any] | None = None,
+        agent_success: bool | None = None,
+    ) -> dict[str, Any] | None:
+        if not self._enable_skill_extraction:
+            return None
+        if not trace_path.exists():
+            return None
+
+        store_root = self._skill_store_root or trace_path.parent
+        lock = _CODE_SKILL_LOCKS.setdefault(
+            store_root.expanduser().resolve(strict=False),
+            asyncio.Lock(),
+        )
+        try:
+            from opengui.skills.code_first import CodeSkillLibrary
+            from opengui.skills.evolution import SkillEvolutionEngine
+
+            async with lock:
+                result = SkillEvolutionEngine(store_root).evolve_trace(
+                    trace_path,
+                    task=task,
+                    platform=platform,
+                )
+                code_graph_synced = False
+                if result.get("status") == "processed_evolution":
+                    code_graph_synced = await CodeSkillLibrary(
+                        store_dir=store_root,
+                        embedding_provider=self._embedding_provider,
+                        merge_llm=self._merge_llm,
+                        embedding_signature=self._embedding_signature,
+                        legacy_fallback=False,
+                    ).sync_graph_cache()
+                    if code_graph_synced:
+                        result["code_graph_synced"] = True
+        except Exception as exc:
+            logger.warning("Skill evolution failed for %s", trace_path, exc_info=True)
+            result = {
+                "status": "error",
+                "trace": str(trace_path),
+                "reason": str(exc) or type(exc).__name__,
+                "error_type": type(exc).__name__,
+            }
+
+        self._write_evolution_result(trace_path, result)
+        if result.get("status") == "no_failure_case":
+            return result
+
+        decisions = result.get("decisions") if isinstance(result.get("decisions"), list) else []
+        promoted = any(isinstance(item, dict) and item.get("promoted") for item in decisions)
+        quarantined = any(
+            isinstance(item, dict) and item.get("quarantine_path")
+            for item in decisions
+        )
+        if result.get("status") == "error":
+            status = "evolution_error"
+        elif promoted:
+            status = "processed_evolution"
+        elif quarantined:
+            status = "quarantined_evolution"
+        else:
+            status = "processed_evolution"
+        self._write_extraction_result(trace_path, {
+            "status": status,
+            "trace": str(trace_path),
+            "is_success": is_success,
+            "agent_success": agent_success,
+            "evaluation_success": (
+                evaluation_result.get("success") if isinstance(evaluation_result, dict) else None
+            ),
+            "platform": platform,
+            "learning_mode": _learning_mode(is_success),
+            "updated_functions": list(result.get("updated_functions") or []),
+            "compiled_skill_ids": list(result.get("compiled_skill_ids") or []),
+            "graph_synced": False,
+            "code_graph_synced": bool(result.get("code_graph_synced")),
+            "evolution": result,
+            "reuse_failure_trace": True,
+            "ordinary_code_extraction_skipped": True,
+        })
+        return result
 
     async def _extract_deeplink_skill(
         self,
@@ -1143,6 +1263,17 @@ class PostRunProcessor:
             usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
         except OSError as exc:
             logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)
+
+    @staticmethod
+    def _write_evolution_result(trace_path: Path, result: dict[str, Any]) -> None:
+        result_path = trace_path.parent / "evolution_result.json"
+        try:
+            result_path.write_text(
+                json.dumps(result, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Could not write evolution result to %s: %s", result_path, exc)
 
     @staticmethod
     def _write_extraction_result(

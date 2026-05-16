@@ -10,7 +10,7 @@ import pytest
 from opengui.action import Action
 from opengui.interfaces import LLMResponse
 from opengui.observation import Observation
-from opengui.postprocessing import PostRunProcessor, _load_completed_reuse
+from opengui.postprocessing import EvaluationConfig, PostRunProcessor, _load_completed_reuse
 from opengui.skills.code_first import (
     CodeSkillExtraction,
     CodeSkillExtractor,
@@ -31,6 +31,7 @@ from opengui.skills.deeplink import (
     _probe_candidate,
     discover_deeplink_skills_from_trace,
 )
+from opengui.skills.evolution import SkillEvolutionEngine, _task_skill_conflict
 from opengui.skills.graph import GraphEdge, GraphNode, SkillGraphStore
 
 
@@ -820,7 +821,7 @@ from opengui.skills.code_graph import C, R, action, skill, state, transition
 
 @skill(app="com.example.app", platform="android")
 async def open_orders(device):
-    await action("tap", target="Old")
+    await action("tap", target="Orders")
 
 @state(app="com.example.app", platform="android", node_id="stale-node", skill_ids=["code:open_orders"])
 def state_open_orders_stale():
@@ -830,7 +831,7 @@ def state_open_orders_stale():
 async def transition_open_orders_stale(device):
     await action(
         "tap",
-        target="Old",
+        target="Orders",
         state_contract=C(required=[R(resource_id="com.example:id/stale_order_title", visible=True)]),
     )
 ''',
@@ -870,7 +871,7 @@ def test_trace_segmenter_splits_long_traces_with_overlap() -> None:
 
 
 @pytest.mark.asyncio
-async def test_code_skill_library_sync_graph_cache_is_disabled_for_linear_mode(tmp_path: Path) -> None:
+async def test_code_skill_library_sync_graph_cache_compiles_graph_declarations(tmp_path: Path) -> None:
     store_dir = tmp_path / "skills"
     store_dir.mkdir()
     (store_dir / "skill_graph_code.py").write_text(
@@ -900,9 +901,9 @@ async def open_orders(device):
     synced = await library.sync_graph_cache()
 
     graph = SkillGraphStore(store_dir=store_dir)
-    assert synced is False
-    assert graph.get_node("node-home") is None
-    assert graph.get_edge("edge-orders") is None
+    assert synced is True
+    assert graph.get_node("node-home") is not None
+    assert graph.get_edge("edge-orders") is not None
 
 
 @pytest.mark.asyncio
@@ -2520,7 +2521,9 @@ async def test_postrun_repairs_text_contract_from_ui_tree_resource_id(tmp_path: 
     assert result["contract_quality"]["quality"] == "canonical"
     assert result["contract_quality"]["canonical_node_count"] >= 1
     assert result["contract_quality"]["repaired_steps"][0]["selector"]["resource_id"] == "com.example:id/nav_orders"
-    assert graph.count_nodes == 0
+    assert result["contract_quality"]["graph_projection"]["quality"] == "canonical"
+    assert graph.count_nodes >= 1
+    assert graph.count_edges >= 1
 
 
 def test_contract_repair_replaces_screenshot_guessed_resource_id_with_ui_tree_evidence() -> None:
@@ -2702,6 +2705,190 @@ async def enter_destination(device, destination: str):
     assert "class_='android.widget.EditText'" in repaired.source
     assert "focused=True" in repaired.source
     assert repaired.report["quality"] == "canonical"
+
+
+def test_contract_repair_targets_timer_digit_instead_of_page_anchor() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.deskclock", platform="android", tags=["timer"])
+async def tap_timer_digit_one(device):
+    await action(
+        "tap",
+        target="1",
+        state_contract=C(
+            app="com.google.android.deskclock",
+            required=[
+                R(text="1", visible=True),
+                R(text="2", visible=True),
+                R(content_desc="More options", visible=True),
+            ],
+        ),
+    )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "1", "x": 260, "y": 810},
+            "pre_observation": {
+                "foreground_app": "com.google.android.deskclock",
+                "platform": "android",
+                "screen_width": 1080,
+                "screen_height": 1920,
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "text": "1",
+                            "resource_id": "com.google.android.deskclock:id/timer_setup_digit_1",
+                            "class": "android.widget.Button",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[120,680][400,960]",
+                        },
+                        {"text": "2", "bounds": "[420,680][700,960]"},
+                        {"content_desc": "More options", "clickable": True},
+                    ],
+                },
+            },
+            "observation": {
+                "foreground_app": "com.google.android.deskclock",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+    compiled = compile_code_skills(repaired.source)
+    required = compiled.skills[0].steps[0].state_contract["signature"]["required"]
+
+    assert required[0]["selector"] == {
+        "resource_id": "com.google.android.deskclock:id/timer_setup_digit_1"
+    }
+    assert set(required[0]["state"]) == {"visible", "enabled", "clickable"}
+    assert "More options" not in repaired.source
+    assert repaired.report["target_selector_repaired_steps"][0]["step_index"] == 0
+    assert repaired.report["page_anchor_downgraded_steps"][0]["step_index"] == 0
+
+
+def test_contract_repair_strips_dynamic_input_text_when_field_has_resource_id() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.search", platform="android", tags=["search"])
+async def search_example(device, query: str):
+    await action(
+        "input_text",
+        target="Search",
+        text=query,
+        state_contract=C(
+            app="com.example.search",
+            required=[
+                R(
+                    resource_id="com.example.search:id/search_src_text",
+                    text="old query",
+                    class_="android.widget.EditText",
+                    visible=True,
+                    focused=True,
+                )
+            ],
+        ),
+    )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "input_text", "text": "new query"},
+            "pre_observation": {
+                "foreground_app": "com.example.search",
+                "platform": "android",
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "text": "old query",
+                            "resource_id": "com.example.search:id/search_src_text",
+                            "class": "android.widget.EditText",
+                            "focused": True,
+                            "enabled": True,
+                        }
+                    ],
+                },
+            },
+            "observation": {
+                "foreground_app": "com.example.search",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+    compiled = compile_code_skills(repaired.source)
+    selector = compiled.skills[0].steps[0].state_contract["signature"]["required"][0]["selector"]
+
+    assert selector == {
+        "resource_id": "com.example.search:id/search_src_text",
+        "class": "android.widget.EditText",
+    }
+    assert "old query" not in repaired.source
+    assert repaired.report["dynamic_target_text_stripped_steps"][0]["step_index"] == 0
+
+
+def test_contract_repair_does_not_anchor_parameter_target_text() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.search", platform="android", tags=["search"])
+async def open_search_result(device, query: str):
+    await action(
+        "tap",
+        target="{{query}}",
+        state_contract=C(
+            app="com.example.search",
+            required=[
+                R(text="{{query}}", visible=True, clickable=True),
+                R(content_desc="More options", visible=True),
+            ],
+        ),
+    )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "weather", "x": 100, "y": 120},
+            "pre_observation": {
+                "foreground_app": "com.example.search",
+                "platform": "android",
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "text": "weather",
+                            "resource_id": "com.example.search:id/search_result_button",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[20,80][260,180]",
+                        },
+                        {"content_desc": "More options"},
+                    ],
+                },
+            },
+            "observation": {
+                "foreground_app": "com.example.search",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+    compiled = compile_code_skills(repaired.source)
+    selector = compiled.skills[0].steps[0].state_contract["signature"]["required"][0]["selector"]
+
+    assert selector == {"resource_id": "com.example.search:id/search_result_button"}
+    assert "text='{{query}}'" not in repaired.source
 
 
 def test_contract_filter_drops_functions_with_weak_steps() -> None:
@@ -2895,6 +3082,69 @@ async def create_contact(device):
     source = repository.source_path.read_text(encoding="utf-8")
     assert source.count("async def create_contact") == 1
     assert source.index("open_app") < source.index("First name")
+
+
+def test_code_skill_repository_preserves_existing_optional_interrupt_prelude(tmp_path: Path) -> None:
+    repository = CodeSkillRepository(tmp_path / "skills")
+    first = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_search(device):
+    await action("open_app", target="com.example.app")
+    await action(
+        "tap",
+        target="Close",
+        optional=True,
+        state_contract=C(app="com.example.app", required=[R(content_desc="Close", visible=True, clickable=True)]),
+    )
+    await action("tap", target="Search", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/search", visible=True, clickable=True)]))
+''')
+    assert not first.errors
+
+    second = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_search(device):
+    await action("open_app", target="com.example.app")
+    await action("tap", target="Search", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/search", visible=True, clickable=True)]))
+    await action("tap", target="Result", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/result", visible=True, clickable=True)]))
+''')
+
+    assert not second.errors
+    source = repository.source_path.read_text(encoding="utf-8")
+    assert source.count("target='Close'") == 1
+    assert "optional=True" in source
+    assert source.index("target='Close'") < source.index("target='Search'")
+
+
+def test_code_skill_repository_writes_variant_for_incompatible_same_name_update(tmp_path: Path) -> None:
+    repository = CodeSkillRepository(tmp_path / "skills")
+    first = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_orders(device):
+    await action("tap", target="Orders", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/orders", visible=True, clickable=True)]))
+''')
+    assert not first.errors
+
+    second = repository.add_code('''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.example.app", platform="android")
+async def open_orders(device):
+    await action("tap", target="Profile", state_contract=C(app="com.example.app", required=[R(resource_id="com.example:id/profile", visible=True, clickable=True)]))
+''')
+
+    assert not second.errors
+    source = repository.source_path.read_text(encoding="utf-8")
+    assert "async def open_orders(device)" in source
+    assert "async def open_orders_variant(device)" in source
+    assert "target='Orders'" in source
+    assert "target='Profile'" in source
+    assert second.updated_functions == ("open_orders_variant",)
 
 
 @pytest.mark.asyncio
@@ -3948,7 +4198,7 @@ def state_navigate_to_my_orders_stale():
 
 
 @pytest.mark.asyncio
-async def test_postrun_writes_linear_code_without_graph_projection(tmp_path: Path) -> None:
+async def test_postrun_writes_code_with_graph_projection_when_trace_is_grounded(tmp_path: Path) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
         trace_path,
@@ -4002,17 +4252,17 @@ async def test_postrun_writes_linear_code_without_graph_projection(tmp_path: Pat
 
     source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
     result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    graph = SkillGraphStore(store_dir=tmp_path / "store")
 
     assert "@skill(" in source
-    assert "@state(" not in source
-    assert "@transition(" not in source
+    assert "@state(" in source
+    assert "@transition(" in source
     assert result["action_sequence"]["quality"] == "aligned"
-    assert "graph_projection" not in result
+    assert result["contract_quality"]["graph_projection"]["quality"] == "canonical"
     assert result["graph_synced"] is False
-    assert result["code_graph_synced"] is False
-    graph = SkillGraphStore(store_dir=tmp_path / "store")
-    assert graph.list_nodes() == []
-    assert graph.list_edges() == []
+    assert result["code_graph_synced"] is True
+    assert graph.list_nodes()
+    assert graph.list_edges()
 
 
 @pytest.mark.asyncio
@@ -4287,6 +4537,72 @@ async def test_postrun_skips_extraction_after_complete_graph_reuse_even_if_evalu
     assert not (tmp_path / "store" / "skill_graph_code.py").exists()
 
 
+@pytest.mark.asyncio
+async def test_postrun_evolution_skips_ordinary_extraction_for_reuse_failure(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "skill_graph_code.py").write_text(
+        """
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.google.android.deskclock", platform="android", description="Pause stopwatch")
+async def pause_stopwatch(device):
+    await action("open_app", target="com.google.android.deskclock")
+    await action("tap", target="Pause")
+""".lstrip(),
+        encoding="utf-8",
+    )
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [
+        {"type": "metadata", "task": "Run the stopwatch", "platform": "android"},
+        {
+            "type": "skill_step",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+            "step_index": 1,
+            "target": "Pause",
+            "action": {"action_type": "tap", "target": "Pause"},
+            "error": "wrong page",
+        },
+        {
+            "type": "skill_execution_result",
+            "state": "failed",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+        },
+        {
+            "type": "step",
+            "action": {"action_type": "tap", "target": "Start"},
+            "observation": {"foreground_app": "com.google.android.deskclock"},
+        },
+        {"type": "result", "success": True},
+    ])
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        skill_store_root=store,
+        enable_skill_extraction=True,
+        evaluation=EvaluationConfig(enabled=False),
+    )
+
+    await processor._run_all(
+        trace_path,
+        is_success=True,
+        platform="android",
+        task="Run the stopwatch",
+    )
+
+    evolution = json.loads((tmp_path / "evolution_result.json").read_text(encoding="utf-8"))
+    extraction = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert evolution["status"] == "processed_evolution"
+    assert extraction["status"] == "processed_evolution"
+    assert extraction["ordinary_code_extraction_skipped"] is True
+    assert "Run the stopwatch" in json.loads(
+        (store / "skill_feedback.json").read_text(encoding="utf-8")
+    )["skills"]["code:pause_stopwatch"]["negative_tasks"]
+
+
 def test_completed_reuse_does_not_skip_when_agent_continues_with_actions(tmp_path: Path) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
@@ -4313,3 +4629,373 @@ def test_completed_reuse_does_not_skip_when_agent_continues_with_actions(tmp_pat
     )
 
     assert _load_completed_reuse(trace_path) is None
+
+
+def test_evolution_downgrades_over_strong_contract_without_variant(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    app = "com.google.android.deskclock"
+    (store / "skill_graph_code.py").write_text(
+        f"""
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="{app}", platform="android", description="Pause stopwatch")
+async def pause_stopwatch(device):
+    await action("open_app", target="{app}")
+    await action("tap", target="Pause", state_contract=C(app="{app}", required=[
+        R(text="Alarm", visible=True),
+        R(content_desc="More options", visible=True),
+        R(content_desc="Pause", visible=True, enabled=True, clickable=True),
+    ]))
+""".lstrip(),
+        encoding="utf-8",
+    )
+    contract = {
+        "anchor": {"app_package": app},
+        "signature": {
+            "required": [
+                {"selector": {"text": "Alarm"}, "state": ["visible"]},
+                {"selector": {"content_desc": "More options"}, "state": ["visible"]},
+                {
+                    "selector": {"content_desc": "Pause"},
+                    "state": ["visible", "enabled", "clickable"],
+                },
+            ],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    }
+    observation = {
+        "foreground_app": app,
+        "extra": {
+            "content_desc": ["Pause"],
+            "ui_tree": [{"content_desc": "Pause", "clickable": True, "enabled": True}],
+        },
+    }
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [
+        {"type": "metadata", "task": "Pause the stopwatch", "platform": "android"},
+        {
+            "type": "skill_step",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+            "step_index": 1,
+            "target": "Pause",
+            "action": {"action_type": "tap", "target": "Pause"},
+            "state_contract": contract,
+            "observation": observation,
+            "screenshot_path": str(tmp_path / "screen.png"),
+            "contract_eval_detail": {
+                "passed": False,
+                "reason": "failed_required",
+                "matched_required": [
+                    {"anchor": {"app_package": app}},
+                    {
+                        "element": {
+                            "selector": {"content_desc": "Pause"},
+                            "state": ["visible", "enabled", "clickable"],
+                        },
+                        "score": 1.0,
+                    },
+                ],
+                "failed_required": [
+                    {"element": {"selector": {"text": "Alarm"}, "state": ["visible"]}},
+                    {
+                        "element": {
+                            "selector": {"content_desc": "More options"},
+                            "state": ["visible"],
+                        }
+                    },
+                ],
+            },
+            "error": "Valid state check failed before action",
+        },
+        {
+            "type": "skill_execution_result",
+            "state": "failed",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+        },
+    ])
+
+    result = SkillEvolutionEngine(store).evolve_trace(
+        trace_path,
+        task="Pause the stopwatch",
+        platform="android",
+    )
+
+    assert result["status"] == "processed_evolution"
+    assert result["decisions"][0]["decision_type"] == "contract_downgrade"
+    assert result["decisions"][0]["promoted"] is True
+    source = (store / "skill_graph_code.py").read_text(encoding="utf-8")
+    assert "pause_stopwatch_variant" not in source
+    assert "More options" not in source
+    assert "Alarm" not in source
+    assert "Pause" in source
+
+
+def test_evolution_inserts_missing_gap_action_from_fallback(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    app = "com.google.android.deskclock"
+    (store / "skill_graph_code.py").write_text(
+        f"""
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="{app}", platform="android", description="Navigate to timer setup")
+async def navigate_to_timer_setup(device):
+    await action("open_app", target="{app}")
+    await action("tap", target="Timer")
+    await action("tap", target="1", state_contract=C(app="{app}", required=[
+        R(resource_id="timer_setup_digit_1", visible=True),
+    ]))
+""".lstrip(),
+        encoding="utf-8",
+    )
+    digit_contract = {
+        "anchor": {"app_package": app},
+        "signature": {
+            "required": [
+                {"selector": {"resource_id": "timer_setup_digit_1"}, "state": ["visible"]}
+            ],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    }
+    before_plus = {
+        "foreground_app": app,
+        "extra": {
+            "content_desc": ["Add timer"],
+            "ui_tree": [
+                {
+                    "content_desc": "Add timer",
+                    "resource_id": "com.google.android.deskclock:id/timer_setup_fab",
+                    "clickable": True,
+                    "enabled": True,
+                    "bounds": "[400,900][600,1100]",
+                }
+            ],
+        },
+    }
+    after_plus = {
+        "foreground_app": app,
+        "extra": {
+            "resource_ids": ["timer_setup_digit_1"],
+            "ui_tree": [{"resource_id": "timer_setup_digit_1", "text": "1"}],
+        },
+    }
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(trace_path, [
+        {"type": "metadata", "task": "Set a timer for 1 second", "platform": "android"},
+        {
+            "type": "skill_step",
+            "skill_id": "code:navigate_to_timer_setup",
+            "skill_name": "navigate_to_timer_setup",
+            "step_index": 2,
+            "target": "1",
+            "action": {"action_type": "tap", "target": "1"},
+            "state_contract": digit_contract,
+            "observation": before_plus,
+            "contract_eval_detail": {
+                "passed": False,
+                "reason": "failed_required",
+                "failed_required": [{"element": digit_contract["signature"]["required"][0]}],
+            },
+            "error": "Valid state check failed before action",
+        },
+        {
+            "type": "skill_execution_result",
+            "state": "failed",
+            "skill_id": "code:navigate_to_timer_setup",
+            "skill_name": "navigate_to_timer_setup",
+        },
+        {
+            "type": "step",
+            "action": {"action_type": "tap", "target": "Add timer", "x": 500, "y": 1000},
+            "observation": after_plus,
+        },
+    ])
+
+    result = SkillEvolutionEngine(store).evolve_trace(
+        trace_path,
+        task="Set a timer for 1 second",
+        platform="android",
+    )
+
+    assert result["status"] == "processed_evolution"
+    assert result["decisions"][0]["decision_type"] == "insert_missing_action_gap"
+    compiled = compile_code_skills((store / "skill_graph_code.py").read_text(encoding="utf-8"))
+    assert not compiled.errors
+    skill = compiled.skills[0]
+    assert [(step.action_type, step.target) for step in skill.steps] == [
+        ("open_app", app),
+        ("tap", "Timer"),
+        ("tap", "Add timer"),
+        ("tap", "1"),
+    ]
+
+
+def test_evolution_records_negative_and_preferred_feedback(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "skill_graph_code.py").write_text(
+        """
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.google.android.deskclock", platform="android", description="Pause stopwatch")
+async def pause_stopwatch(device):
+    await action("open_app", target="com.google.android.deskclock")
+    await action("tap", target="Pause")
+""".lstrip(),
+        encoding="utf-8",
+    )
+    trace_path = tmp_path / "trace.jsonl"
+    (tmp_path / "deeplink_result.json").write_text(
+        json.dumps({
+            "status": "processed_deeplink_code",
+            "compiled_skill_ids": ["intent:show_timers"],
+        }),
+        encoding="utf-8",
+    )
+    _write_trace(trace_path, [
+        {"type": "metadata", "task": "Run the stopwatch", "platform": "android"},
+        {
+            "type": "skill_step",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+            "step_index": 1,
+            "target": "Pause",
+            "action": {"action_type": "tap", "target": "Pause"},
+            "error": "wrong page",
+        },
+        {
+            "type": "skill_execution_result",
+            "state": "failed",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+        },
+    ])
+
+    result = SkillEvolutionEngine(store).evolve_trace(
+        trace_path,
+        task="Run the stopwatch",
+        platform="android",
+    )
+
+    decisions = {decision["decision_type"] for decision in result["decisions"]}
+    assert "negative_selection_feedback" in decisions
+    assert "prefer_verified_intent" in decisions
+    feedback = json.loads((store / "skill_feedback.json").read_text(encoding="utf-8"))
+    assert "Run the stopwatch" in feedback["skills"]["code:pause_stopwatch"]["negative_tasks"]
+    assert "Run the stopwatch" in feedback["skills"]["intent:show_timers"]["preferred_for_tasks"]
+
+
+def test_evolution_prefers_only_updated_verified_intent_from_legacy_deeplink_result(
+    tmp_path: Path,
+) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "skill_graph_code.py").write_text(
+        """
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.google.android.deskclock", platform="android", skill_id="intent:show_timers")
+async def open_show_timers(device):
+    await action("open_intent", intent_action="android.intent.action.SHOW_TIMERS")
+
+@skill(app="com.google.android.deskclock", platform="android", skill_id="intent:unrelated")
+async def open_unrelated_intent(device):
+    await action("open_intent", intent_action="android.intent.action.SET_ALARM")
+
+@skill(app="com.google.android.deskclock", platform="android")
+async def pause_stopwatch(device):
+    await action("open_app", target="com.google.android.deskclock")
+    await action("tap", target="Pause")
+""".lstrip(),
+        encoding="utf-8",
+    )
+    trace_path = tmp_path / "trace.jsonl"
+    (tmp_path / "deeplink_result.json").write_text(
+        json.dumps({
+            "status": "processed_deeplink_code",
+            "candidates": [{"kind": "shortcut_intent"}],
+            "updated_functions": ["open_show_timers"],
+            "compiled_skill_ids": ["intent:show_timers", "intent:unrelated"],
+        }),
+        encoding="utf-8",
+    )
+    _write_trace(trace_path, [
+        {"type": "metadata", "task": "Run the stopwatch", "platform": "android"},
+        {
+            "type": "skill_step",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+            "step_index": 1,
+            "target": "Pause",
+            "action": {"action_type": "tap", "target": "Pause"},
+            "error": "wrong page",
+        },
+        {
+            "type": "skill_execution_result",
+            "state": "failed",
+            "skill_id": "code:pause_stopwatch",
+            "skill_name": "pause_stopwatch",
+        },
+    ])
+
+    result = SkillEvolutionEngine(store).evolve_trace(
+        trace_path,
+        task="Run the stopwatch",
+        platform="android",
+    )
+
+    decision = next(
+        item for item in result["decisions"] if item["decision_type"] == "prefer_verified_intent"
+    )
+    assert decision["preferred_skill_ids"] == ["intent:show_timers"]
+    feedback = json.loads((store / "skill_feedback.json").read_text(encoding="utf-8"))
+    assert "Run the stopwatch" in feedback["skills"]["intent:show_timers"]["preferred_for_tasks"]
+    assert "intent:unrelated" not in feedback["skills"]
+
+
+@pytest.mark.asyncio
+async def test_evolution_task_skill_conflict_tokenizes_stopwatch() -> None:
+    assert not _task_skill_conflict("Run the stopwatch.", "run_stopwatch")
+    assert _task_skill_conflict("Run the stopwatch.", "pause_stopwatch")
+    assert _task_skill_conflict("Pause the stopwatch.", "run_stopwatch")
+
+
+@pytest.mark.asyncio
+async def test_code_skill_search_downweights_negative_feedback(tmp_path: Path) -> None:
+    store = tmp_path / "store"
+    store.mkdir()
+    (store / "skill_graph_code.py").write_text(
+        """
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.google.android.deskclock", platform="android", description="Pause stopwatch")
+async def pause_stopwatch(device):
+    await action("open_app", target="com.google.android.deskclock")
+    await action("tap", target="Pause")
+""".lstrip(),
+        encoding="utf-8",
+    )
+    (store / "skill_feedback.json").write_text(
+        json.dumps({
+            "version": 1,
+            "skills": {
+                "code:pause_stopwatch": {
+                    "negative_tasks": ["Run the stopwatch"],
+                    "failure_counts": {"wrong_skill_selected": 1},
+                }
+            },
+        }),
+        encoding="utf-8",
+    )
+    library = CodeSkillLibrary(store_dir=store, legacy_fallback=False)
+
+    matches = await library.search("Run the stopwatch", platform="android", top_k=5)
+
+    assert matches
+    assert matches[0][0].skill_id == "code:pause_stopwatch"
+    assert matches[0][1] < 0.35

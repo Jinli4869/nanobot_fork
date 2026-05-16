@@ -108,6 +108,9 @@ class StepResult:
     # float → actual LLM validation call duration in seconds
     validate_duration_s: float | None = None
     grounding_duration_s: float | None = None
+    observation: dict[str, Any] | None = None
+    screenshot_path: str | None = None
+    contract_eval_detail: dict[str, Any] | None = None
 
 
 @dataclass
@@ -637,6 +640,11 @@ class SkillExecutor:
     trajectory_recorder: TrajectoryRecorder | None = None
     stop_on_failure: bool = True
     max_recovery_steps: int = 3
+    _last_contract_eval_detail: dict[str, Any] | None = dataclasses.field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     async def execute(
         self,
@@ -667,6 +675,7 @@ class SkillExecutor:
             )
 
         for i, step in enumerate(skill.steps):
+            self._last_contract_eval_detail = None
             is_optional = bool(step.parameters.get("optional", False))
             post_action_contract = (
                 step.action_type in {"open_deeplink", "open_intent"}
@@ -816,6 +825,9 @@ class SkillExecutor:
                     token_usage=dict(validate_usage),
                     duration_s=step_dur,
                     validate_duration_s=validate_dur,
+                    observation=_serialize_observation(observation),
+                    screenshot_path=_screenshot_path_string(screenshot),
+                    contract_eval_detail=self._last_contract_eval_detail,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
@@ -911,6 +923,9 @@ class SkillExecutor:
                             duration_s=step_dur,
                             validate_duration_s=validate_dur,
                             grounding_duration_s=grounding_dur,
+                            observation=_serialize_observation(post_observation),
+                            screenshot_path=_screenshot_path_string(post_screenshot),
+                            contract_eval_detail=self._last_contract_eval_detail,
                         )
                         step_results.append(step_result)
                         self._record_skill_step(skill, step, step_result)
@@ -955,6 +970,9 @@ class SkillExecutor:
                     token_usage=dict(validate_usage),
                     duration_s=step_dur,
                     validate_duration_s=validate_dur,
+                    observation=_serialize_observation(observation),
+                    screenshot_path=_screenshot_path_string(screenshot),
+                    contract_eval_detail=self._last_contract_eval_detail,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
@@ -1065,6 +1083,9 @@ class SkillExecutor:
             valid_state=step.valid_state,
             state_contract=step.state_contract,
             valid_state_check=step_result.valid_state_check,
+            observation=step_result.observation,
+            screenshot_path=step_result.screenshot_path,
+            contract_eval_detail=step_result.contract_eval_detail,
             recovery_attempted=step_result.recovery_attempted,
             recovery_success=bool(step_result.recovery_result and step_result.recovery_result.success),
             error=step_result.error,
@@ -1098,6 +1119,7 @@ class SkillExecutor:
             step.state_contract,
             observation=observation,
         )
+        self._last_contract_eval_detail = _contract_eval_detail_to_dict(contract_detail)
         if contract_detail.passed is not None:
             if contract_detail.passed is False:
                 relaxed_contract = _relax_state_contract_flags(step.state_contract)
@@ -1106,6 +1128,10 @@ class SkillExecutor:
                         relaxed_contract,
                         observation=observation,
                     )
+                    if self._last_contract_eval_detail is not None:
+                        self._last_contract_eval_detail["relaxed"] = (
+                            _contract_eval_detail_to_dict(relaxed_detail)
+                        )
                     if relaxed_detail.passed is True:
                         logger.debug(
                             "State contract relaxed volatile flags for step %s",
@@ -1132,6 +1158,10 @@ class SkillExecutor:
                     relaxed_contract,
                     observation=observation,
                 )
+                if self._last_contract_eval_detail is not None:
+                    self._last_contract_eval_detail["relaxed"] = (
+                        _contract_eval_detail_to_dict(relaxed_detail)
+                    )
                 if relaxed_detail.passed is True:
                     logger.debug(
                         "State contract relaxed unevaluable volatile flags for step %s",
@@ -1152,10 +1182,12 @@ class SkillExecutor:
             return False, {}, None
 
         if _should_skip_validation(step.valid_state):
+            self._last_contract_eval_detail = None
             return True, {}, None
 
         if self.state_validator is None:
             logger.debug("No state validator; allowing step %s", step.action_type)
+            self._last_contract_eval_detail = None
             return True, {}, None
         t0 = time.monotonic()
         try:
@@ -1203,6 +1235,69 @@ def _serialize_action(action: Action) -> dict[str, Any]:
         for key, value in payload.items()
         if value is not None and not (key == "relative" and value is False)
     }
+
+
+def _serialize_observation(observation: Observation | None) -> dict[str, Any] | None:
+    if observation is None:
+        return None
+    return {
+        "screenshot_path": observation.screenshot_path,
+        "screen_width": observation.screen_width,
+        "screen_height": observation.screen_height,
+        "foreground_app": observation.foreground_app,
+        "platform": observation.platform,
+        "extra": _scrub_trace_value(observation.extra),
+    }
+
+
+def _screenshot_path_string(screenshot: Path | bytes | None) -> str | None:
+    return str(screenshot) if isinstance(screenshot, Path) else None
+
+
+def _contract_eval_detail_to_dict(detail: Any) -> dict[str, Any]:
+    return {
+        "passed": getattr(detail, "passed", None),
+        "score": round(float(getattr(detail, "score", 0.0) or 0.0), 3),
+        "evidence_coverage": round(
+            float(getattr(detail, "evidence_coverage", 0.0) or 0.0),
+            3,
+        ),
+        "reason": getattr(detail, "reason", None),
+        "matched_required": _scrub_trace_value(
+            list(getattr(detail, "matched_required", []) or [])
+        ),
+        "failed_required": _scrub_trace_value(
+            list(getattr(detail, "failed_required", []) or [])
+        ),
+        "unknown_required": _scrub_trace_value(
+            list(getattr(detail, "unknown_required", []) or [])
+        ),
+        "failed_forbidden": _scrub_trace_value(
+            list(getattr(detail, "failed_forbidden", []) or [])
+        ),
+        "unknown_forbidden": _scrub_trace_value(
+            list(getattr(detail, "unknown_forbidden", []) or [])
+        ),
+    }
+
+
+def _scrub_trace_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        scrubbed: dict[str, Any] = {}
+        action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
+        for key, item in value.items():
+            if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
+                scrubbed[key] = "<omitted:image-data-url>"
+            elif action_type == "input_text" and key == "text":
+                scrubbed[key] = "<redacted:input_text>"
+            else:
+                scrubbed[key] = _scrub_trace_value(item)
+        return scrubbed
+    if isinstance(value, list):
+        return [_scrub_trace_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_scrub_trace_value(item) for item in value]
+    return value
 
 
 def _merge_usage(target: dict[str, int], source: dict[str, int]) -> None:

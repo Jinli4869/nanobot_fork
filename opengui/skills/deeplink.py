@@ -312,6 +312,7 @@ async def discover_deeplink_skills_from_trace(
         contract=contract,
     )
     update = CodeSkillRepository(store_root).add_code(source, description_hint=task)
+    updated_function_names = set(update.updated_functions)
     result = DeeplinkDiscoveryResult(
         status="processed_deeplink_code" if not update.errors else "code_compile_error",
         reason=None if not update.errors else "code_compile_error",
@@ -319,7 +320,11 @@ async def discover_deeplink_skills_from_trace(
         contract=result_contract,
         candidates=tuple(records),
         updated_functions=tuple(update.updated_functions),
-        compiled_skill_ids=tuple(skill.skill_id for skill in update.skills if skill.skill_id),
+        compiled_skill_ids=tuple(
+            skill.skill_id
+            for skill in update.skills
+            if skill.skill_id and (not updated_function_names or skill.name in updated_function_names)
+        ),
         errors=tuple(update.errors),
     )
     return _write_deeplink_result(trace_path, result)

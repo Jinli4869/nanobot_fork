@@ -189,7 +189,10 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
         skill_id="wifi-toggle", name="Toggle Wi-Fi",
         description="Toggle Wi-Fi in Settings", app="com.android.settings",
         platform="android",
-        steps=(SkillStep(action_type="tap", target="Wi-Fi toggle"),),
+        steps=(
+            SkillStep(action_type="open_app", target="com.android.settings"),
+            SkillStep(action_type="tap", target="Wi-Fi toggle"),
+        ),
     )
     lib.add(skill)
     await lib._rebuild_index()
@@ -224,7 +227,7 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
             return f"[android-dry-run] {action.action_type}"
 
     llm = _RecordingLLM([
-        LLMResponse(content='{"applicable": true}'),
+        LLMResponse(content='{"selected_skill_id": "wifi-toggle", "end_step": 2, "reason": "settings wifi task"}'),
         _done_response(),
     ])
     recorder = _make_recorder(tmp_path, "Turn on Wi-Fi")
@@ -580,7 +583,7 @@ async def test_graph_prefix_success_does_not_suppress_flat_skill_search(tmp_path
 
     backend = _BackendOnHome()
     llm = _RecordingLLM([
-        LLMResponse(content='{"applicable": true}'),
+        LLMResponse(content='{"selected_skill_id": "flat-black-box-mall", "end_step": 1, "reason": "finish from profile page"}'),
         _done_response(),
     ])
     recorder = _make_recorder(tmp_path, "open black box mall rewards page")

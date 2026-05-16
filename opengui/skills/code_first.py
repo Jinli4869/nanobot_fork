@@ -29,13 +29,17 @@ import numpy as np
 from opengui.memory.retrieval import _BM25Index, _FaissIndex
 from opengui.skills.code_graph import compile_code_skills
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.evolution import feedback_for_skill, feedback_task_similarity
 from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
 from opengui.skills.state_contract import normalize_state_contract
 from opengui.skills.static_selector_filter import (
     filter_static_resource_ids,
     filter_static_texts,
+    is_dynamic_resource_id,
+    is_dynamic_text,
+    is_static_resource_id,
+    is_static_text,
     selector_is_static,
-    static_control_from_node,
 )
 
 logger = logging.getLogger(__name__)
@@ -630,7 +634,26 @@ class CodeSkillLibrary:
 
     async def sync_graph_cache(self) -> bool:
         self.graph_compile_errors = ()
-        return False
+        source = self._repository.read_source()
+        self._graph_source_mtime = _mtime(self._repository.source_path)
+        if not _has_graph_transitions(source):
+            return False
+
+        from opengui.skills.code_graph import compile_code_graph
+        from opengui.skills.graph import SkillGraphStore
+
+        store = SkillGraphStore(
+            store_dir=self.store_dir,
+            embedding_provider=self.embedding_provider,
+            embedding_signature=self.embedding_signature,
+        )
+        result = await compile_code_graph(source, store)
+        self.graph_compile_errors = tuple(result.errors)
+        if result.errors:
+            return False
+        if result.nodes or result.edges:
+            store.compact_canonical_graph(save=True)
+        return bool(store.count_nodes or store.count_edges)
 
     def list_all(self, *, platform: str | None = None, app: str | None = None) -> list[Skill]:
         skills = self._repository.list_all(platform=platform, app=app)
@@ -669,6 +692,9 @@ class CodeSkillLibrary:
                 return skill
         legacy = self._legacy()
         return legacy.get(skill_id) if legacy is not None else None
+
+    def feedback_for_skill(self, skill_id: str) -> dict[str, Any]:
+        return feedback_for_skill(self.store_dir, skill_id)
 
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         del updated_skill
@@ -743,6 +769,8 @@ class CodeSkillLibrary:
         else:
             scores = bm25_scores
 
+        self._apply_feedback_scores(query, scores, mask)
+
         ranked = np.argsort(-scores)
         results: list[tuple[Skill, float]] = []
         for index in ranked:
@@ -752,6 +780,34 @@ class CodeSkillLibrary:
             if len(results) >= top_k:
                 break
         return results
+
+    def _apply_feedback_scores(self, query: str, scores: np.ndarray, mask: np.ndarray) -> None:
+        for index, skill in enumerate(self._indexed_skills):
+            if not mask[index] or scores[index] <= 0:
+                continue
+            feedback = feedback_for_skill(self.store_dir, skill.skill_id)
+            if not feedback:
+                continue
+            preferred_similarity = feedback_task_similarity(
+                query,
+                feedback.get("preferred_for_tasks"),
+            )
+            if preferred_similarity >= 0.72:
+                scores[index] = max(float(scores[index]), 1.25 + 0.25 * preferred_similarity)
+                continue
+            negative_similarity = feedback_task_similarity(
+                query,
+                feedback.get("negative_tasks"),
+            )
+            if negative_similarity >= 0.72:
+                scores[index] = min(float(scores[index]) * 0.1, 0.05)
+                continue
+            positive_similarity = feedback_task_similarity(
+                query,
+                feedback.get("positive_tasks"),
+            )
+            if positive_similarity >= 0.8:
+                scores[index] = max(float(scores[index]), min(1.15, float(scores[index]) + 0.15))
 
     async def _ensure_index(self, skills: list[Skill]) -> None:
         source_mtime = _mtime(self._repository.source_path)
@@ -1425,7 +1481,9 @@ def _is_generic_target_text(target: str) -> bool:
     return bool(
         lowered
         and (
-            lowered.endswith(":id/a")
+            _is_placeholder_value(lowered)
+            or is_dynamic_text(lowered)
+            or lowered.endswith(":id/a")
             or lowered.endswith("/id/a")
             or lowered in {"a", "ctrip.android.view:id/a", "com.ctrip.ctrip:id/a"}
         )
@@ -1754,9 +1812,38 @@ def repair_code_contracts_from_events(
                     "reason": "parameterized_input_text_removed",
                 })
                 continue
+            sanitized_dynamic_contract = _strip_dynamic_target_text_from_contract(current, step)
+            if sanitized_dynamic_contract is not None and sanitized_dynamic_contract != current:
+                replacements.setdefault(skill.name, {})[index] = {
+                    "app": skill.app,
+                    "contract": sanitized_dynamic_contract,
+                }
+                repaired_steps.append({
+                    "function": skill.name,
+                    "step_index": index,
+                    "action_type": step.action_type,
+                    "target": step.target,
+                    "selector": None,
+                    "reason": "dynamic_target_text_removed",
+                })
+                continue
             current_has_stable = _contract_has_stable_identity(current)
             current_supported = _contract_supported_by_observation(current, evidence_observation)
             if current_has_stable and current_supported:
+                if selector and _selector_has_stable_identity(selector) and _contract_required_count(current) > 1:
+                    replacements.setdefault(skill.name, {})[index] = {
+                        "app": skill.app,
+                        "selector": selector,
+                        "states": _contract_states_for_selector(step.action_type, selector),
+                    }
+                    repaired_steps.append({
+                        "function": skill.name,
+                        "step_index": index,
+                        "action_type": step.action_type,
+                        "target": step.target,
+                        "selector": selector,
+                        "reason": "target_selector_replaced_page_contract",
+                    })
                 continue
             replacement: dict[str, Any] | None = None
             states = _contract_states_for_selector(step.action_type, selector)
@@ -1767,6 +1854,8 @@ def repair_code_contracts_from_events(
                     "selector": selector,
                     "states": states,
                 }
+                if _contract_required_count(current) > 1 or not current_has_stable:
+                    reason = "target_selector_replaced_page_contract"
             elif current_has_stable and not current_supported:
                 page_contract = _page_contract_from_observation(
                     evidence_observation,
@@ -2565,6 +2654,65 @@ def _strip_parameterized_input_text_from_contract(
     return normalize_state_contract(sanitized)
 
 
+def _strip_dynamic_target_text_from_contract(
+    contract: dict[str, Any] | None,
+    step: SkillStep,
+) -> dict[str, Any] | None:
+    normalized = normalize_state_contract(contract)
+    if not normalized:
+        return None
+    signature = normalized.get("signature")
+    required = signature.get("required") if isinstance(signature, dict) else None
+    if not isinstance(required, list):
+        return None
+
+    dynamic_values = {
+        str(value).strip().casefold()
+        for value in (
+            step.target,
+            step.parameters.get("text") if isinstance(step.parameters, dict) else None,
+        )
+        if isinstance(value, str)
+        and value.strip()
+        and (_is_placeholder_value(value) or is_dynamic_text(value))
+    }
+    changed = False
+    sanitized_required: list[Any] = []
+    for element in required:
+        if not isinstance(element, dict):
+            sanitized_required.append(element)
+            continue
+        selector = element.get("selector")
+        if not isinstance(selector, dict):
+            sanitized_required.append(element)
+            continue
+        selector_text = selector.get("text")
+        if (
+            not isinstance(selector_text, str)
+            or not selector_text.strip()
+            or not (selector.get("resource_id") or selector.get("content_desc"))
+        ):
+            sanitized_required.append(element)
+            continue
+        normalized_text = selector_text.strip().casefold()
+        if normalized_text not in dynamic_values and not is_dynamic_text(selector_text):
+            sanitized_required.append(element)
+            continue
+        updated_selector = dict(selector)
+        updated_selector.pop("text", None)
+        updated_element = dict(element)
+        updated_element["selector"] = updated_selector
+        sanitized_required.append(updated_element)
+        changed = True
+    if not changed:
+        return None
+    sanitized = dict(normalized)
+    sanitized_signature = dict(signature)
+    sanitized_signature["required"] = sanitized_required
+    sanitized["signature"] = sanitized_signature
+    return normalize_state_contract(sanitized)
+
+
 def _trace_text_blob(event: dict[str, Any], action: dict[str, Any]) -> str:
     parts: list[str] = []
     for value in (
@@ -2740,14 +2888,20 @@ def _observation_selectors(observation: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _stable_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
-    control = static_control_from_node(node)
-    if not control:
-        return None
     selector: dict[str, Any] = {}
-    for key in ("resource_id", "content_desc", "text"):
-        value = control.get(key)
-        if value:
-            selector[key] = value
+    resource_id = _clean_selector_text(node.get("resource_id"))
+    content_desc = _clean_selector_text(node.get("content_desc"))
+    text = _clean_selector_text(node.get("text"))
+
+    if resource_id and (is_static_resource_id(resource_id) or not is_dynamic_resource_id(resource_id)):
+        selector["resource_id"] = resource_id
+    elif content_desc and is_static_text(content_desc):
+        selector["content_desc"] = content_desc
+    elif text and is_static_text(text):
+        selector["text"] = text
+    else:
+        return None
+
     for flag in ("clickable", "enabled", "focused", "scrollable"):
         if node.get(flag):
             selector[flag] = True
@@ -2769,7 +2923,7 @@ def _input_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
         selector["resource_id"] = resource_id.strip()
     elif isinstance(content_desc, str) and content_desc.strip():
         selector["content_desc"] = content_desc.strip()
-    elif isinstance(text, str) and text.strip():
+    elif isinstance(text, str) and text.strip() and not is_dynamic_text(text):
         selector["text"] = text.strip()
     else:
         return None
@@ -2777,6 +2931,12 @@ def _input_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
         if node.get(flag):
             selector[flag] = True
     return selector
+
+
+def _clean_selector_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split()).strip()
 
 
 def _selector_matches_observed(expected: dict[str, Any], observed: dict[str, Any]) -> bool:
@@ -2859,6 +3019,15 @@ def _contract_has_stable_identity(contract: dict[str, Any] | None) -> bool:
         if isinstance(selector, dict) and _selector_has_stable_identity(selector):
             return True
     return False
+
+
+def _contract_required_count(contract: dict[str, Any] | None) -> int:
+    normalized = normalize_state_contract(contract)
+    if not normalized:
+        return 0
+    signature = normalized.get("signature")
+    required = signature.get("required") if isinstance(signature, dict) else None
+    return len(required) if isinstance(required, list) else 0
 
 
 def _apply_contract_replacements(
@@ -2947,6 +3116,9 @@ def _empty_contract_quality_report() -> dict[str, Any]:
         "canonical_step_count": 0,
         "weak_steps": [],
         "repaired_steps": [],
+        "target_selector_repaired_steps": [],
+        "dynamic_target_text_stripped_steps": [],
+        "page_anchor_downgraded_steps": [],
         "canonical_node_count": 0,
         "auxiliary_node_count": 0,
     }
@@ -2982,6 +3154,31 @@ def _contract_quality_report(
         "auxiliary_node_count": len(weak_steps),
         "weak_steps": weak_steps,
         "repaired_steps": list(repaired_steps),
+        "target_selector_repaired_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") in {
+                "ui_tree_static_selector",
+                "target_selector_replaced_page_contract",
+                "unsupported_static_selector_replaced",
+            }
+        ],
+        "dynamic_target_text_stripped_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") in {
+                "parameterized_input_text_removed",
+                "dynamic_target_text_removed",
+            }
+        ],
+        "page_anchor_downgraded_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") in {
+                "target_selector_replaced_page_contract",
+                "unsupported_static_selector_replaced",
+            }
+        ],
     })
     return report
 
@@ -3535,7 +3732,9 @@ def _merge_code_source(existing_source: str, code_update: str) -> tuple[str, tup
     existing_tree = ast.parse(existing_source)
     update_tree = ast.parse(code_update)
     _strip_open_app_state_contracts_in_tree(update_tree)
+    _rename_incompatible_same_name_skills(existing_tree, update_tree)
     _preserve_existing_entry_actions(existing_tree, update_tree)
+    _preserve_existing_optional_prelude_actions(existing_tree, update_tree)
     ast.fix_missing_locations(update_tree)
     code_update = ast.unparse(update_tree) + "\n"
     update_tree = ast.parse(code_update)
@@ -3543,19 +3742,9 @@ def _merge_code_source(existing_source: str, code_update: str) -> tuple[str, tup
     update_functions = _function_sources(code_update, update_tree)
     existing_nodes = _function_nodes(existing_tree)
     update_nodes = _function_nodes(update_tree)
-    existing_functions = {
-        name: source
-        for name, source in existing_functions.items()
-        if not _is_graph_declaration(existing_nodes[name])
-    }
-    update_functions = {
-        name: source
-        for name, source in update_functions.items()
-        if not _is_graph_declaration(update_nodes[name])
-    }
+    updated_skill_names = _decorated_function_names(update_tree, "skill")
     if not update_functions:
         return existing_source, ()
-    updated_skill_names = _decorated_function_names(update_tree, "skill")
     existing_functions = {
         name: source
         for name, source in existing_functions.items()
@@ -3577,13 +3766,270 @@ def _merge_code_source(existing_source: str, code_update: str) -> tuple[str, tup
         parts.append(merged[name].strip())
         parts.append("")
         parts.append("")
-    return "\n".join(parts).rstrip() + "\n", tuple(update_functions)
+    updated_public_functions = tuple(
+        name for name in update_functions if _has_decorator(update_nodes[name], "skill")
+    )
+    return "\n".join(parts).rstrip() + "\n", updated_public_functions
 
 
 def _strip_open_app_state_contracts_in_tree(tree: ast.Module) -> None:
     for node in tree.body:
         if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
             _strip_open_app_state_contracts_in_function(node)
+
+
+def _rename_incompatible_same_name_skills(existing_tree: ast.Module, update_tree: ast.Module) -> None:
+    existing_nodes = _function_nodes(existing_tree)
+    used_names = set(existing_nodes)
+    for update_node in list(update_tree.body):
+        if not isinstance(update_node, ast.AsyncFunctionDef) or not _has_decorator(update_node, "skill"):
+            continue
+        existing_node = existing_nodes.get(update_node.name)
+        if not isinstance(existing_node, ast.AsyncFunctionDef) or not _has_decorator(existing_node, "skill"):
+            used_names.add(update_node.name)
+            continue
+        same_bucket = _skill_app_platform(existing_node) == _skill_app_platform(update_node)
+        compatible = same_bucket and _skill_action_signatures_compatible(existing_node, update_node)
+        if compatible:
+            used_names.add(update_node.name)
+            continue
+        old_name = update_node.name
+        new_name = _dedupe_function_name(f"{old_name}_variant", used_names)
+        if _first_direct_entry_action_stmt(update_node) is None:
+            existing_entry = _first_direct_entry_action_stmt(existing_node)
+            if existing_entry is not None:
+                entry_stmt = copy.deepcopy(existing_entry)
+                entry_call = _awaited_action_call(entry_stmt)
+                if entry_call is not None and _action_call_type(entry_call) == "open_app":
+                    _remove_action_keyword(entry_call, "state_contract")
+                update_node.body.insert(_skill_entry_insert_index(update_node), entry_stmt)
+        _set_skill_decorator_keyword(update_node, "skill_id", f"code:{new_name}")
+        update_node.name = new_name
+        used_names.add(new_name)
+
+
+def _preserve_existing_optional_prelude_actions(existing_tree: ast.Module, update_tree: ast.Module) -> None:
+    existing_nodes = _function_nodes(existing_tree)
+    update_nodes = _function_nodes(update_tree)
+    for name, update_node in update_nodes.items():
+        existing_node = existing_nodes.get(name)
+        if not isinstance(existing_node, ast.AsyncFunctionDef) or not isinstance(update_node, ast.AsyncFunctionDef):
+            continue
+        if not (_has_decorator(existing_node, "skill") and _has_decorator(update_node, "skill")):
+            continue
+        existing_optional = _leading_optional_action_stmts(existing_node)
+        if not existing_optional:
+            continue
+        update_keys = {_action_stmt_key(stmt) for stmt, _call in _direct_action_calls(update_node)}
+        insert_at = _after_leading_entry_actions_index(update_node)
+        inserted = 0
+        for stmt, _call in existing_optional:
+            key = _action_stmt_key(stmt)
+            if not key or key in update_keys:
+                continue
+            update_node.body.insert(insert_at + inserted, copy.deepcopy(stmt))
+            update_keys.add(key)
+            inserted += 1
+
+
+def _skill_app_platform(func: ast.AsyncFunctionDef | ast.FunctionDef) -> tuple[str, str]:
+    kwargs = _decorator_literal_kwargs(func, "skill")
+    platform = str(kwargs.get("platform") or "unknown").strip().lower()
+    app = str(kwargs.get("app") or "").strip()
+    return platform, normalize_app_identifier(platform, app) if app else ""
+
+
+def _decorator_literal_kwargs(
+    func: ast.AsyncFunctionDef | ast.FunctionDef,
+    decorator_name: str,
+) -> dict[str, Any]:
+    for decorator in func.decorator_list:
+        if not isinstance(decorator, ast.Call):
+            continue
+        name = (
+            decorator.func.id
+            if isinstance(decorator.func, ast.Name)
+            else decorator.func.attr
+            if isinstance(decorator.func, ast.Attribute)
+            else ""
+        )
+        if name != decorator_name:
+            continue
+        values: dict[str, Any] = {}
+        for keyword in decorator.keywords:
+            if keyword.arg is None:
+                continue
+            try:
+                values[keyword.arg] = ast.literal_eval(keyword.value)
+            except (TypeError, ValueError):
+                continue
+        return values
+    return {}
+
+
+def _set_skill_decorator_keyword(
+    func: ast.AsyncFunctionDef | ast.FunctionDef,
+    keyword_name: str,
+    value: Any,
+) -> None:
+    for decorator in func.decorator_list:
+        if not isinstance(decorator, ast.Call):
+            continue
+        if not (
+            (isinstance(decorator.func, ast.Name) and decorator.func.id == "skill")
+            or (isinstance(decorator.func, ast.Attribute) and decorator.func.attr == "skill")
+        ):
+            continue
+        expr = ast.parse(repr(value), mode="eval").body
+        for keyword in decorator.keywords:
+            if keyword.arg == keyword_name:
+                keyword.value = expr
+                return
+        decorator.keywords.append(ast.keyword(arg=keyword_name, value=expr))
+        return
+
+
+def _skill_action_signatures_compatible(
+    existing_node: ast.AsyncFunctionDef,
+    update_node: ast.AsyncFunctionDef,
+) -> bool:
+    existing_signature = _comparable_action_signature(existing_node)
+    update_signature = _comparable_action_signature(update_node)
+    if not existing_signature or not update_signature:
+        return bool(existing_signature == update_signature)
+    shared_len = min(len(existing_signature), len(update_signature))
+    if shared_len <= 0:
+        return False
+    return all(
+        _action_signature_item_compatible(old, new)
+        for old, new in zip(
+            existing_signature[:shared_len],
+            update_signature[:shared_len],
+            strict=False,
+        )
+    )
+
+
+def _comparable_action_signature(func: ast.AsyncFunctionDef) -> tuple[tuple[str, str], ...]:
+    signature: list[tuple[str, str]] = []
+    for _stmt, call in _direct_action_calls(func):
+        action_type = _action_call_type(call)
+        if action_type in _ENTRY_ACTION_TYPES or action_type in {"wait", "done", "request_intervention"}:
+            continue
+        if _action_call_optional(call):
+            continue
+        signature.append((action_type, _normalize_action_target(_action_call_target(call))))
+    return tuple(signature)
+
+
+def _action_signature_item_compatible(
+    existing: tuple[str, str],
+    update: tuple[str, str],
+) -> bool:
+    if existing[0] != update[0]:
+        return False
+    old_target = existing[1]
+    new_target = update[1]
+    if old_target == new_target:
+        return True
+    if not old_target or not new_target:
+        return True
+    if _is_placeholder_value(old_target) or _is_placeholder_value(new_target):
+        return True
+    old_tokens = _tokens(old_target)
+    new_tokens = _tokens(new_target)
+    if not old_tokens or not new_tokens:
+        return False
+    overlap = len(old_tokens & new_tokens) / max(1, min(len(old_tokens), len(new_tokens)))
+    return overlap >= 0.5
+
+
+def _direct_action_calls(func: ast.AsyncFunctionDef) -> list[tuple[ast.stmt, ast.Call]]:
+    calls: list[tuple[ast.stmt, ast.Call]] = []
+    for stmt in func.body:
+        call = _awaited_action_call(stmt)
+        if call is not None:
+            calls.append((stmt, call))
+    return calls
+
+
+def _leading_optional_action_stmts(func: ast.AsyncFunctionDef) -> list[tuple[ast.stmt, ast.Call]]:
+    optional: list[tuple[ast.stmt, ast.Call]] = []
+    seen_body_action = False
+    for stmt, call in _direct_action_calls(func):
+        action_type = _action_call_type(call)
+        if action_type in _ENTRY_ACTION_TYPES:
+            if seen_body_action:
+                break
+            continue
+        if _action_call_optional(call) and _action_has_state_contract(call):
+            optional.append((stmt, call))
+            seen_body_action = True
+            continue
+        break
+    return optional
+
+
+def _after_leading_entry_actions_index(func: ast.AsyncFunctionDef) -> int:
+    index = _skill_entry_insert_index(func)
+    while index < len(func.body):
+        call = _awaited_action_call(func.body[index])
+        if call is None or _action_call_type(call) not in _ENTRY_ACTION_TYPES:
+            break
+        index += 1
+    return index
+
+
+def _action_stmt_key(stmt: ast.stmt) -> str:
+    call = _awaited_action_call(stmt)
+    if call is None:
+        return ""
+    contract = ""
+    for keyword in call.keywords:
+        if keyword.arg == "state_contract":
+            contract = ast.unparse(keyword.value)
+            break
+    return "|".join((
+        _action_call_type(call),
+        _normalize_action_target(_action_call_target(call)),
+        "optional" if _action_call_optional(call) else "required",
+        contract,
+    ))
+
+
+def _action_call_optional(call: ast.Call) -> bool:
+    for keyword in call.keywords:
+        if keyword.arg != "optional":
+            continue
+        value = keyword.value
+        return isinstance(value, ast.Constant) and value.value is True
+    return False
+
+
+def _action_has_state_contract(call: ast.Call) -> bool:
+    return any(keyword.arg == "state_contract" for keyword in call.keywords)
+
+
+def _action_call_target(call: ast.Call) -> str:
+    if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant):
+        return str(call.args[1].value or "")
+    for keyword in call.keywords:
+        if keyword.arg == "target" and isinstance(keyword.value, ast.Constant):
+            return str(keyword.value.value or "")
+    return ""
+
+
+def _normalize_action_target(target: str) -> str:
+    return " ".join(str(target or "").split()).casefold()
+
+
+def _dedupe_function_name(base_name: str, used_names: set[str]) -> str:
+    candidate = base_name
+    suffix = 2
+    while candidate in used_names:
+        candidate = f"{base_name}_{suffix}"
+        suffix += 1
+    return candidate
 
 
 def _preserve_existing_entry_actions(existing_tree: ast.Module, update_tree: ast.Module) -> None:

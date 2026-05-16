@@ -1079,9 +1079,25 @@ class GuiAgent:
 
         skill_context: str | None = None
 
-        # 3. Search skill library (once); LLM-gated when SkillReuser is available.
+        # 3. Try graph-native skill execution before flat skill search.  A full
+        # graph path is already a concrete reusable prefix; a prefix-only graph
+        # path may still need a flat skill or the ordinary agent loop.
+        graph_result: Any | None = await self._try_graph_runtime(task, app_hint=app_hint)
+        graph_completed = False
+        if graph_result is not None:
+            graph_state = getattr(getattr(graph_result, "state", None), "value", None) or str(
+                getattr(graph_result, "state", "")
+            )
+            if graph_state == "succeeded":
+                execution_summary = getattr(graph_result, "execution_summary", None)
+                skill_context = execution_summary if isinstance(execution_summary, str) else None
+                graph_completed = not bool(getattr(graph_result, "prefix_only", False))
+
+        # 4. Search skill library (once); LLM-gated when SkillReuser is available.
         reuser_usage: dict[str, int] = {}
-        if self._skill_reuser is not None and self._skill_library is not None:
+        if graph_completed:
+            skill_match = None
+        elif self._skill_reuser is not None and self._skill_library is not None:
             skill_match = await self._skill_reuser.find(
                 task,
                 self._skill_library,
@@ -1102,7 +1118,7 @@ class GuiAgent:
             else:
                 matched_skill, final_score = skill_match
 
-        # 4. If skill matched, attempt skill execution first.
+        # 5. If skill matched, attempt skill execution first.
         skill_result: Any | None = None
         continuation_usage: dict[str, int] = {}
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:

@@ -24,8 +24,11 @@ from opengui.skills.static_selector_filter import (
     filter_static_controls,
     filter_static_resource_ids,
     filter_static_texts,
+    is_dynamic_resource_id,
+    is_dynamic_text,
+    is_static_resource_id,
+    is_static_text,
     selector_is_static,
-    static_control_from_node,
 )
 
 _CODE_HEADER = "from opengui.skills.code_graph import C, R, action, skill, state, tag, transition"
@@ -702,9 +705,21 @@ def _selector_from_action_node(node: dict[str, Any]) -> dict[str, Any] | None:
     if stable:
         return stable
     selector: dict[str, Any] = {}
-    for key in ("content_desc", "resource_id", "text"):
+    for key in ("resource_id", "content_desc", "text"):
         value = node.get(key)
-        if isinstance(value, str) and value.strip():
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if key == "text" and is_dynamic_text(value):
+            continue
+        if key == "resource_id" and is_dynamic_resource_id(value):
+            continue
+        if key == "content_desc" and not is_static_text(value):
+            continue
+        if key == "resource_id" and not is_static_resource_id(value):
+            continue
+        if key == "text" and not is_static_text(value):
+            continue
+        if value.strip():
             selector[key] = value.strip()
             break
     for flag in ("clickable", "enabled", "focused", "scrollable"):
@@ -734,18 +749,28 @@ def _parse_bounds(value: Any) -> tuple[float, float, float, float] | None:
 
 
 def _stable_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
-    control = static_control_from_node(node)
-    if not control:
-        return None
     selector: dict[str, Any] = {}
-    for key in ("resource_id", "content_desc", "text"):
-        value = control.get(key)
-        if value:
-            selector[key] = value
+    resource_id = _clean_selector_text(node.get("resource_id"))
+    content_desc = _clean_selector_text(node.get("content_desc"))
+    text = _clean_selector_text(node.get("text"))
+    if resource_id and (is_static_resource_id(resource_id) or not is_dynamic_resource_id(resource_id)):
+        selector["resource_id"] = resource_id
+    elif content_desc and is_static_text(content_desc):
+        selector["content_desc"] = content_desc
+    elif text and is_static_text(text):
+        selector["text"] = text
+    else:
+        return None
     for flag in ("clickable", "enabled", "focused", "scrollable"):
         if node.get(flag):
             selector[flag] = True
     return selector or None
+
+
+def _clean_selector_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return " ".join(value.split()).strip()
 
 
 def _target_identity_selector(selectors: list[dict[str, Any]], target: str | None) -> dict[str, Any] | None:
