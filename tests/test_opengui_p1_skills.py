@@ -21,15 +21,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from opengui.backends.dry_run import DryRunBackend
 from opengui.agent import GuiAgent
+from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse
 from opengui.skills import Skill, SkillStep
 from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.library import SkillLibrary
 from opengui.skills.reuser import SkillReuser
-
 
 # ---------------------------------------------------------------------------
 # Shared test helpers
@@ -62,7 +61,9 @@ class _CountingEmbedder(_FakeEmbedder):
 
     async def embed(self, texts: list[str]) -> np.ndarray:
         self.calls += 1
-        if len(texts) <= 1:
+        # A one-document index rebuild is still an index call; query texts are
+        # lower/short and do not include the stored app marker from _skill_text().
+        if len(texts) <= 1 and "com.example.app" not in texts[0]:
             self.query_calls += 1
         else:
             self.index_calls += 1

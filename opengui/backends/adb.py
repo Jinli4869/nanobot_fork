@@ -18,14 +18,17 @@ import asyncio
 import base64
 import importlib.resources
 import inspect
+import logging
 import os
 import re
+import shlex
 import struct
 import tempfile
 import threading
 import time
 import unicodedata
 import uuid
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -33,6 +36,8 @@ from typing import Any, Callable, Protocol
 
 from opengui.action import Action, describe_action, resolve_coordinate
 from opengui.observation import Observation
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Keycode mapping
@@ -87,6 +92,7 @@ _FOCUSED_APP_RE = re.compile(
 )
 
 _DEVICE_SCREENSHOT_PATH = "/sdcard/__opengui_cap.png"
+_DEVICE_UI_XML_PATH = "/sdcard/window.xml"
 _ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 _YADB_PATH = "/data/local/tmp/yadb"
 _YADB_MAIN_CLASS = "com.ysbing.yadb.Main"
@@ -95,6 +101,42 @@ _KEYCOMBINATION_UNSUPPORTED_MARKERS = (
     "unknown command: keycombination",
     "invalid arguments for command: keycombination",
 )
+_ANDROID_PACKAGE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
+_ANDROID_COMPONENT_RE = re.compile(
+    r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+/"
+    r"(?:[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*|\.[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)*)$"
+)
+_ANDROID_INTENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]*$")
+_ANDROID_EXTRA_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_AM_START_FAILURE_MARKERS = (
+    "error:",
+    "exception",
+    "unable to resolve intent",
+    "activity not started",
+)
+
+
+def _am_start_output_failed(output: str) -> bool:
+    lowered = (output or "").lower()
+    return any(marker in lowered for marker in _AM_START_FAILURE_MARKERS)
+
+
+def _without_am_start_wait(remote_args: list[str]) -> list[str]:
+    return [arg for arg in remote_args if arg != "-W"]
+
+
+def _without_am_start_option(remote_args: list[str], option: str) -> list[str]:
+    trimmed: list[str] = []
+    skip_next = False
+    for arg in remote_args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == option:
+            skip_next = True
+            continue
+        trimmed.append(arg)
+    return trimmed
 
 
 def _read_png_size(path: Path) -> tuple[int, int] | None:
@@ -205,6 +247,7 @@ class ScrcpyFrameSource:
         self._listener: Any | None = None
         self._latest_frame: Any | None = None
         self._latest_ts = 0.0
+        self._reader_error: Exception | None = None
         self._started = False
         self._stopping = False
         self._condition = threading.Condition()
@@ -232,16 +275,23 @@ class ScrcpyFrameSource:
         client.start()
         self._client = client
         self._stopping = False
+        with self._condition:
+            self._reader_error = None
 
         initial_frame = self._wait_until_ready(client)
         if initial_frame is not None:
             self._set_latest_frame(initial_frame)
 
-        listener = getattr(client, "start_frame_listener", None)
-        if callable(listener):
-            self._listener = listener(self._on_frame)
-        else:
-            threading.Thread(target=self._listen_forever, daemon=True).start()
+        # py-scrcpy-sdk's helper listener lets thread exceptions escape to
+        # stderr. Keep the listener under our control so reader failures are
+        # surfaced through save_latest(), where AdbBackend can restart or
+        # fall back to adb screencap.
+        self._listener = threading.Thread(
+            target=self._listen_forever,
+            name="opengui-scrcpy-frame-listener",
+            daemon=True,
+        )
+        self._listener.start()
 
         self._started = True
 
@@ -273,9 +323,15 @@ class ScrcpyFrameSource:
         frames = getattr(self._client, "frames", None)
         if not callable(frames):
             return
-        for frame in frames():
-            if self._on_frame(frame) is False:
-                break
+        try:
+            for frame in frames():
+                if self._on_frame(frame) is False:
+                    break
+        except Exception as exc:
+            with self._condition:
+                if not self._stopping:
+                    self._reader_error = exc
+                self._condition.notify_all()
 
     def _on_frame(self, frame: Any) -> bool:
         self._set_latest_frame(frame)
@@ -286,6 +342,7 @@ class ScrcpyFrameSource:
         with self._condition:
             self._latest_frame = frame
             self._latest_ts = ts
+            self._reader_error = None
             self._condition.notify_all()
         if self._on_jpeg_frame is not None:
             try:
@@ -303,7 +360,10 @@ class ScrcpyFrameSource:
             while True:
                 frame = self._latest_frame
                 ts = self._latest_ts
+                reader_error = self._reader_error
                 now = time.time()
+                if reader_error is not None:
+                    raise RuntimeError("scrcpy frame reader failed") from reader_error
                 if frame is not None and (max_age_s <= 0 or now - ts <= max_age_s):
                     break
                 remaining = deadline - now
@@ -311,6 +371,10 @@ class ScrcpyFrameSource:
                     break
                 self._condition.wait(timeout=max(0.01, remaining))
 
+        if reader_error is not None and (
+            frame is None or (max_age_s > 0 and time.time() - ts > max_age_s)
+        ):
+            raise RuntimeError("scrcpy frame reader failed") from reader_error
         if frame is None:
             raise TimeoutError(f"scrcpy frame not available within {timeout_s:.2f}s")
         if max_age_s > 0 and time.time() - ts > max_age_s:
@@ -334,6 +398,7 @@ class ScrcpyFrameSource:
         with self._condition:
             self._latest_frame = None
             self._latest_ts = 0.0
+            self._reader_error = None
             self._condition.notify_all()
         self._listener = None
         self._client = None
@@ -441,6 +506,8 @@ class AdbBackend:
         frame_source: ScrcpyFrameSourceProtocol | None = None,
         on_jpeg_frame: Callable[[bytes, dict[str, Any]], None] | None = None,
         use_scrcpy: bool = True,
+        collect_ui_tree: bool = False,
+        collect_ui_tree_nodes: bool = False,
     ) -> None:
         self._serial = serial
         self._adb = adb_path
@@ -451,6 +518,8 @@ class AdbBackend:
         self._scrcpy_frame_timeout_ms = scrcpy_frame_timeout_ms
         self._scrcpy_max_frame_age_ms = scrcpy_max_frame_age_ms
         self._use_scrcpy = use_scrcpy
+        self._collect_ui_tree = collect_ui_tree
+        self._collect_ui_tree_nodes = collect_ui_tree_nodes
         self._scrcpy_started = False
         self._frame_source = (
             frame_source
@@ -552,7 +621,11 @@ class AdbBackend:
                 raise AdbError("No Android device found. Connect a device or start an emulator.")
 
         if self._use_scrcpy:
-            await self._ensure_scrcpy_started()
+            try:
+                await self._ensure_scrcpy_started()
+            except Exception as exc:
+                logger.warning("ADB scrcpy preflight failed; falling back to screencap: %s", exc)
+                self._use_scrcpy = False
 
     # ------------------------------------------------------------------
     # App discovery
@@ -615,28 +688,38 @@ class AdbBackend:
         return await self._observe_via_screencap(screenshot_path, timeout=timeout)
 
     async def _observe_via_scrcpy(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
-        await self._ensure_scrcpy_started()
+        try:
+            await self._ensure_scrcpy_started()
+        except Exception as exc:
+            logger.warning("ADB scrcpy capture unavailable; falling back to screencap: %s", exc)
+            return await self._observe_via_screencap(screenshot_path, timeout=timeout)
         if self._frame_source is None:
             raise AdbError("ADB scrcpy capture is enabled but no frame source is configured.")
 
         snapshot = await self._capture_scrcpy_frame(screenshot_path, timeout=timeout)
         if snapshot is None:
             return await self._observe_via_screencap(screenshot_path, timeout=timeout)
-        (input_width, input_height), fg_app = await asyncio.gather(
+        (input_width, input_height), fg_app, extra = await asyncio.gather(
             self._query_screen_size(timeout),
             self._query_foreground_app(timeout),
+            self._collect_ui_tree_extra(timeout),
         )
         self._capture_width = snapshot.width
         self._capture_height = snapshot.height
         self._screen_width = input_width
         self._screen_height = input_height
+        merged_extra: dict[str, Any] = {
+            "capture_source": "scrcpy",
+            "frame_timestamp": snapshot.timestamp,
+        }
+        merged_extra.update(extra)
         return Observation(
             screenshot_path=str(screenshot_path),
             screen_width=snapshot.width,
             screen_height=snapshot.height,
             foreground_app=fg_app,
             platform=self.platform,
-            extra={"capture_source": "scrcpy", "frame_timestamp": snapshot.timestamp},
+            extra=merged_extra,
         )
 
     async def _capture_scrcpy_frame(
@@ -648,28 +731,28 @@ class AdbBackend:
     ) -> ScrcpyFrameSnapshot | None:
         if self._frame_source is None:
             return None
-        try:
+
+        async def _capture_once() -> ScrcpyFrameSnapshot:
             return await asyncio.to_thread(
                 self._frame_source.save_latest,
                 screenshot_path,
                 timeout_s=min(timeout, self._scrcpy_frame_timeout_ms / 1000.0),
                 max_age_s=self._scrcpy_max_frame_age_ms / 1000.0,
             )
-        except TimeoutError:
-            if allow_restart:
-                try:
-                    await self._restart_scrcpy_frame_source()
-                except Exception:
-                    return None
-                try:
-                    return await asyncio.to_thread(
-                        self._frame_source.save_latest,
-                        screenshot_path,
-                        timeout_s=min(timeout, self._scrcpy_frame_timeout_ms / 1000.0),
-                        max_age_s=self._scrcpy_max_frame_age_ms / 1000.0,
-                    )
-                except TimeoutError:
-                    return None
+
+        try:
+            return await _capture_once()
+        except (TimeoutError, RuntimeError, OSError):
+            if not allow_restart:
+                return None
+
+        try:
+            await self._restart_scrcpy_frame_source()
+        except Exception:
+            return None
+        try:
+            return await _capture_once()
+        except (TimeoutError, RuntimeError, OSError):
             return None
 
     async def _restart_scrcpy_frame_source(self) -> None:
@@ -686,27 +769,64 @@ class AdbBackend:
         await self._run("pull", _DEVICE_SCREENSHOT_PATH, str(screenshot_path), timeout=timeout)
 
         screenshot_size = _read_png_size(screenshot_path)
+        ui_tree_task = self._collect_ui_tree_extra(timeout)
         if screenshot_size is None:
-            (width, height), fg_app = await asyncio.gather(
+            (width, height), fg_app, extra = await asyncio.gather(
                 self._query_screen_size(timeout),
                 self._query_foreground_app(timeout),
+                ui_tree_task,
             )
         else:
             width, height = screenshot_size
-            fg_app = await self._query_foreground_app(timeout)
+            fg_app, extra = await asyncio.gather(
+                self._query_foreground_app(timeout),
+                ui_tree_task,
+            )
 
         self._screen_width = width
         self._screen_height = height
         self._capture_width = width
         self._capture_height = height
 
+        merged_extra: dict[str, Any] = {"capture_source": "screencap"}
+        merged_extra.update(extra)
         return Observation(
             screenshot_path=str(screenshot_path),
             screen_width=width,
             screen_height=height,
             foreground_app=fg_app,
             platform=self.platform,
+            extra=merged_extra,
         )
+
+    async def _collect_ui_tree_extra(self, timeout: float) -> dict[str, Any]:
+        if not self._collect_ui_tree:
+            return {}
+        # uiautomator dump is noticeably slower than screenshot capture on real
+        # devices; a 1s cap is too aggressive and silently drops the tree.
+        ui_timeout = max(0.2, min(timeout, 3.0))
+        try:
+            await self._run(
+                "shell",
+                "uiautomator",
+                "dump",
+                "--compressed",
+                _DEVICE_UI_XML_PATH,
+                timeout=ui_timeout,
+            )
+            xml_text = await self._run(
+                "shell",
+                "cat",
+                _DEVICE_UI_XML_PATH,
+                timeout=ui_timeout,
+            )
+            return _parse_ui_tree_xml(
+                xml_text,
+                include_nodes=self._collect_ui_tree_nodes,
+            )
+        except Exception as exc:
+            logger.debug("ADB UI-tree capture unavailable: %s", exc)
+            return {}
 
     async def shutdown(self) -> None:
         if self._frame_source is not None:
@@ -1043,6 +1163,12 @@ class AdbBackend:
                     timeout=timeout,
                 )
 
+        elif t == "open_deeplink":
+            await self._open_deeplink(action, timeout=timeout)
+
+        elif t == "open_intent":
+            await self._open_intent(action, timeout=timeout)
+
         elif t == "close_app":
             pkg = action.text or ""
             if pkg:
@@ -1052,6 +1178,122 @@ class AdbBackend:
             raise ValueError(f"Unsupported action type: {t!r}")
 
         return describe_action(action)
+
+    async def _open_deeplink(self, action: Action, *, timeout: float) -> str:
+        uri = action.text or ""
+        if not uri:
+            raise ValueError("open_deeplink requires a URI in action.text")
+        if "\x00" in uri:
+            raise ValueError("open_deeplink URI must not contain NUL bytes")
+        remote_args = [
+            "am", "start", "-W",
+            "-a", "android.intent.action.VIEW",
+            "-d", uri,
+        ]
+        if action.component:
+            if not _ANDROID_COMPONENT_RE.match(action.component):
+                raise ValueError(f"Invalid Android component for open_deeplink: {action.component!r}")
+            remote_args.extend(["-n", action.component])
+        if action.package:
+            if not _ANDROID_PACKAGE_RE.match(action.package):
+                raise ValueError(f"Invalid Android package for open_deeplink: {action.package!r}")
+            remote_args.extend(["-p", action.package])
+        return await self._run_am_start_with_fallbacks(
+            remote_args,
+            timeout=timeout,
+            label="open_deeplink",
+        )
+
+    async def _open_intent(self, action: Action, *, timeout: float) -> str:
+        intent_action = action.intent_action or ""
+        if not intent_action:
+            raise ValueError("open_intent requires action.intent_action")
+        if not _ANDROID_INTENT_NAME_RE.match(intent_action):
+            raise ValueError(f"Invalid Android intent action for open_intent: {intent_action!r}")
+        remote_args = ["am", "start", "-W", "-a", intent_action]
+        if action.text:
+            if "\x00" in action.text:
+                raise ValueError("open_intent data URI must not contain NUL bytes")
+            remote_args.extend(["-d", action.text])
+        if action.mime_type:
+            if "\x00" in action.mime_type:
+                raise ValueError("open_intent MIME type must not contain NUL bytes")
+            remote_args.extend(["-t", action.mime_type])
+        for category in action.categories:
+            if not _ANDROID_INTENT_NAME_RE.match(category):
+                raise ValueError(f"Invalid Android intent category for open_intent: {category!r}")
+            remote_args.extend(["-c", category])
+        if action.component:
+            if not _ANDROID_COMPONENT_RE.match(action.component):
+                raise ValueError(f"Invalid Android component for open_intent: {action.component!r}")
+            remote_args.extend(["-n", action.component])
+        if action.package:
+            if not _ANDROID_PACKAGE_RE.match(action.package):
+                raise ValueError(f"Invalid Android package for open_intent: {action.package!r}")
+            remote_args.extend(["-p", action.package])
+        for key, value in action.extras:
+            if not _ANDROID_EXTRA_KEY_RE.match(key):
+                raise ValueError(f"Invalid Android extra key for open_intent: {key!r}")
+            if isinstance(value, bool):
+                remote_args.extend(["--ez", key, "true" if value else "false"])
+            elif isinstance(value, int) and not isinstance(value, bool):
+                remote_args.extend(["--ei", key, str(value)])
+            elif isinstance(value, float):
+                remote_args.extend(["--ef", key, str(value)])
+            else:
+                text_value = "" if value is None else str(value)
+                if "\x00" in text_value:
+                    raise ValueError(f"open_intent extra {key!r} must not contain NUL bytes")
+                remote_args.extend(["--es", key, text_value])
+        return await self._run_am_start_with_fallbacks(
+            remote_args,
+            timeout=timeout,
+            label="open_intent",
+        )
+
+    async def _run_am_start_with_fallbacks(
+        self,
+        remote_args: list[str],
+        *,
+        timeout: float,
+        label: str,
+    ) -> str:
+        """Run ``am start`` with conservative fallbacks for fragile launchers."""
+        variants: list[tuple[str, list[str]]] = []
+
+        def add_variant(name: str, args: list[str]) -> None:
+            key = tuple(args)
+            if any(tuple(existing) == key for _, existing in variants):
+                return
+            variants.append((name, args))
+
+        add_variant("primary", list(remote_args))
+        add_variant("no_wait", _without_am_start_wait(remote_args))
+        if "-n" in remote_args:
+            implicit_args = _without_am_start_option(remote_args, "-n")
+            add_variant("implicit", implicit_args)
+            add_variant("implicit_no_wait", _without_am_start_wait(implicit_args))
+
+        errors: list[str] = []
+        for variant_name, args in variants:
+            # `adb shell` still routes through the device shell. Quote each
+            # fixed-position argument so URI query separators cannot split the
+            # restricted am-start command or swallow later -n/-p arguments.
+            remote_cmd = " ".join(shlex.quote(arg) for arg in args)
+            try:
+                output = await self._run("shell", remote_cmd, timeout=timeout)
+            except (AdbError, TimeoutError, asyncio.TimeoutError) as exc:
+                errors.append(f"{variant_name}: {type(exc).__name__}: {exc}")
+                continue
+            if _am_start_output_failed(output):
+                errors.append(f"{variant_name}: {output}")
+                continue
+            if variant_name != "primary":
+                logger.info("%s succeeded via %s fallback", label, variant_name)
+            return output
+
+        detail = " | ".join(errors) if errors else "no launch variants attempted"
+        raise AdbError(f"{label} failed: {detail}")
 
     def _resolve_x(self, value: float, *, relative: bool) -> int:
         if relative:
@@ -1125,3 +1367,139 @@ class AdbBackend:
             str(x), str(y), str(x2), str(y2), dur,
             timeout=timeout,
         )
+
+
+def _parse_ui_tree_xml(
+    xml_text: str,
+    *,
+    max_nodes: int = 80,
+    max_values: int = 80,
+    include_nodes: bool = False,
+) -> dict[str, Any]:
+    """Parse Android uiautomator XML into compact observation metadata."""
+    try:
+        root = ET.fromstring(xml_text.strip())
+    except ET.ParseError:
+        return {}
+
+    visible_text: list[str] = []
+    content_desc: list[str] = []
+    resource_ids: list[str] = []
+    clickable_text: list[str] = []
+    focused_text: list[str] = []
+    enabled_text: list[str] = []
+    class_names: list[str] = []
+    ui_tree: list[dict[str, Any]] | None = [] if include_nodes else None
+    node_count = 0
+    scrollable_present = False
+    enabled_present = False
+
+    for element in root.iter("node"):
+        node_count += 1
+        text = _clean_ui_attr(element.get("text"))
+        desc = _clean_ui_attr(element.get("content-desc"))
+        resource_id = _clean_ui_attr(element.get("resource-id"))
+        class_name = _clean_ui_attr(element.get("class"))
+        bounds = _clean_ui_attr(element.get("bounds"))
+        clickable = element.get("clickable") == "true"
+        focused = element.get("focused") == "true"
+        enabled = element.get("enabled") == "true"
+        scrollable = element.get("scrollable") == "true"
+        if enabled:
+            enabled_present = True
+        if scrollable:
+            scrollable_present = True
+
+        if text:
+            visible_text.append(text)
+        if desc:
+            content_desc.append(desc)
+        if resource_id:
+            resource_ids.append(resource_id)
+        if class_name:
+            class_names.append(class_name)
+
+        label = text or desc
+        if clickable:
+            clickable_text.extend(_iter_ui_label_texts(element))
+        if focused and label:
+            focused_text.append(label)
+        if enabled and label:
+            enabled_text.append(label)
+
+        if ui_tree is not None and len(ui_tree) < max_nodes and (
+            text or desc or resource_id or class_name or clickable or focused or enabled or scrollable
+        ):
+            compact_node: dict[str, Any] = {}
+            if text:
+                compact_node["text"] = text
+            if desc:
+                compact_node["content_desc"] = desc
+            if resource_id:
+                compact_node["resource_id"] = resource_id
+            if class_name:
+                compact_node["class"] = class_name
+            if clickable:
+                compact_node["clickable"] = True
+            if focused:
+                compact_node["focused"] = True
+            if enabled:
+                compact_node["enabled"] = True
+            if scrollable:
+                compact_node["scrollable"] = True
+            if bounds:
+                compact_node["bounds"] = bounds
+            ui_tree.append(compact_node)
+
+    extra: dict[str, Any] = {"ui_tree_node_count": node_count}
+    if visible_text:
+        extra["visible_text"] = _dedupe_ui_values(visible_text)[:max_values]
+    if content_desc:
+        extra["content_desc"] = _dedupe_ui_values(content_desc)[:max_values]
+    if resource_ids:
+        extra["resource_ids"] = _dedupe_ui_values(resource_ids)[:max_values]
+    if clickable_text:
+        extra["clickable_text"] = _dedupe_ui_values(clickable_text)[:max_values]
+    if focused_text:
+        extra["focused_text"] = _dedupe_ui_values(focused_text)[:max_values]
+    if enabled_text:
+        extra["enabled_text"] = _dedupe_ui_values(enabled_text)[:max_values]
+    if class_names:
+        extra["class_names"] = _dedupe_ui_values(class_names)[:max_values]
+    if enabled_present:
+        extra["enabled_present"] = True
+    if scrollable_present:
+        extra["scrollable_present"] = True
+    if ui_tree:
+        extra["ui_tree"] = ui_tree
+    return extra
+
+
+def _clean_ui_attr(value: str | None) -> str:
+    if value is None:
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _iter_ui_label_texts(element: ET.Element) -> list[str]:
+    labels: list[str] = []
+    for node in element.iter("node"):
+        label = _clean_ui_attr(node.get("text")) or _clean_ui_attr(node.get("content-desc"))
+        if label:
+            labels.append(label)
+    return labels
+
+
+def _dedupe_ui_values(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _clean_ui_attr(value)
+        if not text:
+            continue
+        marker = text.casefold()
+        if marker in seen:
+            continue
+        out.append(text)
+        seen.add(marker)
+    return out

@@ -25,14 +25,17 @@ import logging
 import re
 import time
 import typing
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from opengui.action import Action
+from opengui.action import Action, ActionError, parse_action
 from opengui.interfaces import DeviceBackend
+from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.state_contract import evaluate_state_contract_detail
 
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
@@ -41,6 +44,9 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _POST_ACTION_SETTLE_SECONDS: float = 0.50
+_OPEN_APP_SETTLE_SECONDS: float = 4.00
+_OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
+_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
 _NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
 
 
@@ -99,6 +105,9 @@ class StepResult:
     # float → actual LLM validation call duration in seconds
     validate_duration_s: float | None = None
     grounding_duration_s: float | None = None
+    observation: dict[str, Any] | None = None
+    screenshot_path: str | None = None
+    contract_eval_detail: dict[str, Any] | None = None
 
 
 @dataclass
@@ -177,6 +186,15 @@ class ScreenshotProvider(typing.Protocol):
 
     async def get_screenshot(self) -> Path | bytes | None:
         """Capture and return the current screenshot."""
+        ...
+
+
+@typing.runtime_checkable
+class ObservationProvider(ScreenshotProvider, typing.Protocol):
+    """Provides a full observation with screenshot and structured metadata."""
+
+    async def get_observation(self) -> Observation | None:
+        """Capture and return the current observation."""
         ...
 
 
@@ -374,6 +392,23 @@ def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
         kwargs["pixels"] = int(values["pixels"])
     if "duration_ms" in values:
         kwargs["duration_ms"] = int(values["duration_ms"])
+    if "component" in values:
+        kwargs["component"] = str(values["component"])
+    if "package" in values:
+        kwargs["package"] = str(values["package"])
+    if "intent_action" in values:
+        kwargs["intent_action"] = str(values["intent_action"])
+    if "mime_type" in values:
+        kwargs["mime_type"] = str(values["mime_type"])
+    if "categories" in values:
+        raw_categories = values["categories"]
+        kwargs["categories"] = tuple(str(item) for item in raw_categories) if isinstance(raw_categories, (list, tuple)) else (str(raw_categories),)
+    if "extras" in values:
+        raw_extras = values["extras"]
+        if isinstance(raw_extras, dict):
+            kwargs["extras"] = tuple(raw_extras.items())
+        elif isinstance(raw_extras, (list, tuple)):
+            kwargs["extras"] = tuple(tuple(item) for item in raw_extras)
     if "relative" in values:
         kwargs["relative"] = bool(values["relative"])
     return Action(**kwargs)
@@ -385,23 +420,103 @@ def _build_template_action(step: SkillStep, params: dict[str, str]) -> Action:
     Used when no ``ActionGrounder`` is provided or when callers do not supply
     one. Mirrors the original ``_ground_step`` behaviour.
     """
+    payload = _build_template_payload(step, params)
+    return _lenient_action_from_payload(payload)
+
+
+def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str, Any]:
+    """Build a raw action payload from step templates and runtime parameters."""
     target = _ground_text(step.target, params)
     grounded: dict[str, Any] = {}
     for k, v in step.parameters.items():
         grounded[k] = _ground_text(str(v), params) if isinstance(v, str) else v
 
-    kwargs: dict[str, Any] = {"action_type": step.action_type}
-    if "x" in grounded:
-        kwargs["x"] = float(grounded["x"])
-    if "y" in grounded:
-        kwargs["y"] = float(grounded["y"])
-    if "text" in grounded:
-        kwargs["text"] = grounded["text"]
-    elif step.action_type == "input_text":
-        kwargs["text"] = target
-    elif step.action_type == "open_app":
-        kwargs["text"] = target
+    payload: dict[str, Any] = {"action_type": step.action_type}
+    for key in (
+        "x",
+        "y",
+        "x2",
+        "y2",
+        "text",
+        "key",
+        "pixels",
+        "duration_ms",
+        "component",
+        "package",
+        "intent_action",
+        "mime_type",
+        "categories",
+        "extras",
+        "relative",
+        "status",
+        "auto_enter",
+    ):
+        if key in grounded:
+            payload[key] = grounded[key]
+    if "text" not in payload and step.action_type in {
+        "input_text",
+        "open_app",
+        "open_deeplink",
+        "close_app",
+    }:
+        payload["text"] = target
+    return payload
+
+
+def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
+    """Create an Action while preserving legacy permissive template fallback."""
+    kwargs: dict[str, Any] = {"action_type": str(payload.get("action_type") or "")}
+    for key in ("x", "y", "x2", "y2"):
+        if key in payload:
+            kwargs[key] = float(payload[key])
+    if "text" in payload:
+        kwargs["text"] = str(payload["text"])
+    if "key" in payload:
+        raw_key = payload["key"]
+        kwargs["key"] = [str(item) for item in raw_key] if isinstance(raw_key, list) else [str(raw_key)]
+    if "pixels" in payload:
+        kwargs["pixels"] = int(payload["pixels"])
+    if "duration_ms" in payload:
+        kwargs["duration_ms"] = int(payload["duration_ms"])
+    if "component" in payload:
+        kwargs["component"] = str(payload["component"])
+    if "package" in payload:
+        kwargs["package"] = str(payload["package"])
+    if "intent_action" in payload:
+        kwargs["intent_action"] = str(payload["intent_action"])
+    if "mime_type" in payload:
+        kwargs["mime_type"] = str(payload["mime_type"])
+    if "categories" in payload:
+        raw_categories = payload["categories"]
+        kwargs["categories"] = tuple(str(item) for item in raw_categories) if isinstance(raw_categories, (list, tuple)) else (str(raw_categories),)
+    if "extras" in payload:
+        raw_extras = payload["extras"]
+        if isinstance(raw_extras, dict):
+            kwargs["extras"] = tuple(raw_extras.items())
+        elif isinstance(raw_extras, (list, tuple)):
+            kwargs["extras"] = tuple(tuple(item) for item in raw_extras)
+    if "relative" in payload:
+        kwargs["relative"] = bool(payload["relative"])
+    if "status" in payload:
+        kwargs["status"] = str(payload["status"])
+    if "auto_enter" in payload:
+        kwargs["auto_enter"] = bool(payload["auto_enter"])
     return Action(**kwargs)
+
+
+def _try_build_complete_template_action(
+    step: SkillStep,
+    params: dict[str, str],
+) -> Action | None:
+    """Return a fully-resolved template action when no visual grounding is needed."""
+    try:
+        action = parse_action(_build_template_payload(step, params))
+    except (ActionError, TypeError, ValueError):
+        return None
+    for value in (action.text, *(action.key or ())):
+        if isinstance(value, str) and re.search(r"\{\{\w+\}\}", value):
+            return None
+    return action
 
 
 # ---------------------------------------------------------------------------
@@ -470,6 +585,11 @@ class SkillExecutor:
     trajectory_recorder: TrajectoryRecorder | None = None
     stop_on_failure: bool = True
     max_recovery_steps: int = 3
+    _last_contract_eval_detail: dict[str, Any] | None = dataclasses.field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     async def execute(
         self,
@@ -487,6 +607,9 @@ class SkillExecutor:
         # valid_state strings confirmed by a high-confidence done judgment;
         # subsequent steps sharing the same valid_state skip LLM re-validation.
         confirmed_valid_states: set[str] = set()
+        visual_guarded_skill = "visual_guarded" in {
+            str(tag) for tag in (getattr(skill, "tags", ()) or ())
+        }
 
         if self.trajectory_recorder is not None:
             self.trajectory_recorder.record_event(
@@ -497,39 +620,78 @@ class SkillExecutor:
             )
 
         for i, step in enumerate(skill.steps):
+            self._last_contract_eval_detail = None
             is_optional = bool(step.parameters.get("optional", False))
+            post_action_contract = (
+                step.action_type in {"open_deeplink", "open_intent"}
+                and step.state_contract is not None
+            )
             step_start = time.monotonic()
             validate_usage: dict[str, int] = {}
             grounding_usage: dict[str, int] = {}
             validate_dur = 0.0
             grounding_dur = 0.0
+            visual_guard_block_reason: str | None = None
 
             # ------------------------------------------------------------------
             # 1. Capture current screenshot
             # ------------------------------------------------------------------
-            screenshot = await self._get_screenshot()
+            observation, screenshot = await self._get_observation_and_screenshot()
 
             # ------------------------------------------------------------------
             # 2. Valid-state check
             #    Skip when the state was already confirmed via a done judgment
             #    in an earlier recovery within this execution.
             # ------------------------------------------------------------------
-            if step.valid_state and step.valid_state in confirmed_valid_states:
+            visual_guarded_step = (
+                visual_guarded_skill
+                and not post_action_contract
+                and step.action_type not in {"open_app", "open_deeplink", "open_intent", "wait", "done", "request_intervention"}
+            )
+            if visual_guarded_step and not step.valid_state:
+                visual_guard_block_reason = "missing visual valid_state"
+                valid, validate_usage, validate_dur = False, {}, None
+            elif visual_guarded_step and self.state_validator is None:
+                visual_guard_block_reason = "missing state validator"
+                valid, validate_usage, validate_dur = False, {}, None
+            elif visual_guarded_step and screenshot is None:
+                visual_guard_block_reason = "missing screenshot"
+                valid, validate_usage, validate_dur = False, {}, None
+            elif post_action_contract:
+                valid, validate_usage, validate_dur = True, {}, None
+            elif step.valid_state and step.valid_state in confirmed_valid_states:
                 logger.debug(
                     "Step %d: valid_state %r confirmed by prior done judgment, skipping check",
                     i, step.valid_state,
                 )
                 valid, validate_usage, validate_dur = True, {}, None
             else:
-                valid, validate_usage, validate_dur = await self._validate_state(step, screenshot)
+                valid, validate_usage, validate_dur = await self._validate_state(
+                    step,
+                    screenshot,
+                    observation=observation,
+                )
             _merge_usage(total_token_usage, validate_usage)
 
             # ------------------------------------------------------------------
             # 3. Recovery subgoal when valid_state fails
             # ------------------------------------------------------------------
             recovery_result: SubgoalResult | None = None
-            if not valid and not _should_skip_validation(step.valid_state):
-                if self.subgoal_runner is not None and screenshot is not None:
+            should_enforce_state = (
+                visual_guarded_step
+                or not post_action_contract
+                and (
+                    step.state_contract is not None
+                    or not _should_skip_validation(step.valid_state)
+                )
+            )
+            if not valid and should_enforce_state and visual_guard_block_reason is None:
+                can_recover_with_subgoal = (
+                    not _should_skip_validation(step.valid_state)
+                    and self.subgoal_runner is not None
+                    and screenshot is not None
+                )
+                if can_recover_with_subgoal:
                     logger.info(
                         "Step %d: valid_state failed, attempting recovery for: %r",
                         i, step.valid_state,
@@ -559,12 +721,22 @@ class SkillExecutor:
                                 )
                         else:
                             # Standard recovery: refresh screenshot and re-validate.
-                            screenshot = recovery_result.final_screenshot or screenshot
-                            revalidate_result, revalidate_usage, revalidate_dur = await self._validate_state(step, screenshot)
+                            fresh_observation, fresh_screenshot = await self._get_observation_and_screenshot()
+                            observation = fresh_observation or observation
+                            screenshot = (
+                                fresh_screenshot
+                                or recovery_result.final_screenshot
+                                or screenshot
+                            )
+                            revalidate_result, revalidate_usage, revalidate_dur = await self._validate_state(
+                                step,
+                                screenshot,
+                                observation=observation,
+                            )
                             valid = revalidate_result
                             _merge_usage(total_token_usage, revalidate_usage)
                             _merge_usage(validate_usage, revalidate_usage)
-                            validate_dur += revalidate_dur
+                            validate_dur = _merge_optional_duration(validate_dur, revalidate_dur)
                             if not valid:
                                 logger.warning(
                                     "Step %d: re-validation after recovery still failed", i
@@ -583,8 +755,9 @@ class SkillExecutor:
             # ------------------------------------------------------------------
             # 4. If still invalid, record failure and decide whether to continue
             # ------------------------------------------------------------------
-            if not valid and not _should_skip_validation(step.valid_state):
+            if not valid and should_enforce_state:
                 step_dur = time.monotonic() - step_start
+                state_description = step.valid_state or visual_guard_block_reason or "state_contract"
                 step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
@@ -593,10 +766,13 @@ class SkillExecutor:
                     valid_state_check=False,
                     recovery_attempted=recovery_result is not None,
                     recovery_result=recovery_result,
-                    error=f"valid_state not reached: {step.valid_state}",
+                    error=f"valid_state not reached: {state_description}",
                     token_usage=dict(validate_usage),
                     duration_s=step_dur,
                     validate_duration_s=validate_dur,
+                    observation=_serialize_observation(observation),
+                    screenshot_path=_screenshot_path_string(screenshot),
+                    contract_eval_detail=self._last_contract_eval_detail,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
@@ -604,7 +780,7 @@ class SkillExecutor:
                     logger.info("Optional step %d skipped (valid_state not reached)", i)
                     continue
                 overall_state = ExecutionState.FAILED
-                error_msg = f"Step {i} valid_state not reached: {step.valid_state}"
+                error_msg = f"Step {i} valid_state not reached: {state_description}"
                 if self.stop_on_failure:
                     break
                 continue
@@ -617,13 +793,95 @@ class SkillExecutor:
                     step, screenshot, params
                 )
                 _merge_usage(total_token_usage, grounding_usage)
-                result_text = await self.backend.execute(action, timeout=timeout)
+                execution_error: Exception | None = None
+                try:
+                    result_text = await self.backend.execute(action, timeout=timeout)
+                except Exception as exc:
+                    if not post_action_contract:
+                        raise
+                    execution_error = exc
+                    result_text = str(exc)
+                    logger.warning(
+                        "Step %d %s raised %s; validating post-state before failing",
+                        i,
+                        action.action_type,
+                        type(exc).__name__,
+                    )
                 # Allow the UI to settle before the next step's
                 # screenshot / validate / grounding cycle.
-                if action.action_type == "open_app":
-                    await asyncio.sleep(2.0)
+                if action.action_type in {"open_app", "open_deeplink", "open_intent"}:
+                    await asyncio.sleep(_OPEN_APP_SETTLE_SECONDS)
                 elif action.action_type not in _NO_SETTLE_ACTIONS:
                     await asyncio.sleep(_POST_ACTION_SETTLE_SECONDS)
+                if post_action_contract:
+                    post_valid = False
+                    attempts = (
+                        _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS
+                        if action.action_type in {"open_deeplink", "open_intent"}
+                        else 1
+                    )
+                    for attempt_index in range(attempts):
+                        post_observation, post_screenshot = await self._get_observation_and_screenshot()
+                        post_valid, post_usage, post_dur = await self._validate_state(
+                            step,
+                            post_screenshot,
+                            observation=post_observation,
+                        )
+                        _merge_usage(total_token_usage, post_usage)
+                        _merge_usage(validate_usage, post_usage)
+                        validate_dur = _merge_optional_duration(validate_dur, post_dur)
+                        if post_valid:
+                            break
+                        if attempt_index < attempts - 1:
+                            await asyncio.sleep(_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS)
+                    if post_valid and execution_error is not None and self.trajectory_recorder is not None:
+                        self.trajectory_recorder.record_event(
+                            "skill_action_error_post_state_ok",
+                            skill_id=skill.skill_id,
+                            skill_name=skill.name,
+                            step_index=i,
+                            action_type=action.action_type,
+                            error=str(execution_error),
+                            exception_type=type(execution_error).__name__,
+                        )
+                    if not post_valid:
+                        step_dur = time.monotonic() - step_start
+                        state_description = step.valid_state or "state_contract"
+                        error_text = f"post-state not reached: {state_description}"
+                        if execution_error is not None:
+                            error_text = (
+                                f"execution failed and post-state not reached: "
+                                f"{state_description}: {execution_error}"
+                            )
+                        step_result = StepResult(
+                            step_index=i,
+                            action=action,
+                            backend_result=result_text,
+                            state=ExecutionState.FAILED,
+                            valid_state_check=False,
+                            grounding_mode=grounding_mode,
+                            recovery_attempted=recovery_result is not None,
+                            recovery_result=recovery_result,
+                            action_summary=f"{action.action_type} on {step.target or 'target'}",
+                            error=error_text,
+                            token_usage=dict(validate_usage),
+                            duration_s=step_dur,
+                            validate_duration_s=validate_dur,
+                            grounding_duration_s=grounding_dur,
+                            observation=_serialize_observation(post_observation),
+                            screenshot_path=_screenshot_path_string(post_screenshot),
+                            contract_eval_detail=self._last_contract_eval_detail,
+                        )
+                        step_results.append(step_result)
+                        self._record_skill_step(skill, step, step_result)
+                        if is_optional:
+                            logger.info("Optional deeplink step %d failed post-state validation", i)
+                            continue
+                        overall_state = ExecutionState.FAILED
+                        error_msg = f"Step {i} post-state not reached: {state_description}"
+                        if self.stop_on_failure:
+                            break
+                        continue
                 step_dur = time.monotonic() - step_start
                 step_token_usage = dict(validate_usage)
                 _merge_usage(step_token_usage, grounding_usage)
@@ -657,6 +915,9 @@ class SkillExecutor:
                     token_usage=dict(validate_usage),
                     duration_s=step_dur,
                     validate_duration_s=validate_dur,
+                    observation=_serialize_observation(observation),
+                    screenshot_path=_screenshot_path_string(screenshot),
+                    contract_eval_detail=self._last_contract_eval_detail,
                 )
                 step_results.append(step_result)
                 self._record_skill_step(skill, step, step_result)
@@ -703,7 +964,11 @@ class SkillExecutor:
     ) -> tuple[Action, str, dict[str, int], float]:
         """Return ``(action, grounding_mode, token_usage, duration_s)`` for the given step."""
         if step.fixed:
-            return _build_fixed_action(step, params), "fixed", {}, 0.0
+            return self._normalize_app_action(_build_fixed_action(step, params)), "fixed", {}, 0.0
+
+        template_action = _try_build_complete_template_action(step, params)
+        if template_action is not None:
+            return self._normalize_app_action(template_action), "template", {}, 0.0
 
         if self.action_grounder is not None and screenshot is not None:
             try:
@@ -713,14 +978,33 @@ class SkillExecutor:
                 usage: dict[str, int] = {}
                 if hasattr(self.action_grounder, "drain_usage"):
                     usage = self.action_grounder.drain_usage()
-                return action, "llm", usage, duration
+                return self._normalize_app_action(action), "llm", usage, duration
             except Exception as exc:
                 logger.warning(
                     "ActionGrounder failed for step %r, falling back to template: %s",
                     step.action_type, exc,
                 )
 
-        return _build_template_action(step, params), "template", {}, 0.0
+        return self._normalize_app_action(_build_template_action(step, params)), "template", {}, 0.0
+
+    def _normalize_app_action(self, action: Action) -> Action:
+        """Resolve human/cross-platform app identifiers before backend execution."""
+        if action.action_type not in ("open_app", "close_app") or not action.text:
+            return action
+        platform = getattr(self.backend, "platform", None)
+        if platform not in ("android", "ios"):
+            return action
+
+        resolved = normalize_app_identifier(platform, action.text)
+        if resolved == action.text:
+            return action
+        logger.debug(
+            "Resolved %s app %r -> %r for skill execution",
+            platform,
+            action.text,
+            resolved,
+        )
+        return dataclasses.replace(action, text=resolved)
 
     def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
         if self.trajectory_recorder is None:
@@ -742,7 +1026,11 @@ class SkillExecutor:
             grounding_mode=step_result.grounding_mode,
             backend_result=step_result.backend_result,
             valid_state=step.valid_state,
+            state_contract=step.state_contract,
             valid_state_check=step_result.valid_state_check,
+            observation=step_result.observation,
+            screenshot_path=step_result.screenshot_path,
+            contract_eval_detail=step_result.contract_eval_detail,
             recovery_attempted=step_result.recovery_attempted,
             recovery_success=bool(step_result.recovery_result and step_result.recovery_result.success),
             error=step_result.error,
@@ -758,6 +1046,8 @@ class SkillExecutor:
         self,
         step: SkillStep,
         screenshot: Path | bytes | None,
+        *,
+        observation: Observation | None = None,
     ) -> tuple[bool, dict[str, int], float | None]:
         """Validate per-step valid_state. Returns ``(valid, token_usage, duration_s)``.
 
@@ -770,10 +1060,32 @@ class SkillExecutor:
         coordinates instead of LLM grounding), not state validation. A fixed
         step with a meaningful ``valid_state`` still requires verification.
         """
+        contract_detail = evaluate_state_contract_detail(
+            step.state_contract,
+            observation=observation,
+        )
+        self._last_contract_eval_detail = _contract_eval_detail_to_dict(contract_detail)
+        if contract_detail.passed is not None:
+            logger.debug(
+                "State contract %s for step %s",
+                "passed" if contract_detail.passed else "failed",
+                step.action_type,
+            )
+            return bool(contract_detail.passed), {}, None
+        if step.state_contract is not None:
+            logger.debug(
+                "State contract could not be evaluated for step %s; failing closed",
+                step.action_type,
+            )
+            return False, {}, None
+
         if _should_skip_validation(step.valid_state):
+            self._last_contract_eval_detail = None
             return True, {}, None
+
         if self.state_validator is None:
             logger.debug("No state validator; allowing step %s", step.action_type)
+            self._last_contract_eval_detail = None
             return True, {}, None
         t0 = time.monotonic()
         try:
@@ -789,6 +1101,20 @@ class SkillExecutor:
         if hasattr(self.state_validator, "drain_usage"):
             usage = self.state_validator.drain_usage()
         return result, usage, duration
+
+    async def _get_observation_and_screenshot(self) -> tuple[Observation | None, Path | bytes | None]:
+        """Capture current observation when the provider supports it."""
+        if self.screenshot_provider is not None:
+            get_observation = getattr(self.screenshot_provider, "get_observation", None)
+            if callable(get_observation):
+                try:
+                    observation = await get_observation()
+                    if observation is not None and observation.screenshot_path:
+                        return observation, Path(observation.screenshot_path)
+                    return observation, None
+                except Exception as exc:
+                    logger.warning("ObservationProvider failed: %s", exc)
+        return None, await self._get_screenshot()
 
     async def _get_screenshot(self) -> Path | bytes | None:
         """Capture the current screenshot via the ScreenshotProvider."""
@@ -809,7 +1135,78 @@ def _serialize_action(action: Action) -> dict[str, Any]:
     }
 
 
+def _serialize_observation(observation: Observation | None) -> dict[str, Any] | None:
+    if observation is None:
+        return None
+    return {
+        "screenshot_path": observation.screenshot_path,
+        "screen_width": observation.screen_width,
+        "screen_height": observation.screen_height,
+        "foreground_app": observation.foreground_app,
+        "platform": observation.platform,
+        "extra": _scrub_trace_value(observation.extra),
+    }
+
+
+def _screenshot_path_string(screenshot: Path | bytes | None) -> str | None:
+    return str(screenshot) if isinstance(screenshot, Path) else None
+
+
+def _contract_eval_detail_to_dict(detail: Any) -> dict[str, Any]:
+    return {
+        "passed": getattr(detail, "passed", None),
+        "score": round(float(getattr(detail, "score", 0.0) or 0.0), 3),
+        "evidence_coverage": round(
+            float(getattr(detail, "evidence_coverage", 0.0) or 0.0),
+            3,
+        ),
+        "reason": getattr(detail, "reason", None),
+        "matched_required": _scrub_trace_value(
+            list(getattr(detail, "matched_required", []) or [])
+        ),
+        "failed_required": _scrub_trace_value(
+            list(getattr(detail, "failed_required", []) or [])
+        ),
+        "unknown_required": _scrub_trace_value(
+            list(getattr(detail, "unknown_required", []) or [])
+        ),
+        "failed_forbidden": _scrub_trace_value(
+            list(getattr(detail, "failed_forbidden", []) or [])
+        ),
+        "unknown_forbidden": _scrub_trace_value(
+            list(getattr(detail, "unknown_forbidden", []) or [])
+        ),
+    }
+
+
+def _scrub_trace_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        scrubbed: dict[str, Any] = {}
+        action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
+        for key, item in value.items():
+            if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
+                scrubbed[key] = "<omitted:image-data-url>"
+            elif action_type == "input_text" and key == "text":
+                scrubbed[key] = "<redacted:input_text>"
+            else:
+                scrubbed[key] = _scrub_trace_value(item)
+        return scrubbed
+    if isinstance(value, list):
+        return [_scrub_trace_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_scrub_trace_value(item) for item in value]
+    return value
+
+
 def _merge_usage(target: dict[str, int], source: dict[str, int]) -> None:
     """Merge *source* token counts into *target* in-place, summing each key."""
     for k, v in source.items():
         target[k] = target.get(k, 0) + v
+
+
+def _merge_optional_duration(left: float | None, right: float | None) -> float | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left + right

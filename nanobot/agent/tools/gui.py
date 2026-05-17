@@ -62,6 +62,7 @@ class GuiSubagentTool(Tool):
         self._workspace = Path(workspace)
         self._gui_event_callback = gui_event_callback
         self._gui_frame_callback = gui_frame_callback
+        self._graph_session_cursor: Any | None = None
         self._llm_adapter = NanobotLLMAdapter(
             provider, model, capture_ttft=gui_config.capture_ttft,
         )
@@ -82,6 +83,8 @@ class GuiSubagentTool(Tool):
             embedding_signature=self._embedding_signature,
             skill_store_root=get_gui_skill_store_root(self._workspace),
             enable_skill_extraction=gui_config.enable_skill_extraction,
+            enable_deeplink_skill_extraction=gui_config.enable_deeplink_skill_extraction,
+            deeplink_probe_backend=self._backend,
             evaluation=EvaluationConfig(
                 enabled=gui_config.evaluation.enabled,
                 judge_model=gui_config.evaluation.judge_model,
@@ -89,6 +92,13 @@ class GuiSubagentTool(Tool):
                 api_base=gui_config.evaluation.api_base,
             ),
         )
+
+    def _get_graph_session_cursor(self) -> Any:
+        if self._graph_session_cursor is None:
+            from opengui.skills.graph import GraphSessionCursor
+
+            self._graph_session_cursor = GraphSessionCursor()
+        return self._graph_session_cursor
 
     @property
     def name(self) -> str:
@@ -329,6 +339,7 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
+            graph_session_cursor=self._get_graph_session_cursor(),
         )
 
         result = await agent.run(task=task)
@@ -410,7 +421,6 @@ class GuiSubagentTool(Tool):
             return {}
 
         latest_step: dict[str, Any] = {}
-        latest_observed_step: dict[str, Any] = {}
         try:
             with open(trace_path, encoding="utf-8") as handle:
                 for raw_line in handle:
@@ -421,37 +431,11 @@ class GuiSubagentTool(Tool):
                         event = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(event, dict) and (event.get("type") == "step" or event.get("event") == "step"):
+                    if isinstance(event, dict) and event.get("type") == "step":
                         latest_step = event
-                        if GuiSubagentTool._step_has_observation_evidence(event):
-                            latest_observed_step = event
         except OSError:
             logger.warning("Could not read GUI trace for post-run state: %s", trace_path, exc_info=True)
-        if latest_step and latest_observed_step and latest_step is not latest_observed_step:
-            merged = dict(latest_step)
-            if not merged.get("screenshot_path"):
-                screenshot_path = latest_observed_step.get("screenshot_path")
-                if not screenshot_path:
-                    observation = GuiSubagentTool._extract_latest_observation(latest_observed_step)
-                    screenshot_path = observation.get("screenshot_path")
-                if screenshot_path:
-                    merged["screenshot_path"] = screenshot_path
-            if not merged.get("observation"):
-                observation = GuiSubagentTool._extract_latest_observation(latest_observed_step)
-                if observation:
-                    merged["observation"] = observation
-            latest_step = merged
         return latest_step
-
-    @staticmethod
-    def _step_has_observation_evidence(step_event: dict[str, Any]) -> bool:
-        if step_event.get("screenshot_path") or isinstance(step_event.get("observation"), dict):
-            return True
-        execution = step_event.get("execution")
-        if isinstance(execution, dict) and isinstance(execution.get("next_observation"), dict):
-            return True
-        prompt = step_event.get("prompt")
-        return isinstance(prompt, dict) and isinstance(prompt.get("current_observation"), dict)
 
     @staticmethod
     def _extract_latest_observation(step_event: dict[str, Any]) -> dict[str, Any]:
@@ -723,6 +707,8 @@ class GuiSubagentTool(Tool):
                 scrcpy_frame_timeout_ms=self._gui_config.scrcpy.frame_timeout_ms,
                 scrcpy_max_frame_age_ms=self._gui_config.scrcpy.max_frame_age_ms,
                 on_jpeg_frame=self._gui_frame_callback,
+                collect_ui_tree=True,
+                collect_ui_tree_nodes=True,
             )
 
         if backend_name == "ios":
@@ -798,9 +784,9 @@ class GuiSubagentTool(Tool):
         embedding_signature: str | None = None,
     ) -> Any:
         if platform not in self._skill_libraries:
-            from opengui.skills.library import SkillLibrary
+            from opengui.skills.code_first import CodeSkillLibrary
 
-            self._skill_libraries[platform] = SkillLibrary(
+            self._skill_libraries[platform] = CodeSkillLibrary(
                 store_dir=get_gui_skill_store_root(self._workspace),
                 embedding_provider=self._embedding_adapter,
                 merge_llm=self._llm_adapter,

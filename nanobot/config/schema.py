@@ -462,6 +462,7 @@ class GuiConfig(Base):
     image_scale_ratio: float = 0.5
     capture_ttft: bool = False
     enable_skill_extraction: bool = False
+    enable_deeplink_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)

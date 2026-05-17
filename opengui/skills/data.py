@@ -28,6 +28,11 @@ class SkillStep:
     parameters: dict[str, Any] = field(default_factory=dict)
     expected_state: str | None = None
     valid_state: str | None = None
+    state_contract: dict[str, Any] | None = field(
+        default=None,
+        hash=False,
+        compare=False,
+    )
     fixed: bool = False
     # hash=False, compare=False: mutable dict inside frozen dataclass would
     # otherwise raise TypeError when the dataclass is hashed (e.g. used in a
@@ -49,6 +54,8 @@ class SkillStep:
             d["expected_state"] = self.expected_state
         if self.valid_state is not None:
             d["valid_state"] = self.valid_state
+        if self.state_contract:
+            d["state_contract"] = self.state_contract
         # Only serialise fixed-mode fields when they carry non-default data,
         # keeping the dict compact and backward-compatible.
         if self.fixed:
@@ -65,6 +72,7 @@ class SkillStep:
             parameters=data.get("parameters", {}),
             expected_state=data.get("expected_state"),
             valid_state=data.get("valid_state"),
+            state_contract=data.get("state_contract"),
             fixed=data.get("fixed", False),
             fixed_values=data.get("fixed_values", {}),
         )

@@ -37,8 +37,8 @@ from opengui.interfaces import (
 )
 from opengui.memory.retrieval import MemoryRetriever
 from opengui.memory.store import MemoryStore
+from opengui.skills.code_first import CodeSkillLibrary
 from opengui.skills.executor import LLMStateValidator, SkillExecutor
-from opengui.skills.library import SkillLibrary
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
@@ -448,6 +448,8 @@ def build_backend(name: str, config: CliConfig) -> Any:
             scrcpy_jpeg_quality=config.scrcpy.jpeg_quality,
             scrcpy_frame_timeout_ms=config.scrcpy.frame_timeout_ms,
             scrcpy_max_frame_age_ms=config.scrcpy.max_frame_age_ms,
+            collect_ui_tree=True,
+            collect_ui_tree_nodes=True,
         )
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend
@@ -487,12 +489,21 @@ async def build_optional_components(
     memory_retriever = MemoryRetriever(embedding_provider=embedding_provider, top_k=5)
     await memory_retriever.index(memory_store.list_all())
 
-    skill_library = SkillLibrary(
-        store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
-        embedding_provider=embedding_provider,
-        merge_llm=provider,
-        embedding_signature=config.embedding.model,
-    )
+    try:
+        skill_library = CodeSkillLibrary(
+            store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
+            embedding_provider=embedding_provider,
+            merge_llm=provider,
+            embedding_signature=config.embedding.model,
+        )
+    except TypeError as exc:
+        if "embedding_signature" not in str(exc):
+            raise
+        skill_library = CodeSkillLibrary(
+            store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
+            embedding_provider=embedding_provider,
+            merge_llm=provider,
+        )
     state_validator = LLMStateValidator(
         provider,
         image_scale_ratio=config.image_scale_ratio,

@@ -14,22 +14,23 @@ Inspired by KnowAct's four-bucket model, simplified for opengui's scope:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
 import tempfile
-import typing
-import hashlib
-import time
 import threading
-from dataclasses import dataclass, field
+import time
+import typing
 from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
+from opengui.skills.state_contract import normalize_state_contract
 
 if typing.TYPE_CHECKING:
     from opengui.interfaces import LLMProvider
@@ -620,6 +621,12 @@ class SkillLibrary:
     def get(self, skill_id: str) -> Skill | None:
         return self._skills.get(skill_id)
 
+    def feedback_for_skill(self, skill_id: str) -> dict[str, typing.Any]:
+        """Return runtime feedback recorded for a skill."""
+        from opengui.skills.evolution import feedback_for_skill
+
+        return feedback_for_skill(self.store_dir, skill_id)
+
     def list_all(
         self,
         *,
@@ -640,7 +647,18 @@ class SkillLibrary:
 
     @staticmethod
     def _normalize_skill(skill: Skill) -> Skill:
-        return normalize_skill_app(skill)
+        skill = normalize_skill_app(skill)
+        normalized_steps: list[SkillStep] = []
+        changed = False
+        for step in skill.steps:
+            normalized_contract = normalize_state_contract(step.state_contract)
+            if normalized_contract != step.state_contract:
+                step = replace(step, state_contract=normalized_contract)
+                changed = True
+            normalized_steps.append(step)
+        if changed:
+            skill = replace(skill, steps=tuple(normalized_steps))
+        return skill
 
     @staticmethod
     def _normalize_filter_app(platform: str | None, app: str | None) -> str | None:
@@ -886,6 +904,7 @@ class SkillLibrary:
         rrf_max = float(rrf_scores.max())
         if rrf_max > 0:
             rrf_scores = rrf_scores / rrf_max
+        rrf_unscaled_by_embedding = rrf_scores.copy()
 
         # Scale normalized RRF score by the raw embedding cosine similarity so
         # that the final score reflects actual semantic relevance.  Without this,
@@ -906,6 +925,23 @@ class SkillLibrary:
             results.append((self._skills[self._ordered_ids[idx]], float(rrf_scores[idx])))
             if len(results) >= top_k:
                 break
+        if not results and emb_scores is not None:
+            # Do not let a bad/orthogonal embedding distribution erase clear
+            # lexical hits. This keeps RRF robust for small libraries and test
+            # embedders while still preferring embedding-confirmed candidates
+            # whenever they exist.
+            fallback_ranked = np.argsort(-rrf_unscaled_by_embedding)
+            for idx in fallback_ranked:
+                if not mask[idx] or rrf_unscaled_by_embedding[idx] <= 0:
+                    break
+                if bm25_scores[idx] <= 0:
+                    continue
+                results.append((
+                    self._skills[self._ordered_ids[idx]],
+                    float(rrf_unscaled_by_embedding[idx]),
+                ))
+                if len(results) >= top_k:
+                    break
         return results
 
     async def _search_hybrid_comprehensive(
@@ -1452,4 +1488,28 @@ class SkillLibrary:
             parts.append(step.action_type)
             if step.valid_state and step.valid_state.lower() != "no need to verify":
                 parts.append(step.valid_state)
+            if step.expected_state:
+                parts.append(step.expected_state)
+            if step.state_contract:
+                parts.extend(_state_contract_text(step.state_contract))
         return " ".join(p for p in parts if p)
+
+
+def _state_contract_text(value: object) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        parts: list[str] = []
+        for key, item in value.items():
+            if key == "fingerprint":
+                continue
+            parts.extend(_state_contract_text(item))
+        return parts
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            parts.extend(_state_contract_text(item))
+        return parts
+    if isinstance(value, (int, float, bool)):
+        return [str(value)]
+    return []

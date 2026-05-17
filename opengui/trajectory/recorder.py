@@ -128,6 +128,7 @@ class TrajectoryRecorder:
         screen_width: int | None = None,
         screen_height: int | None = None,
         platform: str | None = None,
+        observation_extra: dict[str, Any] | None = None,
         phase: ExecutionPhase | None = None,
         token_usage: dict[str, int] | None = None,
         duration_s: float | None = None,
@@ -152,6 +153,8 @@ class TrajectoryRecorder:
             Screen height in pixels after the step.
         platform:
             Platform identifier (android, macos, etc.).
+        observation_extra:
+            Compact structured observation metadata such as UI-tree text lists.
         phase:
             Override current phase for this step.
         token_usage:
@@ -164,7 +167,7 @@ class TrajectoryRecorder:
             raise RuntimeError("Recorder already closed")
 
         obs: dict[str, Any] | None = None
-        if foreground_app or screen_width is not None:
+        if foreground_app or screen_width is not None or observation_extra:
             obs = {}
             if foreground_app:
                 obs["app"] = foreground_app
@@ -177,6 +180,8 @@ class TrajectoryRecorder:
                 obs["platform"] = platform
             if screenshot_path:
                 obs["screenshot_path"] = screenshot_path
+            if observation_extra:
+                obs["extra"] = _compact_observation_extra(observation_extra)
 
         event: dict[str, Any] = {
             "type": "step",
@@ -233,3 +238,14 @@ class TrajectoryRecorder:
             f.write(json.dumps(event, ensure_ascii=False) + "\n")
         if self.event_callback is not None:
             self.event_callback(dict(event))
+
+
+def _compact_observation_extra(extra: dict[str, Any]) -> dict[str, Any]:
+    """Keep structured observation metadata bounded in trajectory logs."""
+    compact: dict[str, Any] = {}
+    for key, value in extra.items():
+        if isinstance(value, list):
+            compact[key] = value[:80]
+        else:
+            compact[key] = value
+    return compact
