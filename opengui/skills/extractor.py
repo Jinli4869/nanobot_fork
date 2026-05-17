@@ -29,6 +29,10 @@ from typing import Any
 from opengui.interfaces import LLMProvider
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.state_contract import (
+    infer_state_contract,
+    normalize_state_contract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,10 +101,14 @@ omit the open_app step entirely.
 1. Identify the high-level goal and break it into atomic steps.
 2. For each step, provide:
    - ``action_type``: the action (tap, input_text, swipe, scroll, etc.)
-   - ``target``: UI element description (use ``{{{{param}}}}`` for user-variable values)
+   - ``target``: the exact visible UI label, content-desc, resource-id, or stable
+     selector from the page evidence (use ``{{{{param}}}}`` only for
+     user-variable values)
    - ``parameters``: dict of action parameters (x, y, text, etc.)
    - ``expected_state``: what the screen should look like AFTER this step succeeds
    - ``valid_state``: what MUST be true on screen BEFORE executing this step
+   - ``state_contract``: optional machine-checkable version of ``valid_state``
+     using stable selectors from observation UI-tree metadata
 3. Identify user-provided values → ``{{{{param_name}}}}`` placeholders.
 4. List preconditions (e.g. "app must be on home screen").
 5. If screenshots are provided, use them to:
@@ -116,16 +124,24 @@ omit the open_app step entirely.
   "name": "short_snake_case_name",
   "description": "One-line human description",
   "app": "app_package_or_name",
-  "platform": "android|macos|linux|windows",
+  "platform": "android|ios|macos|linux|windows",
   "parameters": ["param1", "param2"],
   "preconditions": ["precondition1"],
   "steps": [
     {{
       "action_type": "tap|input_text|swipe|...",
-      "target": "description, may contain {{{{param}}}}",
+      "target": "visible label/content-desc/resource-id/selector, may contain {{{{param}}}}",
       "parameters": {{}},
       "expected_state": "state after step",
       "valid_state": "required state before step",
+      "state_contract": {{
+        "anchor": {{"app_package": "app_package_or_name"}},
+        "signature": {{
+          "required": [{{"selector": {{"text": "visible label"}}, "state": ["visible", "clickable"]}}],
+          "forbidden": []
+        }},
+        "mask_rules": []
+      }},
       "fixed": true
     }}
   ]
@@ -153,9 +169,44 @@ in ``parameters``.
 ## valid_state guidelines
 - For app launch / wait actions: "No need to verify"
 - For tap actions: "the target button/element is visible and clickable"
-- For input_text: "text input field is visible and focused"
+- For input_text: "text input field is visible and enabled"
 - For scroll/swipe: "content area is scrollable and visible"
 - Be specific about which UI element should be visible.
+- Keep semantic intent in ``description``, ``valid_state``, and
+  ``expected_state``. Do NOT put abstract English intent phrases such as
+  "Me tab in bottom navigation" or "My Orders button" in ``target`` unless
+  that exact phrase is visible in the UI evidence. Use the actual visible
+  label/content-desc/resource-id instead, for example ``黑盒商城`` or
+  ``我的订单``.
+
+## state_contract guidelines
+- Use ``state_contract`` only when the UI-tree metadata directly supports a
+  stable pre-execution check.
+- If the structured metadata is incomplete or uncertain, omit
+  ``state_contract``; the runtime will derive canonical identity from the
+  UI-tree and contract rules.
+- Use the canonical shape with exactly ``anchor``, ``signature``, and
+  ``mask_rules``. The system computes ``fingerprint`` after parsing; do not
+  invent it.
+- ``anchor.app_package`` should be the observed package/bundle. Include
+  ``activity_class`` or ``fragment_class`` only when present in metadata.
+- ``signature.required`` and ``signature.forbidden`` contain elements shaped
+  as ``{{"selector": {{"resource_id|content_desc|text|class|xpath": "..."}},
+  "state": ["visible|clickable|enabled|focused|scrollable"]}}``.
+- Prefer ``resource_id`` and ``content_desc`` over ``text``. Use ``text`` or
+  ``xpath`` only as fallback when they are visible in the trajectory metadata.
+- ``mask_rules`` should name dynamic content to ignore, such as
+  ``badge_count``, ``timestamp``, ``counter``, ``personalized_text``, or
+  ``temporary_recommendation``.
+- Do not invent resource IDs or labels that are not visible in the trajectory
+  or screenshot/UI-tree evidence.
+
+## platform guidelines
+- If trajectory metadata contains a ``platform`` field, copy that exact
+  platform. Do not infer or convert between Android package names and iOS
+  bundle IDs.
+- Use platform-native app identifiers: Android package names for ``android``,
+  iOS bundle IDs for ``ios``.
 
 ## Quality checks
 - The ``description`` field MUST accurately reflect what the steps actually do. \
@@ -207,6 +258,11 @@ Cancel, Ignore, Later, Got it).
 - Prefer ONE parameterized step over multiple mechanical sub-steps.
 - The corrective action should describe WHAT went wrong, not replay the \
 failed mechanical steps.
+- Step ``target`` values must be grounded to actual page evidence: use the
+  visible UI label, content-desc, resource-id, or stable selector. Keep
+  semantic intent in ``description``, ``valid_state``, and ``expected_state``;
+  do not use abstract labels such as "Me tab in bottom navigation" as
+  ``target`` unless that exact text is visible.
 - When in doubt, **leave it out**. Fewer steps = more reusable.
 
 # App-opening collapse rule
@@ -250,16 +306,24 @@ Return ONLY a JSON object (no markdown fences):
   "name": "short_snake_case_name",
   "description": "What went wrong + correction",
   "app": "app_package_or_name",
-  "platform": "android|macos|linux|windows",
+  "platform": "android|ios|macos|linux|windows",
   "parameters": ["param1"],
   "preconditions": ["precondition1"],
   "steps": [
     {{
       "action_type": "tap|input_text|...",
-      "target": "description",
+      "target": "visible label/content-desc/resource-id/selector",
       "parameters": {{}},
       "expected_state": "state after step",
       "valid_state": "required state before step",
+      "state_contract": {{
+        "anchor": {{"app_package": "app_package_or_name"}},
+        "signature": {{
+          "required": [{{"selector": {{"text": "visible label"}}, "state": ["visible", "clickable"]}}],
+          "forbidden": []
+        }},
+        "mask_rules": []
+      }},
       "fixed": true
     }}
   ]
@@ -270,6 +334,17 @@ Same rules as above: ``open_app`` is always ``fixed: true``; \
 static navigation taps include concrete ``x``/``y`` from the trajectory; \
 dynamic or user-variable steps use ``fixed: false`` with ``{{{{param}}}}`` \
 placeholders and no coordinates.
+
+## state_contract guidelines
+Use the same canonical contract shape as successful extraction. Add contracts
+only for reliable prefix states or the corrective step when trajectory UI-tree
+metadata supports the selector. If the structured metadata is incomplete,
+leave ``state_contract`` empty. Do not create popup-specific contracts unless
+the original task explicitly requires that popup or permission.
+
+## platform guidelines
+If trajectory metadata contains a ``platform`` field, copy that exact platform.
+Do not infer or convert between Android package names and iOS bundle IDs.
 """
 
 # Max screenshots forwarded to the LLM per extraction call.
@@ -359,6 +434,8 @@ class SkillExtractor:
 
         # Build rich trajectory including skill, subgoal, and agent phases
         trajectory, screenshot_events = _build_full_trajectory(events)
+        platform_hint = _platform_hint_from_events(events)
+        _attach_platform_hint(trajectory, platform_hint)
 
         agent_steps = [e for e in events if e.get("type") == "step"]
         skill_steps = [e for e in events if e.get("type") == "skill_step"]
@@ -369,7 +446,12 @@ class SkillExtractor:
             )
             return None
 
-        return await self._extract(trajectory, screenshot_events, is_success=is_success)
+        return await self._extract(
+            trajectory,
+            screenshot_events,
+            is_success=is_success,
+            platform_hint=platform_hint,
+        )
 
     async def extract_from_steps(
         self,
@@ -381,8 +463,15 @@ class SkillExtractor:
         if len(steps) < 2:
             return None
         trajectory: dict[str, Any] = {"agent_phase": steps}
+        platform_hint = _platform_hint_from_trajectory(trajectory)
+        _attach_platform_hint(trajectory, platform_hint)
         screenshot_events = [s for s in steps if s.get("screenshot_path")]
-        return await self._extract(trajectory, screenshot_events, is_success=is_success)
+        return await self._extract(
+            trajectory,
+            screenshot_events,
+            is_success=is_success,
+            platform_hint=platform_hint,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -394,6 +483,7 @@ class SkillExtractor:
         screenshot_events: list[dict[str, Any]],
         *,
         is_success: bool,
+        platform_hint: str | None = None,
     ) -> Skill | None:
         trajectory_text = json.dumps(trajectory, ensure_ascii=False, indent=2)
         prompt_template = _SUCCESS_PROMPT if is_success else _FAILURE_PROMPT
@@ -403,7 +493,11 @@ class SkillExtractor:
         response = await self._llm.chat(messages)
 
         self._accumulate_usage(response.usage)
-        skill = self._parse_response(response.content)
+        skill = self._parse_response(
+            response.content,
+            trajectory=trajectory,
+            platform_hint=platform_hint,
+        )
         if skill is not None and not _passes_quality_check(skill, is_success):
             return None
         return skill
@@ -472,7 +566,13 @@ class SkillExtractor:
         for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
             self._total_usage[key] = self._total_usage.get(key, 0) + usage.get(key, 0)
 
-    def _parse_response(self, text: str) -> Skill | None:
+    def _parse_response(
+        self,
+        text: str,
+        *,
+        trajectory: dict[str, Any] | None = None,
+        platform_hint: str | None = None,
+    ) -> Skill | None:
         """Parse LLM response JSON into a Skill."""
         cleaned = text.strip()
         if cleaned.startswith("```"):
@@ -488,21 +588,60 @@ class SkillExtractor:
 
         try:
             steps = []
+            model_platform = data.get("platform", "unknown")
+            platform = _choose_platform(platform_hint, model_platform)
+            if platform_hint and platform != _normalize_platform(model_platform):
+                logger.info(
+                    "Skill extraction platform overridden by trace metadata: %r -> %r",
+                    model_platform,
+                    platform,
+                )
+            model_app = normalize_app_identifier(platform, data.get("app", ""))
+            app_hint = _app_hint_from_trajectory(trajectory, platform)
+            app = app_hint or model_app
+            if app_hint and app_hint != model_app:
+                logger.info(
+                    "Skill extraction app overridden by trajectory observation: %r -> %r",
+                    data.get("app", ""),
+                    app,
+                )
+            trace_steps = _trace_steps_for_contract_alignment(trajectory)
+            trace_cursor = 0
             for s in data.get("steps", []):
                 action_type = s["action_type"]
-                parameters = s.get("parameters", {})
+                parameters = _normalize_step_parameters(
+                    action_type,
+                    s.get("parameters", {}),
+                    platform=platform,
+                    skill_app=app,
+                )
                 # open_app is always fixed; otherwise honour the model's choice
                 fixed = action_type == "open_app" or bool(s.get("fixed", False))
                 # For fixed steps, concrete values live in fixed_values so the
                 # executor can bypass grounding; parameters are kept as-is for
                 # documentation and template-fallback purposes.
                 fixed_values = dict(parameters) if fixed else {}
+                aligned_extra, trace_cursor = _aligned_observation_extra_for_step(
+                    s,
+                    trace_steps,
+                    start_index=trace_cursor,
+                )
+                inferred_contract = (
+                    infer_state_contract(s, observation_extra=aligned_extra, app=app)
+                    if aligned_extra is not None
+                    else None
+                )
+                state_contract = _merge_step_contract(
+                    s.get("state_contract"),
+                    inferred_contract,
+                )
                 steps.append(SkillStep(
                     action_type=action_type,
                     target=s.get("target", ""),
                     parameters=parameters,
                     expected_state=s.get("expected_state"),
                     valid_state=s.get("valid_state"),
+                    state_contract=state_contract,
                     fixed=fixed,
                     fixed_values=fixed_values,
                 ))
@@ -511,11 +650,8 @@ class SkillExtractor:
                 skill_id=str(uuid.uuid4()),
                 name=data["name"],
                 description=data.get("description", ""),
-                app=normalize_app_identifier(
-                    data.get("platform", "unknown"),
-                    data.get("app", ""),
-                ),
-                platform=data.get("platform", "unknown"),
+                app=app,
+                platform=platform,
                 steps=tuple(steps),
                 parameters=tuple(data.get("parameters", ())),
                 preconditions=tuple(data.get("preconditions", ())),
@@ -593,6 +729,8 @@ def _build_full_trajectory(
                 "action": e.get("action"),
                 "action_summary": e.get("action_summary"),
                 "valid_state": e.get("valid_state"),
+                "state_contract": e.get("state_contract"),
+                "observation": _compact_observation_for_extraction(e.get("observation")),
                 "succeeded": bool(e.get("valid_state_check", True)) and not e.get("error"),
                 "error": e.get("error"),
             }
@@ -604,6 +742,7 @@ def _build_full_trajectory(
                         "substep_index": s.get("substep_index"),
                         "action": s.get("action"),
                         "action_summary": s.get("action_summary"),
+                        "observation": _compact_observation_for_extraction(s.get("observation")),
                         "goal_reached": s.get("goal_reached"),
                     }
                     for s in subgoal_steps_by_goal[valid_state]
@@ -640,6 +779,7 @@ def _build_full_trajectory(
             "action": e.get("action"),
             "model_output": e.get("model_output"),
             "foreground_app": (e.get("observation") or {}).get("foreground_app"),
+            "observation": _compact_observation_for_extraction(e.get("observation")),
         }
         for e in agent_steps_raw
     ]
@@ -654,6 +794,321 @@ def _build_full_trajectory(
         trajectory["agent_phase"] = agent_phase
 
     return trajectory, screenshot_events
+
+
+def _trace_steps_for_contract_alignment(
+    trajectory: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(trajectory, dict):
+        return []
+    out: list[dict[str, Any]] = []
+    skill_phase = trajectory.get("skill_phase")
+    if isinstance(skill_phase, dict):
+        for step in skill_phase.get("steps", []) or []:
+            if isinstance(step, dict):
+                out.append(step)
+    for step in trajectory.get("agent_phase", []) or []:
+        if isinstance(step, dict):
+            out.append(step)
+    return out
+
+
+def _aligned_observation_extra_for_step(
+    step_payload: dict[str, Any],
+    trace_steps: list[dict[str, Any]],
+    *,
+    start_index: int,
+) -> tuple[dict[str, Any] | None, int]:
+    if not trace_steps:
+        return None, start_index
+
+    best_score = 0.0
+    best_index: int | None = None
+    for index in range(start_index, len(trace_steps)):
+        score = _trace_step_alignment_score(step_payload, trace_steps[index])
+        if score > best_score:
+            best_score = score
+            best_index = index
+        if score >= 0.85:
+            break
+
+    if best_index is None or best_score < 0.65:
+        return None, start_index
+    observation = trace_steps[best_index].get("observation")
+    if not isinstance(observation, dict):
+        return None, best_index + 1
+    extra = observation.get("extra")
+    return (extra if isinstance(extra, dict) else None), best_index + 1
+
+
+def _trace_step_alignment_score(step_payload: dict[str, Any], trace_step: dict[str, Any]) -> float:
+    expected_action = _normalize_alignment_text(step_payload.get("action_type"))
+    actual_action = _normalize_alignment_text(_trace_action_type(trace_step))
+    if not expected_action or expected_action != actual_action:
+        return 0.0
+
+    score = 0.45
+    target = _normalize_alignment_text(step_payload.get("target"))
+    labels = _trace_alignment_labels(trace_step)
+    if target:
+        if target in labels:
+            score += 0.45
+        elif len(target) >= 4 and any(target in label or label in target for label in labels):
+            score += 0.25
+
+    if _step_coordinates_match(step_payload, trace_step):
+        score += 0.10
+    return min(score, 1.0)
+
+
+def _trace_action_type(trace_step: dict[str, Any]) -> Any:
+    action = trace_step.get("action")
+    if isinstance(action, dict):
+        return action.get("action_type")
+    if isinstance(action, str):
+        return action
+    return trace_step.get("action_type")
+
+
+def _trace_alignment_labels(trace_step: dict[str, Any]) -> set[str]:
+    values: list[Any] = [
+        trace_step.get("target"),
+        trace_step.get("action_summary"),
+        trace_step.get("model_output"),
+    ]
+    action = trace_step.get("action")
+    if isinstance(action, dict):
+        values.extend(
+            action.get(key)
+            for key in ("target", "text", "label", "content_desc", "resource_id", "package")
+        )
+    observation = trace_step.get("observation")
+    if isinstance(observation, dict):
+        extra = observation.get("extra")
+        if isinstance(extra, dict):
+            for key in ("visible_text", "clickable_text", "content_desc", "resource_ids"):
+                value = extra.get(key)
+                if isinstance(value, list):
+                    values.extend(value)
+                elif isinstance(value, str):
+                    values.append(value)
+    return {
+        normalized
+        for value in values
+        if (normalized := _normalize_alignment_text(value))
+    }
+
+
+def _step_coordinates_match(step_payload: dict[str, Any], trace_step: dict[str, Any]) -> bool:
+    params = step_payload.get("parameters")
+    if not isinstance(params, dict):
+        return False
+    action = trace_step.get("action")
+    if not isinstance(action, dict):
+        return False
+    for key in ("x", "y", "x2", "y2"):
+        if key not in params:
+            continue
+        if str(params.get(key)) != str(action.get(key)):
+            return False
+    return any(key in params for key in ("x", "y", "x2", "y2"))
+
+
+def _normalize_alignment_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return " ".join(str(value).strip().casefold().split())
+
+
+def _merge_step_contract(
+    llm_contract: dict[str, Any] | None,
+    inferred_contract: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    inferred = normalize_state_contract(inferred_contract)
+    if inferred is None:
+        return None
+    signature = inferred.get("signature", {})
+    if signature.get("required") or signature.get("forbidden"):
+        return inferred
+    return None
+
+
+_SUPPORTED_PLATFORMS = frozenset({"android", "ios", "macos", "linux", "windows"})
+_PLATFORM_ALIASES = {
+    "iphone": "ios",
+    "ipad": "ios",
+    "iphone/ipad": "ios",
+    "ios/ipados": "ios",
+    "ipados": "ios",
+    "darwin": "macos",
+    "osx": "macos",
+    "mac": "macos",
+}
+
+
+def _platform_hint_from_events(events: list[dict[str, Any]]) -> str | None:
+    for event in events:
+        if event.get("type") == "metadata":
+            platform = _normalize_platform(event.get("platform"))
+            if platform:
+                return platform
+    trajectory, _ = _build_full_trajectory(events)
+    return _platform_hint_from_trajectory(trajectory)
+
+
+def _platform_hint_from_trajectory(trajectory: dict[str, Any]) -> str | None:
+    metadata = trajectory.get("metadata")
+    if isinstance(metadata, dict):
+        platform = _normalize_platform(metadata.get("platform"))
+        if platform:
+            return platform
+
+    def from_observation(observation: Any) -> str | None:
+        if not isinstance(observation, dict):
+            return None
+        return _normalize_platform(observation.get("platform"))
+
+    for step in trajectory.get("agent_phase", []) or []:
+        if isinstance(step, dict):
+            platform = from_observation(step.get("observation"))
+            if platform:
+                return platform
+
+    skill_phase = trajectory.get("skill_phase")
+    if isinstance(skill_phase, dict):
+        for step in skill_phase.get("steps", []) or []:
+            if isinstance(step, dict):
+                platform = from_observation(step.get("observation"))
+                if platform:
+                    return platform
+
+    return None
+
+
+def _attach_platform_hint(trajectory: dict[str, Any], platform: str | None) -> None:
+    if not platform:
+        return
+    metadata = trajectory.setdefault("metadata", {})
+    if isinstance(metadata, dict):
+        metadata["platform"] = platform
+
+
+def _choose_platform(platform_hint: str | None, model_platform: Any) -> str:
+    return (
+        _normalize_platform(platform_hint)
+        or _normalize_platform(model_platform)
+        or "unknown"
+    )
+
+
+def _normalize_platform(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if not text or text == "unknown":
+        return None
+    text = _PLATFORM_ALIASES.get(text, text)
+    return text if text in _SUPPORTED_PLATFORMS else None
+
+
+def _app_hint_from_trajectory(
+    trajectory: dict[str, Any] | None,
+    platform: str,
+) -> str | None:
+    if not isinstance(trajectory, dict):
+        return None
+    if platform not in _SUPPORTED_PLATFORMS:
+        return None
+
+    counts: dict[str, int] = {}
+
+    def record(value: Any, *, obs_platform: Any = None) -> None:
+        observed_platform = _normalize_platform(obs_platform)
+        if observed_platform and observed_platform != platform:
+            return
+        normalized = normalize_app_identifier(platform, str(value or ""))
+        if normalized in {"", "unknown"}:
+            return
+        counts[normalized] = counts.get(normalized, 0) + 1
+
+    def scan_observation(observation: Any) -> None:
+        if not isinstance(observation, dict):
+            return
+        obs_platform = observation.get("platform")
+        record(observation.get("foreground_app"), obs_platform=obs_platform)
+        record(observation.get("app"), obs_platform=obs_platform)
+
+    metadata = trajectory.get("metadata")
+    if isinstance(metadata, dict):
+        record(metadata.get("foreground_app"), obs_platform=metadata.get("platform"))
+        record(metadata.get("app"), obs_platform=metadata.get("platform"))
+
+    for step in trajectory.get("agent_phase", []) or []:
+        if isinstance(step, dict):
+            scan_observation(step.get("observation"))
+            record(step.get("foreground_app"))
+
+    skill_phase = trajectory.get("skill_phase")
+    if isinstance(skill_phase, dict):
+        for step in skill_phase.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            scan_observation(step.get("observation"))
+            for substep in step.get("subgoal_recovery_attempts", []) or []:
+                if isinstance(substep, dict):
+                    scan_observation(substep.get("observation"))
+
+    if not counts:
+        return None
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def _normalize_step_parameters(
+    action_type: str,
+    parameters: Any,
+    *,
+    platform: str,
+    skill_app: str | None = None,
+) -> dict[str, Any]:
+    if not isinstance(parameters, dict):
+        return {}
+    normalized = dict(parameters)
+    if action_type in {"open_app", "close_app"}:
+        if skill_app and skill_app != "unknown":
+            normalized["text"] = skill_app
+        elif normalized.get("text"):
+            normalized["text"] = normalize_app_identifier(platform, str(normalized["text"]))
+    return normalized
+
+
+def _compact_observation_for_extraction(observation: Any) -> dict[str, Any] | None:
+    if not isinstance(observation, dict):
+        return None
+    compact: dict[str, Any] = {}
+    for key in ("app", "foreground_app", "screen_width", "screen_height", "platform"):
+        if observation.get(key) is not None:
+            compact[key] = observation.get(key)
+    extra = observation.get("extra")
+    if isinstance(extra, dict):
+        compact_extra: dict[str, Any] = {}
+        for key in (
+            "visible_text",
+            "content_desc",
+            "resource_ids",
+            "clickable_text",
+            "focused_text",
+            "enabled_text",
+            "enabled_present",
+            "class_names",
+            "scrollable_present",
+            "ui_tree_node_count",
+            "ui_tree",
+        ):
+            value = extra.get(key)
+            if value is None:
+                continue
+            compact_extra[key] = value[:80] if isinstance(value, list) else value
+        if compact_extra:
+            compact["extra"] = compact_extra
+    return compact or None
 
 
 _CORRECTIVE_KEYWORDS = frozenset({

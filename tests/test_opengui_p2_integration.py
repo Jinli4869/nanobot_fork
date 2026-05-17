@@ -6,14 +6,13 @@ from __future__ import annotations
 
 import copy
 import json
-from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 
-from opengui.agent import AgentResult, GuiAgent
+from opengui.agent import GuiAgent
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.memory.retrieval import MemoryRetriever
@@ -22,7 +21,6 @@ from opengui.memory.types import MemoryEntry, MemoryType
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.library import SkillLibrary
 from opengui.trajectory.recorder import TrajectoryRecorder
-
 
 # ---------------------------------------------------------------------------
 # Test helpers
@@ -54,6 +52,19 @@ class _RecordingLLM:
         if not self._responses:
             raise AssertionError("No scripted responses left")
         return self._responses.pop(0)
+
+
+class _StaticSkillReuser:
+    def __init__(self, skill: Skill, score: float = 0.9) -> None:
+        self.skill = skill
+        self.score = score
+
+    async def find(self, task, library, platform=None, *, trajectory_recorder=None):
+        del task, library, platform, trajectory_recorder
+        return self.skill, self.score
+
+    def drain_usage(self):
+        return {}
 
 
 def _done_response(call_id: str = "tc_done") -> LLMResponse:
@@ -136,7 +147,15 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
         skill_id="wifi-toggle", name="Toggle Wi-Fi",
         description="Toggle Wi-Fi in Settings", app="com.android.settings",
         platform="android",
-        steps=(SkillStep(action_type="tap", target="Wi-Fi toggle"),),
+        steps=(
+            SkillStep(
+                action_type="open_app",
+                target="com.android.settings",
+                fixed=True,
+                fixed_values={"text": "com.android.settings"},
+            ),
+            SkillStep(action_type="tap", target="Wi-Fi toggle"),
+        ),
     )
     lib.add(skill)
     await lib._rebuild_index()
@@ -153,6 +172,7 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
         llm, DryRunBackend(),
         trajectory_recorder=recorder,
         skill_library=lib, skill_executor=mock_executor,
+        skill_reuser=_StaticSkillReuser(skill),
         skill_threshold=0.3,  # low threshold to ensure match
         artifacts_root=tmp_path / "runs", max_steps=1,
     )

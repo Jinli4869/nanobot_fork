@@ -43,6 +43,7 @@ class Observation:
         step_index: int,
         app_hint: str | None = None,
         coordinate_instruction: str = "Prefer absolute pixel coordinates.",
+        include_extra: bool = True,
     ) -> str:
         """Render a structured text block for inclusion in an LLM message."""
         app_name = app_hint or self.foreground_app or "unknown"
@@ -63,7 +64,7 @@ class Observation:
             f"Foreground app: {app_name}",
             f"Coordinates: {coordinate_instruction}",
         ])
-        if self.extra:
+        if include_extra and self.extra:
             lines.append("")
             lines.append("Additional context:")
             extra = (

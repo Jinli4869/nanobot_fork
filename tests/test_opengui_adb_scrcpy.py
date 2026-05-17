@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import sys
 import threading
 import time
+import types
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -11,13 +15,17 @@ from PIL import Image
 import opengui.cli as cli
 from nanobot.config.schema import GuiConfig
 from opengui.action import Action
+from opengui.backends import adb as adb_backend_module
 from opengui.backends.adb import (
     AdbBackend,
-    ScrcpyFrameSource,
+    AdbError,
     ScrcpyFrameSnapshot,
+    ScrcpyFrameSource,
+    _parse_ui_tree_xml,
     _pil_image_from_frame,
 )
 from opengui.observation import Observation
+from opengui.skills.state_contract import evaluate_state_contract
 
 
 class FakeFrameSource:
@@ -71,6 +79,45 @@ class AlwaysStaleFrameSource:
     def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot:
         self.save_calls += 1
         raise TimeoutError("latest scrcpy frame is stale (8.00s > 5.00s)")
+
+
+class ErrorThenFreshFrameSource:
+    def __init__(self, exc: Exception) -> None:
+        self.exc = exc
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.save_calls = 0
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot:
+        self.save_calls += 1
+        if self.save_calls == 1:
+            raise self.exc
+        Image.new("RGB", (320, 640), color=(70, 80, 90)).save(path)
+        return ScrcpyFrameSnapshot(width=320, height=640, timestamp=time.time())
+
+
+class AlwaysErrorFrameSource:
+    def __init__(self, exc_factory: type[Exception]) -> None:
+        self.exc_factory = exc_factory
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.save_calls = 0
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop(self) -> None:
+        self.stop_calls += 1
+
+    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot:
+        self.save_calls += 1
+        raise self.exc_factory("scrcpy reader failed")
 
 
 @pytest.mark.asyncio
@@ -142,6 +189,26 @@ async def test_adb_observe_restarts_scrcpy_after_stale_frame(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("exc", [RuntimeError("scrcpy reader failed"), OSError("Bad file descriptor")])
+async def test_adb_observe_restarts_scrcpy_after_scrcpy_reader_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    exc: Exception,
+) -> None:
+    frame_source = ErrorThenFreshFrameSource(exc)
+    backend = AdbBackend(frame_source=frame_source)
+    monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="com.example.app"))
+    monkeypatch.setattr(backend, "_query_screen_size", AsyncMock(return_value=(1080, 2376)))
+
+    observation = await backend.observe(tmp_path / "screen.png")
+
+    assert observation.extra["capture_source"] == "scrcpy"
+    assert frame_source.start_calls == 2
+    assert frame_source.stop_calls == 1
+    assert frame_source.save_calls == 2
+
+
+@pytest.mark.asyncio
 async def test_adb_observe_falls_back_to_screencap_after_scrcpy_restart_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -165,6 +232,285 @@ async def test_adb_observe_falls_back_to_screencap_after_scrcpy_restart_failure(
     assert frame_source.stop_calls == 1
     assert frame_source.save_calls == 2
     fallback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_adb_observe_falls_back_to_screencap_when_scrcpy_start_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = AdbBackend(frame_source=FakeFrameSource())
+    fallback_observation = Observation(
+        screenshot_path=str(tmp_path / "fallback.png"),
+        screen_width=1080,
+        screen_height=2376,
+        foreground_app="com.example.app",
+        platform="android",
+    )
+    fallback = AsyncMock(return_value=fallback_observation)
+    monkeypatch.setattr(backend, "_ensure_scrcpy_started", AsyncMock(side_effect=AdbError("broken scrcpy")))
+    monkeypatch.setattr(backend, "_observe_via_screencap", fallback)
+
+    observation = await backend.observe(tmp_path / "screen.png")
+
+    assert observation is fallback_observation
+    fallback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exc_factory", [RuntimeError, OSError])
+async def test_adb_observe_falls_back_to_screencap_after_scrcpy_reader_error_persists(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    exc_factory: type[Exception],
+) -> None:
+    frame_source = AlwaysErrorFrameSource(exc_factory)
+    backend = AdbBackend(frame_source=frame_source)
+    fallback_observation = Observation(
+        screenshot_path=str(tmp_path / "fallback.png"),
+        screen_width=1080,
+        screen_height=2376,
+        foreground_app="com.example.app",
+        platform="android",
+    )
+    fallback = AsyncMock(return_value=fallback_observation)
+    monkeypatch.setattr(backend, "_observe_via_screencap", fallback)
+
+    observation = await backend.observe(tmp_path / "screen.png")
+
+    assert observation is fallback_observation
+    assert frame_source.start_calls == 2
+    assert frame_source.stop_calls == 1
+    assert frame_source.save_calls == 2
+    fallback.assert_awaited_once()
+
+
+def test_scrcpy_frame_source_records_listener_error_and_save_latest_fails_fast(tmp_path: Path) -> None:
+    class BrokenClient:
+        def frames(self):
+            raise OSError("Bad file descriptor")
+
+    source = ScrcpyFrameSource()
+    source._client = BrokenClient()
+
+    source._listen_forever()
+
+    with pytest.raises(RuntimeError, match="scrcpy frame reader failed") as exc_info:
+        source.save_latest(tmp_path / "screen.png", timeout_s=1.0, max_age_s=0.5)
+    assert isinstance(exc_info.value.__cause__, OSError)
+
+
+def test_scrcpy_frame_source_uses_owned_listener_thread(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class FakeClient:
+        instances: list["FakeClient"] = []
+
+        def __init__(self, config: FakeConfig) -> None:
+            self.config = config
+            self.start_frame_listener_called = False
+            self.stopped = False
+            FakeClient.instances.append(self)
+
+        def start(self) -> None:
+            pass
+
+        def wait_until_ready(self, timeout: float = 5) -> Image.Image:
+            del timeout
+            return Image.new("RGB", (16, 16), color=(1, 2, 3))
+
+        def start_frame_listener(self, callback: object) -> threading.Thread:
+            del callback
+            self.start_frame_listener_called = True
+            worker = threading.Thread(target=lambda: None)
+            worker.start()
+            return worker
+
+        def frames(self):
+            raise OSError("Bad file descriptor")
+            yield  # pragma: no cover
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    fake_module = types.SimpleNamespace(
+        ScrcpyClient=FakeClient,
+        ScrcpyConfig=FakeConfig,
+    )
+    monkeypatch.setitem(sys.modules, "py_scrcpy_sdk", fake_module)
+
+    source = ScrcpyFrameSource(frame_timeout_ms=100)
+    source.start()
+    client = FakeClient.instances[0]
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        with source._condition:
+            if source._reader_error is not None:
+                break
+        time.sleep(0.01)
+
+    assert client.start_frame_listener_called is False
+    with pytest.raises(RuntimeError, match="scrcpy frame reader failed") as exc_info:
+        source.save_latest(tmp_path / "screen.png", timeout_s=1.0, max_age_s=0.5)
+    assert isinstance(exc_info.value.__cause__, OSError)
+    source.stop()
+
+
+@pytest.mark.asyncio
+async def test_adb_observe_can_attach_compact_ui_tree_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <hierarchy rotation="0">
+      <node index="0" text="青少年模式" resource-id="tv.danmaku.bili:id/minor_mode"
+            class="android.widget.TextView" package="tv.danmaku.bili"
+            content-desc="" clickable="true" focused="false" scrollable="false"
+            bounds="[0,0][100,50]" />
+      <node index="1" text="" resource-id="tv.danmaku.bili:id/search"
+            class="android.widget.EditText" package="tv.danmaku.bili"
+            content-desc="搜索" clickable="true" focused="true" scrollable="true"
+            bounds="[0,60][100,110]" />
+    </hierarchy>"""
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
+    run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
+    monkeypatch.setattr(backend, "_run", run_mock)
+    monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
+    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
+
+    observation = await backend.observe(tmp_path / "screen.png")
+
+    assert observation.extra["capture_source"] == "screencap"
+    assert observation.extra["visible_text"] == ["青少年模式"]
+    assert observation.extra["content_desc"] == ["搜索"]
+    assert observation.extra["clickable_text"] == ["青少年模式", "搜索"]
+    assert observation.extra["focused_text"] == ["搜索"]
+    assert observation.extra["scrollable_present"] is True
+    assert observation.extra["resource_ids"] == [
+        "tv.danmaku.bili:id/minor_mode",
+        "tv.danmaku.bili:id/search",
+    ]
+    assert observation.extra["ui_tree_node_count"] == 2
+    assert "ui_tree" not in observation.extra
+
+
+def test_adb_ui_tree_marks_child_text_under_clickable_container_as_clickable() -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <hierarchy rotation="0">
+      <node index="0" text="" resource-id="com.max.xiaoheihe:id/mall_entry"
+            class="android.widget.LinearLayout" package="com.max.xiaoheihe"
+            content-desc="" clickable="true" focused="false" scrollable="false"
+            bounds="[700,300][980,370]">
+        <node index="0" text="黑盒商城" resource-id="com.max.xiaoheihe:id/title"
+              class="android.widget.TextView" package="com.max.xiaoheihe"
+              content-desc="" clickable="false" focused="false" scrollable="false"
+              bounds="[780,315][900,350]" />
+      </node>
+    </hierarchy>"""
+
+    extra = _parse_ui_tree_xml(xml)
+
+    assert extra["visible_text"] == ["黑盒商城"]
+    assert extra["clickable_text"] == ["黑盒商城"]
+    assert "ui_tree" not in extra
+    assert evaluate_state_contract(
+        {"must_exist": [{"text": "黑盒商城", "clickable": True}]},
+        observation_extra=extra,
+    ) is True
+
+
+@pytest.mark.asyncio
+async def test_adb_collect_ui_tree_uses_longer_timeout_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <hierarchy rotation="0">
+      <node index="0" text="设置" resource-id="android:id/title"
+            class="android.widget.TextView" package="com.android.settings"
+            content-desc="" clickable="false" focused="false" scrollable="false"
+            bounds="[0,0][100,50]" />
+    </hierarchy>"""
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
+    run_mock = AsyncMock(side_effect=["UI hierarchy dumped", xml])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    extra = await backend._collect_ui_tree_extra(timeout=5.0)
+
+    assert run_mock.await_args_list[0].kwargs["timeout"] == 3.0
+    assert extra["ui_tree_node_count"] == 1
+    assert extra["visible_text"] == ["设置"]
+
+
+@pytest.mark.asyncio
+async def test_adb_collect_ui_tree_can_include_full_nodes_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <hierarchy rotation="0">
+      <node index="0" text="设置" resource-id="android:id/title"
+            class="android.widget.TextView" package="com.android.settings"
+            content-desc="" clickable="false" focused="false" scrollable="false"
+            bounds="[0,0][100,50]" />
+    </hierarchy>"""
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True, collect_ui_tree_nodes=True)
+    run_mock = AsyncMock(side_effect=["UI hierarchy dumped", xml])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    extra = await backend._collect_ui_tree_extra(timeout=5.0)
+
+    assert extra["ui_tree_node_count"] == 1
+    assert extra["ui_tree"][0]["text"] == "设置"
+
+
+@pytest.mark.asyncio
+async def test_adb_observe_queries_ui_context_in_parallel(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    started: list[str] = []
+    gate = asyncio.Event()
+
+    async def _wait(name: str, result: Any) -> Any:
+        started.append(name)
+        await gate.wait()
+        return result
+
+    backend = AdbBackend(frame_source=FakeFrameSource(), collect_ui_tree=True)
+    monkeypatch.setattr(backend, "_ensure_scrcpy_started", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        backend,
+        "_capture_scrcpy_frame",
+        AsyncMock(return_value=ScrcpyFrameSnapshot(width=320, height=640, timestamp=123.0)),
+    )
+    monkeypatch.setattr(backend, "_query_screen_size", lambda timeout: _wait("screen_size", (1080, 2376)))
+    monkeypatch.setattr(backend, "_query_foreground_app", lambda timeout: _wait("foreground_app", "com.example.app"))
+    monkeypatch.setattr(backend, "_collect_ui_tree_extra", lambda timeout: _wait(
+        "ui_tree",
+        {
+            "ui_tree_node_count": 1,
+            "visible_text": ["设置"],
+            "scrollable_present": True,
+        },
+    ))
+
+    task = asyncio.create_task(backend.observe(tmp_path / "screen.png"))
+    for _ in range(20):
+        if len(started) == 3:
+            break
+        await asyncio.sleep(0)
+
+    assert set(started) == {"screen_size", "foreground_app", "ui_tree"}
+    gate.set()
+    observation = await asyncio.wait_for(task, timeout=1.0)
+
+    assert observation.foreground_app == "com.example.app"
+    assert observation.extra["scrollable_present"] is True
 
 
 @pytest.mark.asyncio
