@@ -1026,14 +1026,15 @@ def canonicalize_code_actions_from_events(
                 })
             trace_cursor = match.index
             aligned.append((step_index, match))
+            trace_target = _target_for_action_replacement(match, step)
             report["aligned_steps"].append({
                 "function": skill.name,
                 "step_index": step_index,
                 "trace_step_index": match.index,
                 "action_type": match.action_type,
                 "generated_target": step.target,
-                "trace_target": match.target,
-                "target_rewritten": bool(match.target and match.target != step.target),
+                "trace_target": trace_target,
+                "target_rewritten": bool(trace_target and trace_target != step.target),
             })
             last_source_step = step
             last_match = match
@@ -1724,7 +1725,7 @@ def _action_stmt_from_trace(
         args=[ast.Constant(value=action.action_type)],
         keywords=[],
     )
-    target = action.target or (getattr(source_step, "target", "") if source_step is not None else "")
+    target = _target_for_action_replacement(action, source_step)
     if target:
         call.keywords.append(ast.keyword(arg="target", value=ast.Constant(value=target)))
     for key, value in _merged_trace_parameters(action, source_step, parameter_names or []).items():
@@ -1740,6 +1741,18 @@ def _action_stmt_from_trace(
             _contract_call_expr({"contract": getattr(source_step, "state_contract", None)}),
         )
     return ast.Expr(value=ast.Await(value=call))
+
+
+def _target_for_action_replacement(action: _TraceAction, source_step: Any | None) -> str:
+    source_target = str(getattr(source_step, "target", "") or "").strip() if source_step is not None else ""
+    trace_target = str(action.target or "").strip()
+    if action.action_type in {"open_app", "close_app"} and _is_generic_trace_target(trace_target) and source_target:
+        return source_target
+    return trace_target or source_target
+
+
+def _is_generic_trace_target(value: str) -> bool:
+    return value.strip().casefold() in {"", "unknown", "none", "null", "未知"}
 
 
 def _merged_trace_parameters(
@@ -1938,15 +1951,9 @@ def filter_code_to_contract_complete(
         _contract_quality_report(result.skills),
         repair_report,
     )
-    weak_functions = {
-        str(step.get("function"))
-        for step in report.get("weak_steps", [])
-        if isinstance(step, dict) and step.get("function")
-    }
-    if not weak_functions:
-        return CodeContractFilter(source=source, report=report)
-    tree = ast.parse(source)
-    first_weak_step_by_function: dict[str, int] = {}
+    skills_by_name = {skill.name: skill for skill in result.skills}
+    trim_step_by_function: dict[str, int] = {}
+    relaxed_steps: list[dict[str, Any]] = []
     for step in report.get("weak_steps", []):
         if not isinstance(step, dict):
             continue
@@ -1954,17 +1961,30 @@ def filter_code_to_contract_complete(
         step_index = step.get("step_index")
         if not function_name or not isinstance(step_index, int):
             continue
-        existing = first_weak_step_by_function.get(function_name)
+        skill = skills_by_name.get(function_name)
+        if _can_relax_weak_step(skill, step_index, step):
+            relaxed_steps.append({
+                **step,
+                "relaxation": "input_text_after_constrained_previous_action",
+            })
+            continue
+        existing = trim_step_by_function.get(function_name)
         if existing is None or step_index < existing:
-            first_weak_step_by_function[function_name] = step_index
+            trim_step_by_function[function_name] = step_index
 
+    if not trim_step_by_function:
+        if relaxed_steps:
+            report = {**report, "relaxed_steps": relaxed_steps}
+        return CodeContractFilter(source=source, report=report)
+
+    tree = ast.parse(source)
     removed: list[str] = []
     trimmed: list[str] = []
     kept_body: list[ast.stmt] = []
     for node in tree.body:
-        if isinstance(node, ast.AsyncFunctionDef) and node.name in weak_functions:
-            first_weak_step = first_weak_step_by_function.get(node.name, 0)
-            if first_weak_step > 0 and _trim_skill_function_to_action_prefix(node, first_weak_step):
+        if isinstance(node, ast.AsyncFunctionDef) and node.name in trim_step_by_function:
+            trim_step = trim_step_by_function.get(node.name, 0)
+            if trim_step > 0 and _trim_skill_function_to_action_prefix(node, trim_step):
                 trimmed.append(node.name)
                 kept_body.append(node)
                 continue
@@ -1987,6 +2007,11 @@ def filter_code_to_contract_complete(
         filtered_report = {
             **filtered_report,
             "trimmed_functions": trimmed,
+        }
+    if relaxed_steps:
+        filtered_report = {
+            **filtered_report,
+            "relaxed_steps": relaxed_steps,
         }
     return CodeContractFilter(
         source=filtered_source,
@@ -2171,6 +2196,21 @@ def normalize_code_skill_entrypoints(code_update: str) -> CodeEntrypointNormaliz
     return CodeEntrypointNormalization(source=ast.unparse(transformed) + "\n", report=report)
 
 
+def _can_relax_weak_step(skill: Skill | None, step_index: int, step_record: dict[str, Any]) -> bool:
+    """Allow narrow weak-contract exceptions for text entry after a gated action."""
+    del step_record
+    if skill is None or step_index <= 0 or step_index >= len(skill.steps):
+        return False
+    step = skill.steps[step_index]
+    if step.action_type != "input_text":
+        return False
+    text_value = step.parameters.get("text")
+    if text_value is None or not str(text_value).strip():
+        return False
+    previous_step = skill.steps[step_index - 1]
+    return _is_canonical_step_contract(previous_step.state_contract)
+
+
 def _trim_skill_function_to_action_prefix(func: ast.AsyncFunctionDef, action_limit: int) -> bool:
     """Trim ``func`` after ``action_limit`` direct action calls.
 
@@ -2193,7 +2233,131 @@ def _trim_skill_function_to_action_prefix(func: ast.AsyncFunctionDef, action_lim
     if kept_reusable_actions <= 0:
         return False
     func.body = kept
+    _remove_unused_function_parameters(func)
+    _rewrite_trimmed_skill_description(func)
     return True
+
+
+def _remove_unused_function_parameters(func: ast.AsyncFunctionDef) -> None:
+    if len(func.args.args) <= 1:
+        return
+    param_names = {arg.arg for arg in func.args.args[1:]}
+    used = _used_parameter_names_in_body(func.body, param_names)
+    if param_names.issubset(used):
+        return
+
+    original_args = list(func.args.args)
+    default_start = len(original_args) - len(func.args.defaults)
+    defaults_by_index = {
+        index: default
+        for index, default in enumerate(func.args.defaults, start=default_start)
+    }
+    retained_args: list[ast.arg] = [original_args[0]]
+    retained_defaults: list[ast.expr] = []
+    for index, arg in enumerate(original_args[1:], start=1):
+        if arg.arg not in used:
+            continue
+        retained_args.append(arg)
+        default = defaults_by_index.get(index)
+        if default is not None:
+            retained_defaults.append(default)
+    func.args.args = retained_args
+    func.args.defaults = retained_defaults
+
+
+def _used_parameter_names_in_body(body: list[ast.stmt], param_names: set[str]) -> set[str]:
+    used: set[str] = set()
+    for stmt in body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and node.id in param_names:
+                used.add(node.id)
+                continue
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                for match in re.finditer(r"\{\{([^{}]+)\}\}", node.value):
+                    if match.group(1) in param_names:
+                        used.add(match.group(1))
+    return used
+
+
+def _rewrite_trimmed_skill_description(func: ast.AsyncFunctionDef) -> None:
+    description = _description_from_kept_actions(func)
+    if not description:
+        return
+    for decorator in func.decorator_list:
+        if not isinstance(decorator, ast.Call):
+            continue
+        if _call_name_from_ast(decorator.func) != "skill":
+            continue
+        for keyword in decorator.keywords:
+            if keyword.arg == "description":
+                keyword.value = ast.Constant(value=description)
+                return
+        decorator.keywords.append(ast.keyword(arg="description", value=ast.Constant(value=description)))
+        return
+
+
+def _description_from_kept_actions(func: ast.AsyncFunctionDef) -> str:
+    app = _skill_decorator_string(func, "app") or "应用"
+    actions: list[tuple[str, str, str]] = []
+    for stmt in func.body:
+        call = _awaited_action_call(stmt)
+        if call is None:
+            continue
+        action_type = _action_call_type(call)
+        target = _action_call_keyword_label(call, "target")
+        text = _action_call_keyword_label(call, "text")
+        actions.append((action_type, target, text))
+    if not actions:
+        return ""
+
+    non_entry_actions = [
+        (action_type, target, text)
+        for action_type, target, text in actions
+        if action_type not in {"open_app", "wait", "done", "request_intervention"}
+    ]
+    if any(action_type == "input_text" for action_type, _, _ in non_entry_actions):
+        input_target = next(
+            (target for action_type, target, _ in reversed(non_entry_actions) if action_type == "input_text" and target),
+            "",
+        )
+        target_phrase = f"在{input_target}" if input_target else ""
+        return f"打开{app}并{target_phrase}输入指定文本"
+    if non_entry_actions:
+        action_type, target, _ = non_entry_actions[-1]
+        if action_type in {"tap", "long_press", "double_tap"} and target:
+            return f"打开{app}并点击{target}"
+        if target:
+            return f"打开{app}并执行{action_type}:{target}"
+        return f"打开{app}并执行{action_type}"
+    return f"打开{app}"
+
+
+def _skill_decorator_string(func: ast.AsyncFunctionDef, key: str) -> str:
+    for decorator in func.decorator_list:
+        if not isinstance(decorator, ast.Call) or _call_name_from_ast(decorator.func) != "skill":
+            continue
+        for keyword in decorator.keywords:
+            if keyword.arg != key:
+                continue
+            if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
+                return keyword.value.value.strip()
+    return ""
+
+
+def _action_call_keyword_label(call: ast.Call, key: str) -> str:
+    for keyword in call.keywords:
+        if keyword.arg != key:
+            continue
+        value = keyword.value
+        if isinstance(value, ast.Constant):
+            return str(value.value or "").strip()
+        if isinstance(value, ast.Name):
+            return f"{{{{{value.id}}}}}"
+        try:
+            return ast.unparse(value).strip()
+        except Exception:
+            return ""
+    return ""
 
 
 def _is_direct_action_await(stmt: ast.stmt) -> bool:
@@ -2442,7 +2606,10 @@ def _merge_repair_steps_into_quality_report(
     target_repair_keys = {
         (str(step.get("function") or ""), step.get("step_index"))
         for step in repaired_steps
-        if str(step.get("reason") or "") in _TARGET_CONTRACT_REPAIR_REASONS
+        if _repair_step_promotes_target_contract(
+            step,
+            weak_steps=merged.get("weak_steps", []),
+        )
     }
     if target_repair_keys:
         weak_steps = [
@@ -2462,6 +2629,32 @@ def _merge_repair_steps_into_quality_report(
             else "weak"
         )
     return merged
+
+
+def _repair_step_promotes_target_contract(
+    step: dict[str, Any],
+    *,
+    weak_steps: list[dict[str, Any]],
+) -> bool:
+    if str(step.get("reason") or "") not in _TARGET_CONTRACT_REPAIR_REASONS:
+        return False
+    selector = step.get("selector")
+    if isinstance(selector, dict) and _selector_has_stable_identity(selector):
+        return True
+    if str(step.get("reason") or "") != "target_text_contract_from_observation":
+        return False
+    function_name = str(step.get("function") or "")
+    step_index = step.get("step_index")
+    if not function_name or not isinstance(step_index, int):
+        return False
+    return not any(
+        isinstance(weak_step, dict)
+        and str(weak_step.get("function") or "") == function_name
+        and weak_step.get("action_type") == "input_text"
+        and isinstance(weak_step.get("step_index"), int)
+        and int(weak_step.get("step_index")) < step_index
+        for weak_step in weak_steps
+    )
 
 
 def _append_contract_audit_steps(report: dict[str, Any], steps: list[dict[str, Any]]) -> None:
@@ -3884,10 +4077,10 @@ class _GeneratedCodeNormalizer(ast.NodeTransformer):
             if description_kw is not None:
                 if not isinstance(description_kw.value, ast.Constant) or not isinstance(description_kw.value.value, str):
                     return node
-                merged = _merge_description_hint(description_kw.value.value, self.description_hint)
-                if merged == description_kw.value.value:
+                existing = " ".join(str(description_kw.value.value or "").split())
+                if existing:
                     return node
-                description_kw.value = ast.Constant(value=merged)
+                description_kw.value = ast.Constant(value=description)
                 self.changed = True
                 return node
             decorator.keywords.append(ast.keyword(
@@ -4602,21 +4795,29 @@ def _code_skill_search_text(skill: Skill) -> str:
     description = " ".join(str(skill.description or "").split())
     parts: list[str] = []
     if description:
-        # The decorator description is the human-authored/repaired retrieval
-        # contract. Weight it more heavily than structural names or step labels.
-        parts.extend([description, description, description])
+        parts.append(description)
     parts.extend([skill.name, skill.app, skill.platform])
     parts.extend(skill.tags)
     for step in skill.steps:
+        if step.action_type:
+            parts.extend([step.action_type, step.action_type])
         target = re.sub(r"\{\{[^}]+\}\}", "", step.target or "").strip()
         if target:
-            parts.append(target)
+            parts.extend([target, target])
+        parameter_text = _state_contract_search_text(step.parameters)
+        if parameter_text:
+            parts.extend(parameter_text)
+        fixed_value_text = _state_contract_search_text(step.fixed_values)
+        if fixed_value_text:
+            parts.extend(fixed_value_text)
         if step.expected_state:
             parts.append(step.expected_state)
         if step.valid_state and step.valid_state.lower() != "no need to verify":
             parts.append(step.valid_state)
         if step.state_contract:
-            parts.extend(_state_contract_search_text(step.state_contract))
+            contract_text = _state_contract_search_text(step.state_contract)
+            parts.extend(contract_text)
+            parts.extend(contract_text)
     return " ".join(part for part in parts if part)
 
 

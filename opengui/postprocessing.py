@@ -39,6 +39,10 @@ from opengui.skills.static_selector_filter import (
     filter_static_resource_ids,
     filter_static_texts,
 )
+from opengui.skills.state_structure import (
+    build_structure_profile,
+    structure_fingerprint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -284,6 +288,10 @@ def _build_retrieval_profile(observation: dict[str, Any]) -> dict[str, Any]:
         stable_controls = _extract_stable_controls(extra.get("ui_tree"))
         if stable_controls:
             profile["stable_controls"] = stable_controls
+        structure_profile = build_structure_profile(extra)
+        if structure_profile:
+            profile["structure_profile"] = structure_profile
+            profile["structure_fingerprint"] = structure_fingerprint(structure_profile)
     if _is_sparse_retrieval_profile(profile):
         summary = _short_page_summary(profile)
         if summary:
@@ -448,6 +456,7 @@ class PostRunProcessor:
         effective_success = is_success
         if isinstance(evaluation_result, dict) and evaluation_result.get("success") is False:
             effective_success = False
+        await self._sync_transition_evidence(trace_path)
         await self._extract_deeplink_skill(
             trace_path,
             effective_success,
@@ -1184,6 +1193,31 @@ class PostRunProcessor:
         except Exception:
             logger.warning("Skill graph sync failed", exc_info=True)
             return False
+
+    async def _sync_transition_evidence(self, trace_path: Path) -> int:
+        if self._skill_store_root is None:
+            return 0
+        try:
+            from opengui.skills.graph import SkillGraphStore
+            from opengui.skills.transition_learning import sync_transition_evidence_from_trace
+
+            lock = _GRAPH_SYNC_LOCKS.setdefault(
+                self._skill_store_root.expanduser().resolve(strict=False),
+                asyncio.Lock(),
+            )
+            async with lock:
+                graph = SkillGraphStore(
+                    store_dir=self._skill_store_root,
+                    embedding_provider=self._embedding_provider,
+                    embedding_signature=self._embedding_signature,
+                )
+                count = sync_transition_evidence_from_trace(graph, trace_path)
+                if count:
+                    logger.info("Synced %s transition evidence records from %s", count, trace_path)
+                return count
+        except Exception:
+            logger.warning("Transition evidence sync failed for %s", trace_path, exc_info=True)
+            return 0
 
     # ------------------------------------------------------------------
     # Evaluation

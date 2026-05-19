@@ -34,6 +34,10 @@ from opengui.skills.state_contract import (
     state_contract_fingerprint,
     state_contract_overlap,
 )
+from opengui.skills.state_structure import (
+    normalize_structure_profile,
+    structure_fingerprint,
+)
 from opengui.skills.static_selector_filter import (
     filter_static_controls,
     filter_static_resource_ids,
@@ -245,12 +249,16 @@ class GraphNode:
     resume_policy: str | None = None
     retrieval_profile: dict[str, Any] | None = None
     source_ref: dict[str, Any] | None = None
+    structure_fingerprint: str = ""
+    structure_profile: dict[str, Any] | None = None
 
     def normalized(self) -> "GraphNode":
         platform = (self.platform or "unknown").strip().lower()
         app = normalize_app_identifier(platform, self.app)
         contract = normalize_state_contract(self.state_contract)
         fingerprint = self.fingerprint or state_contract_fingerprint(contract)
+        structure_profile = normalize_structure_profile(self.structure_profile)
+        structure_hash = self.structure_fingerprint or structure_fingerprint(structure_profile)
         if not fingerprint:
             fingerprint = _stable_id("node", platform, app, self.kind, self.description)
         node_id = self.node_id or _stable_id("node", platform, app, fingerprint, self.version)
@@ -271,6 +279,8 @@ class GraphNode:
             resume_policy=self.resume_policy,
             retrieval_profile=_normalize_retrieval_profile(self.retrieval_profile),
             source_ref=self.source_ref if isinstance(self.source_ref, dict) else None,
+            structure_fingerprint=structure_hash,
+            structure_profile=structure_profile,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -291,6 +301,8 @@ class GraphNode:
             "resume_policy": self.resume_policy,
             "retrieval_profile": self.retrieval_profile,
             "source_ref": self.source_ref,
+            "structure_fingerprint": self.structure_fingerprint,
+            "structure_profile": self.structure_profile,
         }
 
     @classmethod
@@ -312,6 +324,8 @@ class GraphNode:
             resume_policy=data.get("resume_policy"),
             retrieval_profile=data.get("retrieval_profile") if isinstance(data.get("retrieval_profile"), dict) else None,
             source_ref=data.get("source_ref") if isinstance(data.get("source_ref"), dict) else None,
+            structure_fingerprint=str(data.get("structure_fingerprint") or ""),
+            structure_profile=data.get("structure_profile") if isinstance(data.get("structure_profile"), dict) else None,
         ).normalized()
 
 
@@ -1230,6 +1244,8 @@ class SkillGraphStore:
                 resume_policy=node.resume_policy,
                 retrieval_profile=node.retrieval_profile,
                 source_ref=node.source_ref,
+                structure_fingerprint=node.structure_fingerprint,
+                structure_profile=node.structure_profile,
             )
             self._nodes[version_base.node_id] = GraphNode(
                 node_id=version_base.node_id,
@@ -1248,6 +1264,8 @@ class SkillGraphStore:
                 resume_policy=version_base.resume_policy,
                 retrieval_profile=version_base.retrieval_profile,
                 source_ref=version_base.source_ref,
+                structure_fingerprint=version_base.structure_fingerprint,
+                structure_profile=version_base.structure_profile,
             )
 
         self._nodes[node.node_id] = node
@@ -1294,6 +1312,9 @@ class SkillGraphStore:
             dismiss_action=node.dismiss_action,
             resume_policy=node.resume_policy,
             retrieval_profile=node.retrieval_profile,
+            source_ref=node.source_ref,
+            structure_fingerprint=node.structure_fingerprint,
+            structure_profile=node.structure_profile,
         )
         self._nodes[node_id] = updated
         self._mark_index_dirty(platform=updated.platform, app=updated.app)
@@ -1507,6 +1528,9 @@ class SkillGraphStore:
             dismiss_action=node.dismiss_action,
             resume_policy=node.resume_policy,
             retrieval_profile=node.retrieval_profile,
+            source_ref=node.source_ref,
+            structure_fingerprint=node.structure_fingerprint,
+            structure_profile=node.structure_profile,
         )
         if save:
             self.save()
@@ -1711,6 +1735,25 @@ class SkillGraphStore:
             "reason": str(payload.get("reason") or "unknown"),
             "candidate_node_ids": list(payload.get("candidate_node_ids") or []),
         }
+        for key in (
+            "source_step_index",
+            "target_step_index",
+            "action",
+            "success",
+            "failure_reason",
+            "source_contract",
+            "target_contract",
+            "source_structure_fingerprint",
+            "target_structure_fingerprint",
+            "source_structure_profile",
+            "target_structure_profile",
+            "trace_ref",
+            "anchor",
+            "selector_signature",
+            "stable_controls",
+        ):
+            if key in payload:
+                record[key] = payload.get(key)
         path = self.store_dir / TRANSITION_EVIDENCE_FILENAME
         with open(path, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -2470,6 +2513,7 @@ def _source_node_from_step(
         description,
         index,
     )
+    structure_profile = _profile_structure_profile(retrieval_profile)
     return GraphNode(
         node_id=_stable_id("node", platform, app, fingerprint, 1),
         app=app,
@@ -2482,6 +2526,8 @@ def _source_node_from_step(
         skill_ids=(skill.skill_id,),
         fingerprint=fingerprint,
         retrieval_profile=retrieval_profile,
+        structure_profile=structure_profile,
+        structure_fingerprint=structure_fingerprint(structure_profile),
     )
 
 
@@ -2503,6 +2549,7 @@ def _terminal_node_from_step(
     )
     kind = NODE_KIND_STATE if _is_canonical_state_contract(contract) else NODE_KIND_AUXILIARY
     fingerprint = state_contract_fingerprint(contract) or _stable_id("terminal", platform, app, description)
+    structure_profile = _profile_structure_profile(retrieval_profile)
     return GraphNode(
         node_id=_stable_id("node", platform, app, fingerprint, 1),
         app=app,
@@ -2515,7 +2562,15 @@ def _terminal_node_from_step(
         skill_ids=(skill.skill_id,),
         fingerprint=fingerprint,
         retrieval_profile=retrieval_profile,
+        structure_profile=structure_profile,
+        structure_fingerprint=structure_fingerprint(structure_profile),
     )
+
+
+def _profile_structure_profile(profile: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(profile, dict):
+        return None
+    return normalize_structure_profile(profile.get("structure_profile"))
 
 
 def _state_contract_from_retrieval_profile(
@@ -3200,6 +3255,9 @@ def _merge_nodes(existing: GraphNode, incoming: GraphNode) -> GraphNode:
         dismiss_action=existing.dismiss_action or incoming.dismiss_action,
         resume_policy=existing.resume_policy or incoming.resume_policy,
         retrieval_profile=_merge_retrieval_profiles(existing.retrieval_profile, incoming.retrieval_profile),
+        source_ref=existing.source_ref or incoming.source_ref,
+        structure_fingerprint=existing.structure_fingerprint or incoming.structure_fingerprint,
+        structure_profile=existing.structure_profile or incoming.structure_profile,
     )
 
 
@@ -3242,6 +3300,9 @@ def _merge_nodes_for_exact_compaction(existing: GraphNode, incoming: GraphNode) 
         dismiss_action=existing.dismiss_action or incoming.dismiss_action,
         resume_policy=existing.resume_policy or incoming.resume_policy,
         retrieval_profile=_merge_retrieval_profiles(existing.retrieval_profile, incoming.retrieval_profile),
+        source_ref=existing.source_ref or incoming.source_ref,
+        structure_fingerprint=existing.structure_fingerprint or incoming.structure_fingerprint,
+        structure_profile=existing.structure_profile or incoming.structure_profile,
     )
 
 
@@ -3274,6 +3335,9 @@ def _merge_nodes_for_hard_alias(canonical: GraphNode, alias: GraphNode) -> Graph
         dismiss_action=canonical.dismiss_action or alias.dismiss_action,
         resume_policy=canonical.resume_policy or alias.resume_policy,
         retrieval_profile=_merge_retrieval_profiles(canonical.retrieval_profile, alias.retrieval_profile),
+        source_ref=canonical.source_ref or alias.source_ref,
+        structure_fingerprint=canonical.structure_fingerprint or alias.structure_fingerprint,
+        structure_profile=canonical.structure_profile or alias.structure_profile,
     )
 
 

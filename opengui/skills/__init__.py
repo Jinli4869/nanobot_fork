@@ -32,8 +32,15 @@ from opengui.skills.graph_runtime import (
     GraphStepResult,
 )
 from opengui.skills.library import SkillLibrary
+from opengui.skills.state_structure import (
+    build_structure_profile,
+    structure_fingerprint,
+    structure_similarity,
+)
+from opengui.skills.transition_learning import sync_transition_evidence_from_trace
 
 __all__ = [
+    "build_structure_profile",
     "EdgeStats",
     "CodeSkillContinuationIndex",
     "ExecutionState",
@@ -59,4 +66,7 @@ __all__ = [
     "StateValidator",
     "StateIdentifier",
     "StepResult",
+    "structure_fingerprint",
+    "structure_similarity",
+    "sync_transition_evidence_from_trace",
 ]

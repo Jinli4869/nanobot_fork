@@ -17,6 +17,7 @@ from opengui.skills.code_first import (
     CodeSkillLibrary,
     CodeSkillRepository,
     TraceSegmenter,
+    _code_skill_search_text,
     canonicalize_code_actions_from_events,
     filter_code_to_contract_complete,
     normalize_code_skill_entrypoints,
@@ -1332,6 +1333,38 @@ async def search_city(device, city: str):
         "tap",
     ]
     assert all(step["reason"] != "trace_gap" for step in canonicalized.report["synthesized_steps"])
+
+
+def test_action_canonicalization_keeps_open_app_package_when_trace_target_unknown() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.sankuai.moviepro", platform="android")
+async def open_moviepro(device):
+    await action("open_app", target="com.sankuai.moviepro")
+    await action("tap", target="Search")
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "open_app", "text": "unknown"},
+            "observation": {"foreground_app": "com.sankuai.moviepro", "platform": "android", "extra": {"ui_tree": []}},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "target": "Search"},
+            "observation": {"foreground_app": "com.sankuai.moviepro", "platform": "android", "extra": {"ui_tree": []}},
+        },
+    ]
+
+    canonicalized = canonicalize_code_actions_from_events(source, events)
+    compiled = compile_code_skills(canonicalized.source)
+
+    assert compiled.errors == []
+    assert compiled.skills[0].steps[0].target == "com.sankuai.moviepro"
+    assert "target='unknown'" not in canonicalized.source
 
 
 @pytest.mark.asyncio
@@ -3691,6 +3724,121 @@ async def open_orders_prefix(device):
     assert filtered.report["quality"] == "canonical"
     assert filtered.report["trimmed_functions"] == ["open_orders_prefix"]
     assert "AfterWeak" not in filtered.source
+
+
+def test_contract_filter_relaxes_input_text_before_dynamic_result_tap() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.sankuai.moviepro", platform="android", tags=["movie", "search", "box_office"], description="打开猫眼App，搜索阿嬷的情书，进入详情页并展示总票房")
+async def search_movie_box_office(device, movie_name="阿嬷的情书"):
+    await action("open_app", target="com.sankuai.moviepro")
+    await action("tap", target="猫眼专业版", x=695.0, y=250.0, relative=True, state_contract=C(app="com.sankuai.moviepro", required=[R(content_desc="猫眼专业版", visible=True, clickable=True, enabled=True)]))
+    await action("input_text", target="找影剧综、找影人、找公司、找影院", text=movie_name)
+    await action("tap", target=movie_name, state_contract=C(app="com.sankuai.moviepro", required=[R(text=movie_name, visible=True, clickable=True)]))
+'''
+
+    filtered = filter_code_to_contract_complete(source)
+    compiled = compile_code_skills(filtered.source)
+
+    assert compiled.errors == []
+    skill = compiled.skills[0]
+    assert [step.action_type for step in skill.steps] == ["open_app", "tap", "input_text"]
+    assert skill.parameters == ("movie_name",)
+    assert filtered.report["trimmed_functions"] == ["search_movie_box_office"]
+    assert filtered.report["relaxed_steps"][0]["action_type"] == "input_text"
+    assert "票房" not in skill.description
+    assert "详情页" not in skill.description
+    assert "总票房" not in _code_skill_search_text(skill)
+
+
+def test_contract_filter_does_not_promote_null_selector_result_repair() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.sankuai.moviepro", platform="android", tags=["movie", "search", "box_office"], description="打开猫眼 App，搜索指定电影并进入详情页查看票房数据")
+async def search_movie_box_office(device, movie_name="阿嬷的情书"):
+    await action("open_app", target="com.sankuai.moviepro")
+    await action("tap", target="猫眼专业版", state_contract=C(app="com.sankuai.moviepro", required=[R(content_desc="猫眼专业版", visible=True, clickable=True, enabled=True)]))
+    await action("input_text", target="找影剧综、找影人、找公司、找影院", text=movie_name)
+    await action("tap", target="给阿嬷的情书", state_contract=C.from_dict({"anchor": {"app_package": "com.sankuai.moviepro"}, "signature": {"required": [{"selector": {"text": "给阿嬷的情书"}, "state": ["visible"]}], "forbidden": []}, "mask_rules": []}))
+'''
+    repair_report = {
+        "repaired_steps": [
+            {
+                "function": "search_movie_box_office",
+                "step_index": 3,
+                "action_type": "tap",
+                "target": "给阿嬷的情书",
+                "selector": None,
+                "reason": "target_text_contract_from_observation",
+            }
+        ],
+        "no_target_selector_steps": [
+            {
+                "function": "search_movie_box_office",
+                "step_index": 2,
+                "action_type": "input_text",
+                "target": "找影剧综、找影人、找公司、找影院",
+                "selector": None,
+                "reason": "no_target_selector",
+            }
+        ],
+    }
+
+    filtered = filter_code_to_contract_complete(source, repair_report=repair_report)
+    compiled = compile_code_skills(filtered.source)
+
+    assert compiled.errors == []
+    skill = compiled.skills[0]
+    assert [step.action_type for step in skill.steps] == ["open_app", "tap", "input_text"]
+    assert filtered.report["trimmed_functions"] == ["search_movie_box_office"]
+    assert filtered.report["relaxed_steps"][0]["action_type"] == "input_text"
+    assert "给阿嬷的情书" not in [step.target for step in skill.steps]
+
+
+def test_contract_filter_drops_unused_parameters_after_prefix_trim() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.sankuai.moviepro", platform="android", tags=["movie", "search", "box_office"], description="打开猫眼App，搜索阿嬷的情书，进入详情页并展示总票房")
+async def search_movie_box_office(device, movie_name="阿嬷的情书"):
+    await action("open_app", target="com.sankuai.moviepro")
+    await action("tap", target="猫眼专业版", state_contract=C(app="com.sankuai.moviepro", required=[R(content_desc="猫眼专业版", visible=True, clickable=True, enabled=True)]))
+    await action("tap", target=movie_name, state_contract=C(app="com.sankuai.moviepro", required=[R(text=movie_name, visible=True, clickable=True)]))
+'''
+
+    filtered = filter_code_to_contract_complete(source)
+    compiled = compile_code_skills(filtered.source)
+
+    assert compiled.errors == []
+    skill = compiled.skills[0]
+    assert [step.action_type for step in skill.steps] == ["open_app", "tap"]
+    assert skill.parameters == ()
+    assert "movie_name" not in filtered.source
+    assert "票房" not in skill.description
+    assert "详情页" not in _code_skill_search_text(skill)
+
+
+def test_compile_deeplink_skill_keeps_fixed_values_without_parameters() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.sankuai.moviepro", platform="android", tags=("deeplink", "verified"), skill_id="deeplink:com.sankuai.moviepro:bb4aca0e38", description="打开猫眼电影详情页")
+async def open_deeplink_com_sankuai_moviepro_bb4aca0e38(device):
+    await action("open_deeplink", target="verified deeplink start", fixed=True, fixed_values={"text": "maoyanpro://www.meituan.com/movieDetail?movieId=1516982", "package": "com.sankuai.moviepro"}, state_contract=C(app="com.sankuai.moviepro", required=[R(resource_id="com.sankuai.moviepro:id/c5", visible=True), R(resource_id="com.sankuai.moviepro:id/h8", visible=True)]))
+'''
+
+    compiled = compile_code_skills(source)
+
+    assert compiled.errors == []
+    skill = compiled.skills[0]
+    assert skill.parameters == ()
+    assert skill.steps[0].fixed is True
+    assert skill.steps[0].fixed_values == {
+        "text": "maoyanpro://www.meituan.com/movieDetail?movieId=1516982",
+        "package": "com.sankuai.moviepro",
+    }
 
 
 def test_entrypoint_normalization_adds_open_app_after_app_change_segment() -> None:
