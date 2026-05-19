@@ -18,6 +18,7 @@ import asyncio
 import base64
 import importlib.resources
 import inspect
+import json
 import logging
 import os
 import re
@@ -108,6 +109,7 @@ _ANDROID_COMPONENT_RE = re.compile(
 )
 _ANDROID_INTENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]*$")
 _ANDROID_EXTRA_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_APP_CONTEXT_LAUNCHER_COMPONENT_ENV = "OPENGUI_APP_CONTEXT_LAUNCHER_COMPONENT"
 _AM_START_FAILURE_MARKERS = (
     "error:",
     "exception",
@@ -137,6 +139,25 @@ def _without_am_start_option(remote_args: list[str], option: str) -> list[str]:
             continue
         trimmed.append(arg)
     return trimmed
+
+
+def _am_start_data_scheme(remote_args: list[str]) -> str | None:
+    try:
+        data_uri = remote_args[remote_args.index("-d") + 1]
+    except (ValueError, IndexError):
+        return None
+    return data_uri.split(":", 1)[0].lower() if ":" in data_uri else None
+
+
+def _annotate_am_start_launch_variant(output: str, variant_name: str) -> str:
+    marker = f"[opengui_launch_variant={variant_name}]"
+    cleaned = str(output or "").rstrip()
+    return f"{cleaned}\n{marker}" if cleaned else marker
+
+
+def _am_start_launch_variant_marker(output: str) -> str | None:
+    match = re.search(r"\[opengui_launch_variant=[A-Za-z0-9_:-]+\]", str(output or ""))
+    return match.group(0) if match else None
 
 
 def _read_png_size(path: Path) -> tuple[int, int] | None:
@@ -578,6 +599,124 @@ class AdbBackend:
                 stderr=stderr,
             )
         return stdout
+
+    def _app_context_launcher_component(self) -> str | None:
+        component = os.environ.get(_APP_CONTEXT_LAUNCHER_COMPONENT_ENV, "").strip()
+        if not component:
+            return None
+        if not _ANDROID_COMPONENT_RE.match(component):
+            logger.warning(
+                "Ignoring invalid %s value: %s",
+                _APP_CONTEXT_LAUNCHER_COMPONENT_ENV,
+                component,
+            )
+            return None
+        return component
+
+    def supports_app_context_launcher(self) -> bool:
+        """Return whether an app-context launch bridge is configured.
+
+        The bridge is optional and intentionally outside the Action schema.
+        When configured, deeplink probing can use it as another launch
+        transport while still relying on post-state contract verification.
+        """
+
+        return self._app_context_launcher_component() is not None
+
+    async def root_available(self, *, timeout: float = 3.0) -> bool:
+        cached = getattr(self, "_root_available_cache", None)
+        if isinstance(cached, bool):
+            return cached
+        for probe in ("su 0 id", "su -c id"):
+            try:
+                output = await self._run("shell", probe, timeout=timeout)
+            except Exception:
+                continue
+            if "uid=0" in output or "root" in output.lower():
+                self._root_available_cache = True
+                return True
+        self._root_available_cache = False
+        return False
+
+    async def run_as_root(self, command: str, *, timeout: float = 10.0) -> str:
+        """Run a read-only adb shell command through root when available.
+
+        Deeplink discovery uses this only for stronger capture evidence
+        (e.g. dumpsys visibility), never for privileged activity replay.
+        """
+
+        command = str(command or "").strip()
+        if not command:
+            raise ValueError("root command must not be empty")
+        if not await self.root_available(timeout=min(timeout, 3.0)):
+            raise AdbError("adb root shell is not available")
+
+        quoted = shlex.quote(command)
+        failures: list[str] = []
+        for root_command in (f"su 0 sh -c {quoted}", f"su -c {quoted}"):
+            try:
+                return await self._run("shell", root_command, timeout=timeout)
+            except Exception as exc:
+                failures.append(str(exc))
+        raise AdbError("adb root shell failed: " + " | ".join(failures[-2:]))
+
+    async def open_deeplink_app_context(self, action: Action, *, timeout: float = 10.0) -> str:
+        if action.action_type != "open_deeplink":
+            raise ValueError("open_deeplink_app_context requires action_type='open_deeplink'")
+        return await self._run_app_context_launcher(action, timeout=timeout)
+
+    async def open_intent_app_context(self, action: Action, *, timeout: float = 10.0) -> str:
+        if action.action_type != "open_intent":
+            raise ValueError("open_intent_app_context requires action_type='open_intent'")
+        return await self._run_app_context_launcher(action, timeout=timeout)
+
+    async def _run_app_context_launcher(self, action: Action, *, timeout: float) -> str:
+        launcher_component = self._app_context_launcher_component()
+        if not launcher_component:
+            raise AdbError(
+                "app-context launcher is not configured; set "
+                f"{_APP_CONTEXT_LAUNCHER_COMPONENT_ENV}"
+            )
+
+        intent_action = (
+            action.intent_action
+            if action.action_type == "open_intent"
+            else "android.intent.action.VIEW"
+        )
+        remote_args = [
+            "am",
+            "start",
+            "-W",
+            "-n",
+            launcher_component,
+            "--es",
+            "opengui.intent_action",
+            intent_action,
+        ]
+        if action.text:
+            remote_args.extend(["--es", "opengui.data_uri", str(action.text)])
+        if action.package:
+            remote_args.extend(["--es", "opengui.package", str(action.package)])
+        if action.component:
+            remote_args.extend(["--es", "opengui.component", str(action.component)])
+        if action.mime_type:
+            remote_args.extend(["--es", "opengui.mime_type", str(action.mime_type)])
+        if action.categories:
+            remote_args.extend(["--esa", "opengui.categories", ",".join(action.categories)])
+        if action.extras:
+            extras_payload = json.dumps(
+                {str(key): value for key, value in action.extras},
+                ensure_ascii=False,
+                default=str,
+                separators=(",", ":"),
+            )
+            remote_args.extend(["--es", "opengui.extras_json", extras_payload])
+
+        remote_cmd = " ".join(shlex.quote(str(arg)) for arg in remote_args)
+        output = await self._run("shell", remote_cmd, timeout=timeout)
+        if _am_start_output_failed(output):
+            raise AdbError(f"app-context launcher failed: {output}")
+        return _annotate_am_start_launch_variant(output, "app_context")
 
     # ------------------------------------------------------------------
     # Preflight
@@ -1059,6 +1198,7 @@ class AdbBackend:
 
     async def execute(self, action: Action, timeout: float = 5.0) -> str:
         t = action.action_type
+        action_result: str | None = None
 
         if t == "tap":
             x, y = self._resolve_point(action)
@@ -1164,10 +1304,10 @@ class AdbBackend:
                 )
 
         elif t == "open_deeplink":
-            await self._open_deeplink(action, timeout=timeout)
+            action_result = await self._open_deeplink(action, timeout=timeout)
 
         elif t == "open_intent":
-            await self._open_intent(action, timeout=timeout)
+            action_result = await self._open_intent(action, timeout=timeout)
 
         elif t == "close_app":
             pkg = action.text or ""
@@ -1177,7 +1317,9 @@ class AdbBackend:
         else:
             raise ValueError(f"Unsupported action type: {t!r}")
 
-        return describe_action(action)
+        description = describe_action(action)
+        marker = _am_start_launch_variant_marker(action_result or "")
+        return f"{description}\n{marker}" if marker else description
 
     async def _open_deeplink(self, action: Action, *, timeout: float) -> str:
         uri = action.text or ""
@@ -1198,11 +1340,21 @@ class AdbBackend:
             if not _ANDROID_PACKAGE_RE.match(action.package):
                 raise ValueError(f"Invalid Android package for open_deeplink: {action.package!r}")
             remote_args.extend(["-p", action.package])
-        return await self._run_am_start_with_fallbacks(
-            remote_args,
-            timeout=timeout,
-            label="open_deeplink",
-        )
+        try:
+            return await self._run_am_start_with_fallbacks(
+                remote_args,
+                timeout=timeout,
+                label="open_deeplink",
+            )
+        except Exception as exc:
+            if not self.supports_app_context_launcher():
+                raise
+            try:
+                return await self._run_app_context_launcher(action, timeout=timeout)
+            except Exception as app_context_exc:
+                raise AdbError(
+                    f"adb deeplink launch failed: {exc}; app-context launch failed: {app_context_exc}"
+                ) from app_context_exc
 
     async def _open_intent(self, action: Action, *, timeout: float) -> str:
         intent_action = action.intent_action or ""
@@ -1237,7 +1389,7 @@ class AdbBackend:
             if isinstance(value, bool):
                 remote_args.extend(["--ez", key, "true" if value else "false"])
             elif isinstance(value, int) and not isinstance(value, bool):
-                remote_args.extend(["--ei", key, str(value)])
+                remote_args.extend(["--ei" if -2147483648 <= value <= 2147483647 else "--el", key, str(value)])
             elif isinstance(value, float):
                 remote_args.extend(["--ef", key, str(value)])
             else:
@@ -1245,11 +1397,21 @@ class AdbBackend:
                 if "\x00" in text_value:
                     raise ValueError(f"open_intent extra {key!r} must not contain NUL bytes")
                 remote_args.extend(["--es", key, text_value])
-        return await self._run_am_start_with_fallbacks(
-            remote_args,
-            timeout=timeout,
-            label="open_intent",
-        )
+        try:
+            return await self._run_am_start_with_fallbacks(
+                remote_args,
+                timeout=timeout,
+                label="open_intent",
+            )
+        except Exception as exc:
+            if not self.supports_app_context_launcher():
+                raise
+            try:
+                return await self._run_app_context_launcher(action, timeout=timeout)
+            except Exception as app_context_exc:
+                raise AdbError(
+                    f"adb intent launch failed: {exc}; app-context launch failed: {app_context_exc}"
+                ) from app_context_exc
 
     async def _run_am_start_with_fallbacks(
         self,
@@ -1273,6 +1435,10 @@ class AdbBackend:
             implicit_args = _without_am_start_option(remote_args, "-n")
             add_variant("implicit", implicit_args)
             add_variant("implicit_no_wait", _without_am_start_wait(implicit_args))
+        if "-p" in remote_args and _am_start_data_scheme(remote_args) in {"http", "https"}:
+            browser_redirect_args = _without_am_start_option(remote_args, "-p")
+            add_variant("browser_redirect", browser_redirect_args)
+            add_variant("browser_redirect_no_wait", _without_am_start_wait(browser_redirect_args))
 
         errors: list[str] = []
         for variant_name, args in variants:
@@ -1290,7 +1456,7 @@ class AdbBackend:
                 continue
             if variant_name != "primary":
                 logger.info("%s succeeded via %s fallback", label, variant_name)
-            return output
+            return _annotate_am_start_launch_variant(output, variant_name)
 
         detail = " | ".join(errors) if errors else "no launch variants attempted"
         raise AdbError(f"{label} failed: {detail}")

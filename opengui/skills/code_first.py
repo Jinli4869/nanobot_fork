@@ -48,6 +48,12 @@ CANONICAL_CODE_FILENAME = "skill_graph_code.py"
 _CODE_HEADER = "from opengui.skills.code_graph import C, R, action, skill, state, tag, transition"
 _SCREENSHOT_EXTRACTION_TIMEOUT_S = 45.0
 _TEXT_EXTRACTION_TIMEOUT_S = 180.0
+_TARGET_CONTRACT_REPAIR_REASONS = frozenset({
+    "ui_tree_static_selector",
+    "target_selector_replaced_page_contract",
+    "target_element_reduced_page_contract",
+    "target_text_contract_from_observation",
+})
 
 
 _CODE_EXTRACTION_PROMPT = """\
@@ -69,15 +75,20 @@ python_code must be directly mergeable into skill_graph_code.py and must obey:
 - Express each GUI action as: await action("...", target="...", ...)
 - target must be a plain string or parameter placeholder. Never use target=R(...);
   selectors belong only inside state_contract.
-- state_contract is a PRE-action check for the screen before that action,
-  except for open_deeplink where it is a required POST-action verification that
-  the deeplink reached the target page.
+- state_contract is a PRE-action hard gate for the next element this action
+  will operate on, except for open_deeplink/open_intent where it is a required
+  POST-action verification that the shortcut reached the target page.
+- For ordinary tap/long_press/double_tap/input_text actions, state_contract
+  should usually contain one required target element. Do not summarize the page
+  with background anchors such as More options, tabs, toolbar buttons, or
+  unrelated labels.
 - Pass state_contract=C(...) inline inside await action(...). Do not assign C(...)
   or R(...) objects to local variables and then reference those variables.
 - Put app anchors on C(app="..."), never inside R(...). For example:
   state_contract=C(app="com.example", required=[R(text="Orders", clickable=True)])
 - R(...) only accepts text, content_desc, resource_id, class_, xpath, visible,
-  clickable, enabled, focused, and scrollable.
+  clickable, enabled, focused, and scrollable. Avoid focused=True as a hard
+  precondition for input_text; focus is often a race-prone runtime state.
 - Do not attach a postcondition-like state_contract to open_app unless the trace
   must already be inside that app before opening a deep link.
 - You may use await action("open_deeplink", ...) only when the trajectory
@@ -1478,6 +1489,9 @@ def _next_trace_action(
 
 def _is_generic_target_text(target: str) -> bool:
     lowered = str(target or "").strip().casefold()
+    if _looks_like_resource_id(lowered):
+        name = lowered.split("/")[-1].split(":")[-1]
+        return name in {"", "a"}
     return bool(
         lowered
         and (
@@ -1488,6 +1502,11 @@ def _is_generic_target_text(target: str) -> bool:
             or lowered in {"a", "ctrip.android.view:id/a", "com.ctrip.ctrip:id/a"}
         )
     )
+
+
+def _looks_like_resource_id(value: str) -> bool:
+    value = str(value or "").strip()
+    return bool(value and (":id/" in value or "/id/" in value))
 
 
 def _observation_has_auth_gate(observation: dict[str, Any] | None) -> bool:
@@ -1782,6 +1801,7 @@ def repair_code_contracts_from_events(
     evidence = _TraceEvidenceIndex(events)
     replacements: dict[str, dict[int, dict[str, Any]]] = {}
     repaired_steps: list[dict[str, Any]] = []
+    audit_steps: list[dict[str, Any]] = []
     for skill in result.skills:
         trace_cursor = -1
         for index, step in enumerate(skill.steps):
@@ -1794,56 +1814,64 @@ def repair_code_contracts_from_events(
                 after=trace_cursor,
             )
             current = normalize_state_contract(step.state_contract)
-            sanitized_input_contract = _strip_parameterized_input_text_from_contract(
-                current,
-                step,
+            current, sanitize_steps = _sanitize_action_contract(current, step)
+            repaired_steps.extend(
+                _repair_records(
+                    skill=skill,
+                    step=step,
+                    index=index,
+                    selector=None,
+                    reasons=sanitize_steps,
+                )
             )
-            if sanitized_input_contract is not None and sanitized_input_contract != current:
-                replacements.setdefault(skill.name, {})[index] = {
-                    "app": skill.app,
-                    "contract": sanitized_input_contract,
-                }
-                repaired_steps.append({
-                    "function": skill.name,
-                    "step_index": index,
-                    "action_type": step.action_type,
-                    "target": step.target,
-                    "selector": None,
-                    "reason": "parameterized_input_text_removed",
-                })
-                continue
-            sanitized_dynamic_contract = _strip_dynamic_target_text_from_contract(current, step)
-            if sanitized_dynamic_contract is not None and sanitized_dynamic_contract != current:
-                replacements.setdefault(skill.name, {})[index] = {
-                    "app": skill.app,
-                    "contract": sanitized_dynamic_contract,
-                }
-                repaired_steps.append({
-                    "function": skill.name,
-                    "step_index": index,
-                    "action_type": step.action_type,
-                    "target": step.target,
-                    "selector": None,
-                    "reason": "dynamic_target_text_removed",
-                })
-                continue
             current_has_stable = _contract_has_stable_identity(current)
             current_supported = _contract_supported_by_observation(current, evidence_observation)
+            if selector and _selector_has_stable_identity(selector):
+                replacements.setdefault(skill.name, {})[index] = {
+                    "app": skill.app,
+                    "selector": _selector_identity(selector),
+                    "states": _contract_states_for_selector(step.action_type, selector),
+                }
+                reason = (
+                    "target_selector_replaced_page_contract"
+                    if _contract_required_count(current) > 1 or not current_has_stable
+                    else "ui_tree_static_selector"
+                )
+                repaired_steps.append({
+                    "function": skill.name,
+                    "step_index": index,
+                    "action_type": step.action_type,
+                    "target": step.target,
+                    "selector": selector,
+                    "reason": reason,
+                })
+                continue
+            target_contract, target_reason = _target_contract_from_existing_contract(
+                current,
+                step,
+                app=skill.app,
+            )
+            if target_contract is not None and target_contract != current:
+                replacements.setdefault(skill.name, {})[index] = {
+                    "app": skill.app,
+                    "contract": target_contract,
+                }
+                repaired_steps.append({
+                    "function": skill.name,
+                    "step_index": index,
+                    "action_type": step.action_type,
+                    "target": step.target,
+                    "selector": _first_required_selector(target_contract),
+                    "reason": target_reason,
+                })
+                continue
+            if current != normalize_state_contract(step.state_contract):
+                replacements.setdefault(skill.name, {})[index] = {
+                    "app": skill.app,
+                    "contract": current,
+                }
+                continue
             if current_has_stable and current_supported:
-                if selector and _selector_has_stable_identity(selector) and _contract_required_count(current) > 1:
-                    replacements.setdefault(skill.name, {})[index] = {
-                        "app": skill.app,
-                        "selector": selector,
-                        "states": _contract_states_for_selector(step.action_type, selector),
-                    }
-                    repaired_steps.append({
-                        "function": skill.name,
-                        "step_index": index,
-                        "action_type": step.action_type,
-                        "target": step.target,
-                        "selector": selector,
-                        "reason": "target_selector_replaced_page_contract",
-                    })
                 continue
             replacement: dict[str, Any] | None = None
             states = _contract_states_for_selector(step.action_type, selector)
@@ -1851,35 +1879,33 @@ def repair_code_contracts_from_events(
             if selector and _selector_has_stable_identity(selector):
                 replacement = {
                     "app": skill.app,
-                    "selector": selector,
+                    "selector": _selector_identity(selector),
                     "states": states,
                 }
                 if _contract_required_count(current) > 1 or not current_has_stable:
                     reason = "target_selector_replaced_page_contract"
-            elif current_has_stable and not current_supported:
-                page_contract = _page_contract_from_observation(
-                    evidence_observation,
-                    app=skill.app,
-                    target=step.target,
-                )
-                replacement = {
-                    "app": skill.app,
-                    "contract": page_contract or _fallback_target_contract(skill.app, step.target),
-                }
-                reason = "unsupported_static_selector_replaced"
             elif selector is None and evidence_observation is not None:
-                page_contract = _page_contract_from_observation(
+                fallback_contract = _fallback_target_contract_from_observation(
                     evidence_observation,
                     app=skill.app,
-                    target=step.target,
+                    step=step,
                 )
-                if page_contract is not None:
+                if fallback_contract is not None:
                     replacement = {
                         "app": skill.app,
-                        "contract": page_contract,
+                        "contract": fallback_contract,
                     }
-                    reason = "page_contract_without_static_selector"
+                    reason = "target_text_contract_from_observation"
             if replacement is None:
+                if selector is None:
+                    audit_steps.append({
+                        "function": skill.name,
+                        "step_index": index,
+                        "action_type": step.action_type,
+                        "target": step.target,
+                        "selector": None,
+                        "reason": "no_target_selector",
+                    })
                 continue
             replacements.setdefault(skill.name, {})[index] = replacement
             repaired_steps.append({
@@ -1894,6 +1920,7 @@ def repair_code_contracts_from_events(
     repaired_result = compile_code_skills(repaired_source)
     skills = repaired_result.skills if not repaired_result.errors else result.skills
     report = _contract_quality_report(skills, repaired_steps=tuple(repaired_steps))
+    _append_contract_audit_steps(report, audit_steps)
     return CodeContractRepair(source=repaired_source, report=report)
 
 
@@ -2401,7 +2428,51 @@ def _merge_repair_steps_into_quality_report(
     ]
     merged = dict(quality_report)
     merged["repaired_steps"] = repaired_steps
+    merged.update(_contract_audit_fields(repaired_steps))
+    for field in _contract_audit_fields():
+        if field != "no_target_selector_steps":
+            continue
+        audit_steps = [
+            step
+            for step in repair_report.get(field, [])
+            if isinstance(step, dict) and str(step.get("function") or "") not in removed_functions
+        ]
+        if audit_steps:
+            merged[field] = audit_steps
+    target_repair_keys = {
+        (str(step.get("function") or ""), step.get("step_index"))
+        for step in repaired_steps
+        if str(step.get("reason") or "") in _TARGET_CONTRACT_REPAIR_REASONS
+    }
+    if target_repair_keys:
+        weak_steps = [
+            step for step in merged.get("weak_steps", [])
+            if (str(step.get("function") or ""), step.get("step_index")) not in target_repair_keys
+        ]
+        promoted_count = len(merged.get("weak_steps", [])) - len(weak_steps)
+        merged["weak_steps"] = weak_steps
+        merged["canonical_step_count"] = int(merged.get("canonical_step_count") or 0) + promoted_count
+        merged["canonical_node_count"] = int(merged.get("canonical_node_count") or 0) + promoted_count
+        merged["auxiliary_node_count"] = len(weak_steps)
+        merged["quality"] = (
+            "canonical"
+            if merged["canonical_step_count"] and not weak_steps
+            else "partial"
+            if merged["canonical_step_count"]
+            else "weak"
+        )
     return merged
+
+
+def _append_contract_audit_steps(report: dict[str, Any], steps: list[dict[str, Any]]) -> None:
+    if not steps:
+        return
+    for field in _contract_audit_fields():
+        report.setdefault(field, [])
+    for step in steps:
+        reason = str(step.get("reason") or "")
+        if reason == "no_target_selector":
+            report["no_target_selector_steps"].append(step)
 
 
 class _TraceEvidenceIndex:
@@ -2470,16 +2541,16 @@ class _TraceEvidenceIndex:
                 match.pre_observation,
                 action_type,
             )
-            if selector is None and not _is_generic_target_text(target_text):
+            if selector is None and not _is_placeholder_value(target_text):
                 selector = _best_selector_for_action(match.pre_observation, target_text, action_type)
             evidence_observation = match.pre_observation
-            if selector is None and match.pre_observation is None:
+            if selector is None and not _observation_has_selector_evidence(match.pre_observation):
                 selector = _best_selector_for_point_action(
                     parameters or match.parameters,
                     match.post_observation,
                     action_type,
                 )
-                if selector is None and not _is_generic_target_text(target_text):
+                if selector is None and not _is_placeholder_value(target_text):
                     selector = _best_selector_for_action(match.post_observation, target_text, action_type)
                 evidence_observation = match.post_observation
             return match.index, selector, evidence_observation
@@ -2493,13 +2564,21 @@ class _TraceEvidenceIndex:
 
 
 def _best_trace_step(candidates: list[_TraceEvidenceStep], target_text: str) -> _TraceEvidenceStep | None:
+    exact_matches = [
+        candidate
+        for candidate in candidates
+        if candidate.target.strip().casefold() == target_text.strip().casefold()
+    ]
+    if exact_matches:
+        return min(exact_matches, key=lambda candidate: candidate.index)
+
     scored: list[tuple[int, int, _TraceEvidenceStep]] = []
     for candidate in candidates:
         score = 0
         if (
             _best_selector_for_point_action(candidate.parameters, candidate.pre_observation, candidate.action_type)
             or (
-                not _is_generic_target_text(target_text)
+                not _is_placeholder_value(target_text)
                 and _best_selector_for_action(candidate.pre_observation, target_text, candidate.action_type)
             )
         ):
@@ -2598,9 +2677,274 @@ def _contract_states_for_selector(action_type: str, selector: dict[str, Any] | N
         states.append("enabled")
     if action_type in {"tap", "long_press", "double_tap"} and selector.get("clickable"):
         states.append("clickable")
-    if action_type == "input_text" and selector.get("focused"):
-        states.append("focused")
     return list(dict.fromkeys(states))
+
+
+def _sanitize_action_contract(
+    contract: dict[str, Any] | None,
+    step: SkillStep,
+) -> tuple[dict[str, Any] | None, list[str]]:
+    current = normalize_state_contract(contract)
+    reasons: list[str] = []
+    sanitized_input_contract = _strip_parameterized_input_text_from_contract(current, step)
+    if sanitized_input_contract is not None and sanitized_input_contract != current:
+        current = sanitized_input_contract
+        reasons.append("parameterized_input_text_removed")
+    sanitized_dynamic_contract = _strip_dynamic_target_text_from_contract(current, step)
+    if sanitized_dynamic_contract is not None and sanitized_dynamic_contract != current:
+        current = sanitized_dynamic_contract
+        reasons.append("dynamic_target_text_removed")
+    sanitized_volatile_contract = _strip_volatile_action_states_from_contract(current, step)
+    if sanitized_volatile_contract is not None and sanitized_volatile_contract != current:
+        current = sanitized_volatile_contract
+        reasons.append("volatile_state_stripped")
+    return current, reasons
+
+
+def _repair_records(
+    *,
+    skill: Skill,
+    step: SkillStep,
+    index: int,
+    selector: dict[str, Any] | None,
+    reasons: list[str],
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "function": skill.name,
+            "step_index": index,
+            "action_type": step.action_type,
+            "target": step.target,
+            "selector": selector,
+            "reason": reason,
+        }
+        for reason in reasons
+    ]
+
+
+def _strip_volatile_action_states_from_contract(
+    contract: dict[str, Any] | None,
+    step: SkillStep,
+) -> dict[str, Any] | None:
+    normalized = normalize_state_contract(contract)
+    if not normalized:
+        return None
+    signature = normalized.get("signature")
+    required = signature.get("required") if isinstance(signature, dict) else None
+    if not isinstance(required, list):
+        return None
+    changed = False
+    sanitized_required: list[Any] = []
+    for element in required:
+        if not isinstance(element, dict):
+            sanitized_required.append(element)
+            continue
+        state = element.get("state") if isinstance(element.get("state"), list) else []
+        sanitized_state = [item for item in state if item != "focused"]
+        if step.action_type == "input_text":
+            sanitized_state = [
+                item for item in sanitized_state if item in {"visible", "enabled"}
+            ]
+        if not sanitized_state and state:
+            sanitized_state = ["visible"]
+        if sanitized_state == state:
+            sanitized_required.append(element)
+            continue
+        updated = dict(element)
+        updated["state"] = sanitized_state
+        sanitized_required.append(updated)
+        changed = True
+    if not changed:
+        return None
+    sanitized = dict(normalized)
+    sanitized_signature = dict(signature)
+    sanitized_signature["required"] = sanitized_required
+    sanitized["signature"] = sanitized_signature
+    return normalize_state_contract(sanitized)
+
+
+def _target_contract_from_existing_contract(
+    contract: dict[str, Any] | None,
+    step: SkillStep,
+    *,
+    app: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    normalized = normalize_state_contract(contract)
+    if not normalized:
+        return None, None
+    signature = normalized.get("signature")
+    required = signature.get("required") if isinstance(signature, dict) else None
+    if not isinstance(required, list) or len(required) <= 1:
+        return None, None
+    target = str(step.target or "").strip()
+    if not target or _is_placeholder_value(target) or (
+        is_dynamic_text(target) and not _looks_like_resource_id(target)
+    ):
+        return None, None
+
+    candidates: list[tuple[tuple[int, int], dict[str, Any]]] = []
+    for element in required:
+        if not isinstance(element, dict):
+            continue
+        selector = element.get("selector")
+        if not isinstance(selector, dict):
+            continue
+        if not _selector_mentions_target(selector, target):
+            continue
+        if _is_background_selector(selector) and not _selector_exactly_matches_target(selector, target):
+            continue
+        selector_identity = _selector_identity(selector)
+        if not selector_identity:
+            continue
+        if not (
+            _selector_has_stable_identity(selector_identity)
+            or selector_identity.get("text")
+            or _selector_has_input_identity(selector_identity)
+        ):
+            continue
+        updated_element = {
+            "selector": selector_identity,
+            "state": _contract_states_for_selector(step.action_type, selector),
+        }
+        candidates.append((_selector_strength(selector_identity), updated_element))
+    if not candidates:
+        return None, None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    anchor_app = str(normalized.get("anchor", {}).get("app_package") or app or "").strip()
+    contract_out = normalize_state_contract({
+        "anchor": {"app_package": anchor_app},
+        "signature": {"required": [candidates[0][1]], "forbidden": []},
+    })
+    return contract_out, "target_element_reduced_page_contract"
+
+
+def _fallback_target_contract_from_observation(
+    observation: dict[str, Any] | None,
+    *,
+    app: str,
+    step: SkillStep,
+) -> dict[str, Any] | None:
+    target = str(step.target or "").strip()
+    if not target or _is_placeholder_value(target) or (
+        is_dynamic_text(target) and not _looks_like_resource_id(target)
+    ):
+        return None
+    if not isinstance(observation, dict) or not _observation_mentions_target(observation, target):
+        return None
+    selector = _best_selector_for_action(observation, target, step.action_type)
+    if selector is not None and _selector_has_stable_identity(selector):
+        anchor_app = str(observation.get("foreground_app") or observation.get("app") or app or "").strip() or app
+        return normalize_state_contract({
+            "anchor": {"app_package": anchor_app},
+            "signature": {
+                "required": [
+                    {
+                        "selector": _selector_identity(selector),
+                        "state": _contract_states_for_selector(step.action_type, selector),
+                    }
+                ],
+                "forbidden": [],
+            },
+        })
+    if not is_static_text(target):
+        return None
+    anchor_app = str(observation.get("foreground_app") or observation.get("app") or app or "").strip() or app
+    return normalize_state_contract({
+        "anchor": {"app_package": anchor_app},
+        "signature": {
+            "required": [{"selector": {"text": target}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    })
+
+
+def _first_required_selector(contract: dict[str, Any] | None) -> dict[str, Any] | None:
+    normalized = normalize_state_contract(contract)
+    signature = normalized.get("signature") if isinstance(normalized, dict) else None
+    required = signature.get("required") if isinstance(signature, dict) else None
+    if not isinstance(required, list) or not required:
+        return None
+    first = required[0]
+    selector = first.get("selector") if isinstance(first, dict) else None
+    return dict(selector) if isinstance(selector, dict) else None
+
+
+def _selector_identity(selector: dict[str, Any]) -> dict[str, Any]:
+    identity: dict[str, Any] = {}
+    for key in ("resource_id", "content_desc", "text", "class", "xpath"):
+        value = selector.get(key)
+        if value is None:
+            continue
+        if key == "text" and (
+            is_dynamic_text(value)
+            or (selector.get("resource_id") or selector.get("content_desc"))
+        ):
+            continue
+        identity[key] = value
+    return identity
+
+
+def _selector_mentions_target(selector: dict[str, Any], target: str) -> bool:
+    target_clean = target.strip()
+    if not target_clean:
+        return False
+    for key in ("text", "content_desc", "resource_id"):
+        value = selector.get(key)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        if _value_mentions_target(value, target_clean):
+            return True
+        if key == "resource_id" and _resource_id_mentions_target(value, target_clean):
+            return True
+    return False
+
+
+def _selector_exactly_matches_target(selector: dict[str, Any], target: str) -> bool:
+    target_clean = target.strip().casefold()
+    for key in ("text", "content_desc"):
+        value = selector.get(key)
+        if isinstance(value, str) and value.strip().casefold() == target_clean:
+            return True
+    return False
+
+
+def _resource_id_mentions_target(resource_id: str, target: str) -> bool:
+    target_clean = target.strip().casefold()
+    if not target_clean:
+        return False
+    name = resource_id.split("/")[-1].split(":")[-1].casefold()
+    tokens = [token for token in re.split(r"[^a-z0-9]+", name) if token]
+    target_tokens = [token for token in re.split(r"[^a-z0-9]+", target_clean) if token]
+    return (
+        target_clean in tokens
+        or name.endswith(target_clean)
+        or bool(target_tokens and all(token in tokens for token in target_tokens))
+    )
+
+
+def _is_background_selector(selector: dict[str, Any]) -> bool:
+    values = [
+        selector.get("text"),
+        selector.get("content_desc"),
+        selector.get("resource_id"),
+    ]
+    joined = " ".join(str(value).casefold() for value in values if value)
+    if not joined:
+        return False
+    return any(
+        marker in joined
+        for marker in (
+            "more options",
+            "overflow",
+            "toolbar",
+            "tab_menu",
+            "menu_",
+            "alarm",
+            "clock",
+            "cancel",
+            "save",
+        )
+    )
 
 
 def _selector_compatible_with_action(selector: dict[str, Any], action_type: str) -> bool:
@@ -2786,16 +3130,7 @@ def _selectors_for_target(
     for node in ui_tree:
         if not isinstance(node, dict):
             continue
-        labels = [
-            str(value).strip()
-            for value in (
-                node.get("text"),
-                node.get("content_desc"),
-                node.get("resource_id"),
-            )
-            if value is not None and str(value).strip()
-        ]
-        if not any(_value_mentions_target(label, target_text) for label in labels):
+        if not _node_matches_target(node, target_text):
             continue
         if action_type == "input_text":
             selector = _input_selector_from_node(node)
@@ -2807,6 +3142,27 @@ def _selectors_for_target(
             matches.append(selector)
             continue
     return matches
+
+
+def _node_matches_target(node: dict[str, Any], target_text: str) -> bool:
+    target = str(target_text or "").strip()
+    if not target:
+        return False
+    text = node.get("text")
+    if isinstance(text, str) and text.strip() and not _is_generic_target_text(target):
+        if _value_mentions_target(text, target):
+            return True
+    content_desc = node.get("content_desc")
+    if isinstance(content_desc, str) and content_desc.strip():
+        if _value_mentions_target(content_desc, target):
+            return True
+    resource_id = node.get("resource_id")
+    if isinstance(resource_id, str) and resource_id.strip():
+        return _value_mentions_target(resource_id, target) or _resource_id_mentions_target(
+            resource_id,
+            target,
+        )
+    return False
 
 
 def _selector_strength(selector: dict[str, Any]) -> tuple[int, int]:
@@ -2885,6 +3241,19 @@ def _observation_selectors(observation: dict[str, Any]) -> list[dict[str, Any]]:
     ]:
         selectors.append({"text": text})
     return selectors
+
+
+def _observation_has_selector_evidence(observation: dict[str, Any] | None) -> bool:
+    if not isinstance(observation, dict):
+        return False
+    extra = observation.get("extra") if isinstance(observation.get("extra"), dict) else {}
+    ui_tree = extra.get("ui_tree")
+    if isinstance(ui_tree, list):
+        return any(isinstance(node, dict) for node in ui_tree)
+    return any(
+        isinstance(extra.get(key), list) and bool(extra.get(key))
+        for key in ("resource_ids", "clickable_text", "visible_text", "content_desc")
+    )
 
 
 def _stable_selector_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
@@ -3097,7 +3466,7 @@ def _contract_call_expr(replacement: dict[str, Any]) -> ast.expr:
         arg = "class_" if key == "class" else key
         r_keywords.append(ast.keyword(arg=arg, value=ast.Constant(value=value)))
     for flag in ("visible", "clickable", "enabled", "focused", "scrollable"):
-        if flag in states or selector.get(flag):
+        if flag in states:
             r_keywords.append(ast.keyword(arg=flag, value=ast.Constant(value=True)))
     r_call = ast.Call(func=ast.Name(id="R", ctx=ast.Load()), args=[], keywords=r_keywords)
     return ast.Call(
@@ -3117,6 +3486,11 @@ def _empty_contract_quality_report() -> dict[str, Any]:
         "weak_steps": [],
         "repaired_steps": [],
         "target_selector_repaired_steps": [],
+        "target_contract_steps": [],
+        "multi_required_action_contract_reduced_steps": [],
+        "background_anchor_dropped_steps": [],
+        "volatile_state_stripped_steps": [],
+        "no_target_selector_steps": [],
         "dynamic_target_text_stripped_steps": [],
         "page_anchor_downgraded_steps": [],
         "canonical_node_count": 0,
@@ -3154,14 +3528,50 @@ def _contract_quality_report(
         "auxiliary_node_count": len(weak_steps),
         "weak_steps": weak_steps,
         "repaired_steps": list(repaired_steps),
+        **_contract_audit_fields(repaired_steps),
+    })
+    return report
+
+
+def _contract_audit_fields(
+    repaired_steps: tuple[dict[str, Any], ...] | list[dict[str, Any]] = (),
+) -> dict[str, Any]:
+    return {
         "target_selector_repaired_steps": [
             dict(step)
             for step in repaired_steps
+            if str(step.get("reason") or "") in _TARGET_CONTRACT_REPAIR_REASONS
+        ],
+        "target_contract_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") in _TARGET_CONTRACT_REPAIR_REASONS
+        ],
+        "multi_required_action_contract_reduced_steps": [
+            dict(step)
+            for step in repaired_steps
             if str(step.get("reason") or "") in {
-                "ui_tree_static_selector",
                 "target_selector_replaced_page_contract",
-                "unsupported_static_selector_replaced",
+                "target_element_reduced_page_contract",
             }
+        ],
+        "background_anchor_dropped_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") in {
+                "target_selector_replaced_page_contract",
+                "target_element_reduced_page_contract",
+            }
+        ],
+        "volatile_state_stripped_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") == "volatile_state_stripped"
+        ],
+        "no_target_selector_steps": [
+            dict(step)
+            for step in repaired_steps
+            if str(step.get("reason") or "") == "no_target_selector"
         ],
         "dynamic_target_text_stripped_steps": [
             dict(step)
@@ -3176,11 +3586,10 @@ def _contract_quality_report(
             for step in repaired_steps
             if str(step.get("reason") or "") in {
                 "target_selector_replaced_page_contract",
-                "unsupported_static_selector_replaced",
+                "target_element_reduced_page_contract",
             }
         ],
-    })
-    return report
+    }
 
 
 def _is_canonical_step_contract(contract: dict[str, Any] | None) -> bool:

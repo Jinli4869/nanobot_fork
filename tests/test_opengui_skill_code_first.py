@@ -26,9 +26,20 @@ from opengui.skills.code_graph import compile_code_graph, compile_code_skills
 from opengui.skills.code_graph_projection import project_graph_code_from_events
 from opengui.skills.deeplink import (
     DeeplinkCandidate,
+    CapturedIntentSpec,
     _build_candidates,
+    _capture_current_intent_specs,
+    _candidate_for_probe_record,
+    _candidate_is_probeable,
+    _candidate_probe_key,
     _contract_from_observation,
+    _code_for_verified_candidates,
+    _dedupe_candidates,
+    _normalize_candidate_uri,
+    _parse_intent_at,
+    _parse_intent_extras,
     _probe_candidate,
+    _raw_capture_for_spec,
     discover_deeplink_skills_from_trace,
 )
 from opengui.skills.evolution import SkillEvolutionEngine, _task_skill_conflict
@@ -93,6 +104,7 @@ class _FakeDeeplinkBackend:
         component_launch_errors: set[str] | None = None,
         resolve_outputs: dict[str, str] | None = None,
         verified_intents: set[str] | None = None,
+        launch_outputs: dict[str, str] | None = None,
     ) -> None:
         self.app = app
         self.package_output = package_output
@@ -102,6 +114,7 @@ class _FakeDeeplinkBackend:
         self.component_launch_errors = component_launch_errors or set()
         self.resolve_outputs = resolve_outputs or {}
         self.verified_intents = verified_intents or set()
+        self.launch_outputs = launch_outputs or {}
         self.launched_uri: str | None = None
         self.launched_intent_action: str | None = None
         self.launched_package: str | None = None
@@ -145,7 +158,7 @@ class _FakeDeeplinkBackend:
             self.launched_uri = None
             self.launched_intent_action = None
             self.launched_package = None
-        return "ok"
+        return self.launch_outputs.get(action.text or action.intent_action or "", "ok")
 
     async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
         del timeout
@@ -217,6 +230,72 @@ class _FakeDeeplinkBackend:
             platform="android",
             extra={"visible_text": ["Home"], "content_desc": [], "resource_ids": []},
         )
+
+
+class _ScriptedProbeBackend(_FakeDeeplinkBackend):
+    def __init__(
+        self,
+        *,
+        package: str = "com.example.app",
+        execute_plan: list[BaseException | None] | None = None,
+        verified_attempts: set[int] | None = None,
+        activity_state: str | list[str] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(app=package, **kwargs)
+        self.execute_plan = list(execute_plan or [])
+        self.verified_attempts = set(verified_attempts or {1})
+        self.activity_state = activity_state
+        self._open_attempt = 0
+        self._observe_attempt = 0
+        self._run_calls = 0
+
+    async def execute(self, action: Action, timeout: float = 5.0) -> str:
+        if action.action_type.startswith("open_"):
+            self._open_attempt += 1
+            if self._open_attempt <= len(self.execute_plan):
+                planned = self.execute_plan[self._open_attempt - 1]
+                if planned is not None:
+                    raise planned
+        return await super().execute(action, timeout=timeout)
+
+    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+        del timeout
+        self._observe_attempt = self._open_attempt
+        _write_png(screenshot_path)
+        if self._observe_attempt in self.verified_attempts:
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=1080,
+                screen_height=1920,
+                foreground_app=self.app,
+                platform="android",
+                extra={
+                    "visible_text": ["My Orders", "Recent purchases"],
+                    "content_desc": ["My Orders"],
+                    "resource_ids": ["com.example.app:id/orders_title"],
+                },
+            )
+        return Observation(
+            screenshot_path=str(screenshot_path),
+            screen_width=1080,
+            screen_height=1920,
+            foreground_app=self.app,
+            platform="android",
+            extra={"visible_text": ["Home"], "content_desc": [], "resource_ids": []},
+        )
+
+    async def _run(self, *args: str, timeout: float = 10.0) -> str:
+        self._run_calls += 1
+        command = " ".join(args)
+        if "dumpsys activity activities" in command:
+            if self.activity_state is None:
+                return await super()._run(*args, timeout=timeout)
+            if isinstance(self.activity_state, list):
+                index = min(self._run_calls - 1, len(self.activity_state) - 1)
+                return self.activity_state[index]
+            return self.activity_state
+        return await super()._run(*args, timeout=timeout)
 
 
 def _write_trace(path: Path, events: list[dict[str, Any]]) -> None:
@@ -1728,7 +1807,7 @@ async def test_deeplink_discovery_prefers_captured_activity_intent(tmp_path: Pat
     backend = _FakeDeeplinkBackend(
         app="com.max.xiaoheihe",
         package_output='Activity Resolver Table:\n  Scheme: "xiaoheihe"\n',
-        activity_outputs={"RouterActivity": activity_dump, "*": activity_dump},
+        activity_outputs={"RouterActivity": activity_dump},
         verified_uris={"heybox://mall/order"},
     )
 
@@ -1749,7 +1828,8 @@ async def test_deeplink_discovery_prefers_captured_activity_intent(tmp_path: Pat
     assert result.candidates[0].source == "dumpsys_activity_activity_grep"
     assert result.candidates[0].kind == "captured_intent"
     assert "heybox://mall/order" in source
-    assert "fixed_values={'text': 'heybox://mall/order', 'package': 'com.max.xiaoheihe'}" in source
+    assert "'text': 'heybox://mall/order'" in source
+    assert "'package': 'com.max.xiaoheihe'" in source
     assert "dumpsys_activity_activity_grep" in source
 
 
@@ -1776,34 +1856,285 @@ async def test_deeplink_candidate_builder_uses_full_activity_dump_fallback() -> 
     )
 
     assert candidates[0].uri == "demo://order"
-    assert candidates[0].component is None
+    assert candidates[0].component == "com.example.app/.DeepLinkActivity"
     assert candidates[0].kind == "captured_intent"
     assert candidates[0].source == "dumpsys_activity_full"
 
 
+def test_parse_intent_extras_splits_nested_bundle_values() -> None:
+    lines = [
+        "    Intent { act=android.intent.action.VIEW dat=demo://order cmp=com.example.app/.Main cat=[android.intent.category.DEFAULT,android.intent.category.BROWSABLE] flg=0x10000000 (has extras)}",
+        "      Extras: Bundle[{a=1, b=[one,two], c={n=[x,y], m={k=v,u:[1,2,3]}}, d=(String)=true}]",
+        "    }",
+    ]
+    spec = _parse_intent_at(lines, 0, source="dumpsys_activity_activity_grep")
+    assert spec is not None
+    assert spec.action == "android.intent.action.VIEW"
+    assert spec.data_uri == "demo://order"
+    assert spec.flags == "0x10000000"
+    assert spec.categories == ("android.intent.category.DEFAULT", "android.intent.category.BROWSABLE")
+    assert spec.extras == (
+        ("a", 1),
+        ("b", "[one,two]"),
+        ("c", "{n=[x,y], m={k=v,u:[1,2,3]}}"),
+        ("d", "(String)=true"),
+    )
+    assert spec.has_extras_marker is True
+
+
+def test_parse_intent_extras_preserves_typed_values_and_reconstructs_command() -> None:
+    lines = [
+        "    Intent { act=android.intent.action.VIEW dat=https://example.com/order cmp=com.example.app/.RouterActivity cat=[android.intent.category.DEFAULT] (has extras) }",
+        "      Extras: Bundle[{flag=true, count=123, ratio=1.5, id=1234567890123, name=abc}]",
+        "    }",
+    ]
+    spec = _parse_intent_at(lines, 0, source="dumpsys_activity_full")
+
+    assert spec is not None
+    assert spec.extras == (
+        ("flag", True),
+        ("count", 123),
+        ("ratio", 1.5),
+        ("id", 1234567890123),
+        ("name", "abc"),
+    )
+    raw_capture = dict(_raw_capture_for_spec(spec))
+    assert raw_capture["extras_typed_count"] == 4
+    assert raw_capture["sample_count"] == 1
+    assert "--ez flag true" in raw_capture["am_start_command"]
+    assert "--ei count 123" in raw_capture["am_start_command"]
+    assert "--ef ratio 1.5" in raw_capture["am_start_command"]
+    assert "--el id 1234567890123" in raw_capture["am_start_command"]
+    assert "--es name abc" in raw_capture["am_start_command"]
+    assert "-n com.example.app/.RouterActivity" in raw_capture["am_start_command"]
+    assert "-n com.example.app/.RouterActivity" not in raw_capture["am_start_command_without_component"]
+
+
+def test_component_only_capture_is_privileged_audit_not_probeable_uri() -> None:
+    line = "    Intent { act=android.intent.action.MAIN cmp=com.example.app/.SecretActivity }"
+    spec = _parse_intent_at([line], 0, source="dumpsys_activity_full")
+
+    assert spec is not None
+    raw_capture = dict(_raw_capture_for_spec(spec))
+    assert raw_capture["requires_privileged_activity_start"] is True
+    assert "-n com.example.app/.SecretActivity" in raw_capture["am_start_command"]
+
+
+def test_parse_intent_at_restores_full_fields_with_extras_marker() -> None:
+    line = "    Intent { act=android.intent.action.VIEW dat=content://contacts/people/1 flg=0x10000000 cmp=com.example.app/.RouterActivity (has extras) cat=[android.intent.category.DEFAULT,android.intent.category.BROWSABLE]}"
+    spec = _parse_intent_at([line], 0, source="dumpsys_activity_full")
+    assert spec is not None
+    assert spec.flags == "0x10000000"
+    assert spec.component == "com.example.app/.RouterActivity"
+    assert spec.categories == (
+        "android.intent.category.DEFAULT",
+        "android.intent.category.BROWSABLE",
+    )
+    assert spec.raw_capture_source == "dumpsys_activity_full"
+    assert spec.has_extras_marker is True
+
+
 @pytest.mark.asyncio
-async def test_deeplink_candidate_builder_parses_quoted_package_scheme() -> None:
-    backend = _FakeDeeplinkBackend(package_output='Activity Resolver Table:\n  Scheme: "heybox"\n')
+async def test_capture_current_intent_specs_collects_three_activity_sources() -> None:
+    backend = _FakeDeeplinkBackend(
+        app="com.example.app",
+        activity_outputs={
+            "DeepLinkActivity": """
+Hist #0: ActivityRecord{123 u0 com.example.app/.DeepLinkActivity t42}
+  Intent { act=android.intent.action.VIEW dat=demo://from_activity cmp=com.example.app/.DeepLinkActivity }
+""",
+            "com.example.app": """
+Hist #0: ActivityRecord{124 u0 com.example.app/.MainActivity t42}
+  Intent { act=android.intent.action.VIEW dat=demo://from_package cmp=com.example.app/.MainActivity }
+""",
+            "*": """
+Hist #0: ActivityRecord{125 u0 com.example.app/.FallbackActivity t42}
+  Intent { act=android.intent.action.VIEW dat=demo://from_full cmp=com.example.app/.FallbackActivity }
+""",
+        },
+    )
+
+    specs = await _capture_current_intent_specs(
+        backend,
+        app="com.example.app",
+        activity="com.example.app.DeepLinkActivity",
+    )
+
+    assert len(specs) == 3
+    assert [spec.source for spec in specs] == [
+        "dumpsys_activity_activity_grep",
+        "dumpsys_activity_package_grep",
+        "dumpsys_activity_full",
+    ]
+    assert {spec.data_uri for spec in specs} == {
+        "demo://from_activity",
+        "demo://from_package",
+        "demo://from_full",
+    }
+
+
+def test_candidate_dedupe_normalizes_querystring_and_keeps_highest_confidence() -> None:
+    candidates = _dedupe_candidates(
+        [
+            DeeplinkCandidate(
+                uri="demo://order?a=1&b=2",
+                kind="custom_scheme",
+                package="com.example.app",
+                action="android.intent.action.VIEW",
+                confidence=0.5,
+            ),
+            DeeplinkCandidate(
+                uri="demo://order?b=2&a=1",
+                kind="custom_scheme",
+                package="com.example.app",
+                action="android.intent.action.VIEW",
+                confidence=0.9,
+                categories=("android.intent.category.DEFAULT",),
+            ),
+        ],
+        limit=4,
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].confidence == 0.9
+    assert candidates[0].uri == "demo://order?a=1&b=2"
+
+
+def test_weak_web_and_internal_candidates_need_resolution() -> None:
+    assert not _candidate_is_probeable(DeeplinkCandidate(
+        uri="https://example.com/orders",
+        kind="web_link",
+        package="com.example.app",
+        confidence=0.5,
+    ))
+    assert not _candidate_is_probeable(DeeplinkCandidate(
+        uri="content://com.example.app/orders",
+        kind="internal_uri_intent",
+        package="com.example.app",
+        source="package_manifest_internal_uri",
+        confidence=0.5,
+    ))
+    assert _candidate_is_probeable(DeeplinkCandidate(
+        uri="content://com.example.app/orders",
+        kind="internal_uri_intent",
+        package="com.example.app",
+        source="dumpsys_activity_full",
+        confidence=0.5,
+    ))
+    assert _candidate_is_probeable(DeeplinkCandidate(
+        uri="content://com.example.app/orders",
+        kind="internal_uri_intent",
+        package="com.example.app",
+        source="package_manifest_internal_uri_resolved",
+        confidence=0.5,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_falls_back_to_manifest_guess_when_no_capture_uri() -> None:
+    backend = _FakeDeeplinkBackend(
+        app="com.autonavi.minimap",
+        package_output='Activity Resolver Table:\n  Scheme: "amapuri"\n',
+    )
 
     candidates = await _build_candidates(
         backend,
-        app="com.max.xiaoheihe",
+        app="com.autonavi.minimap",
         task="open my orders",
         final_observation=None,
         limit=2,
     )
 
-    assert candidates[0].uri == "heybox://order"
-    assert candidates[0].source == "package_manifest"
+    assert candidates
+    manifest_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.source.startswith("package_manifest_")
+    ]
+    assert manifest_candidates
+    assert any(
+        candidate.kind == "manifest_scheme_host_path_guess"
+        for candidate in manifest_candidates
+    )
+    manifest_candidate = next(candidate for candidate in candidates if candidate.source.startswith("package_manifest_"))
+    raw_capture = dict(manifest_candidate.raw_capture)
+    assert raw_capture["manifest_source"] == "package_dumpsys"
+    assert raw_capture["generation_method"] in {"scheme_host_path", "guess_scheme"}
 
 
 @pytest.mark.asyncio
-async def test_deeplink_candidate_builder_uses_manifest_authority_and_path() -> None:
+async def test_deeplink_candidate_builder_falls_back_when_only_non_probeable_uri_candidates_exist(monkeypatch: Any) -> None:
+    async def _fake_capture(
+        _backend: Any,
+        *,
+        app: str,
+        activity: str | None = None,
+    ) -> tuple[CapturedIntentSpec, ...]:
+        del app, activity
+        return (
+            CapturedIntentSpec(
+                action="android.intent.action.VIEW",
+                data_uri="content://example.app/internal",
+                component=None,
+                source="manifest_internal",
+                raw_intent_line='Intent { act=android.intent.action.VIEW dat=content://example.app/internal }',
+            ),
+        )
+
+    monkeypatch.setattr(
+        "opengui.skills.deeplink._capture_current_intent_specs",
+        _fake_capture,
+    )
+    monkeypatch.setattr(
+        "opengui.skills.deeplink._candidate_is_probeable",
+        lambda candidate: False if candidate.source == "manifest_internal" else _candidate_is_probeable(candidate),
+    )
+
+    backend = _FakeDeeplinkBackend(
+        app="com.example.app",
+        package_output="""
+        Activity Resolver Table:
+          Schemes:
+              example:
+                1234567 com.example.app/.Main filter 89abcde
+                  Action: "android.intent.action.VIEW"
+                  Category: "android.intent.category.DEFAULT"
+                  Scheme: "example"
+                  Authority: "example.app": -1
+        """,
+    )
+
+    candidates = await _build_candidates(
+        backend,
+        app="com.example.app",
+        task="open settings",
+        final_observation=None,
+        limit=6,
+    )
+
+    assert candidates
+    assert any(candidate.source.startswith("package_manifest_") for candidate in candidates)
+
+
+@pytest.mark.asyncio
+async def test_deeplink_candidate_builder_falls_back_to_manifest_uri_candidates_by_priority() -> None:
     package_output = """
     Activity Resolver Table:
       Schemes:
+          amapuri:
+            1234567 com.autonavi.minimap/.RouterActivity filter 89abcde
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "amapuri"
+          amapuri:
+            2234567 com.autonavi.minimap/.RouterActivity filter 89abcde
+              Action: "android.intent.action.VIEW"
+              Category: "android.intent.category.DEFAULT"
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "amapuri"
           clock-app:
-            1234567 com.google.android.deskclock/.DeskClock filter 89abcde
+            3333333 com.google.android.deskclock/.DeskClock filter 89abcde
               Action: "android.intent.action.VIEW"
               Category: "android.intent.category.DEFAULT"
               Category: "android.intent.category.BROWSABLE"
@@ -1812,66 +2143,79 @@ async def test_deeplink_candidate_builder_uses_manifest_authority_and_path() -> 
               Path: "PatternMatcher{LITERAL: /timer}"
     """
     backend = _FakeDeeplinkBackend(
-        app="com.google.android.deskclock",
+        app="com.autonavi.minimap",
         package_output=package_output,
     )
 
     candidates = await _build_candidates(
         backend,
-        app="com.google.android.deskclock",
+        app="com.autonavi.minimap",
         task="open timer",
         final_observation=None,
-        limit=6,
+        limit=60,
     )
 
-    assert any(
-        candidate.uri == "clock-app://com.google.android.deskclock/timer"
-        and candidate.source == "package_manifest_authority"
-        for candidate in candidates
+    assert candidates[0].source == "package_manifest_manifest_router"
+    first_non_router = next(
+        candidate for candidate in candidates if candidate.source != "package_manifest_manifest_router"
     )
+    assert first_non_router.source == "package_manifest_manifest_exact_scheme_host_path"
+    assert candidates[0].kind == "manifest_router"
+    assert candidates[0].confidence == 0.65
+    assert any(candidate.source == "package_manifest_manifest_exact_scheme_host_path" and candidate.confidence == 0.60 for candidate in candidates)
+    assert candidates[-1].confidence <= 0.65
+    assert any(candidate.source == "package_manifest_manifest_scheme_host_path_guess" for candidate in candidates)
+    assert any(candidate.source == "package_manifest_manifest_guess_scheme_path" for candidate in candidates)
 
 
 @pytest.mark.asyncio
-async def test_deeplink_candidate_builder_distinguishes_internal_uri_intent() -> None:
+async def test_deeplink_candidate_builder_falls_back_when_capture_has_only_component_only_intent() -> None:
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.example.app/.SplashActivity t42}
+      Intent { act=android.intent.action.MAIN cmp=com.example.app/.SplashActivity }
+    """
     package_output = """
     Activity Resolver Table:
       Schemes:
-          clock-app:
-            1234567 com.google.android.deskclock/com.android.deskclock.HandleUris filter 89abcde
+          example:
+            4567890 com.example.app/.Main filter 89abcde
               Action: "android.intent.action.VIEW"
               Category: "android.intent.category.DEFAULT"
-              Scheme: "clock-app"
-              Authority: "com.google.android.deskclock": -1
+              Category: "android.intent.category.BROWSABLE"
+              Scheme: "example"
+              Authority: "com.example.app": -1
+              Path: "/orders"
     """
     backend = _FakeDeeplinkBackend(
-        app="com.google.android.deskclock",
+        app="com.example.app",
         package_output=package_output,
-        resolve_outputs={
-            "clock-app://com.google.android.deskclock": (
-                "com.google.android.deskclock/com.android.deskclock.HandleUris\n"
-            ),
-        },
+        activity_outputs={"SplashActivity": activity_dump},
     )
 
     candidates = await _build_candidates(
         backend,
-        app="com.google.android.deskclock",
+        app="com.example.app",
         task="open stopwatch",
         final_observation=None,
         limit=4,
     )
 
-    assert candidates[0].kind == "internal_uri_intent"
-    assert candidates[0].uri == "clock-app://com.google.android.deskclock"
-    assert candidates[0].source == "package_manifest_internal_uri_resolved"
-    assert candidates[0].component == "com.google.android.deskclock/com.android.deskclock.HandleUris"
+    assert candidates
+    assert all(candidate.uri for candidate in candidates)
+    assert all(candidate.kind != "captured_privileged_activity" for candidate in candidates)
+    assert any("manifest_source" in dict(candidate.raw_capture) for candidate in candidates)
 
 
 @pytest.mark.asyncio
-async def test_deeplink_candidate_builder_expands_resolver_component_variant() -> None:
+async def test_deeplink_candidate_builder_does_not_resolve_manifest_guess() -> None:
+    activity_dump = """
+    Hist #0: ActivityRecord{123 u0 com.max.xiaoheihe/.RouterActivity t42}
+      Intent { act=android.intent.action.VIEW dat=heybox://order cmp=com.max.xiaoheihe/.RouterActivity }
+    """
     backend = _FakeDeeplinkBackend(
         app="com.max.xiaoheihe",
         package_output='Activity Resolver Table:\n  Scheme: "heybox"\n',
+        activity_outputs={"max.xiaoheihe": activity_dump},
         resolve_outputs={
             "heybox://order": "com.max.xiaoheihe/.RouterActivity\n",
         },
@@ -1885,10 +2229,8 @@ async def test_deeplink_candidate_builder_expands_resolver_component_variant() -
         limit=4,
     )
 
-    assert candidates[0].uri == "heybox://order"
-    assert candidates[0].component == "com.max.xiaoheihe/.RouterActivity"
-    assert candidates[0].source == "package_manifest_resolved"
-    assert any("cmd package resolve-activity" in " ".join(call) for call in backend.run_calls)
+    assert all(candidate.kind == "captured_intent" for candidate in candidates)
+    assert not any("cmd package resolve-activity" in " ".join(call) for call in backend.run_calls)
 
 
 def test_deeplink_contract_rejects_more_options_only_anchor() -> None:
@@ -1960,6 +2302,47 @@ async def test_shortcut_intent_discovery_writes_open_intent_skill(tmp_path: Path
     assert open_actions[0].intent_action == "android.provider.action.VIEW_DOWNLOADS"
     assert compiled.skills[0].steps[0].action_type == "open_intent"
     assert "android.provider.action.VIEW_DOWNLOADS" in source
+
+
+def test_code_for_verified_open_intent_candidate_includes_full_fixed_values() -> None:
+    source = _code_for_verified_candidates(
+        [
+            DeeplinkCandidate(
+                uri="",
+                kind="shortcut_intent",
+                package="com.example.app",
+                action="android.intent.action.INSERT",
+                mime_type="vnd.example.contact",
+                categories=(
+                    "android.intent.category.DEFAULT",
+                    "android.intent.category.BROWSABLE",
+                ),
+                extras=(("source", "contacts"), ("mode", "quick")),
+                source="shortcut_profile_contact_insert",
+                confidence=0.9,
+                component="com.example.app/.ContactInsertActivity",
+                verified_package="com.google.android.contacts",
+                verified_component="com.google.android.contacts/.ContactInsertActivity",
+                verified_action_type="open_intent",
+            ),
+        ],
+        app="com.example.app",
+        task="open contact insert",
+        contract={
+            "anchor": {"app_package": "com.google.android.contacts"},
+            "signature": {
+                "required": [{"selector": {"text": "Contacts"}, "state": ["visible"]}],
+                "forbidden": [],
+            },
+        },
+    )
+
+    assert "'intent_action': 'android.intent.action.INSERT'" in source
+    assert "'categories': ['android.intent.category.DEFAULT', 'android.intent.category.BROWSABLE']" in source
+    assert "'mime_type': 'vnd.example.contact'" in source
+    assert "'extras': {'source': 'contacts', 'mode': 'quick'}" in source
+    assert "'component': 'com.google.android.contacts/.ContactInsertActivity'" in source
+    assert "'package': 'com.google.android.contacts'" in source
 
 
 @pytest.mark.asyncio
@@ -2149,7 +2532,7 @@ async def test_internal_uri_intent_discovery_writes_open_intent_skill(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_shortcut_intent_candidates_precede_manifest_uri_noise() -> None:
+async def test_shortcut_intent_candidates_drop_manifest_uri_noise() -> None:
     package_output = """
     Activity Resolver Table:
       Schemes:
@@ -2187,10 +2570,11 @@ async def test_shortcut_intent_candidates_precede_manifest_uri_noise() -> None:
     assert candidates[0].package == "com.google.android.contacts"
     assert candidates[0].action == "android.intent.action.INSERT"
     assert candidates[0].mime_type == "vnd.android.cursor.dir/contact"
+    assert len(candidates) == 1
 
 
 @pytest.mark.asyncio
-async def test_deeplink_candidate_builder_adds_open_router_path_payload() -> None:
+async def test_deeplink_candidate_builder_uses_only_captured_page_intent() -> None:
     activity_dump = """
     Hist #0: ActivityRecord{123 u0 com.max.xiaoheihe/.RouterActivity t42}
       Intent { act=android.intent.action.VIEW dat=hblink://universal/mall/order cmp=com.max.xiaoheihe/.RouterActivity }
@@ -2226,18 +2610,15 @@ async def test_deeplink_candidate_builder_adds_open_router_path_payload() -> Non
         limit=3,
     )
 
-    expected = (
-        "heybox://%7B%22protocol_type%22%3A%22openRouterPath%22%2C"
-        "%22path%22%3A%22%2Fmall%2Forder%22%7D"
-    )
-    assert candidates[1].uri == expected
-    assert candidates[1].kind == "router_payload"
-    assert candidates[1].component == "com.max.xiaoheihe/.RouterActivity"
-    assert candidates[1].source == "package_manifest_router"
+    assert len(candidates) == 1
+    assert candidates[0].uri == "hblink://universal/mall/order"
+    assert candidates[0].kind == "captured_intent"
+    assert candidates[0].component == "com.max.xiaoheihe/.RouterActivity"
+    assert candidates[0].source == "dumpsys_activity_activity_grep"
 
 
 @pytest.mark.asyncio
-async def test_deeplink_discovery_verifies_open_router_path_payload(tmp_path: Path) -> None:
+async def test_deeplink_discovery_verifies_captured_page_intent_only(tmp_path: Path) -> None:
     trace_path = tmp_path / "trace.jsonl"
     _write_trace(
         trace_path,
@@ -2274,10 +2655,7 @@ async def test_deeplink_discovery_verifies_open_router_path_payload(tmp_path: Pa
               Category: "android.intent.category.BROWSABLE"
               Scheme: "heybox"
     """
-    expected = (
-        "heybox://%7B%22protocol_type%22%3A%22openRouterPath%22%2C"
-        "%22path%22%3A%22%2Fmall%2Forder%22%7D"
-    )
+    expected = "hblink://universal/mall/order"
     backend = _FakeDeeplinkBackend(
         app="com.max.xiaoheihe",
         package_output=package_output,
@@ -2298,11 +2676,10 @@ async def test_deeplink_discovery_verifies_open_router_path_payload(tmp_path: Pa
     open_actions = [action for action in backend.actions if action.action_type == "open_deeplink"]
     assert result.status == "processed_deeplink_code"
     assert any(candidate.uri == expected and candidate.matched for candidate in result.candidates)
-    assert open_actions[1].text == expected
-    assert open_actions[1].component == "com.max.xiaoheihe/.RouterActivity"
+    assert any(action.text == expected and action.component is None for action in open_actions)
     assert f"'text': '{expected}'" in source
     assert "'package': 'com.max.xiaoheihe'" in source
-    assert "'component': 'com.max.xiaoheihe/.RouterActivity'" in source
+    assert "'component': 'com.max.xiaoheihe/.RouterActivity'" not in source
 
 
 @pytest.mark.asyncio
@@ -2325,8 +2702,8 @@ async def test_deeplink_candidate_builder_does_not_publish_component_only_intent
     )
 
     assert candidates
-    assert all(candidate.component != "com.example.app/.RouterActivity" for candidate in candidates)
-    assert all(candidate.kind != "captured_intent_component" for candidate in candidates)
+    assert any(candidate.kind == "captured_privileged_activity" for candidate in candidates)
+    assert any(candidate.source.startswith("package_manifest_") for candidate in candidates)
 
 
 @pytest.mark.asyncio
@@ -2372,8 +2749,56 @@ async def test_deeplink_discovery_classifies_security_launch_errors(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_deeplink_discovery_does_not_emit_code_for_unverified_candidates(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "done"},
+                "observation": {
+                    "app": "com.example.app",
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {
+                        "visible_text": ["My Orders", "Recent purchases"],
+                        "content_desc": ["My Orders"],
+                        "resource_ids": ["com.example.app:id/orders_title"],
+                    },
+                },
+            },
+            {"type": "result", "success": True, "total_steps": 1, "error": None},
+        ],
+    )
+    result = await discover_deeplink_skills_from_trace(
+        trace_path,
+        backend=_FakeDeeplinkBackend(
+            verified_uris=set(),
+            package_output='Activity Resolver Table:\n  Scheme: "hello"\n',
+        ),
+        task="open my orders",
+        platform="android",
+        is_success=True,
+        store_root=tmp_path / "store",
+    )
+
+    assert result.status == "no_candidate"
+    assert result.reason == "no_verified_deeplink"
+    assert not (tmp_path / "store" / "skill_graph_code.py").exists()
+
+
+@pytest.mark.asyncio
 async def test_deeplink_probe_retries_security_failure_without_component(tmp_path: Path) -> None:
-    backend = _FakeDeeplinkBackend(component_launch_errors={"demo://order"})
+    backend = _ScriptedProbeBackend(
+        execute_plan=[
+            RuntimeError("SecurityException: Permission Denial"),
+            RuntimeError("SecurityException: Permission Denial"),
+            None,
+        ],
+        verified_attempts={3},
+    )
     contract = {
         "anchor": {"app_package": "com.example.app"},
         "signature": {
@@ -2386,7 +2811,7 @@ async def test_deeplink_probe_retries_security_failure_without_component(tmp_pat
         backend,
         DeeplinkCandidate(
             uri="demo://order",
-            kind="captured_intent_component",
+            kind="captured_intent",
             package="com.example.app",
             component="com.example.app/.UnexportedActivity",
             source="test",
@@ -2400,10 +2825,213 @@ async def test_deeplink_probe_retries_security_failure_without_component(tmp_pat
     open_actions = [action for action in backend.actions if action.action_type == "open_deeplink"]
     assert record.status == "target_verified"
     assert record.component is None
-    assert [action.component for action in open_actions] == [
+    assert [entry["component"] for entry in record.probe_plan] == [
+        None,
         "com.example.app/.UnexportedActivity",
         None,
     ]
+    assert [entry["status"] for entry in record.probe_plan] == [
+        "launch_error_security",
+        "launch_error_security",
+        "target_verified",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deeplink_probe_retries_activity_not_found_with_implicit_package(tmp_path: Path) -> None:
+    backend = _ScriptedProbeBackend(
+        execute_plan=[
+            RuntimeError("ActivityNotFoundException: No activity found to handle Intent"),
+            None,
+        ],
+        verified_attempts={2},
+    )
+    contract = {
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "My Orders"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    }
+
+    record = await _probe_candidate(
+        backend,
+        DeeplinkCandidate(
+            uri="demo://order",
+            kind="captured_intent",
+            package="com.example.app",
+            source="test",
+            confidence=0.9,
+        ),
+        contract=contract,
+        screenshot_path=tmp_path / "probe.png",
+        settle_seconds=0.0,
+    )
+
+    assert record.status == "target_verified"
+    assert record.launch_error_type is None
+    assert record.probe_plan[0]["status"] == "launch_error_activity_not_found"
+    assert record.probe_plan[1]["status"] == "target_verified"
+    assert record.probe_plan[1]["package"] is None
+
+
+@pytest.mark.asyncio
+async def test_deeplink_probe_records_verified_browser_redirect_variant(tmp_path: Path) -> None:
+    backend = _FakeDeeplinkBackend(
+        verified_uris={"https://example.com/order"},
+        launch_outputs={
+            "https://example.com/order": "Starting: Intent {}\n[opengui_launch_variant=browser_redirect]",
+        },
+    )
+    contract = {
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "My Orders"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    }
+    candidate = DeeplinkCandidate(
+        uri="https://example.com/order",
+        kind="captured_intent",
+        package="com.example.app",
+        source="test",
+        confidence=0.9,
+    )
+
+    record = await _probe_candidate(
+        backend,
+        candidate,
+        contract=contract,
+        screenshot_path=tmp_path / "probe_redirect.png",
+        settle_seconds=0.0,
+    )
+    verified_candidate = _candidate_for_probe_record(candidate, record)
+    source = _code_for_verified_candidates(
+        [verified_candidate],
+        app="com.example.app",
+        task="open my orders",
+        contract=contract,
+    )
+
+    assert record.status == "target_verified"
+    assert record.launch_variant == "browser_redirect"
+    assert record.probe_plan[0]["launch_variant"] == "browser_redirect"
+    assert verified_candidate.verified_package is None
+    assert "verified_launch_variant" in source
+    assert "fixed_values={'text': 'https://example.com/order'}" in source
+
+
+@pytest.mark.asyncio
+async def test_deeplink_probe_keeps_unverified_browser_redirect_out_of_codegen(tmp_path: Path) -> None:
+    backend = _FakeDeeplinkBackend(
+        verified_uris=set(),
+        launch_outputs={
+            "https://example.com/order": "Starting: Intent {}\n[opengui_launch_variant=browser_redirect]",
+        },
+    )
+    contract = {
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "My Orders"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    }
+
+    record = await _probe_candidate(
+        backend,
+        DeeplinkCandidate(
+            uri="https://example.com/order",
+            kind="captured_intent",
+            package="com.example.app",
+            source="test",
+            confidence=0.9,
+        ),
+        contract=contract,
+        screenshot_path=tmp_path / "probe_redirect_unverified.png",
+        settle_seconds=0.0,
+    )
+
+    assert record.matched is False
+    assert record.launch_variant == "browser_redirect"
+    assert record.probe_plan[0]["launch_variant"] == "browser_redirect"
+    assert record.status in {"contract_mismatch", "redirect_unverified"}
+
+
+@pytest.mark.asyncio
+async def test_deeplink_probe_detects_wrong_app_navigation_state(tmp_path: Path) -> None:
+    activity_state = """
+    ACTIVITY MANAGER ACTIVITIES (dumpsys activity activities)
+    TASK com.example.app id=1
+      Hist #0: ActivityRecord{111 u0 com.other/.WrongApp t1}
+        Intent { flg=0x10800000 }
+    """
+    backend = _ScriptedProbeBackend(
+        execute_plan=[None, None],
+        verified_attempts={1, 2},
+        activity_state=activity_state,
+    )
+    contract = {
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "My Orders"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    }
+
+    record = await _probe_candidate(
+        backend,
+        DeeplinkCandidate(
+            uri="demo://order",
+            kind="captured_intent",
+            package="com.example.app",
+            source="test",
+            confidence=0.9,
+        ),
+        contract=contract,
+        screenshot_path=tmp_path / "probe_wrong_app.png",
+        settle_seconds=0.0,
+    )
+
+    assert record.status == "wrong_app"
+    assert all(entry["status"] == "wrong_app" for entry in record.probe_plan)
+    assert record.launch_error_type is None
+    assert [entry["package"] for entry in record.probe_plan] == ["com.example.app", None]
+
+
+@pytest.mark.asyncio
+async def test_deeplink_probe_distinguishes_launch_error_and_contract_mismatch(tmp_path: Path) -> None:
+    backend = _ScriptedProbeBackend(
+        execute_plan=[
+            RuntimeError("SecurityException: Permission Denial"),
+            None,
+        ],
+        verified_attempts=set(),
+    )
+    contract = {
+        "anchor": {"app_package": "com.example.app"},
+        "signature": {
+            "required": [{"selector": {"text": "My Orders"}, "state": ["visible"]}],
+            "forbidden": [],
+        },
+    }
+
+    record = await _probe_candidate(
+        backend,
+        DeeplinkCandidate(
+            uri="demo://order",
+            kind="captured_intent",
+            package="com.example.app",
+            source="test",
+            confidence=0.9,
+        ),
+        contract=contract,
+        screenshot_path=tmp_path / "probe_mismatch.png",
+        settle_seconds=0.0,
+    )
+
+    assert record.status == "contract_mismatch"
+    assert record.probe_plan[0]["status"] == "launch_error_security"
+    assert record.probe_plan[1]["status"] == "contract_mismatch"
 
 
 @pytest.mark.asyncio
@@ -2703,7 +3331,7 @@ async def enter_destination(device, destination: str):
     repaired = repair_code_contracts_from_events(source, events)
 
     assert "class_='android.widget.EditText'" in repaired.source
-    assert "focused=True" in repaired.source
+    assert "focused=True" not in repaired.source
     assert repaired.report["quality"] == "canonical"
 
 
@@ -2770,6 +3398,134 @@ async def tap_timer_digit_one(device):
     assert "More options" not in repaired.source
     assert repaired.report["target_selector_repaired_steps"][0]["step_index"] == 0
     assert repaired.report["page_anchor_downgraded_steps"][0]["step_index"] == 0
+    assert repaired.report["multi_required_action_contract_reduced_steps"][0]["step_index"] == 0
+
+
+def test_contract_repair_reduces_page_text_anchors_to_action_target_text() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.deskclock", platform="android", tags=["stopwatch"])
+async def run_stopwatch(device):
+    await action(
+        "tap",
+        target="Start",
+        state_contract=C(
+            app="com.google.android.deskclock",
+            required=[
+                R(text="Alarm", visible=True),
+                R(text="More options", visible=True),
+                R(text="Start", visible=True),
+            ],
+        ),
+    )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Start"},
+            "pre_observation": {
+                "foreground_app": "com.google.android.deskclock",
+                "platform": "android",
+                "extra": {"visible_text": ["Alarm", "More options", "Start"]},
+            },
+            "observation": {
+                "foreground_app": "com.google.android.deskclock",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+    compiled = compile_code_skills(repaired.source)
+    required = compiled.skills[0].steps[0].state_contract["signature"]["required"]
+
+    assert required == [{"selector": {"text": "Start"}, "state": ["visible"]}]
+    assert "Alarm" not in repaired.source
+    assert "More options" not in repaired.source
+    assert repaired.report["background_anchor_dropped_steps"][0]["step_index"] == 0
+
+
+def test_contract_repair_reduces_contact_field_contract_to_target_element() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="com.google.android.contacts", platform="android", tags=["contact"])
+async def create_contact(device):
+    await action(
+        "tap",
+        target="First name",
+        state_contract=C(
+            app="com.google.android.contacts",
+            required=[
+                R(text="Cancel", visible=True),
+                R(text="First name", visible=True),
+                R(text="Save", visible=True),
+            ],
+        ),
+    )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "First name"},
+            "pre_observation": {
+                "foreground_app": "com.google.android.contacts",
+                "platform": "android",
+                "extra": {"visible_text": ["Cancel", "First name", "Save"]},
+            },
+            "observation": {
+                "foreground_app": "com.google.android.contacts",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+    compiled = compile_code_skills(repaired.source)
+    required = compiled.skills[0].steps[0].state_contract["signature"]["required"]
+
+    assert required == [{"selector": {"text": "First name"}, "state": ["visible"]}]
+    assert "Cancel" not in repaired.source
+    assert "Save" not in repaired.source
+
+
+def test_contract_repair_does_not_generate_page_contract_when_target_selector_missing() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.app", platform="android", tags=["example"])
+async def tap_unknown(device):
+    await action("tap", target="Missing")
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "Missing"},
+            "pre_observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {"visible_text": ["Alarm", "More options", "Save"]},
+            },
+            "observation": {
+                "foreground_app": "com.example.app",
+                "platform": "android",
+                "extra": {"ui_tree": []},
+            },
+        }
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+
+    assert "Alarm" not in repaired.source
+    assert "More options" not in repaired.source
+    assert "Save" not in repaired.source
+    assert repaired.report["no_target_selector_steps"][0]["step_index"] == 0
 
 
 def test_contract_repair_strips_dynamic_input_text_when_field_has_resource_id() -> None:
@@ -3257,13 +4013,14 @@ async def test_postrun_reports_weak_contract_when_ui_tree_has_only_text(tmp_path
 
     result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
 
-    assert result["status"] == "no_candidate"
-    assert result["processed_segment_count"] == 0
-    assert result["segments"][0]["status"] == "no_candidate"
-    assert result["segments"][0]["rejected_reason"] == "weak_contracts"
-    assert result["segments"][0]["contract_quality"]["quality"] == "weak"
-    assert result["segments"][0]["contract_quality"]["canonical_node_count"] == 0
-    assert result["segments"][0]["contract_quality"]["weak_steps"][0]["reason"] == "single_text_selector"
+    assert result["status"] == "processed_code"
+    assert result["processed_segment_count"] == 1
+    assert result["segments"][0]["status"] == "processed_code"
+    assert result["segments"][0]["contract_quality"]["quality"] == "canonical"
+    assert result["segments"][0]["contract_quality"]["canonical_node_count"] == 1
+    assert result["segments"][0]["contract_quality"]["target_contract_steps"][0]["reason"] == (
+        "target_text_contract_from_observation"
+    )
 
 
 @pytest.mark.asyncio
@@ -3664,6 +4421,14 @@ async def open_orders(device):
     assert "com.example:id/nav_orders_target" in projection.source
     assert "com.example:id/nav_orders_decoy" not in projection.source
     assert "com.example:id/nav_profile" not in projection.source
+    precondition = projection.emitted_transitions[0]["precondition"]
+    required = precondition["signature"]["required"]
+    assert required == [
+        {
+            "selector": {"resource_id": "com.example:id/nav_orders_target"},
+            "state": ["visible", "clickable", "enabled"],
+        }
+    ]
     store = SkillGraphStore(store_dir=tmp_path / "graph")
     result = await compile_code_graph(projection.source, store)
     assert result.errors == []
@@ -3951,8 +4716,8 @@ def test_contract_repair_does_not_use_future_order_title_as_tap_precondition() -
 
     assert "com.max.xiaoheihe:id/rb_5" in repaired.source
     assert "com.max.xiaoheihe:id/tv_appbar_title" not in repaired.source
-    assert [step["step_index"] for step in repaired.report["repaired_steps"]] == [1, 2]
-    assert repaired.report["repaired_steps"][1]["reason"] == "page_contract_without_static_selector"
+    assert [step["step_index"] for step in repaired.report["repaired_steps"]] == [1, 2, 3]
+    assert repaired.report["repaired_steps"][1]["reason"] == "target_text_contract_from_observation"
 
 
 def test_contract_repair_replaces_unsupported_stable_precondition() -> None:
@@ -3967,7 +4732,8 @@ def test_contract_repair_replaces_unsupported_stable_precondition() -> None:
     )
 
     assert "com.max.xiaoheihe:id/tv_appbar_title" not in repaired.source
-    assert "收货地址" in repaired.source
+    assert "收货地址" not in repaired.source
+    assert "text': '我的订单'" in repaired.source
     assert "购买成功" not in repaired.source
     assert {step["step_index"] for step in repaired.report["repaired_steps"]} >= {2, 3}
 
@@ -4136,7 +4902,12 @@ async def search_zhihu(device, query: str):
     assert repaired.report["repaired_steps"][0]["reason"] == "parameterized_input_text_removed"
     compiled = compile_code_skills(repaired.source)
     selector = compiled.skills[0].steps[0].state_contract["signature"]["required"][0]["selector"]
-    assert selector == {"resource_id": "com.zhihu.android:id/input_text"}
+    assert selector == {
+        "resource_id": "com.zhihu.android:id/input_text",
+        "class": "android.widget.EditText",
+    }
+    state = compiled.skills[0].steps[0].state_contract["signature"]["required"][0]["state"]
+    assert "focused" not in state
 
 
 def test_graph_projection_uses_monotonic_trace_alignment_for_repeated_targets() -> None:
