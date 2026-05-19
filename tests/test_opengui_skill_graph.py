@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from opengui.skills.code_graph import compile_code_skills
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.graph import (
     EDGE_STATUS_ACTIVE,
@@ -188,6 +189,27 @@ def _same_screen_skill() -> Skill:
             ),
         ),
     )
+
+
+def test_compile_code_skills_parameters_follow_executable_placeholders() -> None:
+    source = '''
+from opengui.skills.code_graph import action, skill
+
+@skill(app="com.example.app", platform="android")
+async def unused_default(device, movie_name="阿嬷的情书"):
+    await action("open_app", target="com.example.app")
+
+@skill(app="com.example.app", platform="android")
+async def used_input(device, movie_name="阿嬷的情书"):
+    await action("input_text", target="Search", text=movie_name)
+'''
+
+    compiled = compile_code_skills(source)
+
+    assert compiled.errors == []
+    by_name = {skill.name: skill for skill in compiled.skills}
+    assert by_name["unused_default"].parameters == ()
+    assert by_name["used_input"].parameters == ("movie_name",)
 
 
 def test_state_contract_fingerprint_is_stable_for_new_schema() -> None:

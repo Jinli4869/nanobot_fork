@@ -36,6 +36,7 @@ _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
 _SELECTOR_KEYS = ("text", "content_desc", "resource_id", "class", "xpath")
 _R_ALLOWED_KEYS = frozenset((*_STATE_FLAGS, *_SELECTOR_KEYS, "class_"))
 _C_ALLOWED_KEYS = frozenset(("required", "forbidden", "app", "activity"))
+_PLACEHOLDER_RE = re.compile(r"\{\{([^{}]+)\}\}")
 
 
 @dataclass(frozen=True)
@@ -382,12 +383,48 @@ def compile_code_skills(source: str) -> CodeGraphCompileResult:
             app=app,
             platform=str(meta.get("platform") or "unknown"),
             tags=tags,
-            parameters=tuple(arg.arg for arg in func.args.args[1:]),
+            parameters=_used_step_parameters(func, steps),
             steps=steps,
         ))
     if errors:
         return CodeGraphCompileResult(errors=errors)
     return CodeGraphCompileResult(skills=tuple(skills), errors=[])
+
+
+def _used_step_parameters(func: ast.AsyncFunctionDef, steps: tuple[SkillStep, ...]) -> tuple[str, ...]:
+    """Return function parameters that survive into executable step payloads."""
+    declared = tuple(arg.arg for arg in func.args.args[1:])
+    if not declared:
+        return ()
+    used = _placeholder_names_in_value([
+        {
+            "target": step.target,
+            "parameters": step.parameters,
+            "expected_state": step.expected_state,
+            "valid_state": step.valid_state,
+            "state_contract": step.state_contract,
+            "fixed_values": step.fixed_values,
+        }
+        for step in steps
+    ])
+    return tuple(name for name in declared if name in used)
+
+
+def _placeholder_names_in_value(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return {match.group(1) for match in _PLACEHOLDER_RE.finditer(value)}
+    if isinstance(value, dict):
+        names: set[str] = set()
+        for key, item in value.items():
+            names.update(_placeholder_names_in_value(key))
+            names.update(_placeholder_names_in_value(item))
+        return names
+    if isinstance(value, (list, tuple, set)):
+        names: set[str] = set()
+        for item in value:
+            names.update(_placeholder_names_in_value(item))
+        return names
+    return set()
 
 
 def _validate_code_ast(tree: ast.Module) -> list[str]:
