@@ -86,6 +86,7 @@ class _TransitionSpec:
     dst: _StateSpec
     step: SkillStep
     step_index: int
+    precondition: dict[str, Any] | None = None
 
 
 def project_graph_code_from_trace(source: str, trace_path: Path) -> GraphProjection:
@@ -148,7 +149,7 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
         trace_cursor = -1
         previous_trace_step: _TraceStep | None = None
         previous_target_state: _StateSpec | None = None
-        pending_targetless: list[tuple[SkillStep, int, _StateSpec]] = []
+        pending_targetless: list[tuple[SkillStep, int, _StateSpec, dict[str, Any] | None]] = []
         for index, step in enumerate(skill.steps):
             if step.action_type in _SKIP_TRANSITION_ACTIONS:
                 previous_trace_step = None
@@ -188,6 +189,12 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
                     dynamic_values=source_dynamic_values,
                     drop_identity_text=True,
                 )
+            action_precondition = _action_precondition_for_step(
+                step,
+                trace_step,
+                app=skill.app,
+                platform=skill.platform,
+            )
             source_profile = _retrieval_profile_from_observation(
                 trace_step.pre_observation if trace_step is not None else None,
                 dynamic_values=source_dynamic_values,
@@ -210,9 +217,12 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
                 edge_source_state = previous_target_state
             if source_state is not None and pending_targetless:
                 resolved_pending = False
-                for pending_step, pending_index, pending_source in pending_targetless:
+                for pending_step, pending_index, pending_source, pending_precondition in pending_targetless:
                     if pending_source.node_id == source_state.node_id:
                         skipped.append(_skip_record(skill, pending_step, pending_index, "no_state_change"))
+                        continue
+                    if pending_precondition is None:
+                        skipped.append(_skip_record(skill, pending_step, pending_index, "weak_action_precondition"))
                         continue
                     transitions.append(_TransitionSpec(
                         function_name=_safe_identifier(
@@ -234,6 +244,7 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
                         dst=source_state,
                         step=pending_step,
                         step_index=pending_index,
+                        precondition=pending_precondition,
                     ))
                     resolved_pending = True
                 pending_targetless.clear()
@@ -278,11 +289,15 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
             if edge_source_state is None:
                 skipped.append(_skip_record(skill, step, index, "weak_source_state"))
                 continue
+            if action_precondition is None:
+                skipped.append(_skip_record(skill, step, index, "weak_action_precondition"))
+                previous_target_state = target_state or previous_target_state
+                continue
             if target_state is None:
                 if _trace_step_crosses_app(trace_step, app=skill.app, platform=skill.platform):
                     skipped.append(_skip_record(skill, step, index, "cross_app_target_state"))
                 else:
-                    pending_targetless.append((step, index, edge_source_state))
+                    pending_targetless.append((step, index, edge_source_state, action_precondition))
                 continue
             if edge_source_state.node_id == target_state.node_id:
                 skipped.append(_skip_record(skill, step, index, "no_state_change"))
@@ -304,10 +319,11 @@ def project_graph_code_from_events(source: str, events: list[dict[str, Any]]) ->
                 dst=target_state,
                 step=step,
                 step_index=index,
+                precondition=action_precondition,
             ))
             previous_trace_step = trace_step
             previous_target_state = target_state
-        for pending_step, pending_index, _pending_source in pending_targetless:
+        for pending_step, pending_index, _pending_source, _pending_precondition in pending_targetless:
             skipped.append(_skip_record(skill, pending_step, pending_index, "weak_target_state"))
 
     graph_block = _graph_source_block(state_order, transitions)
@@ -490,6 +506,67 @@ def _contract_from_action_evidence(
         },
     })
     return contract if _is_canonical_contract(contract) else None
+
+
+def _action_precondition_for_step(
+    step: SkillStep,
+    trace_step: _TraceStep | None,
+    *,
+    app: str,
+    platform: str,
+) -> dict[str, Any] | None:
+    return (
+        _contract_from_action_evidence(
+            trace_step,
+            app=app,
+            platform=platform,
+            target=step.target,
+        )
+        or _target_action_contract_from_observation(
+            trace_step.pre_observation if trace_step is not None else None,
+            app=app,
+            platform=platform,
+            target=step.target,
+        )
+        or (
+            normalize_state_contract(step.state_contract)
+            if _is_target_oriented_action_contract(step.state_contract)
+            else None
+        )
+    )
+
+
+def _target_action_contract_from_observation(
+    observation: dict[str, Any] | None,
+    *,
+    app: str,
+    platform: str,
+    target: str | None,
+) -> dict[str, Any] | None:
+    del platform
+    if not isinstance(observation, dict):
+        return None
+    target_text = str(target or "").strip()
+    if not target_text:
+        return None
+    anchor_app = str(observation.get("foreground_app") or observation.get("app") or app or "").strip()
+    if not anchor_app:
+        return None
+    selectors = _selectors_from_observation(observation)
+    target_selector = _target_identity_selector(selectors, target_text)
+    if target_selector is None:
+        target_selector = _target_text_selector(selectors, target_text)
+    if target_selector is None:
+        return None
+    selector = _selector_without_state_flags(target_selector)
+    contract = normalize_state_contract({
+        "anchor": {"app_package": anchor_app},
+        "signature": {
+            "required": [{"selector": selector, "state": _selector_states(target_selector)}],
+            "forbidden": [],
+        },
+    })
+    return contract if _is_target_oriented_action_contract(contract) else None
 
 
 def _contract_from_observation(
@@ -790,6 +867,17 @@ def _target_identity_selector(selectors: list[dict[str, Any]], target: str | Non
     return None
 
 
+def _target_text_selector(selectors: list[dict[str, Any]], target: str | None) -> dict[str, Any] | None:
+    target_text = str(target or "").strip().casefold()
+    if not target_text:
+        return None
+    for selector in selectors:
+        text = selector.get("text")
+        if isinstance(text, str) and text.strip().casefold() == target_text:
+            return selector
+    return None
+
+
 def _text_values_from_selectors(selectors: list[dict[str, Any]], target: str | None) -> list[str]:
     needle = str(target or "").strip().casefold()
     matched: list[str] = []
@@ -1060,11 +1148,20 @@ def _graph_source_block(states: list[_StateSpec], transitions: list[_TransitionS
         ]
         if transition.step.parameters:
             parts.append(f"parameters={_code_literal(transition.step.parameters)}")
-        parts.append(f"state_contract=C.from_dict({_code_literal(transition.src.contract)})")
+        precondition = transition.precondition or transition.src.contract
+        parts.append(f"state_contract=C.from_dict({_code_literal(precondition)})")
         lines.append(f"    await action({', '.join(parts)})")
         lines.append("")
         lines.append("")
     return "\n".join(lines).rstrip()
+
+
+def _is_target_oriented_action_contract(contract: Any) -> bool:
+    normalized = normalize_state_contract(contract)
+    if not _is_canonical_contract(normalized):
+        return False
+    required = normalized.get("signature", {}).get("required", [])
+    return isinstance(required, list) and len(required) == 1
 
 
 def _is_canonical_contract(contract: Any) -> bool:
@@ -1281,8 +1378,6 @@ def _selector_states(selector: dict[str, Any]) -> list[str]:
         states.append("clickable")
     if selector.get("enabled"):
         states.append("enabled")
-    if selector.get("focused"):
-        states.append("focused")
     if selector.get("scrollable"):
         states.append("scrollable")
     return states
@@ -1331,6 +1426,7 @@ def _transition_record(transition: _TransitionSpec) -> dict[str, Any]:
         "target": transition.step.target,
         "src": transition.src.function_name,
         "dst": transition.dst.function_name,
+        "precondition": transition.precondition,
     }
 
 

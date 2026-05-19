@@ -242,6 +242,56 @@ def test_continuation_index_rejects_weak_generic_contract() -> None:
     assert index.candidates == ()
 
 
+def test_continuation_index_rejects_multi_required_page_contract() -> None:
+    page_contract = normalize_state_contract({
+        "anchor": {"app_package": "com.example.contacts"},
+        "signature": {
+            "required": [
+                {"selector": {"text": "Cancel"}, "state": ["visible"]},
+                {"selector": {"text": "First name"}, "state": ["visible"]},
+                {"selector": {"text": "Save"}, "state": ["visible"]},
+            ],
+            "forbidden": [],
+        },
+    })
+    skill = _skill(
+        "page-contract",
+        "page_contract",
+        (SkillStep(action_type="tap", target="First name", state_contract=page_contract),),
+    )
+
+    index = CodeSkillContinuationIndex.from_skills([skill])
+
+    assert index.candidates == ()
+
+
+def test_continuation_index_rejects_tab_menu_background_contract() -> None:
+    tab_contract = normalize_state_contract({
+        "anchor": {"app_package": "com.google.android.deskclock"},
+        "signature": {
+            "required": [
+                {
+                    "selector": {
+                        "resource_id": "com.google.android.deskclock:id/tab_menu_stopwatch"
+                    },
+                    "state": ["visible", "clickable"],
+                }
+            ],
+            "forbidden": [],
+        },
+    })
+    skill = _skill(
+        "run-stopwatch",
+        "run_stopwatch",
+        (SkillStep(action_type="tap", target="Stopwatch", state_contract=tab_contract),),
+        app="com.google.android.deskclock",
+    )
+
+    index = CodeSkillContinuationIndex.from_skills([skill])
+
+    assert index.candidates == ()
+
+
 @pytest.mark.asyncio
 async def test_continuation_index_lists_skills_from_library() -> None:
     skill = _skill(

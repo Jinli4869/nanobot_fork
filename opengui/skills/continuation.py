@@ -24,10 +24,13 @@ from opengui.skills.static_selector_filter import selector_is_static
 
 ENTRY_ACTIONS: frozenset[str] = frozenset({"open_app", "open_deeplink", "open_intent"})
 _GENERIC_SELECTOR_TEXTS: frozenset[str] = frozenset({
+    "alarm",
+    "clock",
     "more options",
     "back",
     "cancel",
     "ok",
+    "save",
     "search",
     "menu",
     "navigate up",
@@ -101,7 +104,9 @@ class CodeSkillContinuationIndex:
                 action_type = str(getattr(step, "action_type", "") or "")
                 if action_type in ENTRY_ACTIONS:
                     continue
-                if not _is_continuation_contract_usable(getattr(step, "state_contract", None)):
+                if not _is_continuation_contract_usable(
+                    getattr(step, "state_contract", None),
+                ):
                     continue
                 candidates.append(
                     SkillContinuationCandidate(
@@ -208,9 +213,9 @@ def _is_continuation_contract_usable(contract: Any) -> bool:
     if not normalized:
         return False
     required = normalized.get("signature", {}).get("required", [])
-    if not required:
+    if not required or len(required) != 1:
         return False
-    return any(_is_required_element_usable(element) for element in required)
+    return _is_required_element_usable(required[0])
 
 
 def _is_required_element_usable(element: Any) -> bool:
@@ -226,9 +231,16 @@ def _is_required_element_usable(element: Any) -> bool:
 
 def _is_generic_selector(selector: dict[str, Any]) -> bool:
     text_value = selector.get("text") or selector.get("content_desc")
-    if text_value is None:
+    if text_value is not None and str(text_value).strip().lower() in _GENERIC_SELECTOR_TEXTS:
+        return True
+    resource_id = selector.get("resource_id")
+    if not isinstance(resource_id, str):
         return False
-    return str(text_value).strip().lower() in _GENERIC_SELECTOR_TEXTS
+    resource_name = resource_id.split("/")[-1].split(":")[-1].casefold()
+    return any(
+        marker in resource_name
+        for marker in ("tab_menu", "overflow", "toolbar", "menu_")
+    )
 
 
 __all__ = [
