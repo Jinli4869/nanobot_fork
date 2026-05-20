@@ -15,6 +15,7 @@ import asyncio
 import base64
 import copy
 import io
+import hashlib
 import json
 import logging
 import os
@@ -54,6 +55,8 @@ _TARGET_CONTRACT_REPAIR_REASONS = frozenset({
     "target_element_reduced_page_contract",
     "target_text_contract_from_observation",
 })
+
+_CODE_SKILL_EMBEDDINGS_FILENAME = "code_skill_embeddings.npy"
 
 
 _CODE_EXTRACTION_PROMPT = """\
@@ -620,12 +623,94 @@ class CodeSkillLibrary:
         self.graph_compile_errors: tuple[str, ...] = ()
         self.alpha = 0.6
         self._index_source_mtime: float | None = None
+        self._index_embedding_signature: str | None = None
         self._indexed_skills: list[Skill] = []
         self._ordered_ids: list[str] = []
         self._documents: list[str] = []
         self._bm25 = _BM25Index()
         self._faiss = _FaissIndex()
         self._embeddings: dict[str, np.ndarray] = {}
+        self._embedding_signatures: dict[str, str] = {}
+
+    def _embeddings_path(self) -> Path:
+        return self.store_dir / _CODE_SKILL_EMBEDDINGS_FILENAME
+
+    def _load_cached_embeddings(self) -> None:
+        path = self._embeddings_path()
+        if not path.is_file():
+            self._embeddings.clear()
+            self._embedding_signatures.clear()
+            return
+
+        try:
+            payload = np.load(str(path), allow_pickle=True).item()
+        except Exception as exc:
+            logger.warning("Failed to load code skill embedding cache from %s: %s", path, exc)
+            path.unlink(missing_ok=True)
+            self._embeddings.clear()
+            self._embedding_signatures.clear()
+            return
+        if not isinstance(payload, dict):
+            self._embeddings.clear()
+            self._embedding_signatures.clear()
+            return
+        if payload.get("embedding_signature") != self.embedding_signature:
+            self._embeddings.clear()
+            self._embedding_signatures.clear()
+            path.unlink(missing_ok=True)
+            return
+
+        raw_vectors = payload.get("vectors")
+        raw_signatures = payload.get("signatures")
+        if not isinstance(raw_vectors, dict) or not isinstance(raw_signatures, dict):
+            self._embeddings.clear()
+            self._embedding_signatures.clear()
+            return
+
+        for skill_id, vector in raw_vectors.items():
+            if not isinstance(skill_id, str):
+                continue
+            sig = raw_signatures.get(skill_id)
+            if not isinstance(sig, str):
+                continue
+            arr = np.asarray(vector, dtype=np.float32)
+            if arr.ndim != 1 or arr.size == 0:
+                continue
+            self._embeddings[skill_id] = arr
+            self._embedding_signatures[skill_id] = sig
+
+    def _save_cached_embeddings(self) -> None:
+        if not self._embeddings:
+            self._embeddings_path().unlink(missing_ok=True)
+            return
+
+        vectors = {sid: vec for sid, vec in self._embeddings.items() if sid}
+        if not vectors:
+            self._embeddings_path().unlink(missing_ok=True)
+            return
+        signatures = {
+            sid: sig
+            for sid, sig in self._embedding_signatures.items()
+            if sid in vectors and sig
+        }
+        if not signatures:
+            self._embeddings_path().unlink(missing_ok=True)
+            return
+
+        payload = {
+            "embedding_signature": self.embedding_signature,
+            "vectors": vectors,
+            "signatures": signatures,
+        }
+        target = self._embeddings_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = target.with_suffix(".tmp.npy")
+        try:
+            np.save(str(tmp_path), payload)
+            tmp_path.replace(target)
+        except BaseException:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     def refresh_if_stale(self) -> bool:
         current = _mtime(self._repository.source_path)
@@ -633,6 +718,7 @@ class CodeSkillLibrary:
         self._source_mtime = current
         if changed:
             self._index_source_mtime = None
+            self._index_embedding_signature = None
         legacy = self._legacy()
         if legacy is not None:
             refresh = getattr(legacy, "refresh_if_stale", None)
@@ -825,6 +911,7 @@ class CodeSkillLibrary:
         skill_ids = [skill.skill_id for skill in skills]
         if (
             self._index_source_mtime == source_mtime
+            and self._index_embedding_signature == self.embedding_signature
             and self._ordered_ids == skill_ids
             and len(self._documents) == len(skills)
         ):
@@ -836,13 +923,44 @@ class CodeSkillLibrary:
         self._bm25 = _BM25Index()
         self._bm25.build(self._documents)
         self._faiss = _FaissIndex()
-        self._embeddings = {}
+        self._embeddings.clear()
+        self._embedding_signatures.clear()
+        self._load_cached_embeddings()
 
         if self.embedding_provider is not None and self._documents:
+            signatures = [_code_skill_search_signature(document) for document in self._documents]
+            current_ids = set(self._ordered_ids)
+            self._embeddings = {
+                sid: vector
+                for sid, vector in self._embeddings.items()
+                if sid in current_ids and sid in self._embedding_signatures
+            }
+            self._embedding_signatures = {
+                sid: sig
+                for sid, sig in self._embedding_signatures.items()
+                if sid in self._embeddings and sid in current_ids
+            }
+            missing: list[int] = []
+            for index, (sid, signature) in enumerate(zip(self._ordered_ids, signatures, strict=False)):
+                if self._embeddings.get(sid) is not None and self._embedding_signatures.get(sid) == signature:
+                    continue
+                self._embeddings.pop(sid, None)
+                self._embedding_signatures.pop(sid, None)
+                missing.append(index)
+
             try:
-                vectors = await self.embedding_provider.embed(self._documents)
-                for skill, vector in zip(self._indexed_skills, vectors, strict=False):
-                    self._embeddings[skill.skill_id] = np.asarray(vector, dtype=np.float32)
+                if missing:
+                    missing_texts = [self._documents[index] for index in missing]
+                    vectors = await self.embedding_provider.embed(missing_texts)
+                    if vectors is None or len(vectors) != len(missing):
+                        raise RuntimeError("embedding batch size mismatch")
+                    for index, vector in zip(missing, vectors, strict=False):
+                        sid = self._ordered_ids[index]
+                        signature = signatures[index]
+                        self._embeddings[sid] = np.asarray(vector, dtype=np.float32)
+                        self._embedding_signatures[sid] = signature
+                if self._embeddings:
+                    self._save_cached_embeddings()
                 if self._embeddings:
                     self._faiss.build(np.stack([
                         self._embeddings[skill.skill_id]
@@ -852,9 +970,11 @@ class CodeSkillLibrary:
             except Exception as exc:
                 logger.warning("Failed to embed code skills during index rebuild: %s", exc)
                 self._embeddings = {}
+                self._embedding_signatures = {}
                 self._faiss = _FaissIndex()
 
         self._index_source_mtime = source_mtime
+        self._index_embedding_signature = self.embedding_signature
 
     async def _query_embedding(self, query: str) -> np.ndarray | None:
         if self.embedding_provider is None or not query.strip():
@@ -4839,6 +4959,10 @@ def _state_contract_search_text(value: object) -> list[str]:
 
 def _tokens(value: str) -> set[str]:
     return set(re.findall(r"[\w\u4e00-\u9fff]+", value.casefold()))
+
+
+def _code_skill_search_signature(document: str) -> str:
+    return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
 
 def _mtime(path: Path) -> float | None:
