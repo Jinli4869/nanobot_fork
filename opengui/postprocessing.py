@@ -390,6 +390,7 @@ class PostRunProcessor:
         skill_store_root: Path | None = None,
         enable_skill_extraction: bool = False,
         enable_deeplink_skill_extraction: bool = False,
+        enable_skill_graph: bool = True,
         deeplink_probe_backend: Any | None = None,
         evaluation: EvaluationConfig | None = None,
     ) -> None:
@@ -400,6 +401,7 @@ class PostRunProcessor:
         self._skill_store_root = skill_store_root
         self._enable_skill_extraction = enable_skill_extraction
         self._enable_deeplink_skill_extraction = enable_deeplink_skill_extraction
+        self._enable_skill_graph = bool(enable_skill_graph)
         self._deeplink_probe_backend = deeplink_probe_backend
         self._evaluation = evaluation or EvaluationConfig()
         self._pending: set[asyncio.Task[None]] = set()
@@ -456,7 +458,8 @@ class PostRunProcessor:
         effective_success = is_success
         if isinstance(evaluation_result, dict) and evaluation_result.get("success") is False:
             effective_success = False
-        await self._sync_transition_evidence(trace_path)
+        if self._enable_skill_graph:
+            await self._sync_transition_evidence(trace_path)
         await self._extract_deeplink_skill(
             trace_path,
             effective_success,
@@ -580,7 +583,6 @@ class PostRunProcessor:
             repair_code_contracts_from_events,
         )
         from opengui.skills.code_graph import compile_code_skills
-        from opengui.skills.code_graph_projection import project_graph_code_from_events
 
         try:
             extractor = CodeSkillExtractor(llm=self._llm)
@@ -757,7 +759,9 @@ class PostRunProcessor:
                         used_visual_guarded_fallback = True
 
                     repository_source = normalized.source
-                    if filtered_compile.skills:
+                    if filtered_compile.skills and self._enable_skill_graph:
+                        from opengui.skills.code_graph_projection import project_graph_code_from_events
+
                         projection = project_graph_code_from_events(
                             repository_source,
                             list(segment.events),
@@ -815,14 +819,16 @@ class PostRunProcessor:
                     if first_contract_quality is None:
                         first_contract_quality = segment_record["contract_quality"]
 
-                code_library = CodeSkillLibrary(
-                    store_dir=store_root,
-                    embedding_provider=self._embedding_provider,
-                    merge_llm=self._merge_llm,
-                    embedding_signature=self._embedding_signature,
-                    legacy_fallback=False,
-                )
-                code_graph_synced = await code_library.sync_graph_cache()
+                code_graph_synced = False
+                if self._enable_skill_graph:
+                    code_library = CodeSkillLibrary(
+                        store_dir=store_root,
+                        embedding_provider=self._embedding_provider,
+                        merge_llm=self._merge_llm,
+                        embedding_signature=self._embedding_signature,
+                        legacy_fallback=False,
+                    )
+                    code_graph_synced = await code_library.sync_graph_cache()
                 graph_synced = False
 
             self._write_extraction_usage(trace_path, extractor.total_usage)
@@ -932,7 +938,7 @@ class PostRunProcessor:
                     platform=platform,
                 )
                 code_graph_synced = False
-                if result.get("status") == "processed_evolution":
+                if result.get("status") == "processed_evolution" and self._enable_skill_graph:
                     code_graph_synced = await CodeSkillLibrary(
                         store_dir=store_root,
                         embedding_provider=self._embedding_provider,
@@ -1053,7 +1059,7 @@ class PostRunProcessor:
                     store_root=store_root,
                 )
                 code_graph_synced = False
-                if discovery.status == "processed_deeplink_code":
+                if discovery.status == "processed_deeplink_code" and self._enable_skill_graph:
                     from opengui.skills.code_first import CodeSkillLibrary
 
                     code_graph_synced = await CodeSkillLibrary(
@@ -1129,6 +1135,8 @@ class PostRunProcessor:
         self._write_extraction_result(trace_path, existing)
 
     async def _sync_code_skills_graph(self, skills: tuple[Any, ...]) -> bool:
+        if not self._enable_skill_graph:
+            return False
         if self._skill_store_root is None:
             return False
         try:
@@ -1153,6 +1161,8 @@ class PostRunProcessor:
         continuation_anchor_id: str | None = None,
         node_profiles: dict[int | str, dict[str, Any] | None] | None = None,
     ) -> bool:
+        if not self._enable_skill_graph:
+            return False
         if self._skill_store_root is None:
             return False
         try:
@@ -1195,6 +1205,8 @@ class PostRunProcessor:
             return False
 
     async def _sync_transition_evidence(self, trace_path: Path) -> int:
+        if not self._enable_skill_graph:
+            return 0
         if self._skill_store_root is None:
             return 0
         try:

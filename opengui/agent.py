@@ -1013,6 +1013,7 @@ class GuiAgent:
         image_scale_ratio: float = 0.5,
         stagnation_limit: int = 0,
         graph_session_cursor: Any = None,
+        enable_graph_runtime: bool = True,
         max_skill_continuations: int = 2,
     ) -> None:
         self.llm = llm
@@ -1041,6 +1042,7 @@ class GuiAgent:
         self._intervention_handler = intervention_handler
         self._memory_store = memory_store
         self._graph_session_cursor = graph_session_cursor
+        self._enable_graph_runtime = bool(enable_graph_runtime)
         self._active_retry_summaries: tuple[str, ...] = ()
         self._image_scale_ratio = image_scale_ratio
         try:
@@ -1082,7 +1084,11 @@ class GuiAgent:
         # 3. Try graph-native skill execution before flat skill search.  A full
         # graph path is already a concrete reusable prefix; a prefix-only graph
         # path may still need a flat skill or the ordinary agent loop.
-        graph_result: Any | None = await self._try_graph_runtime(task, app_hint=app_hint)
+        graph_result: Any | None = (
+            await self._try_graph_runtime(task, app_hint=app_hint)
+            if self._enable_graph_runtime
+            else None
+        )
         graph_completed = False
         if graph_result is not None:
             graph_state = getattr(getattr(graph_result, "state", None), "value", None) or str(
@@ -3169,6 +3175,8 @@ class GuiAgent:
         *,
         app_hint: str | None,
     ) -> Any | None:
+        if not self._enable_graph_runtime:
+            return None
         if self._skill_library is None:
             return None
         store_dir = getattr(self._skill_library, "store_dir", None)

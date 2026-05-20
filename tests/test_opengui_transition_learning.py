@@ -149,3 +149,38 @@ async def test_postprocessor_syncs_transition_evidence(tmp_path: Path) -> None:
 
     assert count == 1
     assert (tmp_path / "graph" / "skill_graph_transition_evidence.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_postprocessor_skips_transition_evidence_when_skill_graph_disabled(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(
+        trace_path,
+        [
+            {"type": "metadata", "task": "open orders", "platform": "android"},
+            {
+                "type": "step",
+                "phase": "agent",
+                "step_index": 0,
+                "action": {"action_type": "open_app", "text": "com.example.app"},
+                "observation": _observation("Home", "com.example:id/home"),
+            },
+            {
+                "type": "step",
+                "phase": "agent",
+                "step_index": 1,
+                "action": {"action_type": "tap", "text": "Orders"},
+                "observation": _observation("Orders", "com.example:id/orders"),
+            },
+        ],
+    )
+    processor = PostRunProcessor(
+        llm=None,
+        skill_store_root=tmp_path / "graph",
+        enable_skill_graph=False,
+    )
+
+    count = await processor._sync_transition_evidence(trace_path)
+
+    assert count == 0
+    assert not (tmp_path / "graph" / "skill_graph_transition_evidence.jsonl").exists()

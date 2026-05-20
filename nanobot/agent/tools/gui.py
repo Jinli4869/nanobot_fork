@@ -84,6 +84,7 @@ class GuiSubagentTool(Tool):
             skill_store_root=get_gui_skill_store_root(self._workspace),
             enable_skill_extraction=gui_config.enable_skill_extraction,
             enable_deeplink_skill_extraction=gui_config.enable_deeplink_skill_extraction,
+            enable_skill_graph=gui_config.enable_skill_graph,
             deeplink_probe_backend=self._backend,
             evaluation=EvaluationConfig(
                 enabled=gui_config.evaluation.enabled,
@@ -339,7 +340,10 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
-            graph_session_cursor=self._get_graph_session_cursor(),
+            graph_session_cursor=(
+                self._get_graph_session_cursor() if self._gui_config.enable_skill_graph else None
+            ),
+            enable_graph_runtime=self._gui_config.enable_skill_graph,
         )
 
         result = await agent.run(task=task)
@@ -354,6 +358,15 @@ class GuiSubagentTool(Tool):
             summary=summary,
             error=error,
         )
+        metrics_path = recorder.metrics_path
+        metrics = self._load_gui_metrics(metrics_path)
+        total_duration_s = metrics.get("total_duration_s") or metrics.get("duration_s")
+        total_token_usage = (
+            result.token_usage
+            or metrics.get("total_token_usage")
+            or metrics.get("token_usage")
+            or {}
+        )
         self._postprocessor.schedule(trace_path, is_success=result.success, platform=active_backend.platform, task=task)
 
         return json.dumps(
@@ -365,6 +378,11 @@ class GuiSubagentTool(Tool):
                 "steps_taken": result.steps_taken,
                 "error": error,
                 "post_run_state": post_run_state,
+                "metrics_path": str(metrics_path) if metrics_path is not None and metrics_path.exists() else None,
+                "duration_s": total_duration_s,
+                "token_usage": total_token_usage,
+                "total_duration_s": total_duration_s,
+                "total_token_usage": total_token_usage,
             },
             ensure_ascii=False,
         )
@@ -828,6 +846,16 @@ class GuiSubagentTool(Tool):
         return None
 
     @staticmethod
+    def _load_gui_metrics(metrics_path: Path | None) -> dict[str, Any]:
+        if metrics_path is None or not metrics_path.exists():
+            return {}
+        try:
+            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    @staticmethod
     def _background_json_failure(summary: str) -> str:
         return json.dumps(
             {
@@ -836,6 +864,11 @@ class GuiSubagentTool(Tool):
                 "trace_path": None,
                 "steps_taken": 0,
                 "error": None,
+                "metrics_path": None,
+                "duration_s": None,
+                "token_usage": {},
+                "total_duration_s": None,
+                "total_token_usage": {},
             },
             ensure_ascii=False,
         )

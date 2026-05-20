@@ -66,6 +66,22 @@ class TestGuiConfigSkillExtractionField:
         assert config.enable_skill_extraction is True
 
 
+class TestGuiConfigSkillGraphField:
+    """GuiConfig.enable_skill_graph controls graph runtime/projection separately."""
+
+    def test_defaults_to_true(self) -> None:
+        config = GuiConfig()
+        assert config.enable_skill_graph is True
+
+    def test_accepts_false_explicitly(self) -> None:
+        config = GuiConfig(enable_skill_graph=False)
+        assert config.enable_skill_graph is False
+
+    def test_accepts_camel_case_key(self) -> None:
+        config = GuiConfig.model_validate({"enableSkillGraph": False})
+        assert config.enable_skill_graph is False
+
+
 # ---------------------------------------------------------------------------
 # GuiSubagentTool wiring tests
 # ---------------------------------------------------------------------------
@@ -203,6 +219,46 @@ class TestSkillExecutorWiringEnabled:
 
         assert "skill_executor" in captured_kwargs
         assert isinstance(captured_kwargs["skill_executor"], SkillExecutor)
+
+    def test_skill_graph_flag_is_forwarded_to_agent(self) -> None:
+        gui_config = GuiConfig(
+            backend="dry-run",
+            enable_skill_execution=True,
+            enable_skill_graph=False,
+        )
+        tool = _make_tool(gui_config)
+
+        captured_kwargs: dict = {}
+
+        async def _run() -> None:
+            with (
+                patch.object(tool, "_get_graph_session_cursor") as cursor_mock,
+                patch("nanobot.agent.tools.gui.GuiAgent.__init__", return_value=None) as mock_init,
+                patch(
+                    "nanobot.agent.tools.gui.TrajectoryRecorder",
+                    return_value=MagicMock(path=None),
+                ),
+                patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run,
+            ):
+                mock_run.return_value = MagicMock(
+                    success=True,
+                    summary="ok",
+                    model_summary="",
+                    trace_path=None,
+                    steps_taken=0,
+                    error=None,
+                )
+                mock_init.side_effect = lambda *a, **kw: captured_kwargs.update(kw)
+                try:
+                    await tool._run_task(tool._backend, "open settings")
+                except Exception:
+                    pass
+                cursor_mock.assert_not_called()
+
+        asyncio.run(_run())
+
+        assert captured_kwargs["enable_graph_runtime"] is False
+        assert captured_kwargs["graph_session_cursor"] is None
 
     def test_skill_executor_built_with_correct_backend(self) -> None:
         """SkillExecutor.backend must be the active_backend passed to _run_task."""

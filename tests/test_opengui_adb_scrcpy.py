@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import threading
 import time
@@ -400,6 +401,34 @@ async def test_adb_observe_can_attach_compact_ui_tree_metadata(
     assert "ui_tree" not in observation.extra
 
 
+@pytest.mark.asyncio
+async def test_adb_observe_writes_raw_ui_tree_xml_sibling_dir(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <hierarchy rotation="0">
+      <node index="0" text="搜索" resource-id="tv.danmaku.bili:id/search_src_text"
+            class="android.widget.EditText" package="tv.danmaku.bili"
+            content-desc="搜索查询" clickable="true" focused="true" scrollable="false"
+            bounds="[0,0][100,50]" />
+    </hierarchy>"""
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True, collect_ui_tree_nodes=True)
+    run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
+    monkeypatch.setattr(backend, "_run", run_mock)
+    monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
+    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
+
+    screenshot = tmp_path / "run" / "screenshots" / "step_000.png"
+    observation = await backend.observe(screenshot)
+
+    raw_xml_path = tmp_path / "run" / "ui_tree" / "step_000.xml"
+    assert raw_xml_path.read_text(encoding="utf-8") == xml
+    assert not list((tmp_path / "run" / "screenshots").glob("*.xml"))
+    assert observation.extra["ui_tree"][0]["resource_id"] == "tv.danmaku.bili:id/search_src_text"
+    assert "hierarchy" not in json.dumps(observation.extra, ensure_ascii=False)
+
+
 def test_adb_ui_tree_marks_child_text_under_clickable_container_as_clickable() -> None:
     xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
     <hierarchy rotation="0">
@@ -490,7 +519,7 @@ async def test_adb_observe_queries_ui_context_in_parallel(
     )
     monkeypatch.setattr(backend, "_query_screen_size", lambda timeout: _wait("screen_size", (1080, 2376)))
     monkeypatch.setattr(backend, "_query_foreground_app", lambda timeout: _wait("foreground_app", "com.example.app"))
-    monkeypatch.setattr(backend, "_collect_ui_tree_extra", lambda timeout: _wait(
+    monkeypatch.setattr(backend, "_collect_ui_tree_extra", lambda timeout, **_kwargs: _wait(
         "ui_tree",
         {
             "ui_tree_node_count": 1,

@@ -63,6 +63,15 @@ class _RecordingValidator:
         return self._returns.pop(0)
 
 
+class _NoopSkillReuser:
+    async def find(self, task, skill_library, platform, trajectory_recorder=None):
+        del task, skill_library, platform, trajectory_recorder
+        return None
+
+    def drain_usage(self) -> dict[str, int]:
+        return {}
+
+
 class _SkillTestBackend:
     def __init__(self) -> None:
         self.platform = "dry-run"
@@ -92,6 +101,40 @@ class _SkillTestBackend:
 
     async def list_apps(self) -> list[str]:
         return []
+
+
+@pytest.mark.asyncio
+async def test_agent_skips_graph_runtime_when_disabled(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content="Action: done",
+            tool_calls=[
+                ToolCall(
+                    id="tool-call-0",
+                    name="computer_use",
+                    arguments={"action_type": "done", "status": "success"},
+                )
+            ],
+        )
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "graph disabled"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        include_date_context=False,
+        skill_library=object(),
+        skill_reuser=_NoopSkillReuser(),
+        enable_graph_runtime=False,
+    )
+    try_graph_runtime = AsyncMock(return_value=None)
+    agent._try_graph_runtime = try_graph_runtime  # type: ignore[method-assign]
+
+    result = await agent.run("finish", max_retries=1)
+
+    assert result.success is True
+    try_graph_runtime.assert_not_called()
 
 
 def test_parse_scroll_allows_center_default() -> None:
@@ -1125,6 +1168,46 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
     assert subgoal_result["success"] is False
 
 
+def test_recorder_metrics_include_skill_and_agent_totals(tmp_path: Path) -> None:
+    recorder = _make_recorder(tmp_path, "skill plus agent metrics")
+    recorder.start()
+    recorder.record_event(
+        "skill_step",
+        skill_id="code:open_menu",
+        skill_name="open_menu",
+        step_index=0,
+        action={"action_type": "tap"},
+        token_usage={"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+        duration_s=1.25,
+    )
+    recorder.record_step(
+        action={"action_type": "done"},
+        model_output="done",
+        token_usage={"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        duration_s=0.5,
+    )
+
+    recorder.finish(
+        success=True,
+        token_usage={"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
+    )
+
+    assert recorder.metrics_path is not None
+    metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
+    assert metrics["token_usage"] == {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}
+    assert metrics["total_token_usage"] == metrics["token_usage"]
+    assert metrics["total_duration_s"] == metrics["duration_s"]
+    assert metrics["total_steps"] == 1
+    assert metrics["total_recorded_steps"] == 2
+    assert metrics["steps"][0]["event_type"] == "skill_step"
+    assert metrics["steps"][0]["phase"] == "skill"
+    assert metrics["steps"][0]["skill_id"] == "code:open_menu"
+    assert metrics["steps"][1]["event_type"] == "step"
+    assert metrics["steps"][1]["phase"] == "agent"
+    assert metrics["phase_metrics"]["skill"]["token_usage"]["total_tokens"] == 4
+    assert metrics["phase_metrics"]["agent"]["token_usage"]["total_tokens"] == 7
+
+
 @pytest.mark.asyncio
 async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_path: Path) -> None:
     """default profile + gemini model → relative_999: tap(900, 941) must get relative=True."""
@@ -1437,6 +1520,7 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
                 name="computer_use",
                 arguments={"action_type": "wait", "duration_ms": 1},
             )],
+            usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
         ),
         LLMResponse(
             content="Action: done",
@@ -1445,12 +1529,14 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
                 name="computer_use",
                 arguments={"action_type": "done", "status": "success"},
             )],
+            usage={"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
         ),
     ])
+    recorder = _make_recorder(tmp_path, "Open Settings")
     agent = GuiAgent(
         llm,
         DryRunBackend(),
-        trajectory_recorder=_make_recorder(tmp_path, "Open Settings"),
+        trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=2,
         include_date_context=False,
@@ -1472,6 +1558,22 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
     assert step_event["model_output"]["tool_calls"][0]["arguments"]["duration_ms"] == 1
     assert step_event["model_output"]["parsed_action"]["action_type"] == "wait"
     assert step_event["execution"]["tool_result"] == "[dry-run] wait 1 ms"
+    assert recorder.metrics_path is not None
+    metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
+    assert metrics["task"] == "Open Settings"
+    assert metrics["success"] is True
+    assert metrics["total_steps"] == 2
+    assert metrics["token_usage"] == {
+        "prompt_tokens": 18,
+        "completion_tokens": 3,
+        "total_tokens": 21,
+    }
+    assert metrics["total_token_usage"] == metrics["token_usage"]
+    assert metrics["total_duration_s"] == metrics["duration_s"]
+    assert metrics["total_recorded_steps"] == 2
+    assert metrics["steps"][0]["action_type"] == "wait"
+    assert metrics["steps"][0]["token_usage"]["total_tokens"] == 12
+    assert "duration_s" in metrics["steps"][0]
     image_blocks = [
         block
         for message in step_event["prompt"]["messages"]

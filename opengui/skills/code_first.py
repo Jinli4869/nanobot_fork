@@ -2857,12 +2857,16 @@ class _TraceEvidenceIndex:
             if selector is None and not _is_placeholder_value(target_text):
                 selector = _best_selector_for_action(match.pre_observation, target_text, action_type)
             evidence_observation = match.pre_observation
-            if selector is None and not _observation_has_selector_evidence(match.pre_observation):
-                selector = _best_selector_for_point_action(
+            if selector is None:
+                post_point_selector = _best_selector_for_point_action(
                     parameters or match.parameters,
                     match.post_observation,
                     action_type,
                 )
+                if post_point_selector is not None:
+                    selector = post_point_selector
+                    evidence_observation = match.post_observation
+            if selector is None and not _observation_has_selector_evidence(match.pre_observation):
                 if selector is None and not _is_placeholder_value(target_text):
                     selector = _best_selector_for_action(match.post_observation, target_text, action_type)
                 evidence_observation = match.post_observation

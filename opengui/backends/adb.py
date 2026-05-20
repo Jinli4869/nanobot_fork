@@ -841,7 +841,7 @@ class AdbBackend:
         (input_width, input_height), fg_app, extra = await asyncio.gather(
             self._query_screen_size(timeout),
             self._query_foreground_app(timeout),
-            self._collect_ui_tree_extra(timeout),
+            self._collect_ui_tree_extra(timeout, screenshot_path=screenshot_path),
         )
         self._capture_width = snapshot.width
         self._capture_height = snapshot.height
@@ -908,7 +908,7 @@ class AdbBackend:
         await self._run("pull", _DEVICE_SCREENSHOT_PATH, str(screenshot_path), timeout=timeout)
 
         screenshot_size = _read_png_size(screenshot_path)
-        ui_tree_task = self._collect_ui_tree_extra(timeout)
+        ui_tree_task = self._collect_ui_tree_extra(timeout, screenshot_path=screenshot_path)
         if screenshot_size is None:
             (width, height), fg_app, extra = await asyncio.gather(
                 self._query_screen_size(timeout),
@@ -938,7 +938,12 @@ class AdbBackend:
             extra=merged_extra,
         )
 
-    async def _collect_ui_tree_extra(self, timeout: float) -> dict[str, Any]:
+    async def _collect_ui_tree_extra(
+        self,
+        timeout: float,
+        *,
+        screenshot_path: Path | None = None,
+    ) -> dict[str, Any]:
         if not self._collect_ui_tree:
             return {}
         # uiautomator dump is noticeably slower than screenshot capture on real
@@ -959,6 +964,7 @@ class AdbBackend:
                 _DEVICE_UI_XML_PATH,
                 timeout=ui_timeout,
             )
+            _write_raw_ui_tree_xml(screenshot_path, xml_text)
             return _parse_ui_tree_xml(
                 xml_text,
                 include_nodes=self._collect_ui_tree_nodes,
@@ -1538,7 +1544,7 @@ class AdbBackend:
 def _parse_ui_tree_xml(
     xml_text: str,
     *,
-    max_nodes: int = 80,
+    max_nodes: int = 160,
     max_values: int = 80,
     include_nodes: bool = False,
 ) -> dict[str, Any]:
@@ -1639,6 +1645,20 @@ def _parse_ui_tree_xml(
     if ui_tree:
         extra["ui_tree"] = ui_tree
     return extra
+
+
+def _write_raw_ui_tree_xml(screenshot_path: Path | None, xml_text: str) -> None:
+    if screenshot_path is None or not xml_text:
+        return
+    screenshot_path = Path(screenshot_path)
+    parent = screenshot_path.parent
+    run_dir = parent.parent if parent.name == "screenshots" else parent
+    target = run_dir / "ui_tree" / f"{screenshot_path.stem}.xml"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(xml_text, encoding="utf-8")
+    except OSError as exc:
+        logger.debug("Could not write raw UI tree XML %s: %s", target, exc)
 
 
 def _clean_ui_attr(value: str | None) -> str:

@@ -56,6 +56,8 @@ class TrajectoryRecorder:
     _start_time: float = field(default=0.0, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
     _current_phase: ExecutionPhase = field(default=ExecutionPhase.AGENT, init=False, repr=False)
+    _step_metrics: list[dict[str, Any]] = field(default_factory=list, init=False, repr=False)
+    _metrics_path: Path | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.output_dir = Path(self.output_dir)
@@ -67,6 +69,10 @@ class TrajectoryRecorder:
     @property
     def step_count(self) -> int:
         return self._step_count
+
+    @property
+    def metrics_path(self) -> Path | None:
+        return self._metrics_path
 
     @property
     def current_phase(self) -> ExecutionPhase:
@@ -81,6 +87,8 @@ class TrajectoryRecorder:
         self._step_count = 0
         self._closed = False
         self._current_phase = phase
+        self._step_metrics = []
+        self._metrics_path = self.output_dir / "gui_metrics.json"
 
         self._write_event({
             "type": "metadata",
@@ -111,12 +119,29 @@ class TrajectoryRecorder:
         """Record a non-step lifecycle event in the trajectory."""
         if self._closed:
             raise RuntimeError("Recorder already closed")
-        self._write_event({
+        event = {
             "type": event_type,
             "timestamp": time.time(),
             "at_step": self._step_count,
             **payload,
-        })
+        }
+        self._write_event(event)
+        if event_type == "skill_step":
+            self._step_metrics.append(
+                _step_metric_from_event(
+                    event,
+                    phase_value=ExecutionPhase.SKILL.value,
+                    metric_index=len(self._step_metrics),
+                )
+            )
+        elif event_type == "subgoal_step":
+            self._step_metrics.append(
+                _step_metric_from_event(
+                    event,
+                    phase_value=ExecutionPhase.RECOVERY.value,
+                    metric_index=len(self._step_metrics),
+                )
+            )
 
     def record_step(
         self,
@@ -183,10 +208,11 @@ class TrajectoryRecorder:
             if observation_extra:
                 obs["extra"] = _compact_observation_extra(observation_extra)
 
+        phase_value = (phase or self._current_phase).value
         event: dict[str, Any] = {
             "type": "step",
             "step_index": self._step_count,
-            "phase": (phase or self._current_phase).value,
+            "phase": phase_value,
             "timestamp": time.time(),
             "action": action,
             "model_output": model_output,
@@ -203,6 +229,13 @@ class TrajectoryRecorder:
             event["ttft_s"] = round(ttft_s, 3)
 
         self._write_event(event)
+        self._step_metrics.append(
+            _step_metric_from_event(
+                event,
+                phase_value=phase_value,
+                metric_index=len(self._step_metrics),
+            )
+        )
         self._step_count += 1
 
     def finish(
@@ -228,6 +261,12 @@ class TrajectoryRecorder:
         if token_usage:
             event["token_usage"] = token_usage
         self._write_event(event)
+        self._write_metrics(
+            success=success,
+            duration_s=round(duration, 2),
+            error=error,
+            token_usage=token_usage,
+        )
         self._closed = True
         return self._path  # type: ignore[return-value]
 
@@ -239,6 +278,36 @@ class TrajectoryRecorder:
         if self.event_callback is not None:
             self.event_callback(dict(event))
 
+    def _write_metrics(
+        self,
+        *,
+        success: bool,
+        duration_s: float,
+        error: str | None,
+        token_usage: dict[str, int] | None,
+    ) -> None:
+        if self._metrics_path is None:
+            self._metrics_path = self.output_dir / "gui_metrics.json"
+        total_token_usage = token_usage or _sum_step_token_usage(self._step_metrics)
+        payload = {
+            "task": self.task,
+            "platform": self.platform,
+            "success": success,
+            "total_steps": self._step_count,
+            "total_recorded_steps": len(self._step_metrics),
+            "duration_s": duration_s,
+            "total_duration_s": duration_s,
+            "error": error,
+            "token_usage": total_token_usage,
+            "total_token_usage": total_token_usage,
+            "phase_metrics": _summarize_phase_metrics(self._step_metrics),
+            "steps": self._step_metrics,
+        }
+        self._metrics_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
 
 def _compact_observation_extra(extra: dict[str, Any]) -> dict[str, Any]:
     """Keep structured observation metadata bounded in trajectory logs."""
@@ -249,3 +318,65 @@ def _compact_observation_extra(extra: dict[str, Any]) -> dict[str, Any]:
         else:
             compact[key] = value
     return compact
+
+
+def _step_metric_from_event(
+    event: dict[str, Any],
+    *,
+    phase_value: str,
+    metric_index: int,
+) -> dict[str, Any]:
+    action = event.get("action") if isinstance(event.get("action"), dict) else {}
+    metric: dict[str, Any] = {
+        "metric_index": metric_index,
+        "event_type": event.get("type"),
+        "step_index": event.get("step_index"),
+        "phase": phase_value,
+        "action_type": action.get("action_type"),
+    }
+    if event.get("type") == "skill_step":
+        metric["skill_id"] = event.get("skill_id")
+        metric["skill_name"] = event.get("skill_name")
+        metric["skill_step_index"] = event.get("step_index")
+    elif event.get("type") == "subgoal_step":
+        metric["substep_index"] = event.get("substep_index")
+    for key in ("token_usage", "duration_s", "chat_latency_s", "ttft_s"):
+        if key in event:
+            metric[key] = event[key]
+    return metric
+
+
+def _sum_step_token_usage(steps: list[dict[str, Any]]) -> dict[str, int]:
+    total: dict[str, int] = {}
+    for step in steps:
+        usage = step.get("token_usage")
+        if not isinstance(usage, dict):
+            continue
+        for key, value in usage.items():
+            if isinstance(value, int):
+                total[key] = total.get(key, 0) + value
+    return total
+
+
+def _summarize_phase_metrics(steps: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    by_phase: dict[str, dict[str, Any]] = {}
+    for step in steps:
+        phase = str(step.get("phase") or "unknown")
+        bucket = by_phase.setdefault(phase, {
+            "step_count": 0,
+            "duration_s": 0.0,
+            "token_usage": {},
+        })
+        bucket["step_count"] += 1
+        duration = step.get("duration_s")
+        if isinstance(duration, (int, float)):
+            bucket["duration_s"] = float(bucket["duration_s"]) + float(duration)
+        usage = step.get("token_usage")
+        if isinstance(usage, dict):
+            target = bucket["token_usage"]
+            for key, value in usage.items():
+                if isinstance(value, int):
+                    target[key] = target.get(key, 0) + value
+    for bucket in by_phase.values():
+        bucket["duration_s"] = round(float(bucket["duration_s"]), 3)
+    return by_phase
