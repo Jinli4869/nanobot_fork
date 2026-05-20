@@ -466,6 +466,7 @@ class GuiConfig(Base):
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
+    enable_skill_graph: bool = True
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
 
     @field_validator("agent_profile")

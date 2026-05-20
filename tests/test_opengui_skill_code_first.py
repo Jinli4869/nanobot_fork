@@ -4919,6 +4919,68 @@ def test_contract_repair_uses_post_ui_tree_when_first_pre_observation_is_missing
     assert repaired.report["repaired_steps"][0]["step_index"] == 0
 
 
+def test_contract_repair_uses_post_point_selector_when_pre_tree_has_unrelated_nodes() -> None:
+    source = '''
+from opengui.skills.code_graph import C, R, action, skill
+
+@skill(app="tv.danmaku.bili", platform="android", tags=["search"])
+async def open_bilibili_search(device):
+    await action(
+        "tap",
+        target="搜索框",
+        state_contract=C(app="tv.danmaku.bili", required=[R(text="搜索框", visible=True)]),
+    )
+'''
+    events = [
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "target": "搜索框", "x": 50, "y": 30},
+            "prompt": {
+                "current_observation": {
+                    "foreground_app": "tv.danmaku.bili",
+                    "platform": "android",
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "text": "首页",
+                                "resource_id": "tv.danmaku.bili:id/home_tab",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[200,200][300,300]",
+                            }
+                        ],
+                    },
+                },
+            },
+            "observation": {
+                "foreground_app": "tv.danmaku.bili",
+                "platform": "android",
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "text": "王者荣耀",
+                            "content_desc": "搜索查询",
+                            "resource_id": "tv.danmaku.bili:id/search_src_text",
+                            "class": "android.widget.EditText",
+                            "clickable": True,
+                            "enabled": True,
+                            "focused": True,
+                            "bounds": "[0,0][120,80]",
+                        }
+                    ],
+                },
+            },
+        },
+    ]
+
+    repaired = repair_code_contracts_from_events(source, events)
+
+    assert "resource_id='tv.danmaku.bili:id/search_src_text'" in repaired.source
+    assert repaired.report["quality"] == "canonical"
+    assert repaired.report["repaired_steps"][0]["reason"] == "target_selector_replaced_page_contract"
+
+
 def test_action_canonicalization_does_not_synthesize_unverifiable_trailing_trace_actions() -> None:
     source = '''
 from opengui.skills.code_graph import C, R, action, skill
@@ -5182,6 +5244,74 @@ async def test_postrun_writes_code_with_graph_projection_when_trace_is_grounded(
     assert result["code_graph_synced"] is True
     assert graph.list_nodes()
     assert graph.list_edges()
+
+
+@pytest.mark.asyncio
+async def test_postrun_skips_graph_projection_when_skill_graph_disabled(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_trace(
+        trace_path,
+        [
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "open_app", "text": "com.example.app"},
+                "observation": {
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "text": "Orders",
+                                "resource_id": "com.example:id/nav_orders",
+                                "clickable": True,
+                            }
+                        ],
+                    },
+                },
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "tap", "target": "Orders"},
+                "action_summary": "Tap Orders",
+                "observation": {
+                    "foreground_app": "com.example.app",
+                    "platform": "android",
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "text": "Order list",
+                                "resource_id": "com.example:id/order_page_title",
+                            }
+                        ],
+                    },
+                },
+            },
+            {"type": "result", "success": True},
+        ],
+    )
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([_wrapped_code(_text_only_skill_source())]),
+        skill_store_root=tmp_path / "store",
+        enable_skill_extraction=True,
+        enable_skill_graph=False,
+    )
+
+    await processor._extract_skill(trace_path, is_success=True, platform="android")
+
+    source = (tmp_path / "store" / "skill_graph_code.py").read_text(encoding="utf-8")
+    result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    graph = SkillGraphStore(store_dir=tmp_path / "store")
+
+    assert "@skill(" in source
+    assert "@state(" not in source
+    assert "@transition(" not in source
+    assert "graph_projection" not in result["contract_quality"]
+    assert result["graph_synced"] is False
+    assert result["code_graph_synced"] is False
+    assert not graph.list_nodes()
+    assert not graph.list_edges()
 
 
 @pytest.mark.asyncio
