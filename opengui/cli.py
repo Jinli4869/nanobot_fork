@@ -7,8 +7,9 @@ import asyncio
 import json
 import logging
 import os
+import inspect
 import sys
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,8 +38,8 @@ from opengui.interfaces import (
 )
 from opengui.memory.retrieval import MemoryRetriever
 from opengui.memory.store import MemoryStore
-from opengui.skills.code_first import CodeSkillLibrary
 from opengui.skills.executor import LLMStateValidator, SkillExecutor
+from opengui.skills.flat import FlatSkillLibrary
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
@@ -441,16 +442,28 @@ def load_config(path: Path | None = None) -> CliConfig:
 
 def build_backend(name: str, config: CliConfig) -> Any:
     if name == "adb":
-        return AdbBackend(
-            serial=config.adb.serial,
-            adb_path=config.adb.adb_path or "adb",
-            scrcpy_max_fps=config.scrcpy.max_fps,
-            scrcpy_jpeg_quality=config.scrcpy.jpeg_quality,
-            scrcpy_frame_timeout_ms=config.scrcpy.frame_timeout_ms,
-            scrcpy_max_frame_age_ms=config.scrcpy.max_frame_age_ms,
-            collect_ui_tree=True,
-            collect_ui_tree_nodes=True,
-        )
+        base_kwargs = {
+            "serial": config.adb.serial,
+            "adb_path": config.adb.adb_path or "adb",
+        }
+        extra_kwargs = {
+            "scrcpy_max_fps": config.scrcpy.max_fps,
+            "scrcpy_jpeg_quality": config.scrcpy.jpeg_quality,
+            "scrcpy_frame_timeout_ms": config.scrcpy.frame_timeout_ms,
+            "scrcpy_max_frame_age_ms": config.scrcpy.max_frame_age_ms,
+            "collect_ui_tree": True,
+            "collect_ui_tree_nodes": True,
+        }
+        kwargs = {**base_kwargs}
+        try:
+            signature = inspect.signature(AdbBackend.__init__)
+            kwargs.update({
+                key: value for key, value in extra_kwargs.items()
+                if key in signature.parameters
+            })
+        except (TypeError, ValueError):
+            pass
+        return AdbBackend(**kwargs)
     if name == "ios":
         from opengui.backends.ios_wda import WdaBackend
         return WdaBackend(wda_url=config.ios.wda_url)
@@ -490,7 +503,7 @@ async def build_optional_components(
     await memory_retriever.index(memory_store.list_all())
 
     try:
-        skill_library = CodeSkillLibrary(
+        skill_library = FlatSkillLibrary(
             store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
             embedding_provider=embedding_provider,
             merge_llm=provider,
@@ -499,7 +512,7 @@ async def build_optional_components(
     except TypeError as exc:
         if "embedding_signature" not in str(exc):
             raise
-        skill_library = CodeSkillLibrary(
+        skill_library = FlatSkillLibrary(
             store_dir=config.skills_dir or DEFAULT_SKILLS_DIR,
             embedding_provider=embedding_provider,
             merge_llm=provider,
@@ -686,7 +699,15 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.json_output:
-        print(json.dumps(asdict(result)))
+        payload = {
+            "success": result.success,
+            "summary": result.summary,
+            "model_summary": result.model_summary,
+            "trace_path": result.trace_path,
+            "steps_taken": result.steps_taken,
+            "error": result.error,
+        }
+        print(json.dumps(payload))
     else:
         _print_human_result(result)
     return 0 if result.success else 1

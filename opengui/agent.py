@@ -43,8 +43,9 @@ from opengui.interfaces import (
 )
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
+from opengui.skills.deeplink import AppShortcutProfile
 from opengui.skills.normalization import normalize_app_identifier
-from opengui.skills.state_contract import evaluate_state_contract
+from opengui.skills.state_contract import evaluate_state_contract, infer_interaction_target
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from opengui.trajectory.summarizer import build_state_note, is_state_note
 
@@ -83,6 +84,7 @@ class StepResult:
     action_intent: str | None = None
     state_summary: str | None = None
     next_observation: Observation | None = None
+    interaction_target: dict[str, Any] | None = None
     action_debug: dict[str, Any] | None = None
     prompt_snapshot: dict[str, Any] | None = None
     model_snapshot: dict[str, Any] | None = None
@@ -211,6 +213,53 @@ def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
             },
         },
     }
+
+
+def _build_shortcut_tool_defs(
+    shortcuts: dict[str, AppShortcutProfile],
+) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str, str, str | None]]]:
+    """Convert AppShortcutProfile entries into independent function tool definitions."""
+    tools: list[dict[str, Any]] = []
+    action_map: dict[str, tuple[str, str, str, str | None]] = {}
+    for profile in shortcuts.values():
+        pkg = re.sub(r"[^a-zA-Z0-9_]+", "_", profile.package).strip("_").lower()
+        for dl in profile.deep_links:
+            safe = _shortcut_slug("_".join(x for x in (dl.scheme, dl.host or "", dl.path or "") if x))
+            digest = _shortcut_hash(f"{profile.package}|{dl.component}|{dl.uri_template}|{dl.path_kind or ''}")
+            name = f"{pkg}__{safe}__{digest}" if safe else f"{pkg}__{digest}"
+            params: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": dl.description,
+                    "parameters": params,
+                },
+            })
+            action_map[name] = ("open_deeplink", dl.uri_template, dl.component, None)
+        for di in profile.deep_intents:
+            safe = _shortcut_slug("_".join(x for x in (di.action.split(".")[-1], di.mime_type or "") if x))
+            digest = _shortcut_hash(f"{profile.package}|{di.component}|{di.action}|{di.mime_type or ''}")
+            name = f"{pkg}__{safe}__{digest}" if safe else f"{pkg}__{digest}"
+            params: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+            tools.append({
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": di.description,
+                    "parameters": params,
+                },
+            })
+            action_map[name] = ("open_intent", di.action, di.component, di.mime_type)
+    return tools, action_map
+
+
+def _shortcut_hash(text: str, n: int = 10) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:n]
+
+
+def _shortcut_slug(value: str, *, max_len: int = 40) -> str:
+    return re.sub(r"[^a-zA-Z0-9_]+", "_", value).strip("_").lower()[:max_len]
 
 
 _COMPUTER_USE_TOOL: dict[str, Any] = {
@@ -378,17 +427,23 @@ class _AgentActionGrounder:
 
             if response.tool_calls:
                 tc = response.tool_calls[0]
-                if tc.name == "computer_use":
+                if tc.name == "computer_use" or not native_tools_enabled:
                     try:
                         return parse_action(tc.arguments)
                     except Exception as exc:
                         if attempt < self._MAX_RETRIES:
                             messages.append({"role": "assistant", "content": response.content or ""})
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": f"Error parsing action: {exc}. Please fix.",
-                            })
+                            if native_tools_enabled:
+                                messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.id,
+                                    "content": f"Error parsing action: {exc}. Please fix.",
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"Format error: {exc}. Please fix and retry.",
+                                })
                             continue
                         raise RuntimeError(f"ActionGrounder parse failed: {exc}") from exc
 
@@ -396,10 +451,12 @@ class _AgentActionGrounder:
                 messages.append({"role": "assistant", "content": response.content or ""})
                 messages.append({
                     "role": "user",
-                    "content": "Error: no computer_use tool call. You must use it.",
+                    "content": "Error: no computer_use tool call. You must use it." if native_tools_enabled else "Error: no Action block found. Use configured profile format (Thought:/Action:).",
                 })
             else:
-                raise RuntimeError("ActionGrounder: LLM did not return a computer_use call after retries.")
+                if native_tools_enabled:
+                    raise RuntimeError("ActionGrounder: LLM did not return a computer_use call after retries.")
+                raise RuntimeError("ActionGrounder: LLM did not return a valid profile action after retries.")
 
         raise RuntimeError("ActionGrounder: unexpected exit from retry loop.")
 
@@ -560,7 +617,7 @@ class _AgentSubgoalRunner:
                 )
                 continue
 
-            if not response.tool_calls or response.tool_calls[0].name != "computer_use":
+            if not response.tool_calls:
                 logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
                 summaries.append(f"Sub-step {i+1}: no valid action returned")
                 substep_dur = time.monotonic() - substep_start
@@ -579,6 +636,24 @@ class _AgentSubgoalRunner:
                 continue
 
             tc = response.tool_calls[0]
+            if self._agent_profile == "default" and tc.name != "computer_use":
+                logger.warning("Subgoal returned unsupported tool %s at sub-step %d", tc.name, i)
+                summaries.append(f"Sub-step {i+1}: no valid action returned")
+                substep_dur = time.monotonic() - substep_start
+                self._record_subgoal_step(
+                    goal=goal,
+                    substep_index=i + 1,
+                    model_output=response.content,
+                    action=None,
+                    action_summary=None,
+                    screenshot_path=None,
+                    goal_reached=False,
+                    error="no valid action returned",
+                    duration_s=substep_dur,
+                    token_usage=None,
+                )
+                continue
+
             try:
                 action = parse_action(tc.arguments)
                 action = self._normalize_relative_coordinates(action)
@@ -871,13 +946,6 @@ def _clean_inferred_param(value: str) -> str:
     return value.strip().strip('`"\'“”‘’').strip()
 
 
-def _clean_observed_app(value: Any) -> str | None:
-    app = str(value or "").strip()
-    if not app or app.lower() in {"unknown", "none", "null"}:
-        return None
-    return app
-
-
 def _looks_like_date_param(value: str) -> bool:
     return bool(re.search(r"\d+\s*(?:月|号|日|/|-)", value))
 
@@ -973,7 +1041,8 @@ class GuiAgent:
         artifacts_root: Root directory for run artifacts (traces, screenshots).
         max_steps: Maximum steps per single attempt.
         step_timeout: Timeout in seconds for each step (LLM + execute + observe).
-        history_image_window: Number of recent screenshot turns kept as full image context.
+        history_image_window: Number of recent screenshot turns kept as full
+            image context, including the current screen.
         include_date_context: Whether to include today's date in the task framing text.
         progress_callback: Optional async callback for progress reporting.
         stagnation_limit: Consecutive unchanged-screen transitions before abort.
@@ -982,6 +1051,11 @@ class GuiAgent:
     _MAX_TOOL_RETRIES = 2
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.50
+    _POST_ACTION_STABILITY_WINDOW_SECONDS = 2.0
+    _POST_ACTION_STABILITY_POLL_SECONDS = 0.15
+    _POST_ACTION_STABILITY_MAX_ATTEMPTS = 4
+    _POST_ACTION_STABILITY_FRAMES_REQUIRED = 2
+    _POST_ACTION_OBSERVE_TIMEOUT_SECONDS = 5.0
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
     _STAGNATION_SSIM_SIZE = 64
     _STAGNATION_SSIM_THRESHOLD = 0.985
@@ -995,7 +1069,7 @@ class GuiAgent:
         artifacts_root: Path | str = ".opengui/runs",
         max_steps: int = 15,
         step_timeout: float = 30.0,
-        history_image_window: int = 4,
+        history_image_window: int = 3,
         include_date_context: bool = True,
         history_text_window: int = 8,
         progress_callback: ProgressCallback | None = None,
@@ -1006,15 +1080,15 @@ class GuiAgent:
         memory_top_k: int = 5,
         skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
+        shortcuts: dict[str, AppShortcutProfile] | None = None,
+        shortcut_backend: DeviceBackend | None = None,
+        shortcut_cache_dir: Path | str | None = None,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
         memory_store: Any = None,
         agent_profile: str | None = None,
         image_scale_ratio: float = 0.5,
         stagnation_limit: int = 0,
-        graph_session_cursor: Any = None,
-        enable_graph_runtime: bool = True,
-        max_skill_continuations: int = 2,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -1039,10 +1113,14 @@ class GuiAgent:
         self._skill_reuser = skill_reuser
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
+        del shortcuts
+        self._shortcuts: dict[str, AppShortcutProfile] = {}
+        self._shortcut_backend = shortcut_backend
+        self._shortcut_cache_dir = Path(shortcut_cache_dir) if shortcut_cache_dir else None
+        self._shortcut_tools: list[dict[str, Any]] = []
+        self._shortcut_action_map: dict[str, tuple[str, str, str, str | None]] = {}
         self._intervention_handler = intervention_handler
         self._memory_store = memory_store
-        self._graph_session_cursor = graph_session_cursor
-        self._enable_graph_runtime = bool(enable_graph_runtime)
         self._active_retry_summaries: tuple[str, ...] = ()
         self._image_scale_ratio = image_scale_ratio
         try:
@@ -1050,11 +1128,41 @@ class GuiAgent:
         except (TypeError, ValueError):
             parsed_stagnation_limit = 0
         self.stagnation_limit = max(0, parsed_stagnation_limit)
-        try:
-            parsed_max_skill_continuations = int(max_skill_continuations)
-        except (TypeError, ValueError):
-            parsed_max_skill_continuations = 2
-        self.max_skill_continuations = max(0, parsed_max_skill_continuations)
+
+    def _build_tools_list(self) -> list[dict[str, Any]]:
+        tools = [_COMPUTER_USE_TOOL]
+        tools.extend(self._shortcut_tools)
+        return tools
+
+    async def _ensure_shortcuts_for_app(self, foreground_app: str) -> None:
+        """Lazy-load shortcuts when a new foreground app is detected."""
+        app = str(foreground_app or "").strip()
+        if not app or not self._shortcut_cache_dir or not self._shortcut_backend:
+            return
+        if str(getattr(self._shortcut_backend, "platform", self.backend.platform)).lower() != "android":
+            return
+        app = normalize_app_identifier("android", app)
+        if not app or app == "unknown":
+            return
+        if app in self._shortcuts:
+            return
+
+        cache_file = self._shortcut_cache_dir / f"{app}.json"
+        if cache_file.exists():
+            profile = AppShortcutProfile.from_dict(json.loads(cache_file.read_text(encoding="utf-8")))
+        else:
+            from opengui.skills.deeplink import extract_app_shortcuts
+
+            profile = await extract_app_shortcuts(self._shortcut_backend, app)
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(
+                json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        self._shortcuts[app] = profile
+        if profile.deep_links or profile.deep_intents:
+            self._shortcut_tools, self._shortcut_action_map = _build_shortcut_tool_defs(self._shortcuts)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1081,29 +1189,9 @@ class GuiAgent:
 
         skill_context: str | None = None
 
-        # 3. Try graph-native skill execution before flat skill search.  A full
-        # graph path is already a concrete reusable prefix; a prefix-only graph
-        # path may still need a flat skill or the ordinary agent loop.
-        graph_result: Any | None = (
-            await self._try_graph_runtime(task, app_hint=app_hint)
-            if self._enable_graph_runtime
-            else None
-        )
-        graph_completed = False
-        if graph_result is not None:
-            graph_state = getattr(getattr(graph_result, "state", None), "value", None) or str(
-                getattr(graph_result, "state", "")
-            )
-            if graph_state == "succeeded":
-                execution_summary = getattr(graph_result, "execution_summary", None)
-                skill_context = execution_summary if isinstance(execution_summary, str) else None
-                graph_completed = not bool(getattr(graph_result, "prefix_only", False))
-
-        # 4. Search skill library (once); LLM-gated when SkillReuser is available.
+        # 3. Search the flat skill library once; LLM-gated when SkillReuser is available.
         reuser_usage: dict[str, int] = {}
-        if graph_completed:
-            skill_match = None
-        elif self._skill_reuser is not None and self._skill_library is not None:
+        if self._skill_reuser is not None and self._skill_library is not None:
             skill_match = await self._skill_reuser.find(
                 task,
                 self._skill_library,
@@ -1124,9 +1212,8 @@ class GuiAgent:
             else:
                 matched_skill, final_score = skill_match
 
-        # 5. If skill matched, attempt skill execution first.
+        # 4. If skill matched, attempt skill execution first.
         skill_result: Any | None = None
-        continuation_usage: dict[str, int] = {}
         if matched_skill is not None and self._skill_executor is not None and final_score is not None:
             entry_allowed = await self._skill_entry_allows_current_state(matched_skill)
             if not entry_allowed:
@@ -1147,23 +1234,10 @@ class GuiAgent:
                 execution_summary = getattr(skill_result, "execution_summary", None)
                 skill_context = execution_summary if isinstance(execution_summary, str) else None
                 if skill_result.state.value == "succeeded":
-                    continuation_summary, continuation_usage = await self._try_execute_skill_continuations(
-                        task,
-                        matched_skill,
-                        max_continuations=self.max_skill_continuations,
-                    )
-                    if continuation_summary:
-                        skill_context = "\n".join(
-                            part for part in (skill_context, continuation_summary) if part
-                        )
                     # Skill succeeded — fall through to agent for confirmation
                     self._trajectory_recorder.set_phase(
                         ExecutionPhase.AGENT,
-                        reason=(
-                            "Skill continuation complete, agent confirms"
-                            if continuation_summary
-                            else "Skill complete, agent confirms"
-                        ),
+                        reason="Skill complete, agent confirms",
                     )
                 else:
                     # Skill partially succeeded — agent completes the rest
@@ -1189,8 +1263,6 @@ class GuiAgent:
             raw_skill_token_usage = getattr(skill_result, "token_usage", None)
             if isinstance(raw_skill_token_usage, dict):
                 skill_token_usage = dict(raw_skill_token_usage)
-        for k, v in continuation_usage.items():
-            skill_token_usage[k] = skill_token_usage.get(k, 0) + v
         total_usage: dict[str, int] = dict(skill_token_usage)
         for k, v in reuser_usage.items():
             total_usage[k] = total_usage.get(k, 0) + v
@@ -1628,6 +1700,7 @@ class GuiAgent:
                     self._scrub_for_artifact(result.next_observation.extra)
                     if result.next_observation else None
                 ),
+                interaction_target=self._scrub_for_artifact(result.interaction_target),
                 token_usage=result.step_usage or None,
                 duration_s=result.duration_s or None,
                 chat_latency_s=result.chat_latency_s,
@@ -1882,6 +1955,8 @@ class GuiAgent:
     ) -> StepResult:
         """Execute a single vision-action step with retries on malformed calls."""
         _step_start = time.monotonic()
+        fg = str(current_observation.foreground_app or "").strip() if current_observation else ""
+        await self._ensure_shortcuts_for_app(fg)
         retries_left = self._MAX_TOOL_RETRIES + 1
         step_usage: dict[str, int] = {}
         step_chat_latency_s: float = 0.0
@@ -1894,7 +1969,7 @@ class GuiAgent:
             native_tools_enabled = profile_uses_native_tools(self.agent_profile)
             response: LLMResponse = await self.llm.chat(
                 messages=messages,
-                tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                tools=self._build_tools_list() if native_tools_enabled else None,
                 tool_choice="required" if native_tools_enabled else None,
             )
             for k, v in (response.usage or {}).items():
@@ -1908,10 +1983,15 @@ class GuiAgent:
             try:
                 response = normalize_profile_response(self.agent_profile, response)
             except ValueError as exc:
+                detail = f"{exc}. Follow the required response format exactly."
+                feedback = self._build_tool_format_error(
+                    native_tools=native_tools_enabled,
+                    detail=detail,
+                )
                 if retries_left > 0:
                     messages.append({
                         "role": "user",
-                        "content": f"Format error: {exc}. Follow the required response format exactly.",
+                        "content": feedback,
                     })
                     continue
                 raise _StepExecutionError(
@@ -1920,7 +2000,10 @@ class GuiAgent:
                 ) from exc
 
             # Append assistant message
-            assistant_msg = self._build_assistant_message(response)
+            assistant_msg = self._build_assistant_message(
+                response,
+                include_tool_calls=native_tools_enabled,
+            )
             messages.append(assistant_msg)
             assistant_snapshot = self._snapshot_failed_model_response(
                 response,
@@ -1930,10 +2013,17 @@ class GuiAgent:
             # Validate tool call
             if not response.tool_calls or len(response.tool_calls) == 0:
                 if retries_left > 0:
+                    feedback = self._build_tool_format_error(
+                        native_tools=native_tools_enabled,
+                        detail=(
+                            "No action payload found. "
+                            "Return one `Thought:` + `Action:` response "
+                            "in the configured profile format."
+                        ),
+                    )
                     messages.append({
-                        "role": "tool",
-                        "tool_call_id": "error",
-                        "content": "Error: no tool call found. You must use the computer_use tool.",
+                        "role": "user",
+                        "content": feedback,
                     })
                     continue
                 raise _StepExecutionError(
@@ -1942,18 +2032,32 @@ class GuiAgent:
                 )
 
             tool_call = response.tool_calls[0]
-            if tool_call.name != "computer_use":
+            if native_tools_enabled and tool_call.name != "computer_use" and tool_call.name not in self._shortcut_action_map:
                 if retries_left > 0:
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": f"Error: expected 'computer_use' tool, got '{tool_call.name}'.",
+                        "content": f"Error: unexpected tool '{tool_call.name}'.",
                     })
                     continue
                 raise _StepExecutionError(
                     f"LLM called unexpected tool '{tool_call.name}'.",
                     model_snapshot=assistant_snapshot,
                 )
+            if tool_call.name in self._shortcut_action_map:
+                action_type, text, component, mime_type = self._shortcut_action_map[tool_call.name]
+                arguments = {
+                    "action_type": action_type,
+                    "text": text,
+                    "component": component,
+                    "intent": f"Shortcut: {tool_call.name}",
+                    "summary": f"Executing shortcut {tool_call.name}",
+                }
+                if action_type == "open_intent":
+                    arguments["intent_action"] = text
+                    if mime_type:
+                        arguments["mime_type"] = mime_type
+                tool_call = replace(tool_call, arguments=arguments)
             action_intent, state_summary = self._tool_call_semantics(tool_call)
 
             # Parse action
@@ -1962,11 +2066,17 @@ class GuiAgent:
                 action = self._normalize_relative_coordinates(action)
             except ActionError as exc:
                 if retries_left > 0:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": f"Error parsing action: {exc}. Please fix and retry.",
-                    })
+                    if native_tools_enabled:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"Error parsing action: {exc}. Please fix and retry.",
+                        })
+                    else:
+                        messages.append({
+                            "role": "user",
+                            "content": f"Format error: {exc}. Please return {tool_call.name} output in the configured profile format.",
+                        })
                     continue
                 raise _StepExecutionError(
                     f"Failed to parse action after retries: {exc}",
@@ -1988,6 +2098,7 @@ class GuiAgent:
             assistant_message = self._build_assistant_message(
                 response,
                 content_override=action_text,
+                include_tool_calls=native_tools_enabled,
             )
             model_snapshot = self._snapshot_model_response(
                 response=response,
@@ -2065,6 +2176,8 @@ class GuiAgent:
                     )
                     action = replace(action, text=resolved)
 
+            interaction_target = infer_interaction_target(action, current_observation)
+
             # Execute action on backend
             try:
                 result_text = await self.backend.execute(action, timeout=self.step_timeout)
@@ -2080,6 +2193,8 @@ class GuiAgent:
             next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
             next_observation, observe_error = await self._observe_after_action(
                 next_screenshot,
+                previous_observation=current_observation,
+                action=action,
                 timeout=self.step_timeout,
             )
             if observe_error:
@@ -2094,6 +2209,7 @@ class GuiAgent:
                 action_intent=action_summary,
                 state_summary=state_summary,
                 next_observation=next_observation,
+                interaction_target=interaction_target,
                 prompt_snapshot=prompt_snapshot,
                 model_snapshot=model_snapshot,
                 execution_snapshot={
@@ -2134,16 +2250,68 @@ class GuiAgent:
         self,
         screenshot_path: Path,
         *,
+        previous_observation: Observation | None = None,
+        action: Action | None = None,
         timeout: float,
     ) -> tuple[Observation | None, str | None]:
+        # Wait for the UI to reach a short stable state before returning the
+        # observation used by the next planner turn.
+        max_attempts = self._POST_ACTION_STABILITY_MAX_ATTEMPTS
+        if action is not None and action.action_type in self._NO_SETTLE_ACTIONS:
+            max_attempts = 1
+        if action is None or self._post_action_settle_seconds(action) <= 0:
+            max_attempts = min(max_attempts, 1)
+
+        window_seconds = min(timeout, self._POST_ACTION_STABILITY_WINDOW_SECONDS)
+        poll_interval = self._POST_ACTION_STABILITY_POLL_SECONDS
+        observe_timeout = min(timeout, self._POST_ACTION_OBSERVE_TIMEOUT_SECONDS)
+        attempts_within_window = max(
+            1,
+            int(window_seconds / max(poll_interval, 1e-6)),
+        )
+        max_attempts = max(1, min(max_attempts, attempts_within_window))
+
+        previous_fingerprint = (
+            self._build_screen_fingerprint(previous_observation)
+            if previous_observation is not None
+            else None
+        )
+        stable_count = 0
+        stable_required = self._POST_ACTION_STABILITY_FRAMES_REQUIRED
         last_error: str | None = None
-        for attempt in range(3):
+        last_observation: Observation | None = None
+        deadline = time.monotonic() + window_seconds
+
+        for attempt in range(max_attempts):
             try:
-                return await self.backend.observe(screenshot_path, timeout=timeout), None
+                observation = await self.backend.observe(
+                    screenshot_path,
+                    timeout=observe_timeout,
+                )
+                last_observation = observation
+                current_fingerprint = self._build_screen_fingerprint(observation)
+
+                if previous_fingerprint is not None and current_fingerprint is not None:
+                    if self._is_same_screen(previous_fingerprint, current_fingerprint):
+                        stable_count += 1
+                    else:
+                        stable_count = 1
+                        previous_fingerprint = current_fingerprint
+                else:
+                    # Fingerprints are best-effort. If unavailable, just use the
+                    # latest sampled observation as the fallback signal.
+                    stable_count = min(stable_count + 1, stable_required)
+
+                if stable_count >= stable_required:
+                    return observation, None
             except Exception as exc:
                 last_error = str(exc)
-                if attempt < 2:
-                    await asyncio.sleep(0.5 * (attempt + 1))
+
+            if max_attempts > 1 and time.monotonic() < deadline:
+                await asyncio.sleep(poll_interval)
+
+        if last_observation is not None:
+            return last_observation, last_error
         return None, last_error
 
     def _build_screen_fingerprint(self, observation: Observation) -> _ScreenFingerprint | None:
@@ -2266,12 +2434,7 @@ class GuiAgent:
         memory_context: str | None = None,
         skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build the prompt for the current step.
-
-        History is represented as text-only action summaries in the instruction
-        prompt. Only the current screenshot is attached — no history screenshots
-        or raw tool-call parameters are replayed into the context.
-        """
+        """Build the prompt for the current step."""
         messages: list[dict[str, Any]] = [{
             "role": "system",
             "content": build_system_prompt(
@@ -2292,6 +2455,17 @@ class GuiAgent:
             app_hint=app_hint,
             skill_context=skill_context,
         )
+        history_image_count = max(0, self.history_image_window - 1)
+        recent_image_history = history[-history_image_count:] if history_image_count else []
+        for turn in recent_image_history:
+            messages.append(
+                self._history_user_message(
+                    turn.observation,
+                    prompt_text=self._history_image_prompt(turn),
+                )
+            )
+            messages.append(self._history_assistant_message(turn))
+
         messages.append(
             self._current_user_message(
                 current_observation,
@@ -2364,7 +2538,6 @@ class GuiAgent:
                 "Check the current screen. If the task is now complete, call "
                 "done(status=\"success\"). Otherwise, continue with any remaining steps.",
             ])
-
         return "\n".join(lines)
 
     @staticmethod
@@ -2576,6 +2749,23 @@ class GuiAgent:
             content.append(self._image_block(Path(observation.screenshot_path)))
         return {"role": "user", "content": content}
 
+    @staticmethod
+    def _history_image_prompt(turn: HistoryTurn) -> str:
+        return (
+            f"Historical screen before Step {turn.step_index}. "
+            "The next assistant message summarizes the action taken from this screen."
+        )
+
+    @staticmethod
+    def _history_assistant_message(turn: HistoryTurn) -> dict[str, Any]:
+        lines = [f"Step {turn.step_index}: {turn.action_intent or turn.action_summary}"]
+        if turn.state_summary and turn.state_summary.strip():
+            lines.append(f"State summary: {turn.state_summary.strip()}")
+        tool_result = turn.tool_result_message.get("content")
+        if isinstance(tool_result, str) and tool_result.strip():
+            lines.append(f"Tool result: {tool_result.strip()}")
+        return {"role": "assistant", "content": "\n".join(lines)}
+
     def _current_user_message(
         self,
         observation: Observation,
@@ -2615,6 +2805,7 @@ class GuiAgent:
         response: LLMResponse,
         *,
         content_override: str | None = None,
+        include_tool_calls: bool = True,
     ) -> dict[str, Any]:
         """Build an assistant message dict from an LLM response."""
         msg: dict[str, Any] = {"role": "assistant"}
@@ -2623,7 +2814,7 @@ class GuiAgent:
         if content:
             msg["content"] = content
 
-        if response.tool_calls:
+        if include_tool_calls and response.tool_calls:
             msg["tool_calls"] = [
                 {
                     "id": tc.id,
@@ -2638,6 +2829,33 @@ class GuiAgent:
             ]
 
         return msg
+
+    @staticmethod
+    def _extract_action_line_from_response(content: str) -> str | None:
+        parts = content.split("Action:", 1)
+        if len(parts) != 2:
+            return None
+
+        action_line = parts[1].strip().splitlines()
+        if not action_line:
+            return None
+
+        first_line = action_line[0].strip()
+        if not first_line:
+            return None
+
+        first_line = first_line.strip('"')
+        return first_line.strip()
+
+    @staticmethod
+    def _build_tool_format_error(
+        *,
+        native_tools: bool,
+        detail: str,
+    ) -> str:
+        if native_tools:
+            return f"Error: {detail}"
+        return "Format error: " + detail
 
     def _snapshot_step_prompt(
         self,
@@ -2726,6 +2944,9 @@ class GuiAgent:
         if summary:
             return f"Action: {summary}"
         text = content.strip() if content else ""
+        action_line = GuiAgent._extract_action_line_from_response(text)
+        if action_line:
+            return f"Action: {action_line}"
         if text:
             first_line = text.splitlines()[0].strip()
             if first_line.lower().startswith("action:"):
@@ -3169,134 +3390,6 @@ class GuiAgent:
             context=context,
         )
 
-    async def _try_graph_runtime(
-        self,
-        task: str,
-        *,
-        app_hint: str | None,
-    ) -> Any | None:
-        if not self._enable_graph_runtime:
-            return None
-        if self._skill_library is None:
-            return None
-        store_dir = getattr(self._skill_library, "store_dir", None)
-        if store_dir is None:
-            return None
-        try:
-            from opengui.skills.graph import (
-                SkillGraphStore,
-                infer_app_hint_from_task,
-                infer_explicit_app_hint_from_task,
-            )
-            from opengui.skills.graph_runtime import GraphRuntimeExecutor
-            from opengui.skills.normalization import normalize_app_identifier
-        except Exception:
-            logger.debug("Graph runtime unavailable", exc_info=True)
-            return None
-
-        try:
-            sync_graph_cache = getattr(self._skill_library, "sync_graph_cache", None)
-            if callable(sync_graph_cache):
-                await sync_graph_cache()
-            graph = SkillGraphStore(
-                store_dir=Path(store_dir),
-                embedding_provider=getattr(self._skill_library, "embedding_provider", None),
-                embedding_signature=getattr(self._skill_library, "embedding_signature", None),
-            )
-            if graph.count_nodes == 0:
-                return None
-            effective_app_hint = app_hint
-            graph_apps = {
-                normalize_app_identifier(self.backend.platform, node.app)
-                for node in graph.list_nodes(platform=self.backend.platform)
-                if getattr(node, "app", None)
-            }
-            graph_apps.discard("unknown")
-            if effective_app_hint is None:
-                explicit_app_hint = infer_explicit_app_hint_from_task(
-                    task,
-                    platform=self.backend.platform,
-                )
-                if explicit_app_hint is not None:
-                    if explicit_app_hint not in graph_apps:
-                        self._trajectory_recorder.record_event(
-                            "graph_runtime_skipped",
-                            reason="requested_app_not_in_graph",
-                            requested_app=explicit_app_hint,
-                            graph_app_count=len(graph_apps),
-                        )
-                        return None
-                    effective_app_hint = explicit_app_hint
-                else:
-                    effective_app_hint = infer_app_hint_from_task(
-                        task,
-                        platform=self.backend.platform,
-                        candidate_apps=graph_apps,
-                    )
-            elif graph_apps:
-                normalized_hint = normalize_app_identifier(self.backend.platform, effective_app_hint)
-                if normalized_hint != "unknown" and normalized_hint not in graph_apps:
-                    self._trajectory_recorder.record_event(
-                        "graph_runtime_skipped",
-                        reason="requested_app_not_in_graph",
-                        requested_app=normalized_hint,
-                        graph_app_count=len(graph_apps),
-                    )
-                    return None
-                effective_app_hint = normalized_hint if normalized_hint != "unknown" else effective_app_hint
-
-            self._trajectory_recorder.set_phase(
-                ExecutionPhase.SKILL,
-                reason="Skill graph runtime attempt",
-            )
-            runtime = GraphRuntimeExecutor(
-                store=graph,
-                backend=self.backend,
-                artifacts_root=self.artifacts_root,
-                trajectory_recorder=self._trajectory_recorder,
-                timeout=self.step_timeout,
-                session_cursor=self._graph_session_cursor,
-            )
-            result = await runtime.execute(
-                task,
-                platform=self.backend.platform,
-                app_hint=effective_app_hint,
-            )
-        except Exception as exc:
-            self._trajectory_recorder.set_phase(
-                ExecutionPhase.AGENT,
-                reason="Skill graph runtime failed, falling back",
-            )
-            self._trajectory_recorder.record_event(
-                "graph_runtime_result",
-                state="failed",
-                error=str(exc),
-                exception_type=type(exc).__name__,
-            )
-            logger.debug("Graph runtime setup/execution failed", exc_info=True)
-            return None
-        if result.state.value == "succeeded":
-            self._trajectory_recorder.set_phase(
-                ExecutionPhase.AGENT,
-                reason="Skill graph runtime complete, agent confirms",
-            )
-        else:
-            self._trajectory_recorder.set_phase(
-                ExecutionPhase.AGENT,
-                reason="Skill graph runtime failed, falling back",
-            )
-        self._trajectory_recorder.record_event(
-            "graph_runtime_result",
-            state=result.state.value,
-            error=result.error,
-            summary=result.execution_summary,
-            goal_status=getattr(result.goal_resolution, "status", None),
-            path_status=getattr(result.path, "status", None),
-            prefix_only=getattr(result, "prefix_only", False),
-            prefix_terminal_node_id=getattr(result, "prefix_terminal_node_id", None),
-        )
-        return result
-
     async def _search_skill(self, task: str) -> Any | None:
         """Search the skill library and return the top match when above threshold."""
         if self._skill_library is None:
@@ -3378,224 +3471,6 @@ class GuiAgent:
                     "missing required skill params: " + ", ".join(missing_params)
                 )
         return await self._skill_executor.execute(skill, params=skill_params)
-
-    async def _try_execute_skill_continuations(
-        self,
-        task: str,
-        initial_skill: Any,
-        *,
-        max_continuations: int = 2,
-    ) -> tuple[str | None, dict[str, int]]:
-        """Execute locally matched suffix skills after a successful skill."""
-        summaries: list[str] = []
-        token_usage: dict[str, int] = {}
-        current_skill = initial_skill
-        seen: set[tuple[str, int]] = set()
-        executed_skill_ids: set[str] = {
-            str(getattr(initial_skill, "skill_id", "") or "")
-        }
-        continuation_limit = max(0, int(max_continuations))
-        if continuation_limit <= 0:
-            return None, {}
-        if self._skill_library is None:
-            self._trajectory_recorder.record_event(
-                "skill_continuation_rejected",
-                current_skill_id=str(getattr(initial_skill, "skill_id", "") or ""),
-                current_skill_name=str(getattr(initial_skill, "name", "") or ""),
-                reason="no_library",
-                platform=getattr(self.backend, "platform", None),
-                app=str(getattr(initial_skill, "app", "") or "") or None,
-            )
-            return None, {}
-        try:
-            from opengui.skills.continuation import CodeSkillContinuationIndex
-
-            continuation_index = await CodeSkillContinuationIndex.from_library(
-                self._skill_library,
-                platform=getattr(self.backend, "platform", None),
-            )
-        except Exception as exc:
-            self._trajectory_recorder.record_event(
-                "skill_continuation_rejected",
-                current_skill_id=str(getattr(initial_skill, "skill_id", "") or ""),
-                current_skill_name=str(getattr(initial_skill, "name", "") or ""),
-                reason="index_build_failed",
-                error=str(exc),
-                exception_type=type(exc).__name__,
-                platform=getattr(self.backend, "platform", None),
-                app=str(getattr(initial_skill, "app", "") or "") or None,
-            )
-            return None, {}
-        if not tuple(getattr(continuation_index, "candidates", ()) or ()):
-            self._trajectory_recorder.record_event(
-                "skill_continuation_rejected",
-                current_skill_id=str(getattr(initial_skill, "skill_id", "") or ""),
-                current_skill_name=str(getattr(initial_skill, "name", "") or ""),
-                reason="no_candidates",
-                checked_count=0,
-                platform=getattr(self.backend, "platform", None),
-                app=str(getattr(initial_skill, "app", "") or "") or None,
-            )
-            return None, {}
-
-        for hop_index in range(continuation_limit):
-            suffix_skill = await self._find_skill_continuation(
-                current_skill,
-                continuation_index=continuation_index,
-                hop_index=hop_index,
-                excluded_skill_ids=executed_skill_ids,
-            )
-            if suffix_skill is None:
-                break
-
-            skill_id = str(getattr(suffix_skill, "skill_id", "") or "")
-            skill_name = str(getattr(suffix_skill, "name", "") or "")
-            cycle_key = (skill_id, len(tuple(getattr(suffix_skill, "steps", ()) or ())))
-            if cycle_key in seen:
-                self._trajectory_recorder.record_event(
-                    "skill_continuation_rejected",
-                    current_skill_id=str(getattr(current_skill, "skill_id", "") or ""),
-                    current_skill_name=str(getattr(current_skill, "name", "") or ""),
-                    skill_id=skill_id,
-                    skill_name=skill_name,
-                    reason="cycle_detected",
-                )
-                break
-            seen.add(cycle_key)
-
-            self._trajectory_recorder.set_phase(
-                ExecutionPhase.SKILL,
-                reason=f"Skill continuation: {skill_name}",
-            )
-            try:
-                result = await self._execute_skill_with_params(task, suffix_skill)
-            except Exception as exc:
-                self._trajectory_recorder.record_event(
-                    "skill_continuation_result",
-                    skill_id=skill_id,
-                    skill_name=skill_name,
-                    state="failed",
-                    error=str(exc),
-                    exception_type=type(exc).__name__,
-                )
-                self._trajectory_recorder.set_phase(
-                    ExecutionPhase.AGENT,
-                    reason="Skill continuation failed, agent completes",
-                )
-                break
-
-            raw_usage = getattr(result, "token_usage", None)
-            if isinstance(raw_usage, dict):
-                for key, value in raw_usage.items():
-                    token_usage[key] = token_usage.get(key, 0) + value
-
-            state_value = getattr(getattr(result, "state", None), "value", None) or str(
-                getattr(result, "state", "")
-            )
-            execution_summary = getattr(result, "execution_summary", None)
-            self._trajectory_recorder.record_event(
-                "skill_continuation_result",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                state=state_value,
-                execution_summary=execution_summary if isinstance(execution_summary, str) else None,
-                error=getattr(result, "error", None),
-                step_count=len(tuple(getattr(suffix_skill, "steps", ()) or ())),
-            )
-            if state_value != "succeeded":
-                self._trajectory_recorder.set_phase(
-                    ExecutionPhase.AGENT,
-                    reason="Skill continuation partially succeeded, agent completes",
-                )
-                break
-
-            if isinstance(execution_summary, str) and execution_summary:
-                summaries.append(execution_summary)
-            current_skill = suffix_skill
-            if skill_id:
-                executed_skill_ids.add(skill_id)
-
-        return ("\n".join(summaries) if summaries else None), token_usage
-
-    async def _find_skill_continuation(
-        self,
-        current_skill: Any,
-        *,
-        continuation_index: Any,
-        hop_index: int,
-        excluded_skill_ids: set[str] | None = None,
-    ) -> Any | None:
-        """Find a suffix skill whose first state contract matches the current page."""
-        current_skill_id = str(getattr(current_skill, "skill_id", "") or "")
-        current_skill_name = str(getattr(current_skill, "name", "") or "")
-        current_app = str(getattr(current_skill, "app", "") or "") or None
-        screenshot_path = (
-            self.artifacts_root
-            / "skill_continuation_gate"
-            / f"continuation_{max(0, int(hop_index))}.png"
-        )
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            observation = await self.backend.observe(
-                screenshot_path,
-                timeout=self.step_timeout,
-            )
-        except Exception as exc:
-            logger.warning("Skill continuation observation failed for %s: %s", current_skill_name, exc)
-            self._trajectory_recorder.record_event(
-                "skill_continuation_rejected",
-                current_skill_id=current_skill_id,
-                current_skill_name=current_skill_name,
-                reason="observe_failed",
-                error=str(exc),
-                platform=getattr(self.backend, "platform", None),
-                app=current_app,
-            )
-            return None
-        observed_app = _clean_observed_app(getattr(observation, "foreground_app", None))
-        effective_app = observed_app or current_app
-        decision = continuation_index.find_next(
-            observation,
-            current_skill_id=current_skill_id,
-            excluded_skill_ids=excluded_skill_ids,
-            app=effective_app,
-        )
-        if decision.candidate is None:
-            self._trajectory_recorder.record_event(
-                "skill_continuation_rejected",
-                current_skill_id=current_skill_id,
-                current_skill_name=current_skill_name,
-                reason=decision.reason,
-                checked_count=decision.checked_count,
-                failed_count=decision.failed_count,
-                unevaluable_count=decision.unevaluable_count,
-                platform=getattr(self.backend, "platform", None),
-                app=effective_app,
-                skill_app=current_app,
-                observed_app=observed_app,
-            )
-            return None
-
-        candidate = decision.candidate
-        suffix_skill = candidate.suffix_skill
-        self._trajectory_recorder.record_event(
-            "skill_continuation_selected",
-            skill_id=suffix_skill.skill_id,
-            skill_name=suffix_skill.name,
-            source_skill_id=candidate.source_skill.skill_id,
-            source_skill_name=candidate.source_skill.name,
-            start_step=candidate.start_step,
-            remaining_steps=len(suffix_skill.steps),
-            reason=decision.reason,
-            checked_count=decision.checked_count,
-            failed_count=decision.failed_count,
-            unevaluable_count=decision.unevaluable_count,
-            platform=getattr(self.backend, "platform", None),
-            app=effective_app,
-            skill_app=current_app,
-            observed_app=observed_app,
-        )
-        return suffix_skill
 
     async def _skill_entry_allows_current_state(self, skill: Any) -> bool:
         """Fail closed on mid-flow skills unless their first contract matches now."""

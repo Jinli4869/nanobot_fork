@@ -32,6 +32,7 @@ from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.state_contract import (
     infer_state_contract,
     normalize_state_contract,
+    infer_interaction_target,
 )
 
 logger = logging.getLogger(__name__)
@@ -419,9 +420,23 @@ class SkillExtractor:
         is_success:
             Whether the trajectory represents a successful or failed task.
         """
+        skills = await self.extract_from_file_multi(trajectory_path, is_success=is_success)
+        return skills[0] if skills else None
+
+    async def extract_from_file_multi(
+        self,
+        trajectory_path: Path,
+        *,
+        is_success: bool = True,
+    ) -> list[Skill]:
+        """Read a trajectory JSONL and extract one or more skills by app foreground.
+
+        The trajectory is split by foreground app change. Each segment is extracted
+        independently; this preserves reusability for mixed-app workflows.
+        """
         if not trajectory_path.exists():
             logger.warning("Trajectory file not found: %s", trajectory_path)
-            return None
+            return []
 
         lines = trajectory_path.read_text(encoding="utf-8").strip().splitlines()
         events = [json.loads(line) for line in lines if line.strip()]
@@ -444,11 +459,11 @@ class SkillExtractor:
                 "Trajectory too short (%d agent steps, %d skill steps)",
                 len(agent_steps), len(skill_steps),
             )
-            return None
+            return []
 
-        return await self._extract(
-            trajectory,
-            screenshot_events,
+        return await self._extract_segments(
+            trajectory=trajectory,
+            screenshot_events=screenshot_events,
             is_success=is_success,
             platform_hint=platform_hint,
         )
@@ -462,13 +477,68 @@ class SkillExtractor:
         """Extract a skill from pre-parsed agent step dicts (backward-compatible)."""
         if len(steps) < 2:
             return None
+        skills = await self.extract_from_steps_multi(steps, is_success=is_success)
+        return skills[0] if skills else None
+
+    async def extract_from_steps_multi(
+        self,
+        steps: list[dict[str, Any]],
+        *,
+        is_success: bool = True,
+    ) -> list[Skill]:
+        """Extract skills from pre-parsed steps, split by foreground app change."""
+        if len(steps) < 1:
+            return []
         trajectory: dict[str, Any] = {"agent_phase": steps}
         platform_hint = _platform_hint_from_trajectory(trajectory)
         _attach_platform_hint(trajectory, platform_hint)
         screenshot_events = [s for s in steps if s.get("screenshot_path")]
+        return await self._extract_segments(
+            trajectory=trajectory,
+            screenshot_events=screenshot_events,
+            is_success=is_success,
+            platform_hint=platform_hint,
+        )
+
+    async def _extract_segments(
+        self,
+        *,
+        trajectory: dict[str, Any],
+        screenshot_events: list[dict[str, Any]],
+        is_success: bool,
+        platform_hint: str | None = None,
+    ) -> list[Skill]:
+        segments = _segment_trajectory_by_foreground_app(
+            trajectory=trajectory,
+            screenshot_events=screenshot_events,
+            platform_hint=platform_hint,
+        )
+        if not segments:
+            return []
+
+        out: list[Skill] = []
+        for segment_trajectory, segment_screenshot_events in segments:
+            skill = await self._extract_single(
+                segment_trajectory,
+                segment_screenshot_events,
+                is_success=is_success,
+                platform_hint=platform_hint,
+            )
+            if skill is not None:
+                out.append(skill)
+        return out
+
+    async def _extract_single(
+        self,
+        trajectory: dict[str, Any],
+        screenshot_events: list[dict[str, Any]],
+        *,
+        is_success: bool,
+        platform_hint: str | None = None,
+    ) -> Skill | None:
         return await self._extract(
-            trajectory,
-            screenshot_events,
+            trajectory=trajectory,
+            screenshot_events=screenshot_events,
             is_success=is_success,
             platform_hint=platform_hint,
         )
@@ -621,15 +691,19 @@ class SkillExtractor:
                 # executor can bypass grounding; parameters are kept as-is for
                 # documentation and template-fallback purposes.
                 fixed_values = dict(parameters) if fixed else {}
-                aligned_extra, trace_cursor = _aligned_observation_extra_for_step(
+                aligned_extra, interaction_target, trace_cursor = _aligned_step_evidence_for_step(
                     s,
                     trace_steps,
                     start_index=trace_cursor,
                 )
+                interaction_contract = _contract_from_interaction_target(interaction_target)
                 inferred_contract = (
-                    infer_state_contract(s, observation_extra=aligned_extra, app=app)
-                    if aligned_extra is not None
-                    else None
+                    interaction_contract
+                    or (
+                        infer_state_contract(s, observation_extra=aligned_extra, app=app)
+                        if aligned_extra is not None
+                        else None
+                    )
                 )
                 state_contract = _merge_step_contract(
                     s.get("state_contract"),
@@ -780,6 +854,7 @@ def _build_full_trajectory(
             "model_output": e.get("model_output"),
             "foreground_app": (e.get("observation") or {}).get("foreground_app"),
             "observation": _compact_observation_for_extraction(e.get("observation")),
+            "interaction_target": e.get("interaction_target"),
         }
         for e in agent_steps_raw
     ]
@@ -794,6 +869,102 @@ def _build_full_trajectory(
         trajectory["agent_phase"] = agent_phase
 
     return trajectory, screenshot_events
+
+
+def _segment_trajectory_by_foreground_app(
+    trajectory: dict[str, Any],
+    screenshot_events: list[dict[str, Any]],
+    platform_hint: str | None = None,
+) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    """Split trajectory by foreground app change and return per-segment inputs.
+
+    Returns:
+        A list of ``(trajectory, screenshot_events)`` pairs. Each trajectory keeps
+        the same metadata and only the ``agent_phase`` steps for that segment.
+    """
+    if not isinstance(trajectory, dict):
+        return []
+
+    agent_phase = trajectory.get("agent_phase")
+    if not isinstance(agent_phase, list) or not agent_phase:
+        return []
+
+    metadata = trajectory.get("metadata")
+    metadata_payload = (
+        dict(metadata) if isinstance(metadata, dict) else {}
+    )
+
+    screenshot_by_step_index: dict[Any, list[dict[str, Any]]] = {}
+    for event in screenshot_events:
+        step_index = event.get("step_index")
+        if step_index is None:
+            continue
+        screenshot_by_step_index.setdefault(step_index, []).append(event)
+
+    segments: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    current_steps: list[dict[str, Any]] = []
+    current_app: str | None = None
+
+    for step in agent_phase:
+        if not isinstance(step, dict):
+            continue
+
+        step_app = _step_foreground_app_for_segmentation(step, platform_hint=platform_hint)
+        if current_steps and step_app is not None and current_app is not None and step_app != current_app:
+            segments.append(_build_segment_payload(
+                current_steps,
+                metadata_payload,
+                screenshot_by_step_index,
+            ))
+            current_steps = []
+            current_app = None
+
+        if current_app is None and step_app is not None:
+            current_app = step_app
+        current_steps.append(step)
+
+    if current_steps:
+        segments.append(_build_segment_payload(
+            current_steps,
+            metadata_payload,
+            screenshot_by_step_index,
+        ))
+
+    return segments
+
+
+def _build_segment_payload(
+    steps: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    screenshot_by_step_index: dict[Any, list[dict[str, Any]]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    step_indices = {s.get("step_index") for s in steps}
+    screenshots: list[dict[str, Any]] = []
+    for step_index in step_indices:
+        screenshots.extend(screenshot_by_step_index.get(step_index, []))
+
+    trajectory: dict[str, Any] = {"agent_phase": steps}
+    if metadata:
+        trajectory["metadata"] = dict(metadata)
+
+    return trajectory, screenshots
+
+
+def _step_foreground_app_for_segmentation(
+    step: dict[str, Any],
+    *,
+    platform_hint: str | None = None,
+) -> str | None:
+    observation = step.get("observation")
+    raw_app = step.get("foreground_app")
+    if isinstance(observation, dict):
+        raw_app = observation.get("foreground_app") or raw_app or observation.get("app")
+    if raw_app in ("", None):
+        return None
+    if platform_hint:
+        normalized = normalize_app_identifier(platform_hint, str(raw_app))
+        return None if normalized in {"", "unknown"} else normalized
+    return str(raw_app).strip() or None
 
 
 def _trace_steps_for_contract_alignment(
@@ -813,14 +984,14 @@ def _trace_steps_for_contract_alignment(
     return out
 
 
-def _aligned_observation_extra_for_step(
+def _aligned_step_evidence_for_step(
     step_payload: dict[str, Any],
     trace_steps: list[dict[str, Any]],
     *,
     start_index: int,
-) -> tuple[dict[str, Any] | None, int]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, int]:
     if not trace_steps:
-        return None, start_index
+        return None, None, start_index
 
     best_score = 0.0
     best_index: int | None = None
@@ -832,13 +1003,107 @@ def _aligned_observation_extra_for_step(
         if score >= 0.85:
             break
 
+    def aligned_observation_for_trace_index(
+        step_index: int,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        if step_index < 0 or step_index >= len(trace_steps):
+            return None, None
+
+        trace_step = trace_steps[step_index]
+        if not isinstance(trace_step, dict):
+            return None, None
+
+        trace_observation = trace_step.get("observation")
+        previous_observation: dict[str, Any] | None = None
+        if step_index > 0:
+            candidate = trace_steps[step_index - 1].get("observation")
+            if isinstance(candidate, dict):
+                previous_observation = candidate
+
+        step_action_type = str(_normalize_alignment_text(step_payload.get("action_type")))
+
+        # For pointer actions and input actions, contract inference is
+        # usually more stable from the pre-action frame.
+        if step_action_type in {"tap", "double_tap", "long_press", "input_text"}:
+            if previous_observation is not None:
+                trace_observation = previous_observation
+
+        # For coordinate actions, the interaction target belongs to the
+        # pre-action frame, so prefer previous observation when available.
+        if step_action_type in {"tap", "double_tap", "long_press"}:
+            interaction_target = _interaction_target_from_trace_step(
+                trace_step,
+                fallback_observation=previous_observation,
+            )
+        else:
+            interaction_target = _interaction_target_from_trace_step(trace_step)
+
+        if trace_observation and isinstance(trace_observation, dict):
+            trace_extra = trace_observation.get("extra")
+            if isinstance(trace_extra, dict):
+                return trace_extra, interaction_target
+
+        if interaction_target is not None:
+            return None, interaction_target
+        return None, None
+
     if best_index is None or best_score < 0.65:
-        return None, start_index
+        expected_action = _normalize_alignment_text(step_payload.get("action_type"))
+        if expected_action:
+            for fallback_index in range(start_index, len(trace_steps)):
+                fallback_step = trace_steps[fallback_index]
+                if _normalize_alignment_text(_trace_action_type(fallback_step)) != expected_action:
+                    continue
+                extra, fallback_target = aligned_observation_for_trace_index(fallback_index)
+                return extra, fallback_target, fallback_index + 1
+        return None, None, start_index
+
+    observation, interaction_target = aligned_observation_for_trace_index(best_index)
+    if observation is not None:
+        return observation, interaction_target, best_index + 1
+
     observation = trace_steps[best_index].get("observation")
     if not isinstance(observation, dict):
-        return None, best_index + 1
+        return None, _interaction_target_from_trace_step(
+            trace_steps[best_index],
+            fallback_observation=None,
+        ), best_index + 1
     extra = observation.get("extra")
-    return (extra if isinstance(extra, dict) else None), best_index + 1
+    return (
+        extra if isinstance(extra, dict) else None,
+        _interaction_target_from_trace_step(
+            trace_steps[best_index],
+            fallback_observation=None,
+        ),
+        best_index + 1,
+    )
+
+
+def _interaction_target_from_trace_step(
+    trace_step: dict[str, Any],
+    *,
+    fallback_observation: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    target = trace_step.get("interaction_target")
+    if isinstance(target, dict):
+        return target
+    action = trace_step.get("action")
+    observation = trace_step.get("observation")
+    if fallback_observation is not None:
+        observation = fallback_observation
+    if not isinstance(action, dict) or not isinstance(observation, dict):
+        return None
+    return infer_interaction_target(action, observation)
+
+
+def _contract_from_interaction_target(target: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(target, dict):
+        return None
+    contract = normalize_state_contract(target.get("state_contract"))
+    if not contract:
+        return None
+    required = contract.get("signature", {}).get("required", [])
+    return contract if len(required) == 1 else None
 
 
 def _trace_step_alignment_score(step_payload: dict[str, Any], trace_step: dict[str, Any]) -> float:

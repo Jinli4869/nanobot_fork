@@ -154,6 +154,7 @@ class TrajectoryRecorder:
         screen_height: int | None = None,
         platform: str | None = None,
         observation_extra: dict[str, Any] | None = None,
+        interaction_target: dict[str, Any] | None = None,
         phase: ExecutionPhase | None = None,
         token_usage: dict[str, int] | None = None,
         duration_s: float | None = None,
@@ -180,6 +181,8 @@ class TrajectoryRecorder:
             Platform identifier (android, macos, etc.).
         observation_extra:
             Compact structured observation metadata such as UI-tree text lists.
+        interaction_target:
+            Pre-action UI node/contract matched by the action coordinates.
         phase:
             Override current phase for this step.
         token_usage:
@@ -219,6 +222,8 @@ class TrajectoryRecorder:
             "screenshot_path": screenshot_path,
             "observation": obs,
         }
+        if interaction_target:
+            event["interaction_target"] = interaction_target
         if token_usage:
             event["token_usage"] = token_usage
         if duration_s is not None:
@@ -288,7 +293,11 @@ class TrajectoryRecorder:
     ) -> None:
         if self._metrics_path is None:
             self._metrics_path = self.output_dir / "gui_metrics.json"
-        total_token_usage = token_usage or _sum_step_token_usage(self._step_metrics)
+        # Prefer step-level accumulated usage so totals always reflect all recorded
+        # steps (including multi-attempt trajectories) even when the final result
+        # returns a smaller aggregate from the last attempt.
+        step_token_usage = _sum_step_token_usage(self._step_metrics)
+        total_token_usage = step_token_usage or token_usage or {}
         payload = {
             "task": self.task,
             "platform": self.platform,

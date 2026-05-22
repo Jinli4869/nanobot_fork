@@ -1072,14 +1072,14 @@ class SkillExecutor:
                 step.action_type,
             )
             return bool(contract_detail.passed), {}, None
-        if step.state_contract is not None:
-            logger.debug(
-                "State contract could not be evaluated for step %s; failing closed",
-                step.action_type,
-            )
-            return False, {}, None
 
         if _should_skip_validation(step.valid_state):
+            if step.state_contract is not None:
+                logger.debug(
+                    "State contract could not be evaluated for step %s and no valid_state fallback exists",
+                    step.action_type,
+                )
+                return False, {}, None
             self._last_contract_eval_detail = None
             return True, {}, None
 

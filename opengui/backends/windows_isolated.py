@@ -129,7 +129,7 @@ class WindowsIsolatedBackend:
             response = await self._send_worker_command(
                 {
                     "command": "execute",
-                    "action": dataclasses.asdict(action),
+                    "action": _serialize_action_for_windows_worker(action),
                     "timeout": timeout,
                 }
             )
@@ -365,3 +365,44 @@ class WindowsIsolatedBackend:
         flush = getattr(stdin, "flush", None)
         if callable(flush):
             flush()
+
+
+def _serialize_action_for_windows_worker(action: Action) -> dict[str, Any]:
+    payload = dataclasses.asdict(action)
+    normalized: dict[str, Any] = {
+        key: payload[key]
+        for key in (
+            "action_type",
+            "x",
+            "y",
+            "x2",
+            "y2",
+            "text",
+            "key",
+            "pixels",
+            "duration_ms",
+            "relative",
+            "status",
+            "auto_enter",
+            "component",
+            "package",
+            "intent_action",
+            "mime_type",
+            "categories",
+            "extras",
+        )
+        if key in payload
+    }
+    if normalized.get("component") is None:
+        normalized.pop("component", None)
+    if normalized.get("package") is None:
+        normalized.pop("package", None)
+    if normalized.get("intent_action") is None:
+        normalized.pop("intent_action", None)
+    if normalized.get("mime_type") is None:
+        normalized.pop("mime_type", None)
+    if not normalized.get("categories"):
+        normalized.pop("categories", None)
+    if not normalized.get("extras"):
+        normalized.pop("extras", None)
+    return normalized

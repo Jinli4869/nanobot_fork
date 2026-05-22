@@ -11,9 +11,8 @@ import re
 from typing import Any
 
 from opengui.interfaces import LLMProvider
-from opengui.skills.shortcut import ParameterSlot
 
-from opengui.grounding.protocol import GroundingContext, GroundingResult
+from opengui.grounding.protocol import GroundingContext, GroundingResult, ParameterSlot
 
 
 class LLMGrounder:

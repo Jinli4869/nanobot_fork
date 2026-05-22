@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import inspect
 import time
 from contextlib import AsyncExitStack, nullcontext
 from pathlib import Path
@@ -849,6 +850,7 @@ class AgentLoop:
 
     async def close_mcp(self) -> None:
         """Drain pending background archives, then close MCP connections."""
+        await self._shutdown_tools()
         if self._background_tasks:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
             self._background_tasks.clear()
@@ -858,6 +860,22 @@ class AgentLoop:
             except (RuntimeError, BaseExceptionGroup):
                 logger.debug("MCP server '{}' cleanup error (can be ignored)", name)
         self._mcp_stacks.clear()
+
+    async def _shutdown_tools(self) -> None:
+        shutdown_calls: list[Awaitable[None]] = []
+        for tool in getattr(self.tools, "_tools", {}).values():
+            shutdown = getattr(tool, "shutdown", None)
+            if not callable(shutdown):
+                continue
+            try:
+                result = shutdown()
+                if inspect.isawaitable(result):
+                    shutdown_calls.append(result)
+            except Exception:
+                logger.exception("Tool '{}' shutdown failed", tool.name if hasattr(tool, "name") else tool)
+
+        if shutdown_calls:
+            await asyncio.gather(*shutdown_calls, return_exceptions=True)
 
     def _schedule_background(self, coro) -> None:
         """Schedule a coroutine as a tracked background task (drained on shutdown)."""

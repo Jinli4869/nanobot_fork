@@ -19,7 +19,7 @@ from opengui.memory.retrieval import MemoryRetriever
 from opengui.memory.store import MemoryStore
 from opengui.memory.types import MemoryEntry, MemoryType
 from opengui.skills.data import Skill, SkillStep
-from opengui.skills.library import SkillLibrary
+from opengui.skills.flat import FlatSkillLibrary
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 # ---------------------------------------------------------------------------
@@ -142,7 +142,7 @@ async def test_memory_injected_into_system_prompt(tmp_path: Path) -> None:
 async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
     """When a matching skill exists above threshold, GuiAgent should use SkillExecutor path."""
     embedder = _FakeEmbedder()
-    lib = SkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
+    lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     skill = Skill(
         skill_id="wifi-toggle", name="Toggle Wi-Fi",
         description="Toggle Wi-Fi in Settings", app="com.android.settings",
@@ -158,7 +158,6 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
         ),
     )
     lib.add(skill)
-    await lib._rebuild_index()
 
     # Mock executor that returns success
     mock_executor = AsyncMock()
@@ -198,14 +197,13 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
 async def test_free_explore_when_no_skill_match(tmp_path: Path) -> None:
     """When no skill matches, GuiAgent should use free exploration."""
     embedder = _FakeEmbedder()
-    lib = SkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
+    lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     # Add an unrelated skill
     lib.add(Skill(
         skill_id="unrelated", name="Send Email",
         description="Send an email via Gmail", app="com.google.android.gm",
         platform="android",
     ))
-    await lib._rebuild_index()
 
     llm = _RecordingLLM([_done_response()])
     recorder = _make_recorder(tmp_path, "Open calculator")
@@ -276,7 +274,7 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
 
     # Seed skill library
     embedder = _FakeEmbedder()
-    lib = SkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
+    lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     skill = Skill(
         skill_id="open-settings", name="Open Settings",
         description="Open the Settings app", app="com.android.settings",
@@ -284,7 +282,6 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
         steps=(SkillStep(action_type="open_app", target="com.android.settings"),),
     )
     lib.add(skill)
-    await lib._rebuild_index()
 
     mock_executor = AsyncMock()
     mock_exec_result = AsyncMock()

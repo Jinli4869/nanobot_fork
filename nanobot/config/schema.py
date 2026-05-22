@@ -292,9 +292,8 @@ class GuiConfig(Base):
     image_scale_ratio: float = 0.5
     capture_ttft: bool = False
     enable_skill_extraction: bool = False
-    enable_deeplink_skill_extraction: bool = False
     enable_skill_execution: bool = False
-    enable_skill_graph: bool = True
+    shortcut_apps: list[str] = Field(default_factory=list)
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
 
     @field_validator("agent_profile")

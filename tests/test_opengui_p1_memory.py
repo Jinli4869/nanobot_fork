@@ -355,20 +355,20 @@ async def test_retriever_bm25_chinese_search() -> None:
 
 
 async def test_skill_library_search_chinese_bm25() -> None:
-    """SkillLibrary.search() must return matching Chinese-described skills via shared _BM25Index.
+    """FlatSkillLibrary.search() must return matching Chinese-described skills.
 
     Creates a library with three skills that have Chinese descriptions and searches
     with a Chinese compound-word query. Verifies the correct skill is returned.
     """
     from opengui.skills.data import Skill, SkillStep
-    from opengui.skills.library import SkillLibrary
+    from opengui.skills.flat import FlatSkillLibrary
 
     with pytest.MonkeyPatch().context() as mp:
         import tempfile
         import pathlib
 
         tmp_dir = pathlib.Path(tempfile.mkdtemp())
-        library = SkillLibrary(store_dir=tmp_dir)
+        library = FlatSkillLibrary(store_dir=tmp_dir)
 
         skills = [
             Skill(

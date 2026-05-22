@@ -44,19 +44,45 @@ def build_system_prompt(
             "- Only use `relative=true` when the host explicitly requests relative coordinates."
         )
 
-    sections = [
-        "# Tools",
-        "",
-        "You may call one function to assist with the user query.",
-        "",
-        "You are provided with function signatures within <tools></tools> XML tags:",
-        "<tools>",
-        tool_schema,
-        "</tools>",
-        "",
+    sections = []
+    if profile_name == "default":
+        sections.extend([
+            "# Tools",
+            "",
+            "You may call one function to assist with the user query.",
+            "",
+            "You are provided with function signatures within <tools></tools> XML tags:",
+            "<tools>",
+            tool_schema,
+            "</tools>",
+            "",
+        ])
+    elif profile_name in {"qwen3vl", "mai_ui"}:
+        sections.extend([
+            "# Tools",
+            "",
+            "You are provided with function signatures within <tools></tools> XML tags:",
+            "<tools>",
+            tool_schema,
+            "</tools>",
+            "",
+            "- Non-native profile mode: do not use provider-native tool calling.",
+            "- Emit the tool call text exactly in the configured response contract.",
+            "",
+        ])
+    else:
+        sections.extend([
+            "# Action Contract",
+            "",
+            "- Non-native profile mode: use the response contract below.",
+            "- Do not rely on native tool-calling in the API request.",
+            "",
+        ])
+
+    sections.extend([
         "# Environment",
         "",
-        "- You are operating on a GUI screen and can only act through the `computer_use` tool.",
+        "- You are operating on a GUI screen; produce the next action in the configured contract.",
         "- Some actions may take time to complete, so you may need to wait and observe again.",
         "- Use the latest screenshot as the source of truth.",
         "- Click the center of the intended UI element unless the task clearly requires an edge.",
@@ -67,7 +93,7 @@ def build_system_prompt(
         "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
         "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
         coordinate_rules,
-    ]
+    ])
 
     if prompt_contract["environment"]:
         sections.extend([""])

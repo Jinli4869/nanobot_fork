@@ -30,9 +30,8 @@ from opengui.agent import (
 from opengui.backends.adb import AdbBackend
 from opengui.cli import OpenAICompatibleEmbeddingProvider, OpenAICompatibleLLMProvider
 from opengui.postprocessing import EvaluationConfig, PostRunProcessor
-from opengui.skills.code_first import CodeSkillLibrary
 from opengui.skills.executor import LLMStateValidator, SkillExecutor
-from opengui.skills.graph import GraphSessionCursor
+from opengui.skills.flat import FlatSkillLibrary
 from opengui.skills.reuser import SkillReuser
 from opengui.trajectory.recorder import TrajectoryRecorder
 
@@ -337,12 +336,11 @@ async def _run_one_task(
     skill_executor = None
     skill_reuser = None
     if enable_reuse:
-        skill_library = CodeSkillLibrary(
+        skill_library = FlatSkillLibrary(
             store_dir=skill_root,
             embedding_provider=embedding_provider,
             merge_llm=runtime_provider,
             embedding_signature=embedding_signature,
-            legacy_fallback=False,
         )
         skill_executor = _build_skill_executor(
             backend=backend,
@@ -371,7 +369,6 @@ async def _run_one_task(
         agent_profile=agent_profile,
         image_scale_ratio=image_scale_ratio,
         stagnation_limit=0,
-        graph_session_cursor=GraphSessionCursor(),
     )
 
     agent_error = None
@@ -399,8 +396,6 @@ async def _run_one_task(
             embedding_signature=embedding_signature,
             skill_store_root=skill_root,
             enable_skill_extraction=True,
-            enable_deeplink_skill_extraction=True,
-            deeplink_probe_backend=backend,
             evaluation=EvaluationConfig(enabled=False),
         )
         postprocessor.schedule(trace_path, is_success=aw_success, platform="android", task=task.goal)

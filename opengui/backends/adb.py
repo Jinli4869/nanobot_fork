@@ -948,30 +948,31 @@ class AdbBackend:
             return {}
         # uiautomator dump is noticeably slower than screenshot capture on real
         # devices; a 1s cap is too aggressive and silently drops the tree.
-        ui_timeout = max(0.2, min(timeout, 3.0))
-        try:
-            await self._run(
-                "shell",
-                "uiautomator",
-                "dump",
-                "--compressed",
-                _DEVICE_UI_XML_PATH,
-                timeout=ui_timeout,
-            )
-            xml_text = await self._run(
-                "shell",
-                "cat",
-                _DEVICE_UI_XML_PATH,
-                timeout=ui_timeout,
-            )
-            _write_raw_ui_tree_xml(screenshot_path, xml_text)
-            return _parse_ui_tree_xml(
-                xml_text,
-                include_nodes=self._collect_ui_tree_nodes,
-            )
-        except Exception as exc:
-            logger.debug("ADB UI-tree capture unavailable: %s", exc)
-            return {}
+        ui_timeout = max(0.2, min(timeout, 5.0))
+        attempts = [
+            ("uiautomator", "dump", "--compressed", _DEVICE_UI_XML_PATH),
+            ("uiautomator", "dump", _DEVICE_UI_XML_PATH),
+        ]
+        last_error: Exception | None = None
+        for args in attempts:
+            try:
+                await self._run("shell", *args, timeout=ui_timeout)
+                xml_text = await self._run(
+                    "shell",
+                    "cat",
+                    _DEVICE_UI_XML_PATH,
+                    timeout=ui_timeout,
+                )
+                _write_raw_ui_tree_xml(screenshot_path, xml_text)
+                return _parse_ui_tree_xml(
+                    xml_text,
+                    include_nodes=self._collect_ui_tree_nodes,
+                )
+            except Exception as exc:
+                last_error = exc
+                continue
+        logger.warning("ADB UI-tree capture unavailable after retries: %s", last_error)
+        return {}
 
     async def shutdown(self) -> None:
         if self._frame_source is not None:

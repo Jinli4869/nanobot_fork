@@ -13,7 +13,28 @@ from typing import Any, Protocol, runtime_checkable
 
 from opengui.interfaces import LLMProvider
 from opengui.observation import Observation
-from opengui.skills.shortcut import ParameterSlot
+
+
+@dataclass(frozen=True)
+class ParameterSlot:
+    name: str
+    type: str = "string"
+    description: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": self.type,
+            "description": self.description,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ParameterSlot":
+        return cls(
+            name=str(data.get("name", "")),
+            type=str(data.get("type", "string")),
+            description=str(data.get("description", "")),
+        )
 
 
 @dataclass(frozen=True)
@@ -100,4 +121,5 @@ __all__ = [
     "GroundingContext",
     "GroundingResult",
     "LLMProvider",
+    "ParameterSlot",
 ]

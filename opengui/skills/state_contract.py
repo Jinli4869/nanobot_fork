@@ -399,6 +399,76 @@ def evaluate_state_contract(
     return result.passed
 
 
+def infer_interaction_target(action: Any, observation: Any) -> dict[str, Any] | None:
+    """Return the pre-action UI node targeted by a pointer action."""
+    action_type = _normalize_text(_action_get(action, "action_type"))
+    if action_type not in {"tap", "long_press", "double_tap"}:
+        return None
+
+    extra = getattr(observation, "extra", None) or _dict_get(observation, "extra") or {}
+    if not isinstance(extra, dict) or not isinstance(extra.get("ui_tree"), list):
+        return None
+
+    action_payload = {
+        "x": _action_get(action, "x"),
+        "y": _action_get(action, "y"),
+        "relative": bool(_action_get(action, "relative")),
+    }
+    point_extra = dict(extra)
+    point_extra.setdefault("screen_width", getattr(observation, "screen_width", None) or _dict_get(observation, "screen_width"))
+    point_extra.setdefault("screen_height", getattr(observation, "screen_height", None) or _dict_get(observation, "screen_height"))
+    point = _step_point(action_payload, point_extra)
+    if point is None:
+        return None
+
+    hits: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
+    for node in extra.get("ui_tree") or []:
+        if not isinstance(node, dict):
+            continue
+        bounds = _parse_bounds(node.get("bounds"))
+        if bounds is None:
+            continue
+        left, top, right, bottom = bounds
+        x, y = point
+        if not (left <= x <= right and top <= y <= bottom):
+            continue
+        selector = static_selector_from_node(node)
+        if not selector or not selector_is_static(selector):
+            continue
+        selector = {key: value for key, value in selector.items() if key in _SELECTOR_KEYS}
+        if not selector:
+            continue
+        hits.append((max(1.0, (right - left) * (bottom - top)), node, selector))
+
+    if not hits:
+        return None
+    hits.sort(key=lambda item: item[0])
+    min_area = hits[0][0]
+    smallest = [(node, selector) for area, node, selector in hits if area == min_area]
+    if len({_selector_key(selector) for _, selector in smallest}) != 1:
+        return None
+
+    node, selector = smallest[0]
+    app = getattr(observation, "foreground_app", None) or _dict_get(observation, "foreground_app") or _dict_get(observation, "app")
+    contract = normalize_state_contract({
+        "anchor": {"app_package": app} if _clean_string(app) else {},
+        "signature": {
+            "required": [{"selector": selector, "state": ["visible", "clickable"]}],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    })
+    if contract is None:
+        return None
+    return {
+        "selector": selector,
+        "bounds": node.get("bounds"),
+        "match_method": "coordinate_hit",
+        "confidence": 0.9,
+        "state_contract": contract,
+    }
+
+
 def infer_state_contract(
     step_payload: dict[str, Any],
     *,
@@ -1213,6 +1283,23 @@ def _step_point(step_payload: dict[str, Any], extra: dict[str, Any]) -> tuple[fl
         height = _float_value(extra.get("screen_height"))
         if width is None or height is None:
             return None
+        ui_tree = extra.get("ui_tree")
+        if isinstance(ui_tree, list) and ui_tree:
+            tree_width: float | None = None
+            tree_height: float | None = None
+            for node in ui_tree:
+                if not isinstance(node, dict):
+                    continue
+                bounds = _parse_bounds(node.get("bounds"))
+                if bounds is None:
+                    continue
+                tree_width = max(tree_width or 0.0, bounds[2])
+                tree_height = max(tree_height or 0.0, bounds[3])
+            if tree_width and tree_height:
+                if tree_width > width * 1.2:
+                    width = tree_width
+                if tree_height > height * 1.2:
+                    height = tree_height
         x = x / 1000.0 * width
         y = y / 1000.0 * height
     return x, y
@@ -1614,6 +1701,12 @@ def _selector_identity_key(selector: dict[str, Any]) -> tuple[tuple[str, Any], .
 
 def _dict_get(value: Any, key: str) -> Any:
     return value.get(key) if isinstance(value, dict) else None
+
+
+def _action_get(value: Any, key: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(key)
+    return getattr(value, key, None)
 
 
 def _should_skip_valid_state(valid_state: Any) -> bool:
