@@ -69,24 +69,36 @@ def _nanobot_tool_response(
     )
 
 
-def _code_skill_source(*, app: str = "Settings", name: str = "open_settings") -> str:
-    return f'''
-from opengui.skills.code_graph import C, R, action, skill
+def _skill_candidate(*, app: str = "Settings", name: str = "open_settings") -> Any:
+    from opengui.skills.data import Skill, SkillStep
 
-@skill(app="{app}", platform="dry-run", tags=["settings"])
-async def {name}(device):
-    await action(
-        "tap",
-        target="Menu",
-        text="Menu",
-        x=100,
-        y=100,
-        state_contract=C(
-            app="{app}",
-            required=[R(resource_id="dryrun:id/menu", clickable=True)],
+    return Skill(
+        skill_id=f"flat:{name}",
+        name=name,
+        description="Open Settings from the dry-run menu",
+        app=app,
+        platform="dry-run",
+        tags=("settings",),
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="Menu",
+                parameters={"x": 100, "y": 100, "text": "Menu"},
+                state_contract={
+                    "anchor": {"app_package": app},
+                    "signature": {
+                        "required": [
+                            {
+                                "selector": {"resource_id": "dryrun:id/menu"},
+                                "state": ["clickable"],
+                            }
+                        ],
+                        "forbidden": [],
+                    },
+                },
+            ),
         ),
     )
-'''
 
 
 def _install_code_skill_trace_run(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -555,39 +567,27 @@ async def test_gui_task_returns_state_note_for_partial_run(
 @pytest.mark.asyncio
 async def test_auto_skill_extraction(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
-    from opengui.skills.code_first import CodeSkillExtraction, CodeSkillExtractor
+    from opengui.skills.extractor import SkillExtractor
 
     extract_calls: list[dict[str, Any]] = []
 
-    async def fake_extract(
+    async def fake_extract_from_file_multi(
         self,
-        events: list[dict[str, Any]],
+        trace_path: Path,
         *,
         is_success: bool,
-        platform: str | None = None,
-        task: str | None = None,
-        evaluation_result: dict[str, Any] | None = None,
-        feedback: str | None = None,
-        segment_id: str | None = None,
-        segment_summary: str | None = None,
     ):
-        del self, evaluation_result, feedback, segment_summary
+        del self
         extract_calls.append(
             {
-                "event_count": len(events),
+                "trace_path": trace_path,
                 "is_success": is_success,
-                "platform": platform,
-                "task": task,
-                "segment_id": segment_id,
             }
         )
-        return CodeSkillExtraction(
-            python_code=_code_skill_source(),
-            attempts=({"segment_id": segment_id, "violations": []},),
-        )
+        return [_skill_candidate()]
 
     _install_code_skill_trace_run(monkeypatch)
-    monkeypatch.setattr(CodeSkillExtractor, "extract_from_events", fake_extract)
+    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_from_file_multi)
     monkeypatch.setattr("opengui.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
 
     provider = _MockNanobotProvider([])
@@ -609,24 +609,25 @@ async def test_auto_skill_extraction(tmp_workspace: Path, monkeypatch: pytest.Mo
     assert result["success"] is True
     assert len(extract_calls) == 1
     assert extract_calls[0]["is_success"] is True
-    assert extract_calls[0]["platform"] == "dry-run"
-    assert extract_calls[0]["task"] == "Open calculator"
+    assert extract_calls[0]["trace_path"] == Path(result["trace_path"])
     extraction_result = json.loads(
         (Path(result["trace_path"]).parent / "extraction_result.json").read_text(encoding="utf-8")
     )
     assert extraction_result["status"] == "processed_code"
+    assert extraction_result["platform"] == "dry-run"
+    assert extraction_result["task"] == "Open calculator"
     assert "open_settings" in extraction_result["updated_functions"]
-    assert (tmp_workspace / "gui_skills" / "skill_graph_code.py").is_file()
+    assert (tmp_workspace / "gui_skills" / "skills.py").is_file()
 
 
 @pytest.mark.asyncio
 async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
-    from opengui.skills.code_first import CodeSkillExtractor
+    from opengui.skills.extractor import SkillExtractor
 
-    extract = AsyncMock(return_value=None)
+    extract = AsyncMock(return_value=[])
     _install_code_skill_trace_run(monkeypatch)
-    monkeypatch.setattr(CodeSkillExtractor, "extract_from_events", extract)
+    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", extract)
     monkeypatch.setattr("opengui.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
 
     provider = _MockNanobotProvider([])
@@ -660,17 +661,14 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
-    from opengui.skills.code_first import CodeSkillExtraction, CodeSkillExtractor
+    from opengui.skills.extractor import SkillExtractor
 
-    async def fake_extract(self, *args: Any, **kwargs: Any):
+    async def fake_extract_multi(self, *args: Any, **kwargs: Any):
         del self, args, kwargs
-        return CodeSkillExtraction(
-            python_code=_code_skill_source(app=" Settings "),
-            attempts=({"segment_id": "seg-000", "violations": []},),
-        )
+        return [_skill_candidate(app=" Settings ")]
 
     _install_code_skill_trace_run(monkeypatch)
-    monkeypatch.setattr(CodeSkillExtractor, "extract_from_events", fake_extract)
+    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_multi)
     monkeypatch.setattr("opengui.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
 
     provider = _MockNanobotProvider([])
@@ -689,7 +687,7 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
 
     result = json.loads(await tool.execute(task="Open calculator"))
     await tool._wait_for_pending_postprocessing()
-    code_store = tmp_workspace / "gui_skills" / "skill_graph_code.py"
+    code_store = tmp_workspace / "gui_skills" / "skills.py"
     reloaded = tool._get_skill_library("dry-run")
     reloaded.load_all()
 

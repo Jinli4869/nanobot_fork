@@ -62,7 +62,6 @@ class GuiSubagentTool(Tool):
         self._workspace = Path(workspace)
         self._gui_event_callback = gui_event_callback
         self._gui_frame_callback = gui_frame_callback
-        self._graph_session_cursor: Any | None = None
         self._llm_adapter = NanobotLLMAdapter(
             provider, model, capture_ttft=gui_config.capture_ttft,
         )
@@ -83,9 +82,6 @@ class GuiSubagentTool(Tool):
             embedding_signature=self._embedding_signature,
             skill_store_root=get_gui_skill_store_root(self._workspace),
             enable_skill_extraction=gui_config.enable_skill_extraction,
-            enable_deeplink_skill_extraction=gui_config.enable_deeplink_skill_extraction,
-            enable_skill_graph=gui_config.enable_skill_graph,
-            deeplink_probe_backend=self._backend,
             evaluation=EvaluationConfig(
                 enabled=gui_config.evaluation.enabled,
                 judge_model=gui_config.evaluation.judge_model,
@@ -93,13 +89,6 @@ class GuiSubagentTool(Tool):
                 api_base=gui_config.evaluation.api_base,
             ),
         )
-
-    def _get_graph_session_cursor(self) -> Any:
-        if self._graph_session_cursor is None:
-            from opengui.skills.graph import GraphSessionCursor
-
-            self._graph_session_cursor = GraphSessionCursor()
-        return self._graph_session_cursor
 
     @property
     def name(self) -> str:
@@ -323,6 +312,9 @@ class GuiSubagentTool(Tool):
             reuser_llm = NanobotLLMAdapter(self._provider, self._gui_config.reuser_model)
             skill_reuser = SkillReuser(reuser_llm, threshold=self._gui_config.skill_threshold)
 
+        sc_dir = Path(self._workspace) / "shortcut_cache"
+        sc_dir.mkdir(parents=True, exist_ok=True)
+
         agent = GuiAgent(
             llm=self._llm_adapter,
             backend=active_backend,
@@ -340,10 +332,9 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
-            graph_session_cursor=(
-                self._get_graph_session_cursor() if self._gui_config.enable_skill_graph else None
-            ),
-            enable_graph_runtime=self._gui_config.enable_skill_graph,
+            shortcuts={},
+            shortcut_backend=active_backend,
+            shortcut_cache_dir=str(sc_dir),
         )
 
         result = await agent.run(task=task)
@@ -362,9 +353,9 @@ class GuiSubagentTool(Tool):
         metrics = self._load_gui_metrics(metrics_path)
         total_duration_s = metrics.get("total_duration_s") or metrics.get("duration_s")
         total_token_usage = (
-            result.token_usage
-            or metrics.get("total_token_usage")
+            metrics.get("total_token_usage")
             or metrics.get("token_usage")
+            or result.token_usage
             or {}
         )
         self._postprocessor.schedule(trace_path, is_success=result.success, platform=active_backend.platform, task=task)
@@ -802,9 +793,9 @@ class GuiSubagentTool(Tool):
         embedding_signature: str | None = None,
     ) -> Any:
         if platform not in self._skill_libraries:
-            from opengui.skills.code_first import CodeSkillLibrary
+            from opengui.skills.flat import FlatSkillLibrary
 
-            self._skill_libraries[platform] = CodeSkillLibrary(
+            self._skill_libraries[platform] = FlatSkillLibrary(
                 store_dir=get_gui_skill_store_root(self._workspace),
                 embedding_provider=self._embedding_adapter,
                 merge_llm=self._llm_adapter,
@@ -877,6 +868,7 @@ class GuiSubagentTool(Tool):
         return _GuiToolInterventionHandler(active_backend=active_backend, task=task)
 
     async def shutdown(self) -> None:
+        await self._wait_for_pending_postprocessing()
         shutdown = getattr(self._backend, "shutdown", None)
         if callable(shutdown):
             await shutdown()

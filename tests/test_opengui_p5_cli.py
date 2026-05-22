@@ -485,7 +485,7 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
         async def index(self, entries: list[str]) -> None:
             calls["indexed_entries"].append(entries)
 
-    class FakeSkillLibrary:
+    class FakeFlatSkillLibrary:
         def __init__(self, store_dir: Path, embedding_provider: Any = None, merge_llm: Any = None) -> None:
             calls["skill_library"].append(
                 {
@@ -520,7 +520,7 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
     monkeypatch.setattr(cli, "OpenAICompatibleEmbeddingProvider", FakeEmbeddingProvider)
     monkeypatch.setattr(cli, "MemoryStore", FakeMemoryStore)
     monkeypatch.setattr(cli, "MemoryRetriever", FakeMemoryRetriever)
-    monkeypatch.setattr(cli, "SkillLibrary", FakeSkillLibrary)
+    monkeypatch.setattr(cli, "FlatSkillLibrary", FakeFlatSkillLibrary)
     monkeypatch.setattr(cli, "LLMStateValidator", FakeValidator)
     monkeypatch.setattr(cli, "_AgentActionGrounder", FakeGrounder)
     monkeypatch.setattr(cli, "_AgentSubgoalRunner", FakeRunner)

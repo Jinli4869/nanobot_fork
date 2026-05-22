@@ -17,13 +17,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from types import SimpleNamespace
 import platform
 import sys
 from asyncio.subprocess import PIPE
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import mss
+try:
+    import mss
+except ImportError:  # pragma: no cover
+    mss = SimpleNamespace(mss=None)
 from PIL import Image
 
 from opengui.action import Action, describe_action, resolve_coordinate
@@ -147,7 +151,14 @@ class LocalDesktopBackend:
         """
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with mss.mss() as sct:
+        capture = getattr(mss, "mss", None)
+        if capture is None:
+            raise RuntimeError(
+                "Install `mss` to use LocalDesktopBackend screen capture "
+                "(optional dependency in the `desktop` extra)."
+            )
+
+        with capture() as sct:
             monitor_index = 1
             if self._target_display is not None:
                 monitor_index = self._target_display.monitor_index

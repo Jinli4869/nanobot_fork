@@ -8,11 +8,16 @@ import json
 import pathlib
 import subprocess
 import sys
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
-from opengui.action import parse_action
-from opengui.backends.desktop import LocalDesktopBackend
 from opengui.observation import Observation
+from opengui.action import parse_action
+
+if TYPE_CHECKING:
+    from opengui.backends.desktop import LocalDesktopBackend
+
+
+LocalDesktopBackend = None
 
 
 def launch_windows_worker(
@@ -84,7 +89,12 @@ async def _run_worker(
     stdout: TextIO,
 ) -> int:
     _ = args.control_path
-    backend = LocalDesktopBackend()
+    backend_cls = LocalDesktopBackend
+    if backend_cls is None:
+        from opengui.backends.desktop import LocalDesktopBackend as ImportedLocalDesktopBackend
+
+        backend_cls = ImportedLocalDesktopBackend
+    backend = backend_cls()
     await backend.preflight()
 
     while True:

@@ -2,7 +2,7 @@
 
 Covers three wiring seams left broken after Phases 3-5:
   1. GuiConfig.embedding_model field (config surface, camelCase alias)
-  2. GuiSubagentTool embedding adapter wiring (NanobotEmbeddingAdapter → SkillLibrary)
+  2. GuiSubagentTool embedding adapter wiring (NanobotEmbeddingAdapter → FlatSkillLibrary)
   3. pyproject.toml packaging metadata (Pillow in desktop/dev extras, opengui console script)
 
 These tests are intentionally self-contained: they do not import helpers or
@@ -105,7 +105,7 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """GuiSubagentTool must instantiate NanobotEmbeddingAdapter and wire it to SkillLibrary
+    """GuiSubagentTool must instantiate NanobotEmbeddingAdapter and wire it to FlatSkillLibrary
     when gui.embedding_model is set in the config."""
     import litellm
 
@@ -137,7 +137,7 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
     # Adapter must be created.
     assert tool._embedding_adapter is not None
 
-    # The SkillLibrary for "dry-run" must have the adapter wired in.
+    # The FlatSkillLibrary for "dry-run" must have the adapter wired in.
     assert "dry-run" in tool._skill_libraries
     assert tool._skill_libraries["dry-run"].embedding_provider is tool._embedding_adapter
 
@@ -286,7 +286,7 @@ async def test_gui_tool_batches_litellm_embedding_requests_in_chunks_of_ten(
 @pytest.mark.asyncio
 async def test_gui_tool_skips_embedding_adapter_without_config(tmp_path: Path) -> None:
     """GuiSubagentTool must leave _embedding_adapter as None when embedding_model is absent,
-    and SkillLibrary must still be created successfully with embedding_provider=None."""
+    and FlatSkillLibrary must still be created successfully with embedding_provider=None."""
     from nanobot.agent.tools.gui import GuiSubagentTool
     from nanobot.config.schema import Config
 

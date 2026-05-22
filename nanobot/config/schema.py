@@ -462,11 +462,10 @@ class GuiConfig(Base):
     image_scale_ratio: float = 0.5
     capture_ttft: bool = False
     enable_skill_extraction: bool = False
-    enable_deeplink_skill_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
-    enable_skill_graph: bool = True
+    shortcut_apps: list[str] = Field(default_factory=list)
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
 
     @field_validator("agent_profile")

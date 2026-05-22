@@ -5,7 +5,9 @@ import base64
 import copy
 import io
 import json
+import logging
 import tomllib
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -15,7 +17,7 @@ import opengui.backends.adb as adb_backend_module
 import opengui.backends.hdc as hdc_backend_module
 import opengui.backends.ios_wda as ios_wda_module
 from opengui.action import Action, ActionError, parse_action, resolve_coordinate
-from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
+from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner, _build_shortcut_tool_defs
 from opengui.agent_profiles import normalize_profile_response, profile_tool_definition
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
@@ -24,6 +26,8 @@ from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.skills.data import SkillStep
+from opengui.skills import deeplink as deeplink_module
+from opengui.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 
@@ -101,40 +105,6 @@ class _SkillTestBackend:
 
     async def list_apps(self) -> list[str]:
         return []
-
-
-@pytest.mark.asyncio
-async def test_agent_skips_graph_runtime_when_disabled(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[
-                ToolCall(
-                    id="tool-call-0",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )
-            ],
-        )
-    ])
-    agent = GuiAgent(
-        llm,
-        DryRunBackend(),
-        trajectory_recorder=_make_recorder(tmp_path, "graph disabled"),
-        artifacts_root=tmp_path / "runs",
-        max_steps=1,
-        include_date_context=False,
-        skill_library=object(),
-        skill_reuser=_NoopSkillReuser(),
-        enable_graph_runtime=False,
-    )
-    try_graph_runtime = AsyncMock(return_value=None)
-    agent._try_graph_runtime = try_graph_runtime  # type: ignore[method-assign]
-
-    result = await agent.run("finish", max_retries=1)
-
-    assert result.success is True
-    try_graph_runtime.assert_not_called()
 
 
 def test_parse_scroll_allows_center_default() -> None:
@@ -257,6 +227,286 @@ def test_relative_observation_prompt_normalizes_ui_tree_bounds_without_screen_re
     assert "[0,0][999,999]" in text
     assert "[239,304][361,323]" in text
     assert "[258,723][390,768]" not in text
+
+
+@pytest.mark.asyncio
+async def test_adb_ui_tree_capture_retries_without_compressed() -> None:
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
+    calls: list[tuple[str, ...]] = []
+    xml = (
+        '<hierarchy><node text="Open" class="android.widget.Button" '
+        'clickable="true" enabled="true" bounds="[0,0][10,10]" /></hierarchy>'
+    )
+
+    async def fake_run(*args: str, timeout: float = 5.0) -> str:
+        del timeout
+        calls.append(args)
+        if args == (
+            "shell",
+            "uiautomator",
+            "dump",
+            "--compressed",
+            adb_backend_module._DEVICE_UI_XML_PATH,
+        ):
+            raise RuntimeError("compressed dump failed")
+        if args == (
+            "shell",
+            "uiautomator",
+            "dump",
+            adb_backend_module._DEVICE_UI_XML_PATH,
+        ):
+            return "UI hierchary dumped"
+        if args == ("shell", "cat", adb_backend_module._DEVICE_UI_XML_PATH):
+            return xml
+        raise AssertionError(f"Unexpected adb call: {args}")
+
+    backend._run = fake_run  # type: ignore[method-assign]
+
+    extra = await backend._collect_ui_tree_extra(1.0)
+
+    assert extra["visible_text"] == ["Open"]
+    assert extra["clickable_text"] == ["Open"]
+    assert calls == [
+        (
+            "shell",
+            "uiautomator",
+            "dump",
+            "--compressed",
+            adb_backend_module._DEVICE_UI_XML_PATH,
+        ),
+        (
+            "shell",
+            "uiautomator",
+            "dump",
+            adb_backend_module._DEVICE_UI_XML_PATH,
+        ),
+        ("shell", "cat", adb_backend_module._DEVICE_UI_XML_PATH),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_adb_ui_tree_capture_logs_warning_after_retry_failure(caplog: pytest.LogCaptureFixture) -> None:
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run(*args: str, timeout: float = 5.0) -> str:
+        del timeout
+        calls.append(args)
+        raise RuntimeError("dump failed")
+
+    backend._run = fake_run  # type: ignore[method-assign]
+    caplog.set_level(logging.WARNING, logger=adb_backend_module.__name__)
+
+    assert await backend._collect_ui_tree_extra(1.0) == {}
+
+    assert calls == [
+        (
+            "shell",
+            "uiautomator",
+            "dump",
+            "--compressed",
+            adb_backend_module._DEVICE_UI_XML_PATH,
+        ),
+        (
+            "shell",
+            "uiautomator",
+            "dump",
+            adb_backend_module._DEVICE_UI_XML_PATH,
+        ),
+    ]
+    assert "ADB UI-tree capture unavailable after retries" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_agent_lazy_loads_shortcuts_for_foreground_app_and_updates_tools(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _SkillTestBackend()
+    backend.platform = "android"
+    cache_dir = tmp_path / "shortcut-cache"
+    profile = AppShortcutProfile(
+        package="com.example.app",
+        deep_links=(
+            DeepLink(
+                uri_template="example://home",
+                scheme="example",
+                host="home",
+                path=None,
+                component="com.example.app/.MainActivity",
+                description="Open example home",
+            ),
+        ),
+    )
+    calls: list[tuple[object, str]] = []
+
+    async def fake_extract(shortcut_backend: object, package: str) -> AppShortcutProfile:
+        calls.append((shortcut_backend, package))
+        return profile
+
+    monkeypatch.setattr(deeplink_module, "extract_app_shortcuts", fake_extract)
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        backend,
+        trajectory_recorder=_make_recorder(tmp_path, "lazy shortcuts"),
+        shortcut_backend=backend,
+        shortcut_cache_dir=str(cache_dir),
+    )
+
+    await agent._ensure_shortcuts_for_app("com.example.app")
+    await agent._ensure_shortcuts_for_app("com.example.app")
+
+    assert calls == [(backend, "com.example.app")]
+    assert (cache_dir / "com.example.app.json").exists()
+    shortcut_name = next(iter(agent._shortcut_action_map))
+    assert shortcut_name.startswith("com_example_app__example_home__")
+    assert agent._shortcut_action_map[shortcut_name] == (
+        "open_deeplink",
+        "example://home",
+        "com.example.app/.MainActivity",
+        None,
+    )
+
+
+def test_static_shortcut_extraction_ignores_path_without_host_and_pattern_paths() -> None:
+    manifest = ET.fromstring(
+        """
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app">
+          <application>
+            <activity android:name=".NoHost">
+              <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="foo" android:path="/ignored" />
+              </intent-filter>
+            </activity>
+            <activity android:name=".Pattern">
+              <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="bar" android:host="user" android:pathPattern="/profile/.*" />
+              </intent-filter>
+            </activity>
+            <activity android:name=".Prefix">
+              <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="baz" android:host="user" android:pathPrefix="/profile" />
+              </intent-filter>
+            </activity>
+          </application>
+        </manifest>
+        """
+    )
+
+    filters = deeplink_module._extract_all_filters(manifest, "com.example.app")
+    links = deeplink_module._classify_deep_links(filters)
+
+    assert [link.uri_template for link in links] == ["foo:", "baz://user/profile"]
+    assert links[0].path is None
+    assert links[1].path_kind == "pathPrefix"
+    assert "Static Android deep link candidate" in links[1].description
+    assert "not page-validated" in links[1].description
+
+
+def test_static_shortcut_extraction_parses_deep_intent_mime_type() -> None:
+    manifest = ET.fromstring(
+        """
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.app">
+          <application>
+            <activity android:name=".Share">
+              <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+              </intent-filter>
+            </activity>
+          </application>
+        </manifest>
+        """
+    )
+
+    filters = deeplink_module._extract_all_filters(manifest, "com.example.app")
+    intents = deeplink_module._classify_deep_intents(filters)
+
+    assert len(intents) == 1
+    assert intents[0].action == "android.intent.action.SEND"
+    assert intents[0].mime_type == "text/plain"
+    assert "Static Android intent candidate" in intents[0].description
+    assert "not page-validated" in intents[0].description
+
+
+@pytest.mark.asyncio
+async def test_probe_deep_link_resolve_does_not_bind_component() -> None:
+    calls: list[tuple[str, ...]] = []
+
+    class Backend:
+        async def _run(self, *args: str, timeout: float = 5.0) -> str:
+            del timeout
+            calls.append(args)
+            return "com.example.app/.Router"
+
+    link = DeepLink(
+        uri_template="example://home",
+        scheme="example",
+        host="home",
+        path=None,
+        component="com.example.app/.Router",
+        description="Static Android deep link candidate",
+    )
+
+    assert await deeplink_module.probe_deep_link(Backend(), link) is True
+    assert "-n" not in calls[0]
+
+
+def test_shortcut_skill_ids_and_agent_tool_names_do_not_collide() -> None:
+    profile = AppShortcutProfile(
+        package="com.example.app",
+        deep_links=(
+            DeepLink(
+                uri_template="example://user/profile",
+                scheme="example",
+                host="user",
+                path="/profile",
+                component="com.example.app/.Router",
+                description="Static Android deep link candidate",
+                path_kind="path",
+            ),
+            DeepLink(
+                uri_template="example://user/settings",
+                scheme="example",
+                host="user",
+                path="/settings",
+                component="com.example.app/.Router",
+                description="Static Android deep link candidate",
+                path_kind="path",
+            ),
+        ),
+        deep_intents=(
+            DeepIntent(
+                action="android.intent.action.SEND",
+                component="com.example.app/.Share",
+                mime_type="text/plain",
+                description="Static Android intent candidate",
+            ),
+            DeepIntent(
+                action="android.intent.action.SEND",
+                component="com.example.app/.Share",
+                mime_type="image/png",
+                description="Static Android intent candidate",
+            ),
+        ),
+    )
+
+    skills = deeplink_module.profile_to_skills(profile)
+    assert len({skill.skill_id for skill in skills}) == len(skills)
+
+    tools, action_map = _build_shortcut_tool_defs({"com.example.app": profile})
+    names = [tool["function"]["name"] for tool in tools]
+    assert len(set(names)) == len(names)
+    assert len(action_map) == 4
+    intent_entries = [value for value in action_map.values() if value[0] == "open_intent"]
+    assert {entry[3] for entry in intent_entries} == {"text/plain", "image/png"}
 
 
 def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
@@ -913,7 +1163,7 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
     response = LLMResponse(
         content=(
             'Thought: I found the target\n'
-            'Action: "Tap the login button"\n'
+            'Action: "Tap target"\n'
             '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>'
         ),
         tool_calls=None,
@@ -931,13 +1181,25 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
     }
 
 
+def test_qwen3vl_profile_rejects_action_json_without_tool_call() -> None:
+    response = LLMResponse(
+        content=(
+            'Thought: I found a target\n'
+            'Action: {"action":"click","coordinate":[500,250]}'
+        ),
+        tool_calls=None,
+    )
+
+    with pytest.raises(ValueError):
+        normalize_profile_response("qwen3vl", response)
+
+
 def test_qwen3vl_profile_preserves_action_summary() -> None:
     response = LLMResponse(
         content=(
             'Thought: I found the target\n'
-            'Action: "Tap the login button"\n'
-            '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250],"summary":"tap login button","intent":"tap login button"}}'
-            '</tool_call>'
+            'Action: "Tap login"\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250],"summary":"tap login button","intent":"tap login button"}}</tool_call>'
         ),
         tool_calls=None,
     )
@@ -951,6 +1213,24 @@ def test_qwen3vl_profile_preserves_action_summary() -> None:
         "y": 250,
         "relative": True,
         "summary": "tap login button",
+    }
+
+
+def test_qwen3vl_profile_parses_action_type_key() -> None:
+    response = LLMResponse(
+        content=(
+            'Thought: Wait here\n'
+            'Action: "Wait"\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"wait"}}</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "wait",
     }
 
 
@@ -1028,6 +1308,120 @@ def test_qwen3vl_profile_normalizes_provider_mobile_use_tool_calls() -> None:
         "x": 903,
         "y": 130,
         "relative": True,
+    }
+
+
+def test_qwen3vl_profile_parses_tool_call_without_action_json() -> None:
+    response = LLMResponse(
+        content='Thought: Tap target\n<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>',
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 500,
+        "y": 250,
+        "relative": True,
+    }
+
+
+def test_qwen3vl_profile_normalizes_wait_with_time() -> None:
+    response = LLMResponse(
+        content=(
+            "Thought: Need to wait\n"
+            'Action: "Pause for a moment"\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"wait","time":1.5}}</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "wait",
+        "duration_ms": 1500,
+    }
+
+
+def test_mai_ui_profile_parses_swipe_direction_scroll() -> None:
+    response = LLMResponse(
+        content=(
+            "<thinking>Need to scroll down.</thinking>\n"
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"swipe","direction":"down","coordinate":[300,700]}}</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("mai_ui", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "scroll",
+        "text": "down",
+        "relative": True,
+        "pixels": 420,
+        "x": 300,
+        "y": 700,
+    }
+
+
+def test_mai_ui_profile_rejects_action_json_without_tool_call() -> None:
+    response = LLMResponse(
+        content=(
+            "<thinking>open app</thinking>\n"
+            'Action: {"action":"open","text":"Settings"}\n'
+        ),
+        tool_calls=None,
+    )
+
+    with pytest.raises(ValueError):
+        normalize_profile_response("mai_ui", response)
+
+
+def test_qwen3vl_profile_parses_tool_call_block_with_text_action() -> None:
+    response = LLMResponse(
+        content=(
+            "Thought: Continue\n"
+            'Action: Tap the next result\n'
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[700,240]}}</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("qwen3vl", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "tap",
+        "x": 700,
+        "y": 240,
+        "relative": True,
+    }
+
+
+def test_mai_ui_profile_parses_tool_call_block() -> None:
+    response = LLMResponse(
+        content=(
+            "<thinking>\n"
+            "The next step is to open details.\n"
+            "</thinking>\n"
+            '<tool_call>{"name":"mobile_use","arguments":{"action":"open","text":"Settings"}}</tool_call>'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response("mai_ui", response)
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].name == "computer_use"
+    assert normalized.tool_calls[0].arguments == {
+        "action_type": "open_app",
+        "text": "Settings",
     }
 
 
@@ -1208,6 +1602,26 @@ def test_recorder_metrics_include_skill_and_agent_totals(tmp_path: Path) -> None
     assert metrics["phase_metrics"]["agent"]["token_usage"]["total_tokens"] == 7
 
 
+def test_recorder_metrics_prefers_step_usage_over_explicit_finish_usage(tmp_path: Path) -> None:
+    recorder = _make_recorder(tmp_path, "step usage wins over explicit")
+    recorder.start()
+    recorder.record_step(
+        action={"action_type": "wait", "duration_ms": 1000},
+        model_output="wait",
+        token_usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        duration_s=0.4,
+    )
+    recorder.finish(
+        success=True,
+        token_usage={"prompt_tokens": 99, "completion_tokens": 88, "total_tokens": 187},
+    )
+
+    assert recorder.metrics_path is not None
+    metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
+    assert metrics["token_usage"] == {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+    assert metrics["total_token_usage"] == metrics["token_usage"]
+
+
 @pytest.mark.asyncio
 async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_path: Path) -> None:
     """default profile + gemini model → relative_999: tap(900, 941) must get relative=True."""
@@ -1286,6 +1700,42 @@ async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_agent_post_action_observe_allows_ui_tree_timeout_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observe_timeouts: list[float] = []
+
+    class _TimeoutCapturingBackend(_SkillTestBackend):
+        async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+            observe_timeouts.append(timeout)
+            return await super().observe(screenshot_path, timeout=timeout)
+
+    async def fake_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        _TimeoutCapturingBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "post-action observe timeout"),
+        artifacts_root=tmp_path / "runs",
+        step_timeout=30.0,
+    )
+
+    observation, error = await agent._observe_after_action(
+        tmp_path / "runs" / "screenshots" / "step_001.png",
+        action=Action(action_type="tap", x=10, y=20),
+        timeout=30.0,
+    )
+
+    assert observation is not None
+    assert error is None
+    assert observe_timeouts
+    assert set(observe_timeouts) == {5.0}
+
+
+@pytest.mark.asyncio
 async def test_subgoal_runner_settle_behavior(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1343,7 +1793,7 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
         LLMResponse(
             content=(
                 'Thought: I should wait briefly\n'
-                'Action: "Wait for the screen to settle"\n'
+                'Action: Wait briefly\n'
                 '<tool_call>{"name":"mobile_use","arguments":{"action":"wait"}}</tool_call>'
             ),
             tool_calls=None,
@@ -1351,7 +1801,7 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
         LLMResponse(
             content=(
                 'Thought: The task is complete\n'
-                'Action: "Finish successfully"\n'
+                'Action: Finish successfully\n'
                 '<tool_call>{"name":"mobile_use","arguments":{"action":"terminate","status":"success"}}</tool_call>'
             ),
             tool_calls=None,
@@ -1414,6 +1864,47 @@ async def test_agent_runs_with_qwen3vl_provider_computer_use_stringified_x_coord
 
     assert result.success is True
     assert result.summary
+
+
+@pytest.mark.asyncio
+async def test_qwen_profile_history_assistant_has_no_tool_calls(tmp_path: Path) -> None:
+    llm = _RecordingLLM([
+        LLMResponse(
+            content='Thought: I should wait briefly\nAction: {"action":"wait"}',
+            tool_calls=[ToolCall(
+                id="provider-tool-call-0",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )],
+        ),
+        LLMResponse(
+            content='Thought: Done\nAction: {"action":"terminate","status":"success"}',
+            tool_calls=[ToolCall(
+                id="provider-tool-call-1",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )],
+        ),
+    ])
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "qwen profile history tool calls"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        include_date_context=False,
+        agent_profile="qwen3vl",
+    )
+
+    result = await agent.run("Wait and finish", max_retries=1)
+
+    assert result.success
+    assert len(llm.calls) == 2
+
+    second_call = llm.calls[1]
+    history_assistant = second_call[2]
+    assert history_assistant["role"] == "assistant"
+    assert "tool_calls" not in history_assistant
 
 
 @pytest.mark.asyncio
@@ -2698,7 +3189,7 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
         trajectory_recorder=_make_recorder(tmp_path, "Open Settings"),
         artifacts_root=tmp_path / "runs",
         max_steps=3,
-        history_image_window=1,
+        history_image_window=2,
         include_date_context=False,
     )
 
@@ -2709,11 +3200,29 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
 
     third_call = llm.calls[2]
     assert "# Tools" in third_call[0]["content"]
+    assert [message["role"] for message in third_call] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
 
-    history_user = third_call[1]
+    history_image_text = "\n".join(
+        block["text"]
+        for block in third_call[1]["content"]
+        if block.get("type") == "text"
+    )
+    assert "Historical screen before Step 2." in history_image_text
+
+    history_assistant = third_call[2]
+    assert history_assistant["content"].startswith("Step 2: wait again")
+    assert "Tool result: [dry-run] wait 1 ms" in history_assistant["content"]
+    assert "tool_calls" not in history_assistant
+
+    current_user = third_call[3]
     history_text = "\n".join(
         block["text"]
-        for block in history_user["content"]
+        for block in current_user["content"]
         if block.get("type") == "text"
     )
     assert "Please generate the next move according to the UI screenshot, instruction and recent progress context." in history_text
@@ -2721,7 +3230,13 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     assert "Recent intents:\nStep 1: wait briefly" in history_text
     assert "Step 2: wait again" in history_text
 
-    assert len(third_call) == 2
+    image_blocks = [
+        block
+        for message in third_call
+        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
+        if isinstance(block, dict) and block.get("type") == "image_url"
+    ]
+    assert len(image_blocks) == 2
     assert "Step 3" in history_text
     assert "Task: Open Settings" in history_text
 
