@@ -1009,8 +1009,8 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes(tmp_pa
     release_postprocess = asyncio.Event()
     postprocess_started = asyncio.Event()
 
-    async def fake_promote(trace_path: Path, is_success: bool, platform: str) -> None:
-        del trace_path, is_success, platform
+    async def fake_promote(trace_path: Path, is_success: bool, platform: str, **kwargs: Any) -> None:
+        del trace_path, is_success, platform, kwargs
         postprocess_started.set()
         await release_postprocess.wait()
 

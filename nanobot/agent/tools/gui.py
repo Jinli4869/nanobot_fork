@@ -5,8 +5,10 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import re
 import sys
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -19,7 +21,7 @@ from nanobot.agent.tools.base import Tool
 from opengui.agent import GuiAgent
 from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 from opengui.postprocessing import EvaluationConfig, PostRunProcessor
-from opengui.skills.normalization import get_gui_skill_store_root
+from opengui.skills.normalization import get_gui_skill_store_root, normalize_app_identifier
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 if TYPE_CHECKING:
@@ -38,6 +40,509 @@ probe_isolated_background_support = None
 resolve_run_mode = None
 log_mode_resolution = None
 WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
+
+
+@dataclass(frozen=True)
+class GuiWorkflowSubtask:
+    """One app-scoped GUI workflow step."""
+
+    task: str
+    app_hint: str | None = None
+    inputs: tuple[str, ...] = field(default_factory=tuple)
+    outputs: tuple[str, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "task", str(self.task).strip())
+        object.__setattr__(self, "app_hint", self._clean_optional_text(self.app_hint))
+        object.__setattr__(self, "inputs", self._clean_keys(self.inputs))
+        object.__setattr__(self, "outputs", self._clean_keys(self.outputs))
+
+    @staticmethod
+    def _clean_optional_text(value: Any) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _clean_keys(values: Any) -> tuple[str, ...]:
+        if values is None:
+            return ()
+        if isinstance(values, str):
+            values = [values]
+        cleaned: list[str] = []
+        for value in values:
+            text = str(value).strip()
+            if not text:
+                continue
+            key = re.sub(r"\s+", "_", text)
+            key = re.sub(r"[^\w.-]", "", key)
+            if key and key not in cleaned:
+                cleaned.append(key)
+        return tuple(cleaned)
+
+
+@dataclass(frozen=True)
+class GuiWorkflowPlan:
+    """Planner output for a single gui_task invocation."""
+
+    mode: str = "single"
+    subtasks: tuple[GuiWorkflowSubtask, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        mode = str(self.mode or "single").strip().lower()
+        if mode not in {"single", "multi_app"}:
+            mode = "single"
+        object.__setattr__(self, "mode", mode)
+        subtasks: list[GuiWorkflowSubtask] = []
+        for subtask in self.subtasks or ():
+            if isinstance(subtask, GuiWorkflowSubtask):
+                subtasks.append(subtask)
+            elif isinstance(subtask, dict):
+                subtasks.append(
+                    GuiWorkflowSubtask(
+                        app_hint=subtask.get("app_hint"),
+                        task=str(subtask.get("task") or "").strip(),
+                        inputs=subtask.get("inputs"),
+                        outputs=subtask.get("outputs"),
+                    )
+                )
+        object.__setattr__(self, "subtasks", tuple(subtasks))
+
+
+class GuiWorkflowRunner:
+    """Lightweight multi-app orchestration inside one gui_task call."""
+
+    _MAX_SUBTASKS = 3
+
+    def __init__(
+        self,
+        *,
+        llm: NanobotLLMAdapter,
+        run_task: Callable[..., Awaitable[str]],
+        load_latest_step_event: Callable[[Path | None], dict[str, Any]],
+    ) -> None:
+        self._llm = llm
+        self._run_task = run_task
+        self._load_latest_step_event = load_latest_step_event
+
+    async def run(self, active_backend: Any, task: str, **kwargs: Any) -> str:
+        plan = await self._safe_plan_workflow(task)
+        if plan is None:
+            return await self._run_task(active_backend, task, **kwargs)
+        plan = self._normalize_plan_app_hints(
+            plan,
+            platform=str(getattr(active_backend, "platform", "") or "unknown"),
+        )
+        if plan.mode != "multi_app" or len(plan.subtasks) < 2:
+            payload = await self._run_task(active_backend, task, **kwargs)
+            return self._with_workflow_mode(payload, "single")
+
+        return await self._run_multi_app(active_backend, task, plan, **kwargs)
+
+    async def _safe_plan_workflow(self, task: str) -> GuiWorkflowPlan | None:
+        try:
+            return await self._plan_workflow(task)
+        except Exception:
+            logger.warning("GUI workflow planning failed; falling back to single task.", exc_info=True)
+            return None
+
+    async def _plan_workflow(self, task: str) -> GuiWorkflowPlan:
+        response = await self._llm.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a narrow GUI task router for one gui_task tool call. "
+                        "Return only JSON. Decide whether the original instruction is a single-app task "
+                        "or a cross-app workflow.\n\n"
+                        "Rules:\n"
+                        "1. Use single when the instruction has one core goal, even if that goal needs "
+                        "many UI steps inside one app.\n"
+                        "2. Use multi_app only when the instruction crosses different apps or transfers "
+                        "information from one app into another.\n"
+                        "3. For multi_app, split into the fewest ordered app-scoped subtasks. "
+                        "All operations within the same app must be merged into one subtask.\n"
+                        "4. Return at most 3 subtasks. Each subtask must have: "
+                        "app_hint (string or null), task (string), inputs (array of blackboard keys), "
+                        "outputs (array of string keys to extract after the subtask). "
+                        "Use inputs only for values produced by earlier subtasks. "
+                        "Only string values can be transferred.\n\n"
+                        "Examples:\n"
+                        "Input: Open Settings and turn on mobile network\n"
+                        "Output: {\"mode\":\"single\",\"subtasks\":[]}\n"
+                        "Input: Open WeChat to message Zhang San, then open Maps and navigate home\n"
+                        "Output: {\"mode\":\"multi_app\",\"subtasks\":["
+                        "{\"app_hint\":\"WeChat\",\"task\":\"In WeChat, message Zhang San that you arrived.\","
+                        "\"inputs\":[],\"outputs\":[]},"
+                        "{\"app_hint\":\"Maps\",\"task\":\"In Maps, start navigation home.\","
+                        "\"inputs\":[],\"outputs\":[]}]}"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"Original GUI task:\n{task}",
+                },
+            ],
+            tools=None,
+            max_tokens=900,
+        )
+        payload = self._extract_json_object(response.content)
+        if not isinstance(payload, dict):
+            return GuiWorkflowPlan(mode="single")
+
+        mode = str(payload.get("mode") or "single").strip().lower()
+        raw_subtasks = payload.get("subtasks")
+        subtasks: list[GuiWorkflowSubtask] = []
+        if isinstance(raw_subtasks, list):
+            for raw in raw_subtasks[: self._MAX_SUBTASKS]:
+                if not isinstance(raw, dict):
+                    continue
+                subtask = GuiWorkflowSubtask(
+                    app_hint=raw.get("app_hint"),
+                    task=str(raw.get("task") or "").strip(),
+                    inputs=raw.get("inputs"),
+                    outputs=raw.get("outputs"),
+                )
+                if subtask.task:
+                    subtasks.append(subtask)
+        if mode != "multi_app" or len(subtasks) < 2:
+            return GuiWorkflowPlan(mode="single")
+        return GuiWorkflowPlan(mode="multi_app", subtasks=tuple(subtasks))
+
+    @staticmethod
+    def _normalize_plan_app_hints(plan: GuiWorkflowPlan, *, platform: str) -> GuiWorkflowPlan:
+        if not plan.subtasks:
+            return plan
+        normalized_subtasks: list[GuiWorkflowSubtask] = []
+        for subtask in plan.subtasks:
+            app_hint = subtask.app_hint
+            if app_hint is not None:
+                normalized = normalize_app_identifier(platform, app_hint)
+                app_hint = normalized if normalized and normalized != "unknown" else None
+            normalized_subtasks.append(
+                GuiWorkflowSubtask(
+                    task=subtask.task,
+                    app_hint=app_hint,
+                    inputs=subtask.inputs,
+                    outputs=subtask.outputs,
+                )
+            )
+        return GuiWorkflowPlan(mode=plan.mode, subtasks=tuple(normalized_subtasks))
+
+    async def _run_multi_app(
+        self,
+        active_backend: Any,
+        original_task: str,
+        plan: GuiWorkflowPlan,
+        **kwargs: Any,
+    ) -> str:
+        blackboard: dict[str, str] = {}
+        subtask_records: list[dict[str, Any]] = []
+        payloads: list[dict[str, Any]] = []
+        total_steps = 0
+
+        for index, subtask in enumerate(plan.subtasks, start=1):
+            missing_inputs = [key for key in subtask.inputs if key not in blackboard]
+            if missing_inputs:
+                return self._workflow_failure_payload(
+                    summary=(
+                        "GUI workflow stopped because required input(s) were not available: "
+                        f"{', '.join(missing_inputs)}."
+                    ),
+                    error="missing_workflow_input",
+                    subtask_records=subtask_records,
+                    blackboard=blackboard,
+                    missing_outputs=[],
+                    payloads=payloads,
+                    steps_taken=total_steps,
+                )
+
+            task_prompt = self._append_known_values(subtask.task, blackboard, subtask.inputs)
+            run_kwargs = dict(kwargs)
+            if subtask.app_hint is not None:
+                run_kwargs["app_hint"] = subtask.app_hint
+
+            raw_payload = await self._run_task(active_backend, task_prompt, **run_kwargs)
+            payload = self._load_result_payload(raw_payload)
+            if payload is None:
+                return self._workflow_failure_payload(
+                    summary=f"GUI workflow stopped at subtask {index}: subtask returned invalid JSON.",
+                    error="invalid_subtask_result",
+                    subtask_records=subtask_records,
+                    blackboard=blackboard,
+                    missing_outputs=[],
+                    payloads=payloads,
+                    steps_taken=total_steps,
+                )
+
+            payloads.append(payload)
+            total_steps += self._int_or_zero(payload.get("steps_taken"))
+            subtask_records.append(self._subtask_record(subtask, payload))
+
+            if not bool(payload.get("success")):
+                return self._workflow_failure_payload(
+                    summary=f"GUI workflow stopped at subtask {index}: {payload.get('summary') or 'failed'}",
+                    error=self._string_or_default(payload.get("error"), "subtask_failed"),
+                    subtask_records=subtask_records,
+                    blackboard=blackboard,
+                    missing_outputs=[],
+                    payloads=payloads,
+                    steps_taken=total_steps,
+                )
+
+            if subtask.outputs:
+                trace_path = self._path_or_none(payload.get("trace_path"))
+                latest_step = self._load_latest_step_event(trace_path)
+                extracted = await self._extract_outputs(
+                    original_task=original_task,
+                    subtask=subtask,
+                    declared_outputs=subtask.outputs,
+                    summary=self._string_or_default(payload.get("summary"), ""),
+                    model_summary=self._string_or_default(payload.get("model_summary"), ""),
+                    latest_step=latest_step,
+                )
+                for key, value in extracted.items():
+                    if key in subtask.outputs and isinstance(value, str) and value.strip():
+                        blackboard[key] = value.strip()
+
+                missing_outputs = [key for key in subtask.outputs if key not in blackboard]
+                if missing_outputs:
+                    return self._workflow_failure_payload(
+                        summary=(
+                            "GUI workflow stopped because required output(s) were not found: "
+                            f"{', '.join(missing_outputs)}."
+                        ),
+                        error="missing_workflow_output",
+                        subtask_records=subtask_records,
+                        blackboard=blackboard,
+                        missing_outputs=missing_outputs,
+                        payloads=payloads,
+                        steps_taken=total_steps,
+                    )
+
+        last_payload = payloads[-1] if payloads else {}
+        result = self._base_workflow_payload(
+            success=True,
+            summary=self._string_or_default(last_payload.get("summary"), "GUI workflow completed."),
+            error=None,
+            subtask_records=subtask_records,
+            blackboard=blackboard,
+            payloads=payloads,
+            steps_taken=total_steps,
+        )
+        return json.dumps(result, ensure_ascii=False)
+
+    async def _extract_outputs(
+        self,
+        *,
+        original_task: str,
+        subtask: GuiWorkflowSubtask,
+        declared_outputs: tuple[str, ...],
+        summary: str,
+        model_summary: str,
+        latest_step: dict[str, Any],
+    ) -> dict[str, str]:
+        latest_step_text = self._compact_json(latest_step, max_chars=4000)
+        response = await self._llm.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract structured string values from a completed GUI subtask. "
+                        "Return only a JSON object. Keys must be selected from the declared output keys. "
+                        "If a value is not explicitly present, omit the key. Do not guess."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"Original task:\n{original_task}\n\n"
+                        f"Subtask:\n{subtask.task}\n\n"
+                        f"Declared output keys: {json.dumps(list(declared_outputs), ensure_ascii=False)}\n\n"
+                        f"Summary:\n{summary}\n\n"
+                        f"Model summary:\n{model_summary}\n\n"
+                        f"Latest trace step:\n{latest_step_text}"
+                    ),
+                },
+            ],
+            tools=None,
+            max_tokens=500,
+        )
+        payload = self._extract_json_object(response.content)
+        if not isinstance(payload, dict):
+            return {}
+        allowed = set(declared_outputs)
+        extracted: dict[str, str] = {}
+        for key, value in payload.items():
+            if key not in allowed or value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                extracted[key] = text
+        return extracted
+
+    @staticmethod
+    def _append_known_values(task: str, blackboard: dict[str, str], inputs: tuple[str, ...]) -> str:
+        if not blackboard:
+            return task
+        keys = [key for key in inputs if key in blackboard] if inputs else list(blackboard)
+        if not keys:
+            return task
+        pairs = []
+        for key in keys:
+            value = re.sub(r"\s+", " ", blackboard[key]).strip()
+            pairs.append(f"{key}={value}")
+        return f"{task}\n\nYou must use these known values if relevant: {', '.join(pairs)}"
+
+    @staticmethod
+    def _subtask_record(subtask: GuiWorkflowSubtask, payload: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "app_hint": subtask.app_hint,
+            "task": subtask.task,
+            "success": bool(payload.get("success")),
+            "summary": payload.get("summary"),
+            "trace_path": payload.get("trace_path"),
+        }
+
+    def _workflow_failure_payload(
+        self,
+        *,
+        summary: str,
+        error: str,
+        subtask_records: list[dict[str, Any]],
+        blackboard: dict[str, str],
+        missing_outputs: list[str],
+        payloads: list[dict[str, Any]],
+        steps_taken: int,
+    ) -> str:
+        payload = self._base_workflow_payload(
+            success=False,
+            summary=summary,
+            error=error,
+            subtask_records=subtask_records,
+            blackboard=blackboard,
+            payloads=payloads,
+            steps_taken=steps_taken,
+        )
+        if missing_outputs:
+            payload["missing_outputs"] = missing_outputs
+        return json.dumps(payload, ensure_ascii=False)
+
+    def _base_workflow_payload(
+        self,
+        *,
+        success: bool,
+        summary: str,
+        error: str | None,
+        subtask_records: list[dict[str, Any]],
+        blackboard: dict[str, str],
+        payloads: list[dict[str, Any]],
+        steps_taken: int,
+    ) -> dict[str, Any]:
+        last_payload = payloads[-1] if payloads else {}
+        duration_s = self._sum_numeric(payloads, "duration_s")
+        token_usage = self._sum_token_usage(payloads, "token_usage")
+        return {
+            "success": success,
+            "summary": summary,
+            "model_summary": last_payload.get("model_summary"),
+            "trace_path": last_payload.get("trace_path"),
+            "steps_taken": steps_taken,
+            "error": error,
+            "post_run_state": last_payload.get("post_run_state"),
+            "metrics_path": last_payload.get("metrics_path"),
+            "duration_s": duration_s,
+            "token_usage": token_usage,
+            "total_duration_s": duration_s,
+            "total_token_usage": token_usage,
+            "workflow_mode": "multi_app",
+            "subtasks": subtask_records,
+            "blackboard": dict(blackboard),
+        }
+
+    @staticmethod
+    def _with_workflow_mode(payload: str, mode: str) -> str:
+        data = GuiWorkflowRunner._load_result_payload(payload)
+        if data is None:
+            return payload
+        data["workflow_mode"] = mode
+        return json.dumps(data, ensure_ascii=False)
+
+    @staticmethod
+    def _load_result_payload(payload: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(payload)
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _extract_json_object(text: str) -> dict[str, Any] | None:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start < 0 or end <= start:
+                return None
+            try:
+                payload = json.loads(cleaned[start : end + 1])
+            except json.JSONDecodeError:
+                return None
+        return payload if isinstance(payload, dict) else None
+
+    @staticmethod
+    def _compact_json(value: Any, *, max_chars: int) -> str:
+        try:
+            text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            text = str(value)
+        if len(text) > max_chars:
+            return f"{text[:max_chars]}..."
+        return text
+
+    @staticmethod
+    def _path_or_none(value: Any) -> Path | None:
+        if not value:
+            return None
+        path = Path(str(value))
+        return path if path.exists() else None
+
+    @staticmethod
+    def _int_or_zero(value: Any) -> int:
+        return value if isinstance(value, int) else 0
+
+    @staticmethod
+    def _string_or_default(value: Any, default: str) -> str:
+        if value is None:
+            return default
+        text = str(value).strip()
+        return text or default
+
+    @staticmethod
+    def _sum_numeric(payloads: list[dict[str, Any]], key: str) -> float | None:
+        values = [payload.get(key) for payload in payloads]
+        numeric = [value for value in values if isinstance(value, int | float)]
+        if not numeric:
+            return None
+        return float(sum(numeric))
+
+    @staticmethod
+    def _sum_token_usage(payloads: list[dict[str, Any]], key: str) -> dict[str, int]:
+        totals: dict[str, int] = {}
+        for payload in payloads:
+            usage = payload.get(key)
+            if not isinstance(usage, dict):
+                continue
+            for usage_key, value in usage.items():
+                if isinstance(value, int):
+                    totals[usage_key] = totals.get(usage_key, 0) + value
+        return totals
 
 
 class GuiSubagentTool(Tool):
@@ -211,7 +716,7 @@ class GuiSubagentTool(Tool):
                                 mgr,
                                 run_metadata={"owner": "nanobot", "task": task, "model": self._model},
                             )
-                            return await self._run_task(wrapped_backend, task, **kwargs)
+                            return await self._run_workflow_or_task(wrapped_backend, task, **kwargs)
                         except RuntimeError as exc:
                             return self._background_json_failure(str(exc))
                         finally:
@@ -226,15 +731,31 @@ class GuiSubagentTool(Tool):
                             run_metadata={"owner": "nanobot", "task": task, "model": self._model},
                         )
                         try:
-                            return await self._run_task(wrapped_backend, task, **kwargs)
+                            return await self._run_workflow_or_task(wrapped_backend, task, **kwargs)
                         finally:
                             await wrapped_backend.shutdown()
 
-            return await self._run_task(active_backend, task, **kwargs)
+            return await self._run_workflow_or_task(active_backend, task, **kwargs)
         finally:
             await self._shutdown_android_backend(active_backend)
 
-    async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
+    async def _run_workflow_or_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
+        runner = GuiWorkflowRunner(
+            llm=self._llm_adapter,
+            run_task=self._run_task,
+            load_latest_step_event=self._load_latest_step_event,
+        )
+        return await runner.run(active_backend, task, **kwargs)
+
+    async def _run_task(
+        self,
+        active_backend: Any,
+        task: str,
+        *,
+        app_hint: str | None = None,
+        **kwargs: Any,
+    ) -> str:
+        del kwargs
         policy_context, memory_store = self._load_policy_context_and_memory_store()
         skill_library = None
         if self._gui_config.enable_skill_execution:
@@ -337,7 +858,10 @@ class GuiSubagentTool(Tool):
             shortcut_cache_dir=str(sc_dir),
         )
 
-        result = await agent.run(task=task)
+        if app_hint is not None:
+            result = await agent.run(task=task, app_hint=app_hint)
+        else:
+            result = await agent.run(task=task)
         summary = result.summary
         error = result.error
         if error and error.startswith("intervention_cancelled:"):

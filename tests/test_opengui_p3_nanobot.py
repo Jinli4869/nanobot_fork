@@ -69,6 +69,10 @@ def _nanobot_tool_response(
     )
 
 
+def _nanobot_text_response(content: str) -> Any:
+    return NanobotLLMResponse(content=content)
+
+
 def _skill_candidate(*, app: str = "Settings", name: str = "open_settings") -> Any:
     from opengui.skills.data import Skill, SkillStep
 
@@ -446,6 +450,7 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
 
     provider = _MockNanobotProvider(
         [
+            _nanobot_text_response('{"mode": "single", "subtasks": []}'),
             _nanobot_tool_response(
                 content="Action: wait briefly",
                 arguments={"action_type": "wait", "duration_ms": 1},
@@ -480,6 +485,7 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
         "token_usage",
         "total_duration_s",
         "total_token_usage",
+        "workflow_mode",
     }
     assert result["success"] is True
     assert result["summary"].startswith("Status: completed")
@@ -493,8 +499,249 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     assert isinstance(result["token_usage"], dict)
     assert result["total_duration_s"] == result["duration_s"]
     assert result["total_token_usage"] == result["token_usage"]
+    assert result["workflow_mode"] == "single"
     assert traces
     assert any(path.name == "trace.jsonl" for path in traces)
+
+
+@pytest.mark.asyncio
+async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool, GuiWorkflowPlan
+
+    provider = _MockNanobotProvider([])
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    plan_workflow = AsyncMock(return_value=GuiWorkflowPlan(mode="single", subtasks=[]))
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._plan_workflow",
+        plan_workflow,
+    )
+    run_task = AsyncMock(
+        return_value=json.dumps(
+            {
+                "success": True,
+                "summary": "done",
+                "model_summary": None,
+                "trace_path": None,
+                "steps_taken": 1,
+                "error": None,
+            }
+        )
+    )
+    monkeypatch.setattr(GuiSubagentTool, "_run_task", run_task)
+
+    result = json.loads(await tool.execute(task="Open Settings"))
+
+    plan_workflow.assert_awaited_once_with("Open Settings")
+    run_task.assert_awaited_once_with(tool._backend, "Open Settings")
+    assert result["success"] is True
+    assert result["summary"] == "done"
+    assert result["workflow_mode"] == "single"
+
+
+@pytest.mark.asyncio
+async def test_gui_task_multi_app_workflow_injects_blackboard_values(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool, GuiWorkflowPlan, GuiWorkflowSubtask
+
+    provider = _MockNanobotProvider([])
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    plan = GuiWorkflowPlan(
+        mode="multi_app",
+        subtasks=[
+            GuiWorkflowSubtask(
+                task="Open Messages and read the verification code.",
+                app_hint="Messages",
+                outputs=("code",),
+            ),
+            GuiWorkflowSubtask(
+                task="Open Browser and enter the verification code.",
+                app_hint="Browser",
+                inputs=("code",),
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._plan_workflow",
+        AsyncMock(return_value=plan),
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._extract_outputs",
+        AsyncMock(return_value={"code": "1234"}),
+    )
+
+    async def fake_run_task(active_backend: Any, task: str, **kwargs: Any) -> str:
+        del active_backend, kwargs
+        return json.dumps(
+            {
+                "success": True,
+                "summary": f"completed: {task}",
+                "model_summary": None,
+                "trace_path": None,
+                "steps_taken": 1,
+                "error": None,
+            }
+        )
+
+    run_task = AsyncMock(side_effect=fake_run_task)
+    monkeypatch.setattr(GuiSubagentTool, "_run_task", run_task)
+
+    result = json.loads(await tool.execute(task="Copy a code from Messages into Browser"))
+
+    assert run_task.await_count == 2
+    second_task = run_task.await_args_list[1].args[1]
+    assert "Open Browser and enter the verification code." in second_task
+    assert "You must use these known values if relevant: code=1234" in second_task
+    assert run_task.await_args_list[0].kwargs["app_hint"] == "messages"
+    assert run_task.await_args_list[1].kwargs["app_hint"] == "browser"
+    assert result["success"] is True
+    assert result["workflow_mode"] == "multi_app"
+    assert result["blackboard"] == {"code": "1234"}
+    assert result["subtasks"][0]["app_hint"] == "messages"
+    assert result["subtasks"][1]["app_hint"] == "browser"
+
+
+@pytest.mark.asyncio
+async def test_gui_task_multi_app_workflow_stops_on_missing_declared_output(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool, GuiWorkflowPlan, GuiWorkflowSubtask
+
+    provider = _MockNanobotProvider([])
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+
+    plan = GuiWorkflowPlan(
+        mode="multi_app",
+        subtasks=[
+            GuiWorkflowSubtask(
+                task="Open Shop and read the tracking number.",
+                app_hint="Shop",
+                outputs=("tracking_number",),
+            ),
+            GuiWorkflowSubtask(
+                task="Open Notes and save the tracking number.",
+                app_hint="Notes",
+                inputs=("tracking_number",),
+            ),
+        ],
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._plan_workflow",
+        AsyncMock(return_value=plan),
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._extract_outputs",
+        AsyncMock(return_value={}),
+    )
+    run_task = AsyncMock(
+        return_value=json.dumps(
+            {
+                "success": True,
+                "summary": "Opened Shop but no tracking number was visible.",
+                "model_summary": None,
+                "trace_path": None,
+                "steps_taken": 1,
+                "error": None,
+            }
+        )
+    )
+    monkeypatch.setattr(GuiSubagentTool, "_run_task", run_task)
+
+    result = json.loads(await tool.execute(task="Copy a tracking number from Shop into Notes"))
+
+    run_task.assert_awaited_once()
+    assert result["success"] is False
+    assert result["workflow_mode"] == "multi_app"
+    assert result["error"] == "missing_workflow_output"
+    assert result["missing_outputs"] == ["tracking_number"]
+    assert "tracking_number" in result["summary"]
+    assert result["subtasks"][0]["success"] is True
+    assert result["blackboard"] == {}
+
+
+@pytest.mark.asyncio
+async def test_gui_task_workflow_normalizes_android_app_hints(
+    tmp_workspace: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool, GuiWorkflowPlan, GuiWorkflowSubtask
+
+    provider = _MockNanobotProvider([])
+    tool = GuiSubagentTool(
+        gui_config=Config(gui={"backend": "dry-run"}).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+    tool._backend = SimpleNamespace(platform="android")
+
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._plan_workflow",
+        AsyncMock(
+            return_value=GuiWorkflowPlan(
+                mode="multi_app",
+                subtasks=[
+                    GuiWorkflowSubtask(
+                        task="Open Settings and copy the device name.",
+                        app_hint="Settings",
+                        outputs=("device_name",),
+                    ),
+                    GuiWorkflowSubtask(
+                        task="Open Chrome and search for the device name.",
+                        app_hint="Chrome",
+                        inputs=("device_name",),
+                    ),
+                ],
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiWorkflowRunner._extract_outputs",
+        AsyncMock(return_value={"device_name": "Pixel"}),
+    )
+    run_task = AsyncMock(
+        return_value=json.dumps(
+            {
+                "success": True,
+                "summary": "done",
+                "model_summary": None,
+                "trace_path": None,
+                "steps_taken": 1,
+                "error": None,
+            }
+        )
+    )
+    monkeypatch.setattr(GuiSubagentTool, "_run_task", run_task)
+
+    result = json.loads(await tool.execute(task="Use Settings value in Chrome"))
+
+    assert result["success"] is True
+    assert run_task.await_args_list[0].kwargs["app_hint"] == "com.android.settings"
+    assert run_task.await_args_list[1].kwargs["app_hint"] == "com.android.chrome"
+    assert result["subtasks"][0]["app_hint"] == "com.android.settings"
+    assert result["subtasks"][1]["app_hint"] == "com.android.chrome"
 
 
 @pytest.mark.asyncio
@@ -519,6 +766,7 @@ async def test_gui_task_returns_state_note_for_partial_run(
 
     provider = _MockNanobotProvider(
         [
+            _nanobot_text_response('{"mode": "single", "subtasks": []}'),
             _nanobot_tool_response(
                 content="Action: wait briefly",
                 arguments={"action_type": "wait", "duration_ms": 1},
@@ -547,6 +795,7 @@ async def test_gui_task_returns_state_note_for_partial_run(
         "token_usage",
         "total_duration_s",
         "total_token_usage",
+        "workflow_mode",
     }
     assert result["success"] is False
     assert result["summary"].startswith("Status: partial")
@@ -562,6 +811,7 @@ async def test_gui_task_returns_state_note_for_partial_run(
     assert isinstance(result["token_usage"], dict)
     assert result["total_duration_s"] == result["duration_s"]
     assert result["total_token_usage"] == result["token_usage"]
+    assert result["workflow_mode"] == "single"
 
 
 @pytest.mark.asyncio
