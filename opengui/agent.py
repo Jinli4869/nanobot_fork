@@ -20,15 +20,19 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from opengui.action import Action, ActionError, describe_action, parse_action
 from opengui.agent_profiles import (
+    build_mobileworld_messages,
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
-    normalize_profile_response,
-    profile_tool_definition,
+    normalize_profile_response_for_observation,
+    normalize_profile_response_for_screen,
     profile_uses_native_tools,
     prompt_contract_for_profile,
 )
@@ -42,7 +46,6 @@ from opengui.interfaces import (
     ToolCall,
 )
 from opengui.observation import Observation
-from opengui.prompts.system import build_system_prompt
 from opengui.skills.deeplink import AppShortcutProfile
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.state_contract import evaluate_state_contract, infer_interaction_target
@@ -108,6 +111,7 @@ class HistoryTurn:
     action_summary: str
     action_intent: str | None = None
     state_summary: str | None = None
+    raw_response_content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -311,6 +315,11 @@ _COMPUTER_USE_TOOL: dict[str, Any] = {
 }
 
 
+def _image_dimensions(raw: bytes) -> tuple[int, int]:
+    with Image.open(BytesIO(raw)) as image:
+        return image.size
+
+
 # ---------------------------------------------------------------------------
 # Agent-side protocol implementations for SkillExecutor
 # ---------------------------------------------------------------------------
@@ -381,6 +390,7 @@ class _AgentActionGrounder:
         )
         from opengui.skills.executor import _scale_image
         raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
+        screen_width, screen_height = _image_dimensions(raw)
         image_data = base64.b64encode(
             _scale_image(raw, scale_ratio=self._image_scale_ratio)
         ).decode()
@@ -414,7 +424,13 @@ class _AgentActionGrounder:
                 self._latency_samples.append(response.latency_s)
 
             try:
-                response = normalize_profile_response(self._agent_profile, response)
+                response = normalize_profile_response_for_screen(
+                    self._agent_profile,
+                    response,
+                    screen_width=screen_width,
+                    screen_height=screen_height,
+                    model_name=self._model,
+                )
             except Exception as exc:
                 if attempt < self._MAX_RETRIES:
                     messages.append({"role": "assistant", "content": response.content or ""})
@@ -545,6 +561,7 @@ class _AgentSubgoalRunner:
 
             from opengui.skills.executor import _scale_image
             img_bytes = current_screenshot.read_bytes() if isinstance(current_screenshot, Path) else current_screenshot
+            screen_width, screen_height = _image_dimensions(img_bytes)
             image_data = base64.b64encode(
                 _scale_image(img_bytes, scale_ratio=self._image_scale_ratio)
             ).decode()
@@ -598,7 +615,13 @@ class _AgentSubgoalRunner:
                 subgoal_usage[k] = subgoal_usage.get(k, 0) + v
 
             try:
-                response = normalize_profile_response(self._agent_profile, response)
+                response = normalize_profile_response_for_screen(
+                    self._agent_profile,
+                    response,
+                    screen_width=screen_width,
+                    screen_height=screen_height,
+                    model_name=self._model,
+                )
             except Exception as exc:
                 logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
                 summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
@@ -1637,6 +1660,11 @@ class GuiAgent:
                                 )
                                 or result.state_summary
                             ),
+                            raw_response_content=(
+                                result.model_snapshot.get("raw_content")
+                                if isinstance(result.model_snapshot, dict)
+                                else None
+                            ),
                         )
                     ]
                     summary_observation = result.next_observation or obs
@@ -1831,6 +1859,11 @@ class GuiAgent:
                                 )
                                 or result.state_summary
                             ),
+                            raw_response_content=(
+                                result.model_snapshot.get("raw_content")
+                                if isinstance(result.model_snapshot, dict)
+                                else None
+                            ),
                         )
                     ]
                     termination_summary = await self._generate_termination_summary(
@@ -1903,6 +1936,11 @@ class GuiAgent:
                     state_summary=(
                         self._scrub_text_for_action(result.state_summary, result.action)
                         or result.state_summary
+                    ),
+                    raw_response_content=(
+                        result.model_snapshot.get("raw_content")
+                        if isinstance(result.model_snapshot, dict)
+                        else None
                     ),
                 )
             )
@@ -1981,7 +2019,12 @@ class GuiAgent:
             raw_response_snapshot = self._snapshot_failed_model_response(response)
 
             try:
-                response = normalize_profile_response(self.agent_profile, response)
+                response = normalize_profile_response_for_observation(
+                    self.agent_profile,
+                    response,
+                    current_observation,
+                    model_name=self.model,
+                )
             except ValueError as exc:
                 detail = f"{exc}. Follow the required response format exactly."
                 feedback = self._build_tool_format_error(
@@ -2434,49 +2477,16 @@ class GuiAgent:
         memory_context: str | None = None,
         skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build the prompt for the current step."""
-        messages: list[dict[str, Any]] = [{
-            "role": "system",
-            "content": build_system_prompt(
-                platform=self.backend.platform,
-                coordinate_mode=self._coordinate_mode(),
-                tool_definition=profile_tool_definition(self.agent_profile),
-                memory_context=memory_context,
-                skill_context=skill_context,
-                installed_apps=self._installed_apps,
-                agent_profile=self.agent_profile,
-            ),
-        }]
-
-        prompt_text = self._build_instruction_prompt(
+        """Build the MobileWorld-profile prompt for the current step."""
+        del app_hint, memory_context, skill_context
+        return build_mobileworld_messages(
+            self.agent_profile,
             task=task,
             current_observation=current_observation,
             history=history,
-            app_hint=app_hint,
-            skill_context=skill_context,
+            model_name=self.model,
+            history_image_window=self.history_image_window,
         )
-        history_image_count = max(0, self.history_image_window - 1)
-        recent_image_history = history[-history_image_count:] if history_image_count else []
-        for turn in recent_image_history:
-            messages.append(
-                self._history_user_message(
-                    turn.observation,
-                    prompt_text=self._history_image_prompt(turn),
-                )
-            )
-            messages.append(self._history_assistant_message(turn))
-
-        messages.append(
-            self._current_user_message(
-                current_observation,
-                task=task,
-                step_index=len(history),
-                app_hint=app_hint,
-                prompt_text=prompt_text,
-            )
-        )
-
-        return messages
 
     def _build_instruction_prompt(
         self,
@@ -2876,6 +2886,7 @@ class GuiAgent:
                     "action_summary": turn.action_summary,
                     "action_intent": turn.action_intent,
                     "state_summary": turn.state_summary,
+                    "raw_response_content": turn.raw_response_content,
                     "observation": self._serialize_observation(turn.observation),
                     "tool_result": turn.tool_result_message.get("content"),
                 }
@@ -3746,13 +3757,11 @@ class GuiAgent:
     async def _skill_maintenance(
         self, skill_match: Any | None, success: bool
     ) -> None:
-        """Post-run: update confidence, discard low-confidence, check merge."""
+        """Post-run: update confidence while keeping failed skills evolvable."""
         if skill_match is None or self._skill_library is None:
             return
         if hasattr(skill_match, "layer"):
             return
-        from opengui.skills.data import compute_confidence
-
         skill, _ = skill_match
         if success:
             updated = replace(
@@ -3769,12 +3778,7 @@ class GuiAgent:
                 success_streak=0,
             )
 
-        new_conf = compute_confidence(updated)
-        total_attempts = updated.success_count + updated.failure_count
-        if total_attempts >= 5 and new_conf < 0.25:
-            self._skill_library.remove(skill.skill_id)
-        else:
-            self._skill_library.update(skill.skill_id, updated)
+        self._skill_library.update(skill.skill_id, updated)
 
 
 def _first_tool_call(model_snapshot: dict[str, Any]) -> dict[str, Any] | None:

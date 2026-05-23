@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from PIL import Image
 
 import opengui.backends.adb as adb_backend_module
 import opengui.backends.hdc as hdc_backend_module
@@ -35,6 +36,102 @@ def _make_recorder(tmp_path: Path, task: str = "test task") -> TrajectoryRecorde
     return TrajectoryRecorder(output_dir=tmp_path / "traj", task=task)
 
 
+def _write_test_png(path: Path, *, size: tuple[int, int] = (32, 32)) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", size, color=(255, 255, 255)).save(path, format="PNG")
+
+
+def _mobileworld_response(
+    action: dict,
+    *,
+    thought: str = "Proceed with the next MobileWorld action.",
+    usage: dict[str, int] | None = None,
+) -> LLMResponse:
+    return LLMResponse(
+        content=f"Thought: {thought}\nAction: {json.dumps(action, ensure_ascii=False)}",
+        tool_calls=None,
+        usage=usage or {},
+    )
+
+
+def _qwen_response(
+    arguments: dict,
+    *,
+    thought: str = "Proceed with the next MobileWorld action.",
+    action_text: str = "Execute the next action",
+    usage: dict[str, int] | None = None,
+) -> LLMResponse:
+    tool_call = {"name": "mobile_use", "arguments": arguments}
+    return LLMResponse(
+        content=(
+            f"Thought: {thought}\n"
+            f"Action: \"{action_text}\"\n"
+            f"<tool_call>{json.dumps(tool_call, ensure_ascii=False)}</tool_call>"
+        ),
+        tool_calls=None,
+        usage=usage or {},
+    )
+
+
+def _mobileworld_action_from_tool_args(args: dict) -> dict:
+    action_type = str(args.get("action_type") or args.get("action") or "").strip().lower()
+    if action_type in {"tap", "click", "long_press", "double_tap", "double_click"}:
+        mapped = {"tap": "click", "double_click": "double_tap"}.get(action_type, action_type)
+        return {
+            "action_type": mapped,
+            "coordinate": [
+                args.get("x", 500),
+                args.get("y", 500),
+            ],
+        }
+    if action_type == "drag":
+        return {
+            "action_type": "drag",
+            "start_coordinate": [args.get("x", 500), args.get("y", 500)],
+            "end_coordinate": [args.get("x2", 500), args.get("y2", 500)],
+        }
+    if action_type == "scroll":
+        return {"action_type": "scroll", "direction": args.get("direction") or args.get("text", "down")}
+    if action_type == "input_text":
+        return {"action_type": "input_text", "text": args.get("text", "")}
+    if action_type == "open_app":
+        return {"action_type": "open_app", "app_name": args.get("text", "")}
+    if action_type in {"back", "navigate_back"}:
+        return {"action_type": "navigate_back"}
+    if action_type in {"home", "navigate_home"}:
+        return {"action_type": "navigate_home"}
+    if action_type in {"enter", "keyboard_enter"}:
+        return {"action_type": "keyboard_enter"}
+    if action_type == "wait":
+        return {"action_type": "wait"}
+    if action_type == "done":
+        status = str(args.get("status") or "").lower()
+        text = str(args.get("text") or "").lower()
+        failed = status == "failure" or "fail" in text or "unable" in text
+        return {"action_type": "status", "goal_status": "infeasible" if failed else "complete"}
+    if action_type == "request_intervention":
+        return {"action_type": "ask_user", "text": args.get("text", "")}
+    return {"action_type": action_type or "wait"}
+
+
+def _coerce_mobileworld_response(response: LLMResponse) -> LLMResponse:
+    if not response.tool_calls:
+        return response
+    tool_call = response.tool_calls[0]
+    action = _mobileworld_action_from_tool_args(tool_call.arguments)
+    thought = response.content or "Use the scripted action."
+    return _mobileworld_response(action, thought=thought, usage=response.usage)
+
+
+def _message_text(message: dict) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(str(block.get("text", "")) for block in content if isinstance(block, dict))
+    return ""
+
+
 class _ScriptedLLM:
     def __init__(self, responses: list[LLMResponse]) -> None:
         self._responses = list(responses)
@@ -42,7 +139,7 @@ class _ScriptedLLM:
     async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
         if not self._responses:
             raise AssertionError("No scripted responses left.")
-        return self._responses.pop(0)
+        return _coerce_mobileworld_response(self._responses.pop(0))
 
 
 class _RecordingLLM(_ScriptedLLM):
@@ -90,8 +187,7 @@ class _SkillTestBackend:
     async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
         del timeout
         self.observe_calls.append(screenshot_path)
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        screenshot_path.write_bytes(b"png")
+        _write_test_png(screenshot_path)
         return Observation(
             screenshot_path=str(screenshot_path),
             screen_width=1000,
@@ -658,19 +754,18 @@ def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
         tool_definition={"type": "function", "function": {"name": "computer_use"}},
     )
 
-    assert "# Tools" in prompt
-    assert "<tools>" in prompt
-    assert '"name": "computer_use"' in prompt
-    assert "# Response format" in prompt
-    assert "native tool-calling mechanism" in prompt
+    assert "# Action Contract" in prompt
+    assert "MobileWorld agent profile: general_e2e" in prompt
+    assert "Use the exact MobileWorld response format" in prompt
+    assert "Do not use provider-native tool calling" in prompt
 
 
-def test_default_profile_tool_definition_requires_intent_and_summary() -> None:
+def test_default_profile_tool_definition_is_mobileworld_textual_schema() -> None:
     params = profile_tool_definition("default")["function"]["parameters"]
 
-    assert params["required"] == ["action_type", "intent", "summary"]
-    assert "purpose of the selected next action" in params["properties"]["intent"]["description"]
-    assert "current task progress" in params["properties"]["summary"]["description"]
+    assert profile_tool_definition("default")["function"]["name"] == "mobile_use"
+    assert params["required"] == []
+    assert params["properties"] == {}
 
 
 def test_build_system_prompt_supports_general_e2e_profile() -> None:
@@ -679,9 +774,9 @@ def test_build_system_prompt_supports_general_e2e_profile() -> None:
         agent_profile="general_e2e",
     )
 
-    assert "Thought:" in prompt
-    assert 'Action: {"action_type": "click"' in prompt
-    assert "Do not use native tool calling" in prompt
+    assert "MobileWorld agent profile: general_e2e" in prompt
+    assert "Use the exact MobileWorld response format" in prompt
+    assert "Do not use provider-native tool calling" in prompt
 
 
 def test_annotate_android_apps_filters_unmapped_packages() -> None:
@@ -1124,7 +1219,7 @@ async def test_ios_backend_scroll_vertical_direction_is_inverted(
     assert backend._client._session.swipe_calls == [(200, 400, 200, expected_y2, 0.3)]
 
 
-def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> None:
+def test_agent_uses_absolute_coordinates_for_mobileworld_profiles(tmp_path: Path) -> None:
     qwen_agent = GuiAgent(
         _ScriptedLLM([]),
         DryRunBackend(),
@@ -1140,9 +1235,9 @@ def test_agent_marks_qwen_and_gemini_coordinates_as_relative(tmp_path: Path) -> 
 
     action = parse_action({"action_type": "tap", "x": 500, "y": 250})
 
-    assert qwen_agent._normalize_relative_coordinates(action).relative is True
-    assert gemini_agent._normalize_relative_coordinates(action).relative is True
-    assert qwen_agent._coordinate_mode() == "relative_999"
+    assert qwen_agent._normalize_relative_coordinates(action).relative is False
+    assert gemini_agent._normalize_relative_coordinates(action).relative is False
+    assert qwen_agent._coordinate_mode() == "absolute"
 
 
 def test_agent_keeps_absolute_coordinates_for_other_models(tmp_path: Path) -> None:
@@ -1178,6 +1273,8 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
         "x": 500,
         "y": 250,
         "relative": True,
+        "summary": "Tap target",
+        "intent": "Tap target",
     }
 
 
@@ -1194,7 +1291,7 @@ def test_qwen3vl_profile_rejects_action_json_without_tool_call() -> None:
         normalize_profile_response("qwen3vl", response)
 
 
-def test_qwen3vl_profile_preserves_action_summary() -> None:
+def test_qwen3vl_profile_uses_mobileworld_conclusion_as_summary() -> None:
     response = LLMResponse(
         content=(
             'Thought: I found the target\n'
@@ -1212,7 +1309,8 @@ def test_qwen3vl_profile_preserves_action_summary() -> None:
         "x": 500,
         "y": 250,
         "relative": True,
-        "summary": "tap login button",
+        "summary": "Tap login",
+        "intent": "Tap login",
     }
 
 
@@ -1231,6 +1329,8 @@ def test_qwen3vl_profile_parses_action_type_key() -> None:
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
         "action_type": "wait",
+        "summary": "Wait",
+        "intent": "Wait",
     }
 
 
@@ -1258,10 +1358,12 @@ def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> 
     assert normalized.tool_calls[0].arguments == {
         "action_type": "open_app",
         "text": "chrome",
+        "summary": "Open Chrome",
+        "intent": "Open Chrome",
     }
 
 
-def test_qwen3vl_profile_falls_back_to_provider_tool_calls_when_content_contract_is_missing() -> None:
+def test_qwen3vl_profile_rejects_provider_tool_calls_when_content_contract_is_missing() -> None:
     response = LLMResponse(
         content='Thought: Continue\nAction: Tap the next result',
         tool_calls=[
@@ -1273,20 +1375,11 @@ def test_qwen3vl_profile_falls_back_to_provider_tool_calls_when_content_contract
         ],
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
-
-    assert normalized.tool_calls is not None
-    assert normalized.tool_calls[0].id == "provider-tool-call-0"
-    assert normalized.tool_calls[0].name == "computer_use"
-    assert normalized.tool_calls[0].arguments == {
-        "action_type": "tap",
-        "x": 321,
-        "y": 654,
-        "relative": True,
-    }
+    with pytest.raises(ValueError):
+        normalize_profile_response("qwen3vl", response)
 
 
-def test_qwen3vl_profile_normalizes_provider_mobile_use_tool_calls() -> None:
+def test_qwen3vl_profile_rejects_provider_mobile_use_tool_calls() -> None:
     response = LLMResponse(
         content="Action: Tap the next result",
         tool_calls=[
@@ -1298,34 +1391,18 @@ def test_qwen3vl_profile_normalizes_provider_mobile_use_tool_calls() -> None:
         ],
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
-
-    assert normalized.tool_calls is not None
-    assert normalized.tool_calls[0].id == "provider-tool-call-0"
-    assert normalized.tool_calls[0].name == "computer_use"
-    assert normalized.tool_calls[0].arguments == {
-        "action_type": "tap",
-        "x": 903,
-        "y": 130,
-        "relative": True,
-    }
+    with pytest.raises(ValueError):
+        normalize_profile_response("qwen3vl", response)
 
 
-def test_qwen3vl_profile_parses_tool_call_without_action_json() -> None:
+def test_qwen3vl_profile_requires_action_text_before_tool_call() -> None:
     response = LLMResponse(
         content='Thought: Tap target\n<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>',
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
-
-    assert normalized.tool_calls is not None
-    assert normalized.tool_calls[0].arguments == {
-        "action_type": "tap",
-        "x": 500,
-        "y": 250,
-        "relative": True,
-    }
+    with pytest.raises(ValueError):
+        normalize_profile_response("qwen3vl", response)
 
 
 def test_qwen3vl_profile_normalizes_wait_with_time() -> None:
@@ -1343,7 +1420,8 @@ def test_qwen3vl_profile_normalizes_wait_with_time() -> None:
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
         "action_type": "wait",
-        "duration_ms": 1500,
+        "summary": "Pause for a moment",
+        "intent": "Pause for a moment",
     }
 
 
@@ -1361,11 +1439,12 @@ def test_mai_ui_profile_parses_swipe_direction_scroll() -> None:
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
         "action_type": "scroll",
-        "text": "down",
+        "direction": "up",
         "relative": True,
-        "pixels": 420,
         "x": 300,
         "y": 700,
+        "summary": "Need to scroll down.",
+        "intent": "Need to scroll down.",
     }
 
 
@@ -1401,6 +1480,8 @@ def test_qwen3vl_profile_parses_tool_call_block_with_text_action() -> None:
         "x": 700,
         "y": 240,
         "relative": True,
+        "summary": "Tap the next result",
+        "intent": "Tap the next result",
     }
 
 
@@ -1422,13 +1503,15 @@ def test_mai_ui_profile_parses_tool_call_block() -> None:
     assert normalized.tool_calls[0].arguments == {
         "action_type": "open_app",
         "text": "Settings",
+        "summary": "The next step is to open details.",
+        "intent": "The next step is to open details.",
     }
 
 
 @pytest.mark.asyncio
 async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "grounder.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM([
         LLMResponse(
             content=(
@@ -1445,9 +1528,9 @@ async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Pat
     action = await grounder.ground(step, screenshot, {})
 
     assert action.action_type == "tap"
-    assert action.x == 500
+    assert action.x == 501
     assert action.y == 250
-    assert action.relative is True
+    assert action.relative is False
     assert len(llm.calls) == 1
     assert llm.calls[0][0]["role"] == "user"
 
@@ -1455,7 +1538,7 @@ async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM([
         LLMResponse(
             content=(
@@ -1483,14 +1566,14 @@ async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path
     assert backend.executed_actions
     action = backend.executed_actions[0]
     assert action.action_type == "tap"
-    assert action.relative is True
+    assert action.relative is False
     assert validator.calls[0]["valid_state"] == "Settings screen visible"
 
 
 @pytest.mark.asyncio
 async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal-record.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM([
         LLMResponse(
             content=(
@@ -1538,7 +1621,7 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal-failure.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM([LLMResponse(content="No valid tool call", tool_calls=None)])
     recorder = _make_recorder(tmp_path, "subgoal trace failure")
     recorder.start()
@@ -1557,7 +1640,7 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
 
     assert result.success is False
     subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
-    assert subgoal_step["error"] == "no valid action returned"
+    assert subgoal_step["error"].startswith("profile parse error:")
     subgoal_result = next(event for event in events if event["type"] == "subgoal_result")
     assert subgoal_result["success"] is False
 
@@ -1624,9 +1707,9 @@ def test_recorder_metrics_prefers_step_usage_over_explicit_finish_usage(tmp_path
 
 @pytest.mark.asyncio
 async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_path: Path) -> None:
-    """default profile + gemini model → relative_999: tap(900, 941) must get relative=True."""
+    """MobileWorld profiles parse textual actions into absolute screenshot pixels."""
     screenshot = tmp_path / "subgoal.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM([
         LLMResponse(
             content="tap the target",
@@ -1653,14 +1736,14 @@ async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_pat
     assert backend.executed_actions
     action = backend.executed_actions[0]
     assert action.action_type == "tap"
-    assert action.relative is True
+    assert action.relative is False
 
 
 @pytest.mark.asyncio
 async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> None:
     """execute() and observe() must receive the step_timeout passed at construction."""
     screenshot = tmp_path / "subgoal.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
 
     execute_timeouts: list[float] = []
     observe_timeouts: list[float] = []
@@ -1742,7 +1825,7 @@ async def test_subgoal_runner_settle_behavior(
 ) -> None:
     """tap gets a 0.5s settle before observe; wait action does not."""
     screenshot = tmp_path / "subgoal.png"
-    screenshot.write_bytes(b"png")
+    _write_test_png(screenshot, size=(1000, 1000))
     sleep_calls: list[float] = []
     original_sleep = asyncio.sleep
 
@@ -1821,34 +1904,17 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
 
     assert result.success
     assert len(llm.calls) == 2
-    assert "Action:" in llm.calls[0][0]["content"]
+    assert llm.calls[0][0]["role"] == "system"
+    assert "mobile_use" in llm.calls[0][0]["content"][0]["text"]
 
 
 @pytest.mark.asyncio
-async def test_agent_runs_with_qwen3vl_provider_computer_use_stringified_x_coordinates(
+async def test_agent_runs_with_qwen3vl_mobileworld_coordinates(
     tmp_path: Path,
 ) -> None:
     llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: Tap the search bar",
-            tool_calls=[
-                ToolCall(
-                    id="provider-tool-call-0",
-                    name="computer_use",
-                    arguments={"action_type": "click", "x": "[410, 125]", "relative": True},
-                )
-            ],
-        ),
-        LLMResponse(
-            content="Action: Finish successfully",
-            tool_calls=[
-                ToolCall(
-                    id="provider-tool-call-1",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )
-            ],
-        ),
+        _qwen_response({"action": "click", "coordinate": [410, 125]}, action_text="Tap the search bar"),
+        _qwen_response({"action": "terminate", "status": "success"}, action_text="Finish successfully"),
     ])
     agent = GuiAgent(
         llm,
@@ -1869,22 +1935,8 @@ async def test_agent_runs_with_qwen3vl_provider_computer_use_stringified_x_coord
 @pytest.mark.asyncio
 async def test_qwen_profile_history_assistant_has_no_tool_calls(tmp_path: Path) -> None:
     llm = _RecordingLLM([
-        LLMResponse(
-            content='Thought: I should wait briefly\nAction: {"action":"wait"}',
-            tool_calls=[ToolCall(
-                id="provider-tool-call-0",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content='Thought: Done\nAction: {"action":"terminate","status":"success"}',
-            tool_calls=[ToolCall(
-                id="provider-tool-call-1",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
+        _qwen_response({"action": "wait"}, action_text="Wait briefly"),
+        _qwen_response({"action": "terminate", "status": "success"}, action_text="Finish successfully"),
     ])
     agent = GuiAgent(
         llm,
@@ -1902,24 +1954,14 @@ async def test_qwen_profile_history_assistant_has_no_tool_calls(tmp_path: Path) 
     assert len(llm.calls) == 2
 
     second_call = llm.calls[1]
-    history_assistant = second_call[2]
-    assert history_assistant["role"] == "assistant"
-    assert "tool_calls" not in history_assistant
+    assert [message["role"] for message in second_call] == ["system", "user"]
+    assert "Step 1: Wait briefly" in _message_text(second_call[1])
 
 
 @pytest.mark.asyncio
 async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: Path) -> None:
     llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: Finish successfully",
-            tool_calls=[
-                ToolCall(
-                    id="provider-tool-call-0",
-                    name="mobile_use",
-                    arguments={"action": "terminate", "status": "success"},
-                )
-            ],
-        ),
+        _qwen_response({"action": "terminate", "status": "success"}, action_text="Finish successfully"),
     ])
     agent = GuiAgent(
         llm,
@@ -2045,10 +2087,12 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
     assert step_event["prompt"]["task"] == "Open Settings"
     assert step_event["prompt"]["messages"][0]["role"] == "system"
     assert step_event["prompt"]["current_observation"]["foreground_app"] == "DryRun"
-    assert step_event["model_output"]["raw_content"] == "Action: wait briefly"
-    assert step_event["model_output"]["tool_calls"][0]["arguments"]["duration_ms"] == 1
+    assert step_event["model_output"]["raw_content"] == (
+        'Thought: Action: wait briefly\nAction: {"action_type": "wait"}'
+    )
+    assert step_event["model_output"]["tool_calls"][0]["arguments"]["action_type"] == "wait"
     assert step_event["model_output"]["parsed_action"]["action_type"] == "wait"
-    assert step_event["execution"]["tool_result"] == "[dry-run] wait 1 ms"
+    assert step_event["execution"]["tool_result"] == "[dry-run] wait"
     assert recorder.metrics_path is not None
     metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
     assert metrics["task"] == "Open Settings"
@@ -2714,14 +2758,7 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
         async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
             del messages, tools, tool_choice
             self.calls += 1
-            return LLMResponse(
-                content="wait",
-                tool_calls=[ToolCall(
-                    id=f"call-{self.calls}",
-                    name="computer_use",
-                    arguments={"action_type": "wait", "duration_ms": 1},
-                )],
-            )
+            return _mobileworld_response({"action_type": "wait"}, thought=f"wait {self.calls}")
 
     recorder = _make_recorder(tmp_path, "stagnation retry short-circuit")
     llm = _InfiniteWaitLLM()
@@ -2964,13 +3001,9 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
             self.calls += 1
             if self.calls == 1:
                 raise RuntimeError("provider exploded")
-            return LLMResponse(
-                content="Action: done",
-                tool_calls=[ToolCall(
-                    id="call-2",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
+            return _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="finish task",
             )
 
     recorder = _make_recorder(tmp_path, "retry task")
@@ -3005,21 +3038,13 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
         async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
             self.calls += 1
             if self.calls <= 3:
-                return LLMResponse(
-                    content="Action: Swipe up to reveal the size options.",
-                    tool_calls=[ToolCall(
-                        id=f"bad-call-{self.calls}",
-                        name="computer_use",
-                        arguments={"action_type": "swipe", "x": [500, 750], "relative": True},
-                    )],
+                return _mobileworld_response(
+                    {"action_type": "click"},
+                    thought="malformed click missing coordinate",
                 )
-            return LLMResponse(
-                content="Action: done",
-                tool_calls=[ToolCall(
-                    id="good-call",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
+            return _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="finish task",
             )
 
     recorder = _make_recorder(tmp_path, "retry malformed tool call")
@@ -3038,18 +3063,13 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
     events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
     assert attempt_exception["error_type"] == "_StepExecutionError"
-    assert "Failed to parse action after retries" in attempt_exception["error_message"]
-    assert attempt_exception["model_response"]["raw_content"] == "Action: Swipe up to reveal the size options."
-    assert attempt_exception["model_response"]["tool_calls"][0]["name"] == "computer_use"
-    assert attempt_exception["model_response"]["tool_calls"][0]["arguments"] == {
-        "action_type": "swipe",
-        "x": [500, 750],
-        "relative": True,
-    }
+    assert "Failed to parse profile response after retries" in attempt_exception["error_message"]
+    assert "malformed click missing coordinate" in attempt_exception["model_response"]["raw_content"]
+    assert attempt_exception["model_response"]["tool_calls"] == []
 
 
 @pytest.mark.asyncio
-async def test_retry_prompt_includes_previous_attempt_summary_after_max_steps(
+async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
     tmp_path: Path,
 ) -> None:
     llm = _RecordingLLM([
@@ -3091,15 +3111,11 @@ async def test_retry_prompt_includes_previous_attempt_summary_after_max_steps(
         for block in second_attempt[1]["content"]
         if block.get("type") == "text"
     )
-    assert "Previous attempt summaries:" in retry_text
-    assert "Attempt 1:" in retry_text
-    assert "Failure reason: max_steps_exceeded" in retry_text
-    assert "Step 1: wait briefly" in retry_text
-    assert "Continue from the current screen state" in retry_text
+    assert retry_text == "Open Settings"
 
 
 @pytest.mark.asyncio
-async def test_retry_prompt_includes_previous_attempt_summary_after_exception(
+async def test_retry_uses_clean_mobileworld_prompt_after_exception(
     tmp_path: Path,
 ) -> None:
     class _MalformedThenRecoverLLM:
@@ -3112,21 +3128,13 @@ async def test_retry_prompt_includes_previous_attempt_summary_after_exception(
             self.calls.append(copy.deepcopy(messages))
             self._call_count += 1
             if self._call_count <= 3:
-                return LLMResponse(
-                    content="Action: Swipe up to reveal the size options.",
-                    tool_calls=[ToolCall(
-                        id=f"bad-call-{self._call_count}",
-                        name="computer_use",
-                        arguments={"action_type": "swipe", "x": [500, 750], "relative": True},
-                    )],
+                return _mobileworld_response(
+                    {"action_type": "click"},
+                    thought="malformed click missing coordinate",
                 )
-            return LLMResponse(
-                content="finish task",
-                tool_calls=[ToolCall(
-                    id="good-call",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
+            return _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="finish task",
             )
 
     llm = _MalformedThenRecoverLLM()
@@ -3148,11 +3156,7 @@ async def test_retry_prompt_includes_previous_attempt_summary_after_exception(
         for block in second_attempt[1]["content"]
         if block.get("type") == "text"
     )
-    assert "Previous attempt summaries:" in retry_text
-    assert "Attempt 1:" in retry_text
-    assert "Failure reason: _StepExecutionError: Failed to parse action after retries" in retry_text
-    assert "No completed GUI actions were recorded before the failure." in retry_text
-    assert "Continue from the current screen state" in retry_text
+    assert retry_text == "retry malformed tool call"
 
 
 @pytest.mark.asyncio
@@ -3199,36 +3203,31 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     assert len(llm.calls) == 3
 
     third_call = llm.calls[2]
-    assert "# Tools" in third_call[0]["content"]
+    assert "# Role: Android Phone Operator AI" in third_call[0]["content"]
     assert [message["role"] for message in third_call] == [
         "system",
         "user",
         "assistant",
         "user",
+        "assistant",
+        "user",
     ]
 
-    history_image_text = "\n".join(
-        block["text"]
-        for block in third_call[1]["content"]
-        if block.get("type") == "text"
+    first_user_text = _message_text(third_call[1])
+    assert first_user_text.startswith("Open Settings")
+    assert "(Previous turn, screen not shown)" in first_user_text
+    first_history_assistant = third_call[2]
+    assert first_history_assistant["content"][0]["text"] == (
+        'Thought: wait briefly\nAction: {"action_type": "wait"}'
     )
-    assert "Historical screen before Step 2." in history_image_text
-
-    history_assistant = third_call[2]
-    assert history_assistant["content"].startswith("Step 2: wait again")
-    assert "Tool result: [dry-run] wait 1 ms" in history_assistant["content"]
-    assert "tool_calls" not in history_assistant
-
-    current_user = third_call[3]
-    history_text = "\n".join(
-        block["text"]
-        for block in current_user["content"]
-        if block.get("type") == "text"
+    second_history_assistant = third_call[4]
+    assert second_history_assistant["content"][0]["text"] == (
+        'Thought: wait again\nAction: {"action_type": "wait"}'
     )
-    assert "Please generate the next move according to the UI screenshot, instruction and recent progress context." in history_text
-    assert "Instruction: Open Settings" in history_text
-    assert "Recent intents:\nStep 1: wait briefly" in history_text
-    assert "Step 2: wait again" in history_text
+    assert "Tool call result: [dry-run] wait" in _message_text(third_call[3])
+    assert "Tool call result: [dry-run] wait" in _message_text(third_call[5])
+    assert "tool_calls" not in first_history_assistant
+    assert "tool_calls" not in second_history_assistant
 
     image_blocks = [
         block
@@ -3237,12 +3236,10 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
         if isinstance(block, dict) and block.get("type") == "image_url"
     ]
     assert len(image_blocks) == 2
-    assert "Step 3" in history_text
-    assert "Task: Open Settings" in history_text
 
 
 @pytest.mark.asyncio
-async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path: Path) -> None:
+async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_path: Path) -> None:
     llm = _RecordingLLM([
         LLMResponse(
             content="Action: Tap login button",
@@ -3285,15 +3282,14 @@ async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path:
     result = await agent.run("Open Login")
 
     assert result.success
-    assert result.model_summary == "login flow is complete"
+    assert "Action: Finish task" in result.model_summary
     second_call = llm.calls[1]
-    history_text = "\n".join(
-        block["text"]
-        for block in second_call[1]["content"]
-        if block.get("type") == "text"
+    assert second_call[2]["content"][0]["text"].startswith("Thought: Action: Tap login button")
+    assert "Tool call result: [dry-run] tap at" in _message_text(second_call[3])
+    assert any(
+        isinstance(block, dict) and block.get("type") == "image_url"
+        for block in second_call[3]["content"]
     )
-    assert "Recent intents:\nStep 1: tap login button" in history_text
-    assert "Latest state summary: login page is open; login button is visible" in history_text
 
     trace_path = next((tmp_path / "runs").glob("*/trace.jsonl"))
     step_events = [
@@ -3301,29 +3297,29 @@ async def test_agent_prefers_tool_summary_for_action_history_and_trace(tmp_path:
         for line in trace_path.read_text(encoding="utf-8").splitlines()
         if '"event": "step"' in line
     ]
-    assert step_events[0]["action_intent"] == "tap login button"
-    assert step_events[0]["state_summary"] == "login page is open; login button is visible"
-    assert step_events[1]["model_output"]["action_intent"] == "finish login flow"
-    assert step_events[1]["model_output"]["state_summary"] == "login flow is complete"
+    assert step_events[0]["action_intent"].startswith("Thought: Action: Tap login button")
+    assert step_events[0]["state_summary"].startswith("Thought: Action: Tap login button")
+    assert step_events[1]["model_output"]["action_intent"].startswith("Thought: Action: Finish task")
+    assert step_events[1]["model_output"]["state_summary"].startswith("Thought: Action: Finish task")
 
     mobileworld_trace_path = trace_path.with_name("traj.json")
     mobileworld_trace = json.loads(mobileworld_trace_path.read_text(encoding="utf-8"))
     traj = mobileworld_trace["0"]["traj"]
     assert traj[0]["task_goal"] == "Open Login"
     assert traj[0]["step"] == 1
-    assert traj[0]["prediction"] == "Action: tap login button"
+    assert traj[0]["prediction"].startswith("Action: Thought: Action: Tap login button")
     assert traj[0]["action"]["action_type"] == "tap"
-    assert traj[0]["intent"] == "tap login button"
-    assert traj[0]["summary"] == "login page is open; login button is visible"
+    assert traj[0]["intent"].startswith("Thought: Action: Tap login button")
+    assert traj[0]["summary"].startswith("Thought: Action: Tap login button")
     assert traj[0]["tool_call"]["name"] == "computer_use"
-    assert traj[0]["tool_call"]["arguments"]["intent"] == "tap login button"
+    assert traj[0]["tool_call"]["arguments"]["intent"].startswith("Thought: Action: Tap login button")
     assert traj[0]["screenshot"].startswith("screenshots/")
     assert traj[0]["marked_screenshot"].startswith("marked_screenshots/")
     assert (trace_path.parent / traj[0]["marked_screenshot"]).exists()
 
 
 @pytest.mark.asyncio
-async def test_agent_prompt_uses_last_eight_intents_and_latest_summary(tmp_path: Path) -> None:
+async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> None:
     responses = [
         LLMResponse(
             content=f"Action: Step {index}",
@@ -3368,16 +3364,18 @@ async def test_agent_prompt_uses_last_eight_intents_and_latest_summary(tmp_path:
 
     assert result.success
     tenth_call = llm.calls[9]
-    prompt_text = "\n".join(
-        block["text"]
-        for block in tenth_call[1]["content"]
-        if block.get("type") == "text"
-    )
-    assert "Recent intents:" in prompt_text
-    assert "Step 1: intent 1" not in prompt_text
-    for index in range(2, 10):
-        assert f"Step {index}: intent {index}" in prompt_text
-    assert "Latest state summary: summary 9" in prompt_text
+    assert tenth_call[0]["role"] == "system"
+    first_user_text = _message_text(tenth_call[1])
+    assert first_user_text.startswith("Open Settings")
+    assert "(Previous turn, screen not shown)" in first_user_text
+    assistant_texts = [
+        message["content"][0]["text"]
+        for message in tenth_call
+        if message["role"] == "assistant"
+    ]
+    assert len(assistant_texts) == 9
+    assert assistant_texts[0].startswith("Thought: Action: Step 1")
+    assert assistant_texts[-1].startswith("Thought: Action: Step 9")
 
 
 @pytest.mark.asyncio

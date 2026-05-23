@@ -11,23 +11,34 @@ JSON skill bucket, transition evidence, or legacy store is involved.
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import logging
 import os
 import re
 import tempfile
+import threading
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
 
-from opengui.skills.data import Skill, SkillStep
+from opengui.skills.data import Skill, SkillStep, compute_confidence
 from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
 from opengui.skills.state_contract import normalize_state_contract
 
 logger = logging.getLogger(__name__)
+_STORE_LOCKS: dict[Path, threading.RLock] = {}
+_STORE_LOCKS_GUARD = threading.Lock()
 
 CANONICAL_SKILLS_FILENAME = "skills.py"
+SKILL_EMBEDDINGS_FILENAME = "skills_embeddings.npy"
+SKILL_EMBEDDINGS_META_FILENAME = "skills_embeddings_meta.json"
+SKILL_EMBEDDINGS_CACHE_VERSION = 1
+SKILL_FEEDBACK_FILENAME = "skill_feedback.json"
+SKILL_FEEDBACK_VERSION = 1
 CODE_HEADER = "from opengui.skills.flat import C, R, action, skill, tag"
 
 _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
@@ -59,6 +70,31 @@ _STOPWORDS = frozenset({
     "does",
     "did",
 })
+_EMBEDDING_CONFLICT_THRESHOLD = 0.72
+_STRUCTURAL_CONFLICT_THRESHOLD = 0.70
+_CLEANUP_EMBEDDING_THRESHOLD = 0.72
+
+
+@dataclass(frozen=True)
+class _SkillConflict:
+    skill: Skill
+    score: float
+    embedding_similarity: float | None
+    sequence_similarity: float
+    semantic_similarity: float
+
+
+_StepSignature = tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+
+
+def _store_lock(store_dir: Path) -> threading.RLock:
+    key = store_dir.expanduser().resolve(strict=False)
+    with _STORE_LOCKS_GUARD:
+        lock = _STORE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _STORE_LOCKS[key] = lock
+        return lock
 
 
 @dataclass(frozen=True)
@@ -335,6 +371,9 @@ class FlatSkillRepository:
         self._write_atomic(export_skills_to_source(updated))
         return skill_obj.skill_id
 
+    def replace_all(self, skills: list[Skill] | tuple[Skill, ...]) -> None:
+        self._write_atomic(export_skills_to_source([normalize_skill_app(skill) for skill in skills]))
+
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         skills = self.list_all()
         found = False
@@ -393,6 +432,7 @@ class FlatSkillLibrary:
         self.embedding_signature = embedding_signature
         self._repository = FlatSkillRepository(self.store_dir)
         self._source_mtime: float | None = _mtime(self._repository.source_path)
+        self._store_lock = _store_lock(self.store_dir)
 
     def refresh_if_stale(self) -> bool:
         current = _mtime(self._repository.source_path)
@@ -410,19 +450,267 @@ class FlatSkillLibrary:
         return len(self.list_all())
 
     def add(self, skill_obj: Skill) -> str:
-        self._source_mtime = None
-        return self._repository.add(skill_obj)
+        with self._store_lock:
+            self._source_mtime = None
+            return self._repository.add(self._normalize_skill(skill_obj))
 
     async def add_or_merge(self, skill_obj: Skill) -> tuple[str, str | None]:
-        existing = self.get(skill_obj.skill_id)
-        if existing is not None:
-            self.update(existing.skill_id, skill_obj)
-            return "KEEP_NEW", existing.skill_id
-        for candidate in self.list_all(platform=skill_obj.platform, app=skill_obj.app):
-            if _normalized_name(candidate.name) == _normalized_name(skill_obj.name):
-                self.update(candidate.skill_id, replace(skill_obj, skill_id=candidate.skill_id))
-                return "KEEP_NEW", candidate.skill_id
-        return "ADD", self.add(skill_obj)
+        skill_obj = self._normalize_skill(skill_obj)
+        with self._store_lock:
+            skills_for_embedding = self._repository.list_all()
+        incoming_embedding = await self._embed_skill_for_conflict(skill_obj, skills_for_embedding)
+        with self._store_lock:
+            skills = self._repository.list_all()
+            embeddings = self._cached_skill_embedding_map(skills)
+            if incoming_embedding is not None:
+                embeddings[skill_obj.skill_id] = incoming_embedding
+            existing_same_id = next((skill for skill in skills if skill.skill_id == skill_obj.skill_id), None)
+            if existing_same_id is not None:
+                updated = self._replace_in_list(skills, existing_same_id.skill_id, skill_obj)
+                updated = self._cleanup_superseded_prefixes(updated, skill_obj.platform, skill_obj.app, embeddings=embeddings)
+                self._write_skills(updated)
+                self._prune_feedback_for_skills(updated)
+                return "KEEP_NEW", existing_same_id.skill_id
+
+            conflict = self._find_best_conflict(
+                skill_obj,
+                skills,
+                incoming_embedding=incoming_embedding,
+                existing_embeddings=embeddings,
+            )
+            if conflict is None:
+                updated = [*skills, skill_obj]
+                updated = self._cleanup_superseded_prefixes(updated, skill_obj.platform, skill_obj.app, embeddings=embeddings)
+                self._write_skills(updated)
+                self._prune_feedback_for_skills(updated)
+                return "ADD", skill_obj.skill_id
+
+            decision = self._heuristic_merge_decision(conflict, skill_obj)
+            if decision == "MERGE":
+                merged = self._merge_skills(conflict.skill, skill_obj)
+                if incoming_embedding is not None:
+                    embeddings[merged.skill_id] = incoming_embedding
+                updated = self._replace_in_list(skills, conflict.skill.skill_id, merged)
+                updated = self._cleanup_superseded_prefixes(updated, merged.platform, merged.app, embeddings=embeddings)
+                self._write_skills(updated)
+                self._merge_feedback_records(source_skill_id=skill_obj.skill_id, target_skill_id=merged.skill_id)
+                self._prune_feedback_for_skills(updated)
+                return "MERGE", merged.skill_id
+            if decision == "KEEP_NEW":
+                updated = [
+                    self._normalize_skill(skill_obj) if skill.skill_id == conflict.skill.skill_id else skill
+                    for skill in skills
+                ]
+                updated = self._cleanup_superseded_prefixes(updated, skill_obj.platform, skill_obj.app, embeddings=embeddings)
+                self._write_skills(updated)
+                self._merge_feedback_records(source_skill_id=conflict.skill.skill_id, target_skill_id=skill_obj.skill_id)
+                self._prune_feedback_for_skills(updated)
+                return "KEEP_NEW", skill_obj.skill_id
+            return "KEEP_OLD", conflict.skill.skill_id
+
+    async def _embed_skill_for_conflict(self, skill_obj: Skill, existing: list[Skill]) -> np.ndarray | None:
+        if self.embedding_provider is None:
+            return None
+        if existing:
+            await self._ensure_skill_embeddings(existing)
+        vector = await self.embedding_provider.embed([_skill_search_text(skill_obj)])
+        if vector is None or len(vector) == 0:
+            return None
+        return np.asarray(vector[0], dtype=np.float32)
+
+    def _cached_skill_embedding_map(self, skills: list[Skill]) -> dict[str, np.ndarray]:
+        cached_meta, cached_embeddings = self._load_skill_embedding_cache()
+        if (
+            not cached_meta
+            or cached_embeddings is None
+            or cached_meta["embedding_signature"] != self.embedding_signature
+        ):
+            return {}
+        current_keys = {
+            (skill.skill_id, _text_hash(_skill_search_text(skill)))
+            for skill in skills
+        }
+        out: dict[str, np.ndarray] = {}
+        for record in cached_meta["records"]:
+            key = (record["skill_id"], record["search_text_hash"])
+            if key in current_keys:
+                out[str(record["skill_id"])] = cached_embeddings[int(record["embedding_row"])]
+        return out
+
+    @staticmethod
+    def _find_best_conflict(
+        incoming: Skill,
+        skills: list[Skill],
+        *,
+        incoming_embedding: np.ndarray | None,
+        existing_embeddings: dict[str, np.ndarray],
+    ) -> _SkillConflict | None:
+        best: _SkillConflict | None = None
+        best_score = 0.0
+        incoming_signature = _action_signature(incoming)
+        for existing in skills:
+            if existing.platform != incoming.platform or existing.app != incoming.app:
+                continue
+            if existing.skill_id == incoming.skill_id:
+                return _SkillConflict(
+                    skill=existing,
+                    score=1.0,
+                    embedding_similarity=1.0,
+                    sequence_similarity=1.0,
+                    semantic_similarity=1.0,
+                )
+
+            existing_signature = _action_signature(existing)
+            sequence_sim = _action_similarity(existing_signature, incoming_signature)
+            semantic_sim = _skill_semantic_similarity(existing, incoming)
+            if (
+                _is_strict_rich_prefix(existing_signature, incoming_signature)
+                or _is_strict_rich_prefix(incoming_signature, existing_signature)
+            ):
+                continue
+            embedding_sim: float | None = None
+            score = 0.20 * sequence_sim + 0.05 * semantic_sim
+            existing_embedding = existing_embeddings.get(existing.skill_id)
+            if incoming_embedding is not None and existing_embedding is not None:
+                embedding_sim = _cosine_similarity(incoming_embedding, existing_embedding)
+                score += 0.75 * embedding_sim
+
+            if score > best_score:
+                best = _SkillConflict(
+                    skill=existing,
+                    score=score,
+                    embedding_similarity=embedding_sim,
+                    sequence_similarity=sequence_sim,
+                    semantic_similarity=semantic_sim,
+                )
+                best_score = score
+
+        if best is None:
+            return None
+
+        if best.embedding_similarity is not None:
+            if (
+                best.embedding_similarity >= _EMBEDDING_CONFLICT_THRESHOLD
+                and best.sequence_similarity >= _STRUCTURAL_CONFLICT_THRESHOLD
+            ):
+                return best
+            if (
+                best.embedding_similarity >= 0.60
+                and best.sequence_similarity >= 0.78
+            ):
+                return best
+            return None
+
+        if best.sequence_similarity >= 0.82 and best.semantic_similarity >= 0.25:
+            return best
+        if best.sequence_similarity >= 0.92:
+            return best
+        return None
+
+    @staticmethod
+    def _heuristic_merge_decision(conflict: _SkillConflict, new: Skill) -> str:
+        old = conflict.skill
+        if old.success_count > 0 and new.success_count == 0 and conflict.sequence_similarity < 0.85:
+            return "KEEP_OLD"
+        if new.success_count > old.success_count and old.success_count == 0:
+            return "KEEP_NEW"
+        return "MERGE"
+
+    @staticmethod
+    def _merge_skills(old: Skill, new: Skill) -> Skill:
+        old_signature = _action_signature(old)
+        new_signature = _action_signature(new)
+        if old.success_count > 0 and new.success_count == 0:
+            steps = old.steps
+        elif new.success_count > 0 and old.success_count == 0:
+            steps = new.steps
+        elif _is_strict_rich_prefix(old_signature, new_signature):
+            steps = new.steps
+        elif _is_strict_rich_prefix(new_signature, old_signature):
+            steps = old.steps
+        elif compute_confidence(new) > compute_confidence(old):
+            steps = new.steps or old.steps
+        else:
+            steps = old.steps or new.steps
+        prefer_old_text = old.success_count > 0 and new.success_count == 0
+        return Skill(
+            skill_id=old.skill_id,
+            name=old.name if prefer_old_text and old.name else (new.name or old.name),
+            description=old.description if prefer_old_text and old.description else (new.description or old.description),
+            app=new.app or old.app,
+            platform=new.platform or old.platform,
+            steps=steps,
+            parameters=tuple(sorted(set(old.parameters) | set(new.parameters))),
+            preconditions=tuple(sorted(set(old.preconditions) | set(new.preconditions))),
+            tags=tuple(sorted(set(old.tags) | set(new.tags))),
+            created_at=old.created_at,
+            success_count=old.success_count + new.success_count,
+            failure_count=old.failure_count + new.failure_count,
+            success_streak=max(old.success_streak, new.success_streak),
+            failure_streak=max(old.failure_streak, new.failure_streak),
+        )
+
+    @staticmethod
+    def _cleanup_superseded_prefixes(
+        skills: list[Skill],
+        platform: str,
+        app: str,
+        *,
+        embeddings: dict[str, np.ndarray] | None = None,
+    ) -> list[Skill]:
+        normalized_app = _normalize_app_filter(platform, app) or app
+        candidates = [
+            skill
+            for skill in skills
+            if skill.platform == platform and skill.app == normalized_app
+        ]
+        removed: set[str] = set()
+        for skill in candidates:
+            if skill.success_count > 0:
+                continue
+            signature = _action_signature(skill)
+            for other in candidates:
+                if other.skill_id == skill.skill_id:
+                    continue
+                other_signature = _action_signature(other)
+                if (
+                    _is_strict_rich_prefix(signature, other_signature)
+                    and compute_confidence(other) > compute_confidence(skill)
+                    and _cleanup_same_intent(skill, other, embeddings=embeddings)
+                ):
+                    removed.add(skill.skill_id)
+                    break
+        if not removed:
+            return skills
+        return [skill for skill in skills if skill.skill_id not in removed]
+
+    @staticmethod
+    def _replace_in_list(skills: list[Skill], skill_id: str, updated_skill: Skill) -> list[Skill]:
+        return [
+            replace(FlatSkillLibrary._normalize_skill(updated_skill), skill_id=skill_id)
+            if skill.skill_id == skill_id
+            else skill
+            for skill in skills
+        ]
+
+    def _write_skills(self, skills: list[Skill]) -> None:
+        self._source_mtime = None
+        self._repository.replace_all(skills)
+
+    @staticmethod
+    def _normalize_skill(skill_obj: Skill) -> Skill:
+        skill_obj = normalize_skill_app(skill_obj)
+        normalized_steps: list[SkillStep] = []
+        changed = False
+        for step in skill_obj.steps:
+            normalized_contract = normalize_state_contract(step.state_contract)
+            if normalized_contract != step.state_contract:
+                step = replace(step, state_contract=normalized_contract)
+                changed = True
+            normalized_steps.append(step)
+        if changed:
+            skill_obj = replace(skill_obj, steps=tuple(normalized_steps))
+        return skill_obj
 
     async def search(
         self,
@@ -436,14 +724,24 @@ class FlatSkillLibrary:
             return []
         skills = self.list_all()
         normalized_app = _normalize_app_filter(platform, app)
-        candidates = [
-            skill
-            for skill in skills
+        candidate_pairs = [
+            (index, skill)
+            for index, skill in enumerate(skills)
             if (platform is None or skill.platform == platform)
             and (normalized_app is None or skill.app == normalized_app)
         ]
+        candidate_positions = [index for index, _skill in candidate_pairs]
+        candidates = [skill for _index, skill in candidate_pairs]
         if not candidates:
             return []
+        if self.embedding_provider is not None:
+            return await self._search_with_embeddings(
+                query,
+                skills=skills,
+                candidates=candidates,
+                candidate_positions=candidate_positions,
+                top_k=top_k,
+            )
 
         from opengui.memory.retrieval import _BM25Index
 
@@ -465,6 +763,137 @@ class FlatSkillLibrary:
                 break
         return results
 
+    async def _search_with_embeddings(
+        self,
+        query: str,
+        *,
+        skills: list[Skill],
+        candidates: list[Skill],
+        candidate_positions: list[int],
+        top_k: int,
+    ) -> list[tuple[Skill, float]]:
+        import faiss
+
+        embeddings = await self._ensure_skill_embeddings(skills)
+        candidate_embeddings = np.ascontiguousarray(embeddings[candidate_positions], dtype=np.float32)
+        faiss.normalize_L2(candidate_embeddings)
+        index = faiss.IndexFlatIP(candidate_embeddings.shape[1])
+        index.add(candidate_embeddings)
+
+        query_embedding = await self.embedding_provider.embed([query])
+        query_vector = np.ascontiguousarray(np.asarray(query_embedding[0], dtype=np.float32).reshape(1, -1))
+        faiss.normalize_L2(query_vector)
+        scores, indices = index.search(query_vector, min(top_k, len(candidates)))
+        return [
+            (candidates[int(index)], float(score))
+            for score, index in zip(scores[0], indices[0])
+            if int(index) >= 0
+        ]
+
+    async def _ensure_skill_embeddings(self, skills: list[Skill]) -> np.ndarray:
+        current_records = [
+            {
+                "skill_id": skill.skill_id,
+                "search_text_hash": _text_hash(_skill_search_text(skill)),
+            }
+            for skill in skills
+        ]
+        cached_meta, cached_embeddings = self._load_skill_embedding_cache()
+        reusable: dict[tuple[str, str], np.ndarray] = {}
+        if (
+            cached_meta
+            and cached_embeddings is not None
+            and cached_meta["embedding_signature"] == self.embedding_signature
+        ):
+            for record in cached_meta["records"]:
+                key = (record["skill_id"], record["search_text_hash"])
+                reusable[key] = cached_embeddings[int(record["embedding_row"])]
+
+        rows: list[np.ndarray | None] = []
+        missing_texts: list[str] = []
+        missing_positions: list[int] = []
+        for position, (skill, record) in enumerate(zip(skills, current_records, strict=True)):
+            key = (record["skill_id"], record["search_text_hash"])
+            if key in reusable:
+                rows.append(reusable[key])
+                continue
+            rows.append(None)
+            missing_positions.append(position)
+            missing_texts.append(_skill_search_text(skill))
+
+        if missing_texts:
+            embedded = np.asarray(await self.embedding_provider.embed(missing_texts), dtype=np.float32)
+            for row_index, position in enumerate(missing_positions):
+                rows[position] = embedded[row_index]
+
+        embeddings = np.vstack([np.asarray(row, dtype=np.float32) for row in rows])
+        should_write = (
+            missing_texts
+            or not cached_meta
+            or cached_embeddings is None
+            or cached_meta["embedding_signature"] != self.embedding_signature
+            or _cache_record_keys(cached_meta["records"]) != _cache_record_keys(current_records)
+        )
+        if should_write:
+            meta = {
+                "version": SKILL_EMBEDDINGS_CACHE_VERSION,
+                "embedding_signature": self.embedding_signature,
+                "records": [
+                    {**record, "embedding_row": row}
+                    for row, record in enumerate(current_records)
+                ],
+            }
+            self._write_skill_embedding_cache(embeddings, meta)
+        return embeddings
+
+    def _load_skill_embedding_cache(self) -> tuple[dict[str, Any] | None, np.ndarray | None]:
+        meta_path = self.store_dir / SKILL_EMBEDDINGS_META_FILENAME
+        embeddings_path = self.store_dir / SKILL_EMBEDDINGS_FILENAME
+        if not meta_path.exists() or not embeddings_path.exists():
+            return None, None
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        embeddings = np.load(embeddings_path)
+        if meta["version"] != SKILL_EMBEDDINGS_CACHE_VERSION:
+            return None, None
+        return meta, np.asarray(embeddings, dtype=np.float32)
+
+    def _write_skill_embedding_cache(self, embeddings: np.ndarray, meta: dict[str, Any]) -> None:
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+        embeddings_path = self.store_dir / SKILL_EMBEDDINGS_FILENAME
+        meta_path = self.store_dir / SKILL_EMBEDDINGS_META_FILENAME
+
+        fd, tmp_embeddings = tempfile.mkstemp(
+            prefix=f".{embeddings_path.name}.",
+            suffix=".npy",
+            dir=str(self.store_dir),
+        )
+        os.close(fd)
+        try:
+            np.save(tmp_embeddings, np.asarray(embeddings, dtype=np.float32))
+            os.replace(tmp_embeddings, embeddings_path)
+        finally:
+            try:
+                os.unlink(tmp_embeddings)
+            except FileNotFoundError:
+                pass
+
+        fd, tmp_meta = tempfile.mkstemp(
+            prefix=f".{meta_path.name}.",
+            suffix=".tmp",
+            dir=str(self.store_dir),
+            text=True,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(meta, handle, ensure_ascii=False, indent=2, sort_keys=True)
+                handle.write("\n")
+            os.replace(tmp_meta, meta_path)
+        finally:
+            try:
+                os.unlink(tmp_meta)
+            except FileNotFoundError:
+                pass
+
     def get(self, skill_id: str) -> Skill | None:
         for skill_obj in self.list_all():
             if skill_obj.skill_id == skill_id:
@@ -472,16 +901,137 @@ class FlatSkillLibrary:
         return None
 
     def feedback_for_skill(self, skill_id: str) -> dict[str, Any]:
-        del skill_id
-        return {}
+        feedback = self._load_feedback()
+        record = feedback.get("skills", {}).get(skill_id)
+        return dict(record) if isinstance(record, dict) else {}
+
+    def record_feedback(
+        self,
+        skill_id: str,
+        *,
+        task: str | None = None,
+        failure_case: dict[str, Any] | None = None,
+        status: str | None = None,
+        evolved: bool = False,
+        timestamp: float | None = None,
+    ) -> None:
+        if not skill_id:
+            return
+        with self._store_lock:
+            feedback = self._load_feedback()
+            skills = feedback.setdefault("skills", {})
+            record = skills.setdefault(skill_id, {})
+            record["skill_id"] = skill_id
+            record["last_updated_at"] = float(timestamp if timestamp is not None else _time_now())
+            if task:
+                tasks = list(record.get("negative_tasks") or [])
+                if task not in tasks:
+                    tasks.append(task)
+                record["negative_tasks"] = tasks[-20:]
+            if failure_case:
+                reason = _feedback_failure_reason(failure_case)
+                counts = dict(record.get("failure_counts") or {})
+                counts[reason] = int(counts.get(reason, 0)) + 1
+                record["failure_counts"] = counts
+                record["last_failure_case"] = failure_case
+                record["last_failure_at"] = record["last_updated_at"]
+            if status:
+                record["last_evolution_status"] = status
+            if evolved:
+                record["evolution_count"] = int(record.get("evolution_count") or 0) + 1
+            self._write_feedback(feedback)
 
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
-        self._source_mtime = None
-        return self._repository.update(skill_id, updated_skill)
+        with self._store_lock:
+            self._source_mtime = None
+            return self._repository.update(skill_id, self._normalize_skill(updated_skill))
 
     def remove(self, skill_id: str) -> bool:
-        self._source_mtime = None
-        return self._repository.remove(skill_id)
+        with self._store_lock:
+            self._source_mtime = None
+            removed = self._repository.remove(skill_id)
+            if removed:
+                feedback = self._load_feedback()
+                skills = feedback.get("skills")
+                if isinstance(skills, dict) and skill_id in skills:
+                    del skills[skill_id]
+                    self._write_feedback(feedback)
+            return removed
+
+    def _load_feedback(self) -> dict[str, Any]:
+        path = self.store_dir / SKILL_FEEDBACK_FILENAME
+        if not path.exists():
+            return {"version": SKILL_FEEDBACK_VERSION, "skills": {}}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"version": SKILL_FEEDBACK_VERSION, "skills": {}}
+        if not isinstance(data, dict):
+            return {"version": SKILL_FEEDBACK_VERSION, "skills": {}}
+        if not isinstance(data.get("skills"), dict):
+            data["skills"] = {}
+        data["version"] = SKILL_FEEDBACK_VERSION
+        return data
+
+    def _write_feedback(self, feedback: dict[str, Any]) -> None:
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+        path = self.store_dir / SKILL_FEEDBACK_FILENAME
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            dir=str(self.store_dir),
+            text=True,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(feedback, handle, ensure_ascii=False, indent=2, sort_keys=True)
+                handle.write("\n")
+            os.replace(tmp_name, path)
+        finally:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+
+    def _merge_feedback_records(self, *, source_skill_id: str, target_skill_id: str) -> None:
+        if not source_skill_id or not target_skill_id or source_skill_id == target_skill_id:
+            return
+        feedback = self._load_feedback()
+        skills = feedback.get("skills")
+        if not isinstance(skills, dict) or source_skill_id not in skills:
+            return
+        source = dict(skills.pop(source_skill_id) or {})
+        target = dict(skills.get(target_skill_id) or {})
+        target["skill_id"] = target_skill_id
+        target["negative_tasks"] = _merge_unique_tail(
+            list(target.get("negative_tasks") or []),
+            list(source.get("negative_tasks") or []),
+            limit=20,
+        )
+        counts = dict(target.get("failure_counts") or {})
+        for key, value in dict(source.get("failure_counts") or {}).items():
+            counts[str(key)] = int(counts.get(str(key), 0)) + int(value or 0)
+        if counts:
+            target["failure_counts"] = counts
+        for key in ("last_failure_case", "last_failure_at", "last_evolution_status", "last_updated_at"):
+            if source.get(key) is not None:
+                target[key] = source[key]
+        target["evolution_count"] = int(target.get("evolution_count") or 0) + int(source.get("evolution_count") or 0)
+        skills[target_skill_id] = target
+        self._write_feedback(feedback)
+
+    def _prune_feedback_for_skills(self, skills: list[Skill]) -> None:
+        feedback = self._load_feedback()
+        records = feedback.get("skills")
+        if not isinstance(records, dict):
+            return
+        active_ids = {skill.skill_id for skill in skills}
+        removed = [skill_id for skill_id in records if skill_id not in active_ids]
+        if not removed:
+            return
+        for skill_id in removed:
+            del records[skill_id]
+        self._write_feedback(feedback)
 
 
 def export_skills_to_source(skills: list[Skill] | tuple[Skill, ...]) -> str:
@@ -878,9 +1428,11 @@ def _skill_search_text(skill_obj: Skill) -> str:
         " ".join([
             step.action_type,
             step.target,
+            " ".join(str(k) for k in step.parameters.keys()),
             " ".join(str(v) for v in step.parameters.values()),
             step.expected_state or "",
             step.valid_state or "",
+            _stable_json(step.state_contract),
         ])
         for step in skill_obj.steps
     )
@@ -895,15 +1447,178 @@ def _skill_search_text(skill_obj: Skill) -> str:
     ])
 
 
-def _normalized_name(name: str) -> str:
-    tokens = re.findall(r"\w+", name.lower())
-    return " ".join(t for t in tokens if t not in _STOPWORDS)
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [
+        (str(record["skill_id"]), str(record["search_text_hash"]))
+        for record in records
+    ]
+
+
+def _name_token_similarity(a: str, b: str) -> float:
+    left = set(re.findall(r"\w+", a.lower())) - _STOPWORDS
+    right = set(re.findall(r"\w+", b.lower())) - _STOPWORDS
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
+
+
+def _skill_semantic_similarity(left: Skill, right: Skill) -> float:
+    name_sim = _name_token_similarity(left.name, right.name)
+    description_sim = _name_token_similarity(left.description, right.description)
+    if left.description.strip() and right.description.strip():
+        return max(description_sim, 0.7 * description_sim + 0.3 * name_sim)
+    return name_sim
+
+
+def _action_signature(skill_obj: Skill) -> tuple[_StepSignature, ...]:
+    return tuple(_step_signature(step) for step in skill_obj.steps)
+
+
+def _action_similarity(
+    left: tuple[_StepSignature, ...],
+    right: tuple[_StepSignature, ...],
+) -> float:
+    if not left and not right:
+        return 1.0
+    min_len = min(len(left), len(right))
+    max_len = max(len(left), len(right))
+    if max_len == 0:
+        return 1.0
+    if min_len == 0:
+        return 0.0
+    pair_scores = [
+        _step_similarity(left_step, right_step)
+        for left_step, right_step in zip(left, right, strict=False)
+    ]
+    overlap_quality = sum(pair_scores) / min_len
+    tail_len = max_len - min_len
+    length_penalty = 1.0 - 0.3 * (tail_len / max_len)
+    return overlap_quality * length_penalty
+
+
+def _step_signature(step: SkillStep) -> _StepSignature:
+    return (
+        step.action_type,
+        _tokens(step.target),
+        _tokens(" ".join([*map(str, step.parameters.keys()), *map(str, step.parameters.values())])),
+        _tokens(" ".join(filter(None, (step.expected_state, step.valid_state)))),
+        _tokens(_stable_json(step.state_contract)),
+    )
+
+
+def _step_similarity(
+    left: _StepSignature,
+    right: _StepSignature,
+) -> float:
+    if left[0] != right[0]:
+        return 0.0
+    return (
+        0.35
+        + 0.30 * _weighted_tuple_jaccard(left[1], right[1], empty_score=0.15)
+        + 0.10 * _weighted_tuple_jaccard(left[2], right[2], empty_score=0.50)
+        + 0.15 * _weighted_tuple_jaccard(left[3], right[3], empty_score=0.35)
+        + 0.10 * _weighted_tuple_jaccard(left[4], right[4], empty_score=0.50)
+    )
+
+
+def _is_strict_rich_prefix(
+    shorter: tuple[_StepSignature, ...],
+    longer: tuple[_StepSignature, ...],
+) -> bool:
+    if len(shorter) >= len(longer) or not shorter:
+        return False
+    return all(
+        _step_similarity(short_step, long_step) >= 0.80
+        for short_step, long_step in zip(shorter, longer, strict=False)
+    )
+
+
+def _tuple_jaccard(left: tuple[str, ...], right: tuple[str, ...]) -> float:
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    left_set = set(left)
+    right_set = set(right)
+    return len(left_set & right_set) / len(left_set | right_set)
+
+
+def _weighted_tuple_jaccard(left: tuple[str, ...], right: tuple[str, ...], *, empty_score: float) -> float:
+    if not left and not right:
+        return empty_score
+    return _tuple_jaccard(left, right)
+
+
+def _tokens(value: Any) -> tuple[str, ...]:
+    return tuple(
+        token
+        for token in re.findall(r"\w+", str(value).lower())
+        if token not in _STOPWORDS
+    )
+
+
+def _stable_json(value: Any) -> str:
+    if not value:
+        return ""
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except TypeError:
+        return str(value)
+
+
+def _cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
+    denom = float(np.linalg.norm(left) * np.linalg.norm(right))
+    if denom < 1e-12:
+        return 0.0
+    return float(np.dot(left, right) / denom)
+
+
+def _cleanup_same_intent(
+    left: Skill,
+    right: Skill,
+    *,
+    embeddings: dict[str, np.ndarray] | None,
+) -> bool:
+    if embeddings:
+        left_embedding = embeddings.get(left.skill_id)
+        right_embedding = embeddings.get(right.skill_id)
+        if left_embedding is not None and right_embedding is not None:
+            return _cosine_similarity(left_embedding, right_embedding) >= _CLEANUP_EMBEDDING_THRESHOLD
+    return _skill_semantic_similarity(left, right) >= 0.20
 
 
 def _normalize_app_filter(platform: str | None, app: str | None) -> str | None:
     if app is None:
         return None
     return normalize_app_identifier(platform or "unknown", app)
+
+
+def _feedback_failure_reason(failure_case: dict[str, Any]) -> str:
+    error = failure_case.get("execution_error") or failure_case.get("failure_error")
+    if isinstance(error, str) and error.strip():
+        return error.strip()[:120]
+    target = failure_case.get("failed_target")
+    if isinstance(target, str) and target.strip():
+        return f"failed_target:{target.strip()[:80]}"
+    return "unknown"
+
+
+def _merge_unique_tail(left: list[Any], right: list[Any], *, limit: int) -> list[Any]:
+    merged: list[Any] = []
+    for item in [*left, *right]:
+        if item and item not in merged:
+            merged.append(item)
+    return merged[-limit:]
+
+
+def _time_now() -> float:
+    return time.time()
 
 
 def _mtime(path: Path) -> float | None:

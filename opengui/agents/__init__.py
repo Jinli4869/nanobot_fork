@@ -1,6 +1,4 @@
-"""Compatibility wrapper for MobileWorld-aligned OpenGUI agent profiles."""
-
-from __future__ import annotations
+"""MobileWorld-aligned agent profiles for OpenGUI."""
 
 from opengui.agents.profiles import (
     SUPPORTED_AGENT_PROFILES,

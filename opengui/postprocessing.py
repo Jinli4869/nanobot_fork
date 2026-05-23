@@ -5,10 +5,10 @@ Post-run background processor for GUI task trajectories.
 
 This module intentionally keeps the learning path flat:
 
-    summarize/evaluate trace -> extract one Skill -> write skills.py
+    summarize/evaluate trace -> evolve failed reused Skill or extract Skill -> write skills.py
 
-There is no skill graph, transition evidence, deeplink discovery, evolution
-engine, or JSON-backed skill store in this path.
+There is no skill graph, transition evidence, deeplink discovery, or
+JSON-backed skill store in this path.
 """
 
 from __future__ import annotations
@@ -186,6 +186,18 @@ class PostRunProcessor:
         effective_success = is_success
         if isinstance(evaluation_result, dict) and evaluation_result.get("success") is False:
             effective_success = False
+        evolution_result = await self._evolve_failed_skill(
+            trace_path,
+            effective_success,
+            platform,
+            task=task,
+            evaluation_result=evaluation_result,
+            agent_success=is_success,
+        )
+        if evolution_result is not None and evolution_result.get("status") != "no_failure_case":
+            if summary:
+                logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
+            return
         await self._extract_skill(
             trace_path,
             effective_success,
@@ -208,6 +220,70 @@ class PostRunProcessor:
         except Exception:
             logger.warning("Trajectory summarization failed for %s", trace_path, exc_info=True)
             return ""
+
+    async def _evolve_failed_skill(
+        self,
+        trace_path: Path,
+        is_success: bool,
+        platform: str,
+        *,
+        task: str | None = None,
+        evaluation_result: dict[str, Any] | None = None,
+        agent_success: bool | None = None,
+    ) -> dict[str, Any] | None:
+        if not self._enable_skill_extraction:
+            return None
+        if not trace_path.exists():
+            return None
+
+        store_root = self._skill_store_root or trace_path.parent
+        lock = _FLAT_SKILL_LOCKS.setdefault(
+            store_root.expanduser().resolve(strict=False),
+            asyncio.Lock(),
+        )
+        try:
+            from opengui.skills.evolution import evolve_failed_skill_from_trace
+
+            async with lock:
+                result = await evolve_failed_skill_from_trace(
+                    llm=self._llm,
+                    trace_path=trace_path,
+                    store_root=store_root,
+                    task=task,
+                    platform=platform,
+                    embedding_provider=self._embedding_provider,
+                    embedding_signature=self._embedding_signature,
+                )
+        except Exception as exc:
+            logger.warning("Skill evolution failed for %s", trace_path, exc_info=True)
+            result = {
+                "status": "error",
+                "trace": str(trace_path),
+                "reason": str(exc) or type(exc).__name__,
+                "error_type": type(exc).__name__,
+            }
+
+        self._write_evolution_result(trace_path, result)
+        if result.get("status") == "no_failure_case":
+            return result
+
+        status = "processed_evolution" if result.get("status") == "processed_evolution" else "evolution_error"
+        self._write_extraction_result(trace_path, {
+            "status": status,
+            "trace": str(trace_path),
+            "is_success": is_success,
+            "agent_success": agent_success,
+            "evaluation_success": _evaluation_success(evaluation_result),
+            "platform": platform,
+            "task": task,
+            "learning_mode": _learning_mode(is_success),
+            "updated_functions": list(result.get("updated_functions") or []),
+            "compiled_skill_ids": list(result.get("compiled_skill_ids") or []),
+            "evolution": result,
+            "reuse_failure_trace": True,
+            "ordinary_code_extraction_skipped": True,
+        })
+        return result
 
     async def _extract_skill(
         self,
@@ -259,7 +335,7 @@ class PostRunProcessor:
 
         try:
             from opengui.skills.extractor import SkillExtractor
-            from opengui.skills.flat import FlatSkillRepository
+            from opengui.skills.flat import FlatSkillLibrary
 
             extractor = SkillExtractor(llm=self._llm)
             skills = await extractor.extract_from_file_multi(trace_path, is_success=is_success)
@@ -288,12 +364,18 @@ class PostRunProcessor:
             compiled_skill_ids: list[str] = []
 
             async with lock:
-                repository = FlatSkillRepository(store_root)
+                library = FlatSkillLibrary(
+                    store_dir=store_root,
+                    embedding_provider=self._embedding_provider,
+                    merge_llm=self._merge_llm,
+                    embedding_signature=self._embedding_signature,
+                )
                 for skill in skills:
-                    skill_id = repository.add(skill)
+                    decision, skill_id = await library.add_or_merge(skill)
                     skill_infos.append(
                         {
                             "skill_id": skill_id,
+                            "decision": decision,
                             "name": skill.name,
                             "description": skill.description,
                             "app": skill.app,
@@ -301,7 +383,8 @@ class PostRunProcessor:
                             "step_count": len(skill.steps),
                         },
                     )
-                    compiled_skill_ids.append(skill_id)
+                    if skill_id is not None:
+                        compiled_skill_ids.append(skill_id)
 
             first_skill = skills[0]
 
@@ -412,6 +495,18 @@ class PostRunProcessor:
             usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
         except OSError as exc:
             logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)
+
+    @staticmethod
+    def _write_evolution_result(trace_path: Path, result: dict[str, Any]) -> None:
+        result.setdefault("timestamp", time.time())
+        result_path = trace_path.parent / "evolution_result.json"
+        try:
+            result_path.write_text(
+                json.dumps(result, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Could not write evolution result to %s: %s", result_path, exc)
 
     @staticmethod
     def _write_extraction_result(trace_path: Path, result: dict[str, Any]) -> None:
