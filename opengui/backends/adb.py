@@ -70,6 +70,7 @@ _FOCUSED_APP_RE = re.compile(
 
 _DEVICE_SCREENSHOT_PATH = "/sdcard/__opengui_cap.png"
 _DEVICE_UI_XML_PATH = "/sdcard/window.xml"
+_UI_TREE_DUMP_TIMEOUT_SECONDS = 15.0
 _ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
 _YADB_PATH = "/data/local/tmp/yadb"
 _YADB_MAIN_CLASS = "com.ysbing.yadb.Main"
@@ -983,7 +984,8 @@ class AdbBackend:
         if not self._collect_ui_tree:
             return {}
         # uiautomator dump can be slow on accessibility-heavy app pages.
-        ui_timeout = max(0.2, min(timeout, 10.0))
+        ui_timeout = _UI_TREE_DUMP_TIMEOUT_SECONDS
+        _clear_raw_ui_tree_artifacts(screenshot_path)
         attempts = [
             ("uiautomator", "dump", "--compressed", _DEVICE_UI_XML_PATH),
             ("uiautomator", "dump", _DEVICE_UI_XML_PATH),
@@ -1008,6 +1010,7 @@ class AdbBackend:
                 continue
         message = str(last_error or "unknown error")
         logger.warning("ADB UI-tree capture unavailable after retries: %s", message)
+        _write_raw_ui_tree_error(screenshot_path, message, ui_timeout)
         return {
             "ui_tree_error": message,
             "ui_tree_timeout_s": ui_timeout,
@@ -1688,18 +1691,54 @@ def _parse_ui_tree_xml(
     return extra
 
 
-def _write_raw_ui_tree_xml(screenshot_path: Path | None, xml_text: str) -> None:
-    if screenshot_path is None or not xml_text:
-        return
+def _raw_ui_tree_artifact_paths(screenshot_path: Path | None) -> tuple[Path, Path] | None:
+    if screenshot_path is None:
+        return None
     screenshot_path = Path(screenshot_path)
     parent = screenshot_path.parent
     run_dir = parent.parent if parent.name == "screenshots" else parent
-    target = run_dir / "ui_tree" / f"{screenshot_path.stem}.xml"
+    raw_xml = run_dir / "ui_tree" / f"{screenshot_path.stem}.xml"
+    error_json = run_dir / "ui_tree" / f"{screenshot_path.stem}.error.json"
+    return raw_xml, error_json
+
+
+def _clear_raw_ui_tree_artifacts(screenshot_path: Path | None) -> None:
+    paths = _raw_ui_tree_artifact_paths(screenshot_path)
+    if paths is None:
+        return
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.debug("Could not remove stale UI tree artifact %s: %s", path, exc)
+
+
+def _write_raw_ui_tree_xml(screenshot_path: Path | None, xml_text: str) -> None:
+    paths = _raw_ui_tree_artifact_paths(screenshot_path)
+    if paths is None or not xml_text:
+        return
+    target, _error_path = paths
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(xml_text, encoding="utf-8")
     except OSError as exc:
         logger.debug("Could not write raw UI tree XML %s: %s", target, exc)
+
+
+def _write_raw_ui_tree_error(screenshot_path: Path | None, message: str, timeout_s: float) -> None:
+    paths = _raw_ui_tree_artifact_paths(screenshot_path)
+    if paths is None:
+        return
+    _raw_xml, target = paths
+    payload = {
+        "ui_tree_error": message,
+        "ui_tree_timeout_s": timeout_s,
+    }
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        logger.debug("Could not write raw UI tree error %s: %s", target, exc)
 
 
 def _clean_ui_attr(value: str | None) -> str:

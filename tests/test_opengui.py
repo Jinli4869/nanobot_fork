@@ -398,7 +398,7 @@ async def test_adb_ui_tree_capture_logs_warning_after_retry_failure(caplog: pyte
 
     assert extra == {
         "ui_tree_error": "dump failed",
-        "ui_tree_timeout_s": 1.0,
+        "ui_tree_timeout_s": 15.0,
     }
 
     assert calls == [
@@ -1446,6 +1446,7 @@ def test_mai_ui_profile_parses_swipe_direction_scroll() -> None:
     assert normalized.tool_calls[0].arguments == {
         "action_type": "scroll",
         "direction": "up",
+        "pixels": 40,
         "relative": True,
         "x": 300,
         "y": 700,
@@ -3123,6 +3124,43 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
+async def test_agent_retries_profile_parse_error_three_times_within_step(tmp_path: Path) -> None:
+    class _MalformedThenRecoverLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+            self.calls += 1
+            if self.calls <= 3:
+                return _mobileworld_response(
+                    {"action_type": "click"},
+                    thought="malformed click missing coordinate",
+                )
+            return _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="finish task",
+            )
+
+    llm = _MalformedThenRecoverLLM()
+    recorder = _make_recorder(tmp_path, "retry malformed profile response")
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        trajectory_recorder=recorder,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+    )
+
+    result = await agent.run("retry malformed profile response", max_retries=1)
+
+    assert result.success
+    assert llm.calls == 4
+    assert recorder.path is not None
+    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
+    assert not any(event["type"] == "attempt_exception" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path) -> None:
     class _MalformedToolCallLLM:
         def __init__(self) -> None:
@@ -3130,7 +3168,7 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
 
         async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
             self.calls += 1
-            if self.calls <= 3:
+            if self.calls <= 4:
                 return _mobileworld_response(
                     {"action_type": "click"},
                     thought="malformed click missing coordinate",
@@ -3220,7 +3258,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
             del tools, tool_choice
             self.calls.append(copy.deepcopy(messages))
             self._call_count += 1
-            if self._call_count <= 3:
+            if self._call_count <= 4:
                 return _mobileworld_response(
                     {"action_type": "click"},
                     thought="malformed click missing coordinate",
@@ -3243,7 +3281,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
     result = await agent.run("retry malformed tool call", max_retries=2)
 
     assert result.success
-    second_attempt = llm.calls[3]
+    second_attempt = llm.calls[4]
     retry_text = "\n".join(
         block["text"]
         for block in second_attempt[1]["content"]

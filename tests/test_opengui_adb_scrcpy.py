@@ -383,7 +383,7 @@ async def test_adb_observe_can_attach_compact_ui_tree_metadata(
     run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
-    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (320, 640))
+    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
 
     observation = await backend.observe(tmp_path / "screen.png")
 
@@ -417,7 +417,7 @@ async def test_adb_observe_writes_raw_ui_tree_xml_sibling_dir(
     run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
-    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (320, 640))
+    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
 
     screenshot = tmp_path / "run" / "screenshots" / "step_000.png"
     observation = await backend.observe(screenshot)
@@ -427,6 +427,61 @@ async def test_adb_observe_writes_raw_ui_tree_xml_sibling_dir(
     assert not list((tmp_path / "run" / "screenshots").glob("*.xml"))
     assert observation.extra["ui_tree"][0]["resource_id"] == "tv.danmaku.bili:id/search_src_text"
     assert "hierarchy" not in json.dumps(observation.extra, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_adb_collect_ui_tree_clears_stale_artifacts_before_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    xml = """<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+    <hierarchy rotation="0">
+      <node index="0" text="搜索" resource-id="tv.danmaku.bili:id/search"
+            class="android.widget.TextView" package="tv.danmaku.bili"
+            content-desc="" clickable="true" focused="false" scrollable="false"
+            bounds="[0,0][100,50]" />
+    </hierarchy>"""
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
+    run_mock = AsyncMock(side_effect=["UI hierarchy dumped", xml])
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    screenshot = tmp_path / "run" / "screenshots" / "step_001.png"
+    raw_xml_path = tmp_path / "run" / "ui_tree" / "step_001.xml"
+    error_path = tmp_path / "run" / "ui_tree" / "step_001.error.json"
+    raw_xml_path.parent.mkdir(parents=True)
+    raw_xml_path.write_text("<stale />", encoding="utf-8")
+    error_path.write_text("{}", encoding="utf-8")
+
+    extra = await backend._collect_ui_tree_extra(timeout=5.0, screenshot_path=screenshot)
+
+    assert raw_xml_path.read_text(encoding="utf-8") == xml
+    assert not error_path.exists()
+    assert extra["visible_text"] == ["搜索"]
+
+
+@pytest.mark.asyncio
+async def test_adb_collect_ui_tree_failure_removes_stale_xml_and_writes_error_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
+    run_mock = AsyncMock(side_effect=RuntimeError("dump failed"))
+    monkeypatch.setattr(backend, "_run", run_mock)
+
+    screenshot = tmp_path / "run" / "screenshots" / "step_001.png"
+    raw_xml_path = tmp_path / "run" / "ui_tree" / "step_001.xml"
+    error_path = tmp_path / "run" / "ui_tree" / "step_001.error.json"
+    raw_xml_path.parent.mkdir(parents=True)
+    raw_xml_path.write_text("<stale />", encoding="utf-8")
+
+    extra = await backend._collect_ui_tree_extra(timeout=1.0, screenshot_path=screenshot)
+
+    assert extra == {
+        "ui_tree_error": "dump failed",
+        "ui_tree_timeout_s": 15.0,
+    }
+    assert not raw_xml_path.exists()
+    assert json.loads(error_path.read_text(encoding="utf-8")) == extra
 
 
 def test_adb_ui_tree_marks_child_text_under_clickable_container_as_clickable() -> None:
@@ -471,8 +526,8 @@ async def test_adb_collect_ui_tree_uses_longer_timeout_window(
 
     extra = await backend._collect_ui_tree_extra(timeout=30.0)
 
-    assert run_mock.await_args_list[0].kwargs["timeout"] == 10.0
-    assert run_mock.await_args_list[1].kwargs["timeout"] == 10.0
+    assert run_mock.await_args_list[0].kwargs["timeout"] == 15.0
+    assert run_mock.await_args_list[1].kwargs["timeout"] == 15.0
     assert extra["ui_tree_node_count"] == 1
     assert extra["visible_text"] == ["设置"]
 

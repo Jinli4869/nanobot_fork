@@ -82,7 +82,7 @@ _PROFILE_ALIASES: dict[str | None, str] = {
 
 _CLAUDE_IMAGE_SIZE = (1280, 720)
 _CLAUDE_OPUS_MAX_DIMENSION = 1280
-DEFAULT_SCROLL_PIXELS = 500
+DEFAULT_SCROLL_PIXELS = 400
 
 _MOBILEWORLD_TOOL = {
     "type": "function",
@@ -156,17 +156,41 @@ def build_mobileworld_messages(
             history_image_window=history_image_window,
         )
     if profile == "qwen3vl":
-        return _build_qwen3vl_messages(task=task, current_observation=current_observation, history=history)
+        return _build_qwen3vl_messages(
+            task=task, current_observation=current_observation, history=history
+        )
     if profile == "mai_ui":
-        return _build_mai_ui_messages(task=task, current_observation=current_observation, history=history, history_image_window=history_image_window)
+        return _build_mai_ui_messages(
+            task=task,
+            current_observation=current_observation,
+            history=history,
+            history_image_window=history_image_window,
+        )
     if profile == "gelab":
-        return _build_gelab_messages(task=task, current_observation=current_observation, history=history)
+        return _build_gelab_messages(
+            task=task, current_observation=current_observation, history=history
+        )
     if profile == "seed":
-        return _build_seed_messages(task=task, current_observation=current_observation, history=history, history_image_window=history_image_window)
+        return _build_seed_messages(
+            task=task,
+            current_observation=current_observation,
+            history=history,
+            history_image_window=history_image_window,
+        )
     if profile == "gui_owl_1_5":
-        return _build_gui_owl_messages(task=task, current_observation=current_observation, history=history, history_image_window=history_image_window)
+        return _build_gui_owl_messages(
+            task=task,
+            current_observation=current_observation,
+            history=history,
+            history_image_window=history_image_window,
+        )
     if profile == "ui_venus":
-        return _build_ui_venus_messages(task=task, current_observation=current_observation, history=history, history_image_window=history_image_window)
+        return _build_ui_venus_messages(
+            task=task,
+            current_observation=current_observation,
+            history=history,
+            history_image_window=history_image_window,
+        )
     raise ValueError(f"Unsupported MobileWorld profile: {profile}")
 
 
@@ -226,7 +250,14 @@ def normalize_profile_response_for_screen(
         )
     except Exception as exc:
         raise ValueError(f"Failed to parse {profile} response: {exc}") from exc
-    if fallback_relative and payload.get("action_type") in {"tap", "long_press", "double_tap", "drag", "swipe", "scroll"}:
+    if fallback_relative and payload.get("action_type") in {
+        "tap",
+        "long_press",
+        "double_tap",
+        "drag",
+        "swipe",
+        "scroll",
+    }:
         payload.setdefault("relative", True)
     return LLMResponse(
         content=response.content,
@@ -248,7 +279,7 @@ def parse_mobileworld_action(
 ) -> dict[str, Any]:
     profile = canonicalize_agent_profile(profile_name)
     if profile == "general_e2e":
-        _thought, action_str = general_e2e_agent.parse_action(content)
+        action_str = _general_e2e_action_text(content)
         action = general_e2e_agent.parse_response_to_action(
             action_str,
             screen_width,
@@ -275,7 +306,9 @@ def parse_mobileworld_action(
         return _to_opengui_payload(action, summary=structured.get("conclusion") or content)
     if profile == "mai_ui":
         structured = mai_ui_agent.parse_action_to_structure_output(content)
-        action = _mai_ui_to_action(structured, screen_width=screen_width, screen_height=screen_height)
+        action = _mai_ui_to_action(
+            structured, screen_width=screen_width, screen_height=screen_height
+        )
         return _to_opengui_payload(action, summary=structured.get("thinking") or content)
     if profile == "gelab":
         action = gelab_agent.transform_gelab_action(
@@ -307,7 +340,9 @@ def parse_mobileworld_action(
             origin_h=screen_height,
             origin_w=screen_width,
         )
-        return _to_opengui_payload(action, summary=_between(content, "<conclusion>", "</conclusion>") or content)
+        return _to_opengui_payload(
+            action, summary=_between(content, "<conclusion>", "</conclusion>") or content
+        )
     raise ValueError(f"Unsupported MobileWorld profile: {profile}")
 
 
@@ -343,13 +378,15 @@ def _build_general_e2e_messages(
     ]
     for index, response in enumerate(responses):
         messages.append({"role": "assistant", "content": [{"type": "text", "text": response}]})
-        messages.append(_general_user_message(
-            observations[index + 1],
-            tool_result=tool_results[index],
-            ask_user_response=None,
-            instruction=None,
-            model_name=model_name,
-        ))
+        messages.append(
+            _general_user_message(
+                observations[index + 1],
+                tool_result=tool_results[index],
+                ask_user_response=None,
+                instruction=None,
+                model_name=model_name,
+            )
+        )
     return _hide_history_images_like_general(messages, history_image_window)
 
 
@@ -372,15 +409,19 @@ def _build_planner_executor_messages(
     ]
     for index, response in enumerate(responses):
         messages.append({"role": "assistant", "content": [{"type": "text", "text": response}]})
-        messages.append(_planner_user_message(
-            observations[index + 1],
-            tool_result=tool_results[index],
-            ask_user_response=None,
-        ))
+        messages.append(
+            _planner_user_message(
+                observations[index + 1],
+                tool_result=tool_results[index],
+                ask_user_response=None,
+            )
+        )
     return _hide_history_images_like_general(messages, history_image_window)
 
 
-def _build_qwen3vl_messages(*, task: str, current_observation: Observation, history: list[Any]) -> list[dict[str, Any]]:
+def _build_qwen3vl_messages(
+    *, task: str, current_observation: Observation, history: list[Any]
+) -> list[dict[str, Any]]:
     steps = ""
     for idx, turn in enumerate(history):
         conclusion = turn.action_summary.replace("\n", "").replace('"', "")
@@ -391,12 +432,17 @@ def _build_qwen3vl_messages(*, task: str, current_observation: Observation, hist
     return [
         {
             "role": "system",
-            "content": [{"type": "text", "text": MOBILE_QWEN3VL_PROMPT_WITH_ASK_USER.render(tools="")}],
+            "content": [
+                {"type": "text", "text": MOBILE_QWEN3VL_PROMPT_WITH_ASK_USER.render(tools="")}
+            ],
         },
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": MOBILE_QWEN3VL_USER_TEMPLATE.format(instruction=task, steps=steps)},
+                {
+                    "type": "text",
+                    "text": MOBILE_QWEN3VL_USER_TEMPLATE.format(instruction=task, steps=steps),
+                },
                 _image_content(current_observation),
             ],
         },
@@ -418,25 +464,31 @@ def _build_mai_ui_messages(
     ]
     for index, turn in enumerate(history):
         messages.append({"role": "assistant", "content": _history_raw_response(turn)})
-        messages.append(_mai_user_message(observations[index + 1], turn.tool_result_message.get("content")))
+        messages.append(
+            _mai_user_message(observations[index + 1], turn.tool_result_message.get("content"))
+        )
     return _drop_old_image_messages(messages, history_image_window)
 
 
-def _build_gelab_messages(*, task: str, current_observation: Observation, history: list[Any]) -> list[dict[str, Any]]:
+def _build_gelab_messages(
+    *, task: str, current_observation: Observation, history: list[Any]
+) -> list[dict[str, Any]]:
     summary_history = history[-1].action_summary if history else ""
     user_prompt = GELAB_USER_PROMPT_TEMPLATE.render(
         task=task,
         history_display=summary_history if summary_history else "暂无历史操作",
     )
-    return [{
-        "role": "user",
-        "content": [
-            {"type": "text", "text": GELAB_SYSTEM_PROMPT},
-            {"type": "text", "text": user_prompt},
-            _image_content(current_observation),
-            {"type": "text", "text": GELAB_INSTRUCTION_SUFFIX},
-        ],
-    }]
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": GELAB_SYSTEM_PROMPT},
+                {"type": "text", "text": user_prompt},
+                _image_content(current_observation),
+                {"type": "text", "text": GELAB_INSTRUCTION_SUFFIX},
+            ],
+        }
+    ]
 
 
 def _build_seed_messages(
@@ -448,14 +500,19 @@ def _build_seed_messages(
 ) -> list[dict[str, Any]]:
     observations = [turn.observation for turn in history] + [current_observation]
     messages = [
-        {"role": "system", "content": "You are provided with a task description, a history of previous actions, and corresponding screenshots. Your goal is to perform the next action to complete the task. Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action."},
+        {
+            "role": "system",
+            "content": "You are provided with a task description, a history of previous actions, and corresponding screenshots. Your goal is to perform the next action to complete the task. Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.",
+        },
         {"role": "system", "content": SEED_PROMPT.render(tools=[])},
         {"role": "user", "content": task},
         _seed_user_message(observations[0], None),
     ]
     for index, turn in enumerate(history):
         messages.append({"role": "assistant", "content": _history_raw_response(turn)})
-        messages.append(_seed_user_message(observations[index + 1], turn.tool_result_message.get("content")))
+        messages.append(
+            _seed_user_message(observations[index + 1], turn.tool_result_message.get("content"))
+        )
     return _drop_old_tool_images(messages, history_image_window)
 
 
@@ -476,23 +533,38 @@ def _build_gui_owl_messages(
             f"Step{i + 1}: {history[i].action_summary}. Tool response: {history[i].tool_result_message.get('content') or 'None'}"
             for i in range(text_history_count)
         )
-        first_user_content.append({
-            "type": "text",
-            "text": GUI_OWL_1_5_USER_PROMPT_WITH_HISTSTEPS_TEMPLATE.format(
-                instruction=task,
-                previous_steps=previous_steps,
-            ),
-        })
+        first_user_content.append(
+            {
+                "type": "text",
+                "text": GUI_OWL_1_5_USER_PROMPT_WITH_HISTSTEPS_TEMPLATE.format(
+                    instruction=task,
+                    previous_steps=previous_steps,
+                ),
+            }
+        )
     else:
-        first_user_content.append({"type": "text", "text": GUI_OWL_1_5_USER_PROMPT_TEMPLATE.format(instruction=task)})
+        first_user_content.append(
+            {"type": "text", "text": GUI_OWL_1_5_USER_PROMPT_TEMPLATE.format(instruction=task)}
+        )
     first_user_content.append(_image_content(observations[text_history_count]))
     messages = [
         {"role": "system", "content": GUI_OWL_1_5_SYSTEM_PROMPT_TEMPLATE.render(tools="")},
         {"role": "user", "content": first_user_content},
     ]
     for index in range(text_history_count, total_history_count):
-        messages.append({"role": "assistant", "content": [{"type": "text", "text": _history_raw_response(history[index]).strip()}]})
-        messages.append(_gui_owl_user_message(observations[index + 1], history[index].tool_result_message.get("content")))
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": _history_raw_response(history[index]).strip()}
+                ],
+            }
+        )
+        messages.append(
+            _gui_owl_user_message(
+                observations[index + 1], history[index].tool_result_message.get("content")
+            )
+        )
     return messages
 
 
@@ -508,10 +580,15 @@ def _build_ui_venus_messages(
         f"Step {idx}: <think>{turn.state_summary or ''}</think><action>{turn.action_summary}</action>"
         for idx, turn in enumerate(recent)
     )
-    query = ui_venus_agent.UI_VENUS_15_PROMPT.format(user_task=task, previous_actions=previous_actions)
+    query = ui_venus_agent.UI_VENUS_15_PROMPT.format(
+        user_task=task, previous_actions=previous_actions
+    )
     return [
         {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": [{"type": "text", "text": query}, _image_content(current_observation)]},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": query}, _image_content(current_observation)],
+        },
     ]
 
 
@@ -519,7 +596,9 @@ def _history_raw_response(turn: Any) -> str:
     raw = getattr(turn, "raw_response_content", None)
     if isinstance(raw, str) and raw.strip():
         return raw
-    content = turn.assistant_message.get("content") if isinstance(turn.assistant_message, dict) else None
+    content = (
+        turn.assistant_message.get("content") if isinstance(turn.assistant_message, dict) else None
+    )
     return str(content or turn.action_summary or "")
 
 
@@ -559,13 +638,19 @@ def _planner_user_message(
 
 def _mai_user_message(observation: Observation, tool_result: Any) -> dict[str, Any]:
     if tool_result is not None:
-        return {"role": "user", "content": [{"type": "text", "text": f"Tool call result: {tool_result}"}]}
+        return {
+            "role": "user",
+            "content": [{"type": "text", "text": f"Tool call result: {tool_result}"}],
+        }
     return {"role": "user", "content": [_image_content(observation)]}
 
 
 def _seed_user_message(observation: Observation, tool_result: Any) -> dict[str, Any]:
     if tool_result is not None:
-        return {"role": "user", "content": [{"type": "text", "text": f"Tool call result: {tool_result}"}]}
+        return {
+            "role": "user",
+            "content": [{"type": "text", "text": f"Tool call result: {tool_result}"}],
+        }
     return {"role": "tool", "content": [_image_content(observation)], "tool_call_id": "1"}
 
 
@@ -598,7 +683,9 @@ def _image_content_raw(observation: Observation) -> dict[str, Any]:
 def _general_e2e_image_content(observation: Observation, *, model_name: str) -> dict[str, Any]:
     return {
         "type": "image_url",
-        "image_url": {"url": f"data:image/png;base64,{_general_e2e_observation_base64(observation, model_name=model_name)}"},
+        "image_url": {
+            "url": f"data:image/png;base64,{_general_e2e_observation_base64(observation, model_name=model_name)}"
+        },
     }
 
 
@@ -643,7 +730,30 @@ def _general_e2e_scale_factor(
     return 1000
 
 
-def _hide_history_images_like_general(messages: list[dict[str, Any]], history_image_window: int) -> list[dict[str, Any]]:
+def _general_e2e_action_text(content: str) -> str:
+    if "Action:" not in content:
+        action_str = content.strip()
+    else:
+        try:
+            _thought, action_str = general_e2e_agent.parse_action(content)
+        except ValueError:
+            action_str = content.strip()
+    parsed = general_e2e_agent.parse_json_markdown(action_str)
+    if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+        parsed = parsed[0]
+    if isinstance(parsed, dict):
+        action = dict(parsed)
+        if "action_type" not in action and "action" in action:
+            action["action_type"] = action.pop("action")
+        if "coordinate" not in action and "target" in action:
+            action["coordinate"] = action.pop("target")
+        return json.dumps(action, ensure_ascii=False)
+    return action_str
+
+
+def _hide_history_images_like_general(
+    messages: list[dict[str, Any]], history_image_window: int
+) -> list[dict[str, Any]]:
     used = 0
     for idx in range(len(messages) - 1, -1, -1):
         message = messages[idx]
@@ -652,7 +762,9 @@ def _hide_history_images_like_general(messages: list[dict[str, Any]], history_im
         content = message.get("content")
         if not isinstance(content, list):
             continue
-        image_idx = next((i for i, item in enumerate(content) if item.get("type") == "image_url"), None)
+        image_idx = next(
+            (i for i, item in enumerate(content) if item.get("type") == "image_url"), None
+        )
         if image_idx is None:
             continue
         if used < history_image_window:
@@ -662,7 +774,9 @@ def _hide_history_images_like_general(messages: list[dict[str, Any]], history_im
     return messages
 
 
-def _drop_old_image_messages(messages: list[dict[str, Any]], history_image_window: int) -> list[dict[str, Any]]:
+def _drop_old_image_messages(
+    messages: list[dict[str, Any]], history_image_window: int
+) -> list[dict[str, Any]]:
     image_positions = [
         index
         for index, message in enumerate(messages)
@@ -670,11 +784,17 @@ def _drop_old_image_messages(messages: list[dict[str, Any]], history_image_windo
         and isinstance(message.get("content"), list)
         and any(item.get("type") == "image_url" for item in message["content"])
     ]
-    remove = set(image_positions[:-history_image_window]) if history_image_window > 0 else set(image_positions)
+    remove = (
+        set(image_positions[:-history_image_window])
+        if history_image_window > 0
+        else set(image_positions)
+    )
     return [message for index, message in enumerate(messages) if index not in remove]
 
 
-def _drop_old_tool_images(messages: list[dict[str, Any]], history_image_window: int) -> list[dict[str, Any]]:
+def _drop_old_tool_images(
+    messages: list[dict[str, Any]], history_image_window: int
+) -> list[dict[str, Any]]:
     image_positions = [
         index
         for index, message in enumerate(messages)
@@ -683,11 +803,17 @@ def _drop_old_tool_images(messages: list[dict[str, Any]], history_image_window: 
         and message["content"]
         and message["content"][0].get("type") == "image_url"
     ]
-    remove = set(image_positions[:-history_image_window]) if history_image_window > 0 else set(image_positions)
+    remove = (
+        set(image_positions[:-history_image_window])
+        if history_image_window > 0
+        else set(image_positions)
+    )
     return [message for index, message in enumerate(messages) if index not in remove]
 
 
-def _mai_ui_to_action(structured: dict[str, Any], *, screen_width: int, screen_height: int) -> dict[str, Any]:
+def _mai_ui_to_action(
+    structured: dict[str, Any], *, screen_width: int, screen_height: int
+) -> dict[str, Any]:
     tool_name = structured.get("tool_name", "mobile_use")
     action_json = structured["action_json"]
     if tool_name != "mobile_use":
@@ -696,7 +822,9 @@ def _mai_ui_to_action(structured: dict[str, Any], *, screen_width: int, screen_h
     if action_type in {"click", "long_press", "double_click"}:
         x, y = _coord_to_pixel(action_json.get("coordinate"), screen_width, screen_height)
         return {
-            "action_type": {"click": CLICK, "long_press": LONG_PRESS, "double_click": DOUBLE_TAP}[action_type],
+            "action_type": {"click": CLICK, "long_press": LONG_PRESS, "double_click": DOUBLE_TAP}[
+                action_type
+            ],
             "x": x,
             "y": y,
         }
@@ -708,12 +836,22 @@ def _mai_ui_to_action(structured: dict[str, Any], *, screen_width: int, screen_h
             payload.update({"x": x, "y": y})
         return payload
     if action_type == "drag":
-        sx, sy = _coord_to_pixel(action_json.get("start_coordinate", [0, 0]), screen_width, screen_height)
-        ex, ey = _coord_to_pixel(action_json.get("end_coordinate", [0, 0]), screen_width, screen_height)
+        sx, sy = _coord_to_pixel(
+            action_json.get("start_coordinate", [0, 0]), screen_width, screen_height
+        )
+        ex, ey = _coord_to_pixel(
+            action_json.get("end_coordinate", [0, 0]), screen_width, screen_height
+        )
         return {"action_type": DRAG, "start_x": sx, "start_y": sy, "end_x": ex, "end_y": ey}
     if action_type == "system_button":
         button = str(action_json.get("button", "")).lower()
-        return {"action_type": {"back": NAVIGATE_BACK, "home": NAVIGATE_HOME, "enter": KEYBOARD_ENTER}.get(button, UNKNOWN)}
+        return {
+            "action_type": {
+                "back": NAVIGATE_BACK,
+                "home": NAVIGATE_HOME,
+                "enter": KEYBOARD_ENTER,
+            }.get(button, UNKNOWN)
+        }
     if action_type == "type":
         return {"action_type": INPUT_TEXT, "text": action_json.get("text", "")}
     if action_type == "open":
@@ -729,7 +867,9 @@ def _mai_ui_to_action(structured: dict[str, Any], *, screen_width: int, screen_h
     return {"action_type": UNKNOWN, "text": f"Unknown action: {action_type}"}
 
 
-def _seed_to_action(parsed_action: dict[str, Any], *, screen_width: int, screen_height: int) -> dict[str, Any]:
+def _seed_to_action(
+    parsed_action: dict[str, Any], *, screen_width: int, screen_height: int
+) -> dict[str, Any]:
     func_name = parsed_action["function"]
     params = parsed_action["parameters"]
     if func_name == seed_agent.FINISH_WORD:
@@ -740,8 +880,14 @@ def _seed_to_action(parsed_action: dict[str, Any], *, screen_width: int, screen_
         return {"action_type": ASK_USER, "text": params.get("content", "")}
     if func_name in {"click", "left_double", "long_press"}:
         x, y = seed_agent.parse_point_string(params.get("point", "0 0"))
-        action_type = {"click": CLICK, "left_double": DOUBLE_TAP, "long_press": LONG_PRESS}[func_name]
-        return {"action_type": action_type, "x": int(x * screen_width / 1000), "y": int(y * screen_height / 1000)}
+        action_type = {"click": CLICK, "left_double": DOUBLE_TAP, "long_press": LONG_PRESS}[
+            func_name
+        ]
+        return {
+            "action_type": action_type,
+            "x": int(x * screen_width / 1000),
+            "y": int(y * screen_height / 1000),
+        }
     if func_name == "drag":
         sx, sy = seed_agent.parse_point_string(params.get("start_point", "0 0"))
         ex, ey = seed_agent.parse_point_string(params.get("end_point", "0 0"))
@@ -754,7 +900,12 @@ def _seed_to_action(parsed_action: dict[str, Any], *, screen_width: int, screen_
         }
     if func_name == "scroll":
         x, y = seed_agent.parse_point_string(params.get("point", "500 500"))
-        return {"action_type": SCROLL, "direction": params.get("direction", "down"), "x": int(x * screen_width / 1000), "y": int(y * screen_height / 1000)}
+        return {
+            "action_type": SCROLL,
+            "direction": params.get("direction", "down"),
+            "x": int(x * screen_width / 1000),
+            "y": int(y * screen_height / 1000),
+        }
     if func_name == "type":
         return {"action_type": INPUT_TEXT, "text": params.get("content", "")}
     if func_name == "press_home":
@@ -774,25 +925,31 @@ def _to_opengui_payload(action: dict[str, Any], *, summary: str) -> dict[str, An
     elif action_type in {DOUBLE_TAP, "double_tap"}:
         payload.update({"action_type": "double_tap", "x": action.get("x"), "y": action.get("y")})
     elif action_type in {DRAG, "drag"}:
-        payload.update({
-            "action_type": "drag",
-            "x": action.get("start_x", action.get("x")),
-            "y": action.get("start_y", action.get("y")),
-            "x2": action.get("end_x", action.get("x2")),
-            "y2": action.get("end_y", action.get("y2")),
-        })
+        payload.update(
+            {
+                "action_type": "drag",
+                "x": action.get("start_x", action.get("x")),
+                "y": action.get("start_y", action.get("y")),
+                "x2": action.get("end_x", action.get("x2")),
+                "y2": action.get("end_y", action.get("y2")),
+            }
+        )
     elif action_type in {SCROLL, "scroll"}:
-        payload.update({
-            "action_type": "scroll",
-            "direction": action.get("direction", action.get("text", "down")),
-            "pixels": action.get("pixels", DEFAULT_SCROLL_PIXELS),
-            "x": action.get("x"),
-            "y": action.get("y"),
-        })
+        payload.update(
+            {
+                "action_type": "scroll",
+                "direction": action.get("direction", action.get("text", "down")),
+                "pixels": action.get("pixels", DEFAULT_SCROLL_PIXELS),
+                "x": action.get("x"),
+                "y": action.get("y"),
+            }
+        )
     elif action_type in {INPUT_TEXT, "input_text"}:
         payload.update({"action_type": "input_text", "text": action.get("text", "")})
     elif action_type in {OPEN_APP, "open_app"}:
-        payload.update({"action_type": "open_app", "text": action.get("app_name") or action.get("text", "")})
+        payload.update(
+            {"action_type": "open_app", "text": action.get("app_name") or action.get("text", "")}
+        )
     elif action_type in {NAVIGATE_BACK, "navigate_back"}:
         payload.update({"action_type": "back"})
     elif action_type in {NAVIGATE_HOME, "navigate_home"}:
@@ -802,16 +959,39 @@ def _to_opengui_payload(action: dict[str, Any], *, summary: str) -> dict[str, An
     elif action_type in {WAIT, "wait"}:
         payload.update({"action_type": "wait"})
     elif action_type in {ANSWER, FINISHED, "answer", "finished"}:
-        payload.update({"action_type": "done", "status": _done_status(action), "text": action.get("text", "")})
-    elif action_type in {ASK_USER, MCP, UNKNOWN, ENV_FAIL, "ask_user", "mcp", "unknown", "env_fail"}:
-        payload.update({"action_type": "request_intervention", "text": action.get("text") or f"Unsupported MobileWorld action: {action_type}"})
+        payload.update(
+            {"action_type": "done", "status": _done_status(action), "text": action.get("text", "")}
+        )
+    elif action_type in {
+        ASK_USER,
+        MCP,
+        UNKNOWN,
+        ENV_FAIL,
+        "ask_user",
+        "mcp",
+        "unknown",
+        "env_fail",
+    }:
+        payload.update(
+            {
+                "action_type": "request_intervention",
+                "text": action.get("text") or f"Unsupported MobileWorld action: {action_type}",
+            }
+        )
     else:
-        payload.update({"action_type": str(action_type or "request_intervention"), **{k: v for k, v in action.items() if k != "action_type"}})
+        payload.update(
+            {
+                "action_type": str(action_type or "request_intervention"),
+                **{k: v for k, v in action.items() if k != "action_type"},
+            }
+        )
     return {key: value for key, value in payload.items() if value is not None}
 
 
 def _done_status(action: dict[str, Any]) -> str:
-    text = str(action.get("text") or action.get("status") or action.get("goal_status") or "success").lower()
+    text = str(
+        action.get("text") or action.get("status") or action.get("goal_status") or "success"
+    ).lower()
     return "failure" if "fail" in text or "infeasible" in text or "abort" in text else "success"
 
 
