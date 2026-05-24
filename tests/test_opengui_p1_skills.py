@@ -58,6 +58,27 @@ class _FakeValidator:
         return self._returns.pop(0)
 
 
+class _RecordingBackend(DryRunBackend):
+    def __init__(self) -> None:
+        super().__init__(screen_width=496, screen_height=1080)
+        self.actions: list[Action] = []
+
+    async def execute(self, action: Action, timeout: float = 5.0) -> str:
+        del timeout
+        self.actions.append(action)
+        return action.action_type
+
+
+class _ObservationProvider:
+    def __init__(self, observations: list[Observation]) -> None:
+        self._observations = list(observations)
+
+    async def get_observation(self) -> Observation | None:
+        if not self._observations:
+            return None
+        return self._observations.pop(0)
+
+
 class _FakeSkillLibrary:
     def __init__(self, results: list[tuple[Skill, float]]) -> None:
         self._results = results
@@ -994,6 +1015,94 @@ async def test_skill_executor_falls_back_to_valid_state_when_contract_unknown() 
 
 
 @pytest.mark.asyncio
+async def test_skill_executor_dismisses_post_open_app_skip_overlay(monkeypatch: pytest.MonkeyPatch) -> None:
+    import opengui.skills.executor as executor_module
+
+    monkeypatch.setattr(executor_module, "_OPEN_APP_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(executor_module, "_POST_ACTION_SETTLE_SECONDS", 0.0)
+    backend = _RecordingBackend()
+    skill = _make_skill(
+        "s1",
+        "Open Bilibili",
+        "Open Bilibili",
+        steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili", valid_state="No need to verify"),),
+    )
+    provider = _ObservationProvider([
+        Observation(None, 496, 1080, foreground_app="tv.danmaku.bili", platform="android"),
+        Observation(
+            None,
+            496,
+            1080,
+            foreground_app="tv.danmaku.bili",
+            platform="android",
+            extra={
+                "ui_tree": [
+                    {"class": "FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                    {
+                        "text": "Skip 2",
+                        "class": "TextView",
+                        "clickable": True,
+                        "enabled": True,
+                        "bounds": "[1062,2775][1384,2936]",
+                    },
+                ],
+            },
+        ),
+    ])
+    executor = SkillExecutor(backend=backend, screenshot_provider=provider)
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert [action.action_type for action in backend.actions] == ["open_app", "tap"]
+    assert backend.actions[1].x == pytest.approx(421.4, abs=1.0)
+    assert backend.actions[1].y == pytest.approx(988.4, abs=1.0)
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_ignores_center_close_after_open_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    import opengui.skills.executor as executor_module
+
+    monkeypatch.setattr(executor_module, "_OPEN_APP_SETTLE_SECONDS", 0.0)
+    monkeypatch.setattr(executor_module, "_POST_ACTION_SETTLE_SECONDS", 0.0)
+    backend = _RecordingBackend()
+    skill = _make_skill(
+        "s1",
+        "Open App",
+        "Open App",
+        steps=(SkillStep(action_type="open_app", target="com.example", valid_state="No need to verify"),),
+    )
+    provider = _ObservationProvider([
+        Observation(None, 496, 1080, foreground_app="com.example", platform="android"),
+        Observation(
+            None,
+            496,
+            1080,
+            foreground_app="com.example",
+            platform="android",
+            extra={
+                "ui_tree": [
+                    {"class": "FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                    {
+                        "text": "关闭",
+                        "class": "TextView",
+                        "clickable": True,
+                        "enabled": True,
+                        "bounds": "[620,1400][820,1500]",
+                    },
+                ],
+            },
+        ),
+    ])
+    executor = SkillExecutor(backend=backend, screenshot_provider=provider)
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert [action.action_type for action in backend.actions] == ["open_app"]
+
+
+@pytest.mark.asyncio
 async def test_skill_extractor_parses_llm_json_response() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
@@ -1318,7 +1427,7 @@ def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_strips_tap_contract_from_post_action_focused_input(
+async def test_skill_extractor_keeps_pre_action_tap_contract_before_focused_input(
     tmp_path: Path,
 ) -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
@@ -1327,7 +1436,7 @@ async def test_skill_extractor_strips_tap_contract_from_post_action_focused_inpu
 async def search_bilibili(device, query):
     await action("open_app", target="Bilibili", valid_state="No need to verify")
     await action("tap", target="search bar", valid_state="search bar is visible",
-                 state_contract=C(app="tv.danmaku.bili", required=[R(resource_id="tv.danmaku.bili:id/search_src_text", visible=True)]))
+                 state_contract=C(app="tv.danmaku.bili", required=[R(resource_id="tv.danmaku.bili:id/expand_search", visible=True, clickable=True)]))
     await action("input_text", target=query, valid_state="search input is focused")
 """
     trace_path = tmp_path / "trace.jsonl"
@@ -1337,7 +1446,25 @@ async def search_bilibili(device, query):
             "type": "step",
             "step_index": 0,
             "action": {"action_type": "tap", "x": 400, "y": 800},
-            "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "tv.danmaku.bili",
+                "screen_width": 496,
+                "screen_height": 1080,
+                "extra": {
+                    "ui_tree": [
+                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "content_desc": "Search bar, button",
+                            "resource_id": "tv.danmaku.bili:id/expand_search",
+                            "class": "android.widget.LinearLayout",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[249,182][1076,301]",
+                        },
+                    ],
+                },
+            },
         },
         {
             "type": "step",
@@ -1380,7 +1507,14 @@ async def search_bilibili(device, query):
 
     assert skill is not None
     tap_step = [step for step in skill.steps if step.action_type == "tap"][0]
-    assert tap_step.state_contract is None
+    assert tap_step.state_contract is not None
+    tap_required = tap_step.state_contract["signature"]["required"]
+    assert tap_required[0]["selector"] == {"resource_id": "tv.danmaku.bili:id/expand_search"}
+    input_step = [step for step in skill.steps if step.action_type == "input_text"][0]
+    assert input_step.state_contract is not None
+    input_required = input_step.state_contract["signature"]["required"]
+    assert input_required[0]["selector"]["resource_id"] == "tv.danmaku.bili:id/search_src_text"
+    assert "focused" in input_required[0]["state"]
 
 
 @pytest.mark.asyncio

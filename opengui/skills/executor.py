@@ -48,6 +48,7 @@ _OPEN_APP_SETTLE_SECONDS: float = 5.00
 _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
 _OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
 _NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
+_UI_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +318,101 @@ def _should_skip_validation(valid_state: str | None) -> bool:
     lowered = valid_state.strip().lower()
     skip_hints = ("no need to verify", "return true", "skip", "none", "n/a")
     return any(hint in lowered for hint in skip_hints)
+
+
+def _post_open_app_overlay_action(observation: Observation) -> Action | None:
+    ui_tree = observation.extra.get("ui_tree") if isinstance(observation.extra, dict) else None
+    if not isinstance(ui_tree, list):
+        return None
+
+    parsed_nodes: list[tuple[dict[str, Any], tuple[int, int, int, int]]] = []
+    for node in ui_tree:
+        if isinstance(node, dict):
+            bounds = _parse_ui_bounds(node.get("bounds"))
+            if bounds is not None:
+                parsed_nodes.append((node, bounds))
+    if not parsed_nodes:
+        return None
+
+    root = (
+        min(bounds[0] for _node, bounds in parsed_nodes),
+        min(bounds[1] for _node, bounds in parsed_nodes),
+        max(bounds[2] for _node, bounds in parsed_nodes),
+        max(bounds[3] for _node, bounds in parsed_nodes),
+    )
+    root_width = max(1, root[2] - root[0])
+    root_height = max(1, root[3] - root[1])
+
+    skip_action: Action | None = None
+    close_action: Action | None = None
+    for node, bounds in parsed_nodes:
+        if node.get("clickable") is not True or node.get("enabled") is not True:
+            continue
+        label = _ui_node_label(node)
+        if not label:
+            continue
+        label_lower = label.lower()
+        is_skip = "skip" in label_lower or "跳过" in label
+        is_close = (
+            "关闭" in label
+            or label_lower in {"close", "x", "×"}
+            or label_lower.startswith("close ")
+        )
+        if not is_skip and not is_close:
+            continue
+
+        x1, y1, x2, y2 = bounds
+        cx = (x1 + x2) / 2.0
+        cy = (y1 + y2) / 2.0
+        if is_close:
+            x_ratio = (cx - root[0]) / root_width
+            y_ratio = (cy - root[1]) / root_height
+            if x_ratio < 0.75 or 0.25 < y_ratio < 0.70:
+                continue
+
+        action = _ui_bounds_to_tap_action(bounds, root, observation)
+        if is_skip and skip_action is None:
+            skip_action = action
+        elif is_close and close_action is None:
+            close_action = action
+
+    return skip_action or close_action
+
+
+def _parse_ui_bounds(value: Any) -> tuple[int, int, int, int] | None:
+    if not isinstance(value, str):
+        return None
+    match = _UI_BOUNDS_RE.fullmatch(value.strip())
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.groups())
+
+
+def _ui_node_label(node: dict[str, Any]) -> str:
+    return " ".join(
+        str(value)
+        for value in (node.get("text"), node.get("content_desc"))
+        if value
+    ).strip()
+
+
+def _ui_bounds_to_tap_action(
+    bounds: tuple[int, int, int, int],
+    root: tuple[int, int, int, int],
+    observation: Observation,
+) -> Action:
+    x1, y1, x2, y2 = bounds
+    root_width = max(1, root[2] - root[0])
+    root_height = max(1, root[3] - root[1])
+    screen_width = max(1, int(observation.screen_width or 1))
+    screen_height = max(1, int(observation.screen_height or 1))
+    x = ((x1 + x2) / 2.0 - root[0]) / root_width * screen_width
+    y = ((y1 + y2) / 2.0 - root[1]) / root_height * screen_height
+    return Action(
+        action_type="tap",
+        x=max(0.0, min(float(screen_width - 1), x)),
+        y=max(0.0, min(float(screen_height - 1), y)),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +877,8 @@ class SkillExecutor:
                 # screenshot / validate / grounding cycle.
                 if action.action_type in {"open_app", "open_deeplink", "open_intent"}:
                     await asyncio.sleep(_OPEN_APP_SETTLE_SECONDS)
+                    if action.action_type == "open_app":
+                        await self._dismiss_post_open_app_overlay(timeout=timeout)
                 elif action.action_type not in _NO_SETTLE_ACTIONS:
                     await asyncio.sleep(_POST_ACTION_SETTLE_SECONDS)
                 if post_action_contract:
@@ -975,6 +1073,25 @@ class SkillExecutor:
             resolved,
         )
         return dataclasses.replace(action, text=resolved)
+
+    async def _dismiss_post_open_app_overlay(self, *, timeout: float) -> None:
+        observation, _screenshot = await self._get_observation_and_screenshot()
+        if observation is None:
+            return
+        dismiss_action = _post_open_app_overlay_action(observation)
+        if dismiss_action is None:
+            return
+        try:
+            await self.backend.execute(dismiss_action, timeout=timeout)
+        except Exception as exc:
+            logger.debug("Post-open-app overlay dismiss failed: %s", exc)
+            return
+        if self.trajectory_recorder is not None:
+            self.trajectory_recorder.record_event(
+                "post_open_app_overlay_dismissed",
+                action=_serialize_action(dismiss_action),
+            )
+        await asyncio.sleep(_POST_ACTION_SETTLE_SECONDS)
 
     def _record_skill_step(self, skill: Skill, step: SkillStep, step_result: StepResult) -> None:
         if self.trajectory_recorder is None:

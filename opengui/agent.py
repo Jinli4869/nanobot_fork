@@ -278,7 +278,7 @@ class GuiAgent:
         stagnation_limit: Consecutive unchanged-screen transitions before abort.
     """
 
-    _MAX_TOOL_RETRIES = 2
+    _MAX_TOOL_RETRIES = 3
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.50
     _OPEN_APP_SETTLE_SECONDS = 5.00

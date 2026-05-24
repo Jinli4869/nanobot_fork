@@ -92,6 +92,26 @@ def test_general_e2e_parse_uses_real_screen_dimensions() -> None:
     assert "relative" not in normalized.tool_calls[0].arguments
 
 
+def test_general_e2e_parse_accepts_bare_json_list_action_target() -> None:
+    response = LLMResponse(
+        content='```json\n[{"action":"tap","target":[146,905]}]\n```',
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response_for_screen(
+        "general_e2e",
+        response,
+        screen_width=496,
+        screen_height=1080,
+    )
+
+    assert normalized.tool_calls is not None
+    arguments = normalized.tool_calls[0].arguments
+    assert arguments["action_type"] == "tap"
+    assert arguments["x"] == 72
+    assert arguments["y"] == 977
+
+
 def test_general_e2e_scroll_adds_opengui_default_pixels() -> None:
     response = LLMResponse(
         content='Thought: scroll\nAction: {"action_type":"scroll","direction":"up"}',

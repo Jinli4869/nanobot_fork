@@ -114,12 +114,14 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
                 observation,
                 previous_observation,
             )
+            using_pre_action_observation = target_observation is previous_observation
             pt = _action_point(action, target_observation)
             suppress_extracted_contract = False
             if pt is not None:
                 target_nodes = _ui_tree(target_observation)
                 suppress_extracted_contract = (
                     action_type == "tap"
+                    and not using_pre_action_observation
                     and _point_hits_focused_text_input(target_nodes, *pt)
                 )
                 node = _target_node_at(target_nodes, *pt, action_type=action_type)
