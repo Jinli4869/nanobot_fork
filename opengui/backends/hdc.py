@@ -15,10 +15,10 @@ from __future__ import annotations
 import asyncio
 import math
 import re
-import struct
 from pathlib import Path
 
 from opengui.action import Action, describe_action, resolve_coordinate
+from opengui.backends import read_png_size
 from opengui.observation import Observation
 
 # ---------------------------------------------------------------------------
@@ -28,17 +28,7 @@ from opengui.observation import Observation
 _DEVICE_SCREENSHOT_PATH = "/data/local/tmp/__opengui_cap.jpeg"
 
 # HarmonyOS uitest keyEvent values (numeric codes used by uitest uiInput)
-_HDC_KEYCODE_MAP: dict[str, str] = {
-    "home": "Home",
-    "back": "Back",
-    "enter": "2054",
-    "return": "2054",
-    "delete": "2055",
-    "backspace": "2055",
-    "volumeup": "2072",
-    "volumedown": "2073",
-    "power": "2050",
-}
+from opengui.backends.keycodes import HDC_KEYCODE_MAP as _HDC_KEYCODE_MAP, canonical_key_name  # noqa: E402
 
 _RENDER_SERVICE_RE = re.compile(r"(\d{3,4})\s*[xX]\s*(\d{3,4})")
 # aa dump -l output looks like: bundle_name #string[com.example.app]  state #FOREGROUND
@@ -61,27 +51,6 @@ _COMMON_HARMONY_BUNDLES: list[str] = [
     "com.huawei.hmos.filemanager",
     "com.huawei.hmos.browser",
 ]
-
-
-def _read_png_size(path: Path) -> tuple[int, int] | None:
-    """Return PNG image size from *path* without external dependencies."""
-    try:
-        with path.open("rb") as handle:
-            header = handle.read(24)
-    except OSError:
-        return None
-
-    if len(header) < 24:
-        return None
-    if header[:8] != b"\x89PNG\r\n\x1a\n":
-        return None
-    if header[12:16] != b"IHDR":
-        return None
-
-    width, height = struct.unpack(">II", header[16:24])
-    if width <= 0 or height <= 0:
-        return None
-    return width, height
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +247,7 @@ class HdcBackend:
 
         await asyncio.to_thread(_convert)
 
-        screenshot_size = _read_png_size(screenshot_path)
+        screenshot_size = read_png_size(screenshot_path)
         if screenshot_size is None:
             # --- Screen size + foreground app in parallel ---
             (width, height), fg_app = await asyncio.gather(
@@ -396,7 +365,7 @@ class HdcBackend:
         elif t == "hotkey":
             keys = action.key or []
             for k in keys:
-                keycode = _HDC_KEYCODE_MAP.get(k.lower().strip())
+                keycode = _HDC_KEYCODE_MAP.get(canonical_key_name(k))
                 if keycode is None:
                     raise ValueError(
                         f"Unknown HDC key {k!r}. Supported: {sorted(_HDC_KEYCODE_MAP.keys())}"

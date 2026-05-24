@@ -18,7 +18,8 @@ import opengui.backends.adb as adb_backend_module
 import opengui.backends.hdc as hdc_backend_module
 import opengui.backends.ios_wda as ios_wda_module
 from opengui.action import Action, ActionError, parse_action, resolve_coordinate
-from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner, _build_shortcut_tool_defs
+from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
+from opengui.tool_schemas import build_shortcut_tool_defs
 from opengui.agent_profiles import normalize_profile_response, profile_tool_definition
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
@@ -393,7 +394,12 @@ async def test_adb_ui_tree_capture_logs_warning_after_retry_failure(caplog: pyte
     backend._run = fake_run  # type: ignore[method-assign]
     caplog.set_level(logging.WARNING, logger=adb_backend_module.__name__)
 
-    assert await backend._collect_ui_tree_extra(1.0) == {}
+    extra = await backend._collect_ui_tree_extra(1.0)
+
+    assert extra == {
+        "ui_tree_error": "dump failed",
+        "ui_tree_timeout_s": 1.0,
+    }
 
     assert calls == [
         (
@@ -597,7 +603,7 @@ def test_shortcut_skill_ids_and_agent_tool_names_do_not_collide() -> None:
     skills = deeplink_module.profile_to_skills(profile)
     assert len({skill.skill_id for skill in skills}) == len(skills)
 
-    tools, action_map = _build_shortcut_tool_defs({"com.example.app": profile})
+    tools, action_map = build_shortcut_tool_defs({"com.example.app": profile})
     names = [tool["function"]["name"] for tool in tools]
     assert len(set(names)) == len(names)
     assert len(action_map) == 4
@@ -994,7 +1000,7 @@ async def test_hdc_backend_observe_prefers_screenshot_size(monkeypatch: pytest.M
     monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
     monkeypatch.setattr(hdc_backend_module, "_import_pil_image", lambda: _FakeImage)
-    monkeypatch.setattr(hdc_backend_module, "_read_png_size", lambda _path: (2376, 1080))
+    monkeypatch.setattr(hdc_backend_module, "read_png_size", lambda _path: (2376, 1080))
 
     obs = await backend.observe(Path("/tmp/hdc-orientation.png"))
 
@@ -1036,7 +1042,7 @@ async def test_hdc_backend_observe_falls_back_when_screenshot_size_unavailable(
     monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
     monkeypatch.setattr(hdc_backend_module, "_import_pil_image", lambda: _FakeImage)
-    monkeypatch.setattr(hdc_backend_module, "_read_png_size", lambda _path: None)
+    monkeypatch.setattr(hdc_backend_module, "read_png_size", lambda _path: None)
 
     obs = await backend.observe(Path("/tmp/hdc-orientation-fallback.png"))
 
@@ -1815,7 +1821,7 @@ async def test_agent_post_action_observe_allows_ui_tree_timeout_budget(
     assert observation is not None
     assert error is None
     assert observe_timeouts
-    assert set(observe_timeouts) == {5.0}
+    assert set(observe_timeouts) == {8.0}
 
 
 @pytest.mark.asyncio
@@ -2525,6 +2531,93 @@ async def test_adb_backend_hotkey_multi_key_unsupported_raises_clear_error(
         )
 
     assert run_mock.await_count == 1
+
+
+# -- root_available error classification -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_root_available_does_not_cache_false_on_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """root_available() must not cache False — only True is cached."""
+    backend = AdbBackend()
+    backend._root_available_cache = None
+
+    probe_order: list[str] = []
+
+    async def fake_run(_self: Any, command: str, *args: Any, **kwargs: Any) -> str:
+        probe_order.append(command)
+        raise AdbError(
+            "adb failed (exit 1): /system/bin/sh: su: inaccessible or not found",
+            returncode=1,
+            stderr="/system/bin/sh: su: inaccessible or not found",
+        )
+
+    monkeypatch.setattr(AdbBackend, "_run", fake_run)
+    assert await backend.root_available(timeout=0.1) is False
+    assert not hasattr(backend, "_root_available_cache") or backend._root_available_cache is not False
+    # Verify both probes were attempted (no early cache return)
+    assert len(probe_order) == 2
+
+
+@pytest.mark.asyncio
+async def test_root_available_caches_true_and_returns_early(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """root_available() caches True and short-circuits subsequent calls."""
+    backend = AdbBackend()
+
+    call_count = 0
+
+    async def fake_run(_self: Any, command: str, *args: Any, **kwargs: Any) -> str:
+        nonlocal call_count
+        call_count += 1
+        return "uid=0(root) gid=0(root)"
+
+    monkeypatch.setattr(AdbBackend, "_run", fake_run)
+    assert await backend.root_available(timeout=0.1) is True
+    assert backend._root_available_cache is True
+    assert call_count == 1
+    # Second call must return immediately from cache
+    assert await backend.root_available(timeout=0.1) is True
+    assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_root_available_propagates_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transport errors (device offline) must propagate, not be treated as 'no root'."""
+    backend = AdbBackend()
+    backend._root_available_cache = None
+
+    async def fake_run(_self: Any, command: str, *args: Any, **kwargs: Any) -> str:
+        raise AdbError(
+            "adb: device offline",
+            returncode=1,
+            stderr="error: device offline",
+        )
+
+    monkeypatch.setattr(AdbBackend, "_run", fake_run)
+    with pytest.raises(AdbError):
+        await backend.root_available(timeout=0.1)
+
+
+@pytest.mark.asyncio
+async def test_root_available_propagates_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timeouts must propagate as transport failures."""
+    backend = AdbBackend()
+    backend._root_available_cache = None
+
+    async def fake_run(_self: Any, command: str, *args: Any, **kwargs: Any) -> str:
+        raise asyncio.TimeoutError("adb timed out")
+
+    monkeypatch.setattr(AdbBackend, "_run", fake_run)
+    with pytest.raises(asyncio.TimeoutError):
+        await backend.root_available(timeout=0.1)
 
 
 @pytest.mark.asyncio
@@ -3436,6 +3529,17 @@ async def test_agent_waits_for_ui_to_settle_before_observing(
         "sleep:0.5",
         "observe:step_001.png",
     ]
+
+
+def test_agent_open_app_settle_seconds_is_five(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "open app settle"),
+        artifacts_root=tmp_path / "runs",
+    )
+
+    assert agent._post_action_settle_seconds(Action(action_type="open_app", text="Calendar")) == 5.0
 
 
 def test_pyproject_includes_opengui_in_build() -> None:

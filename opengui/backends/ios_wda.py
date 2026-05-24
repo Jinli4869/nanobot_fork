@@ -39,13 +39,7 @@ def _import_wda() -> Any:
 # iOS key mapping (limited hardware vs. Android)
 # ---------------------------------------------------------------------------
 
-_IOS_KEYCODE_MAP: dict[str, str] = {
-    "home": "home",
-    "volumeup": "volumeUp",
-    "volume_up": "volumeUp",
-    "volumedown": "volumeDown",
-    "volume_down": "volumeDown",
-}
+from opengui.backends.keycodes import IOS_KEYCODE_MAP as _IOS_KEYCODE_MAP, canonical_key_name  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -256,7 +250,7 @@ class WdaBackend:
         elif t == "hotkey":
             keys = action.key or []
             for k in keys:
-                mapped = _IOS_KEYCODE_MAP.get(k.lower().strip())
+                mapped = _IOS_KEYCODE_MAP.get(canonical_key_name(k))
                 if mapped is None:
                     raise ValueError(
                         f"Unknown iOS key {k!r}. Supported: {sorted(_IOS_KEYCODE_MAP.keys())}"

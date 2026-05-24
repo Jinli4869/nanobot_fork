@@ -499,3 +499,10 @@ def normalize_skill_app(skill: Skill) -> Skill:
     if normalized_app == skill.app:
         return skill
     return replace(skill, app=normalized_app)
+
+
+def normalize_app_filter(platform: str | None, app: str | None) -> str | None:
+    """Normalize *app* for use as a filter key, or return None."""
+    if app is None:
+        return None
+    return normalize_app_identifier(platform or "unknown", app)

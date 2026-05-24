@@ -527,6 +527,60 @@ def infer_state_contract(
     })
 
 
+def infer_focused_input_contract(
+    observation_extra: dict[str, Any] | None,
+    *,
+    app: str | None = None,
+) -> dict[str, Any] | None:
+    """Infer a focused editable input contract from Android UI-tree metadata."""
+    if not isinstance(observation_extra, dict):
+        return None
+    focused_inputs = [
+        node for node in observation_extra.get("ui_tree") or []
+        if _is_focused_input_node(node)
+    ]
+    if len(focused_inputs) != 1:
+        return None
+
+    node = focused_inputs[0]
+    selector: dict[str, str] = {}
+    resource_id = _clean_string(node.get("resource_id"))
+    content_desc = _clean_string(node.get("content_desc"))
+    class_name = _clean_string(node.get("class"))
+    if resource_id:
+        selector["resource_id"] = resource_id
+    elif content_desc:
+        selector["content_desc"] = content_desc
+    else:
+        return None
+    if class_name:
+        selector["class"] = class_name
+
+    anchor: dict[str, str] = {}
+    clean_app = _clean_string(app)
+    if clean_app and clean_app.lower() not in {"unknown", "app_package_or_name"}:
+        anchor["app_package"] = clean_app
+
+    return normalize_state_contract({
+        "anchor": anchor,
+        "signature": {
+            "required": [{
+                "selector": selector,
+                "state": ["visible", "enabled", "focused"],
+            }],
+            "forbidden": [],
+        },
+        "mask_rules": [],
+    })
+
+
+def _is_focused_input_node(node: Any) -> bool:
+    if not isinstance(node, dict) or not node.get("focused"):
+        return False
+    class_name = _clean_string(node.get("class")).lower()
+    return "edittext" in class_name
+
+
 def _normalize_anchor(contract: dict[str, Any]) -> dict[str, Any]:
     raw = contract.get("anchor") if isinstance(contract.get("anchor"), dict) else {}
     anchor: dict[str, Any] = {}

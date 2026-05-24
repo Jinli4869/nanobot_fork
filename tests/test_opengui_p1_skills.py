@@ -19,7 +19,8 @@ from opengui.skills.executor import ExecutionState, SkillExecutor
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.flat import FlatSkillLibrary, compile_flat_skills
 from opengui.skills.reuser import SkillReuser
-from opengui.skills.state_contract import infer_interaction_target
+from opengui.skills.state_contract import infer_focused_input_contract, infer_interaction_target
+from opengui.skills.trajectory_codegen import codegen_trajectory
 
 
 class _ScriptedLLM:
@@ -143,6 +144,28 @@ def _make_skill(
     )
 
 
+def _focused_input_extra() -> dict[str, Any]:
+    return {
+        "ui_tree": [
+            {
+                "resource_id": "com.zhihu.android:id/input_text",
+                "class": "android.widget.EditText",
+                "content_desc": "Search query",
+                "focused": True,
+                "enabled": True,
+                "bounds": "[10,20][300,80]",
+            }
+        ]
+    }
+
+
+def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(event) for event in events),
+        encoding="utf-8",
+    )
+
+
 def test_opengui_skills_module_exports_flat_core_types() -> None:
     import opengui.skills as skills_pkg
 
@@ -261,6 +284,19 @@ async def test_flat_skill_library_add_or_merge_deduplicates_semantic_conflict(tm
     assert decision in {"MERGE", "KEEP_NEW"}
     assert skill_id is not None
     assert FlatSkillLibrary(store_dir=tmp_path / "skills").count() == 1
+
+
+@pytest.mark.asyncio
+async def test_flat_skill_library_rejects_unknown_app(tmp_path: Path) -> None:
+    lib = FlatSkillLibrary(store_dir=tmp_path / "skills")
+
+    decision, skill_id = await lib.add_or_merge(
+        _make_skill("unknown-app", "Open Calendar", "Open Calendar", app="unknown")
+    )
+
+    assert decision == "REJECT_UNKNOWN_APP"
+    assert skill_id is None
+    assert FlatSkillLibrary(store_dir=tmp_path / "skills").count() == 0
 
 
 @pytest.mark.asyncio
@@ -707,6 +743,105 @@ async def test_postprocessor_evolves_failed_reused_skill_instead_of_extracting_n
 
 
 @pytest.mark.asyncio
+async def test_postprocessor_evolution_injects_focused_input_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from opengui.postprocessing import PostRunProcessor
+    from opengui.skills.extractor import SkillExtractor
+
+    store = tmp_path / "skills"
+    FlatSkillLibrary(store_dir=store).add(
+        _make_skill(
+            "skill-1",
+            "search_zhihu",
+            "Search Zhihu",
+            app="com.zhihu.android",
+            steps=(
+                SkillStep(action_type="input_text", target="{{query}}", valid_state="Search field focused"),
+            ),
+        )
+    )
+    evolved_payload = json.dumps({
+        "name": "search_zhihu",
+        "description": "Search Zhihu",
+        "app": "com.zhihu.android",
+        "platform": "android",
+        "parameters": ["query"],
+        "preconditions": [],
+        "steps": [
+            {
+                "action_type": "input_text",
+                "target": "{{query}}",
+                "valid_state": "Search field focused",
+            }
+        ],
+    })
+    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", pytest.fail)
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(
+        "\n".join([
+            json.dumps({
+                "type": "skill_step",
+                "skill_id": "skill-1",
+                "skill_name": "search_zhihu",
+                "step_index": 0,
+                "target": "{{query}}",
+                "valid_state": "Search field focused",
+                "valid_state_check": False,
+                "error": "valid_state not reached: Search field focused",
+            }),
+            json.dumps({
+                "type": "skill_execution_result",
+                "skill_id": "skill-1",
+                "skill_name": "search_zhihu",
+                "state": "failed",
+                "error": "Step 0 valid_state not reached",
+            }),
+            json.dumps({
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 40},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.zhihu.android",
+                    "extra": _focused_input_extra(),
+                },
+            }),
+            json.dumps({
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "input_text", "text": "强化学习"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.zhihu.android",
+                    "extra": {"ui_tree": []},
+                },
+            }),
+            json.dumps({"type": "result", "success": True, "total_steps": 2}),
+        ]),
+        encoding="utf-8",
+    )
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([evolved_payload]),
+        skill_store_root=store,
+        enable_skill_extraction=True,
+    )
+    monkeypatch.setattr(processor, "_summarize_trajectory", AsyncMock(return_value=""))
+
+    await processor._run_all(trace_path, is_success=True, platform="android", task="Search Zhihu")
+
+    evolved = FlatSkillLibrary(store_dir=store).get("skill-1")
+    assert evolved is not None
+    required = evolved.steps[0].state_contract["signature"]["required"]
+    assert required[0]["selector"] == {
+        "resource_id": "com.zhihu.android:id/input_text",
+        "class": "android.widget.EditText",
+    }
+    assert required[0]["state"] == ["visible", "enabled", "focused"]
+
+
+@pytest.mark.asyncio
 async def test_postprocessor_rejects_evolved_skill_that_drifts_from_original(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -860,43 +995,22 @@ async def test_skill_executor_falls_back_to_valid_state_when_contract_unknown() 
 
 @pytest.mark.asyncio
 async def test_skill_extractor_parses_llm_json_response() -> None:
-    response = json.dumps({
-        "name": "open_settings",
-        "description": "Open settings",
-        "app": "com.android.settings",
-        "platform": "android",
-        "parameters": [],
-        "preconditions": [],
-        "steps": [
-            {
-                "action_type": "open_app",
-                "target": "Settings",
-                "parameters": {"text": "com.android.settings"},
-                "expected_state": "Settings opens",
-                "valid_state": "No need to verify",
-                "fixed": True,
-            },
-            {
-                "action_type": "tap",
-                "target": "Search",
-                "parameters": {"text": "Search"},
-                "expected_state": "Search field is focused",
-                "valid_state": "Search button is visible",
-                "fixed": True,
-            }
-        ],
-    })
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.android.settings", platform="android", name="open_settings", description="Open settings")
+async def open_settings(device):
+    await action("open_app", target="Settings", fixed=True, fixed_values={"text": "com.android.settings"}, valid_state="No need to verify")
+    await action("tap", target="Search", fixed=True, fixed_values={"text": "Search"}, valid_state="Search button is visible")
+"""
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
     skill = await extractor.extract_from_steps(
         [
             {
-                "type": "step",
                 "action": {"action_type": "open_app", "text": "com.android.settings"},
                 "observation": {"platform": "android", "foreground_app": "com.android.settings"},
             },
             {
-                "type": "step",
                 "action": {"action_type": "done"},
                 "observation": {"platform": "android", "foreground_app": "com.android.settings"},
             },
@@ -912,152 +1026,95 @@ async def test_skill_extractor_parses_llm_json_response() -> None:
 
 @pytest.mark.asyncio
 async def test_skill_extractor_splits_segments_by_foreground_app() -> None:
-    responses = [
-        json.dumps({
-            "name": "netease_open",
-            "description": "Open Netease",
-            "app": "com.netease.cloudmusic",
-            "platform": "android",
-            "parameters": [],
-            "preconditions": [],
-            "steps": [
-                {
-                    "action_type": "open_app",
-                    "target": "Netease",
-                    "parameters": {"text": "com.netease.cloudmusic"},
-                    "expected_state": "Netease is open",
-                    "valid_state": "No need to verify",
-                    "fixed": True,
-                },
-                {
-                    "action_type": "tap",
-                    "target": "Daily",
-                    "parameters": {"x": 100, "y": 200},
-                    "expected_state": "Daily feed is visible",
-                    "valid_state": "Daily icon is visible",
-                    "fixed": True,
-                },
-            ],
-        }),
-        json.dumps({
-            "name": "zhihu_search",
-            "description": "Open Zhihu search",
-            "app": "com.zhihu.android",
-            "platform": "android",
-            "parameters": [],
-            "preconditions": [],
-            "steps": [
-                {
-                    "action_type": "open_app",
-                    "target": "Zhihu",
-                    "parameters": {"text": "com.zhihu.android"},
-                    "expected_state": "Zhihu is open",
-                    "valid_state": "No need to verify",
-                    "fixed": True,
-                },
-                {
-                    "action_type": "input_text",
-                    "target": "search box",
-                    "parameters": {"text": "AI"},
-                    "expected_state": "Search results are visible",
-                    "valid_state": "Search box is focused",
-                    "fixed": False,
-                },
-            ],
-        }),
-    ]
-    extractor = SkillExtractor(_ScriptedLLM(responses))
+    response = """from opengui.skills.flat import C, R, action, skill, tag
 
-    steps = [
-        {
-            "type": "step",
-            "action": {"action_type": "open_app", "text": "com.netease.cloudmusic"},
-            "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"},
-        },
-        {
-            "type": "step",
-            "action": {"action_type": "tap", "x": 100, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"},
-        },
-        {
-            "type": "step",
-            "action": {"action_type": "open_app", "text": "com.zhihu.android"},
-            "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
-        },
-        {
-            "type": "step",
-            "action": {"action_type": "input_text", "text": "AI"},
-            "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
-        },
-    ]
+@skill(app="com.netease.cloudmusic", platform="android", name="open_netease", description="Open Netease")
+async def open_netease(device):
+    await action("open_app", target="Netease", fixed=True, fixed_values={"text": "com.netease.cloudmusic"}, valid_state="No need to verify")
+    await action("tap", target="Daily", fixed=True, fixed_values={"x": 100, "y": 200}, valid_state="Daily icon is visible")
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await extractor.extract_from_steps_multi(steps, is_success=True)
+    skills = await extractor.extract_from_steps_multi([
+        {"action": {"action_type": "open_app", "text": "com.netease.cloudmusic"}, "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"}},
+        {"action": {"action_type": "tap", "x": 100, "y": 200}, "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"}},
+    ], is_success=True)
 
-    assert len(skills) == 2
+    assert len(skills) == 1
     assert skills[0].app == "com.netease.cloudmusic"
-    assert skills[1].app == "com.zhihu.android"
     assert skills[0].steps[1].action_type == "tap"
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_prefers_interaction_target_contract() -> None:
-    response = json.dumps({
-        "name": "open_details",
-        "description": "Open details",
-        "app": "com.example",
-        "platform": "android",
-        "steps": [
-            {
-                "action_type": "tap",
-                "target": "Details",
-                "parameters": {"x": 150, "y": 230},
-                "valid_state": "Details button is visible",
-                "fixed": True,
-            }
-        ],
-    })
+async def test_skill_extractor_resolves_unknown_app_from_open_app_text() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="unknown", platform="android", name="open_calendar", description="Open Calendar")
+async def open_calendar(device):
+    await action("open_app", target="Calendar", fixed=True, fixed_values={"text": "Calendar"}, valid_state="No need to verify")
+"""
     extractor = SkillExtractor(_ScriptedLLM([response]))
-    pre_contract = {
-        "anchor": {"app_package": "com.example"},
-        "signature": {
-            "required": [
-                {
-                    "selector": {"resource_id": "com.example:id/details_btn"},
-                    "state": ["visible", "clickable"],
-                }
-            ],
-            "forbidden": [],
+
+    skills = await extractor.extract_from_steps_multi([
+        {"action": {"action_type": "open_app", "text": "Calendar"}, "observation": {"platform": "android"}},
+    ], is_success=True)
+
+    assert len(skills) == 1
+    assert skills[0].app == "com.android.calendar"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_falls_back_to_trace_app_when_open_app_is_unknown() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="unknown", platform="android", name="open_calendar", description="Open Calendar")
+async def open_calendar(device):
+    await action("open_app", target="unknown", fixed=True, fixed_values={"text": "unknown"}, valid_state="No need to verify")
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+
+    skills = await extractor.extract_from_steps_multi([
+        {
+            "action": {"action_type": "open_app", "text": "unknown"},
+            "observation": {"platform": "android", "foreground_app": "com.google.android.calendar"},
         },
-        "mask_rules": [],
-    }
+    ], is_success=True)
+
+    assert len(skills) == 1
+    assert skills[0].app == "com.google.android.calendar"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_rejects_unknown_app_without_fallback() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="unknown", platform="android", name="open_unknown", description="Open unknown")
+async def open_unknown(device):
+    await action("open_app", target="unknown", fixed=True, fixed_values={"text": "unknown"}, valid_state="No need to verify")
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+
+    skills = await extractor.extract_from_steps_multi([
+        {"action": {"action_type": "open_app", "text": "unknown"}, "observation": {"platform": "android"}},
+    ], is_success=True)
+
+    assert skills == []
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_prefers_interaction_target_contract() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device):
+    await action("tap", target="Details", fixed=True, fixed_values={"x": 150, "y": 230},
+                 valid_state="Details button is visible",
+                 state_contract=C(app="com.example", required=[R(resource_id="com.example:id/details_btn", visible=True, clickable=True)]))
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
 
     skill = await extractor.extract_from_steps(
-        [
-            {
-                "type": "step",
-                "action": {"action_type": "tap", "x": 150, "y": 230, "text": "Details"},
-                "model_output": "tap Details",
-                "interaction_target": {"state_contract": pre_contract},
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.example",
-                    "extra": {
-                        "ui_tree": [
-                            {
-                                "resource_id": "com.example:id/post_action_title",
-                                "text": "Details page",
-                                "bounds": "[0,0][1080,200]",
-                            }
-                        ]
-                    },
-                },
-            },
-            {
-                "type": "step",
-                "action": {"action_type": "done"},
-                "observation": {"platform": "android", "foreground_app": "com.example"},
-            },
-        ],
+        [{"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}}],
         is_success=True,
     )
 
@@ -1068,263 +1125,314 @@ async def test_skill_extractor_prefers_interaction_target_contract() -> None:
 
 @pytest.mark.asyncio
 async def test_skill_extractor_infers_interaction_target_from_trace_step() -> None:
-    response = json.dumps({
-        "name": "search_box",
-        "description": "Tap Zhihu search box",
-        "app": "com.zhihu.android",
-        "platform": "android",
-        "steps": [
-            {
-                "action_type": "tap",
-                "target": "Search box",
-                "parameters": {"x": 436.0, "y": 76.0, "relative": True},
-                "expected_state": "Search field is focused",
-                "valid_state": "Home screen is visible with search bar at the top",
-                "fixed": True,
-            }
-        ],
-    })
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.zhihu.android", platform="android", name="search_box", description="Tap Zhihu search box")
+async def search_box(device):
+    await action("tap", target="Search box", fixed=True, fixed_values={"x": 436, "y": 76, "relative": True},
+                 valid_state="Home screen is visible with search bar at the top",
+                 state_contract=C(app="com.zhihu.android", required=[R(resource_id="com.zhihu.android:id/query_container", visible=True, clickable=True)]))
+"""
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
     skill = await extractor.extract_from_steps(
-        [
-            {
-                "type": "step",
-                "action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True},
-                "model_output": "tap Search box",
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                    "screen_width": 488,
-                    "screen_height": 1080,
-                    "extra": {
-                        "ui_tree": [
-                            {
-                                "resource_id": "com.example:root",
-                                "bounds": "[0,0][1080,2400]",
-                            },
-                                {
-                                    "content_desc": "搜索栏",
-                                    "resource_id": "com.zhihu.android:id/query_container",
-                                    "bounds": "[420,160][540,220]",
-                                    "clickable": True,
-                                }
-                            ]
-                        },
-                },
-            },
-            {
-                "type": "step",
-                "action": {"action_type": "done"},
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                },
-            },
-        ],
+        [{"action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}}],
         is_success=True,
     )
 
     assert skill is not None
     assert skill.steps[0].state_contract is not None
     required = skill.steps[0].state_contract["signature"]["required"]
-    assert required[0]["selector"] == {
-        "resource_id": "com.zhihu.android:id/query_container",
-    }
+    assert required[0]["selector"] == {"resource_id": "com.zhihu.android:id/query_container"}
 
 
 @pytest.mark.asyncio
 async def test_skill_extractor_uses_previous_observation_for_pre_action_target() -> None:
-    response = json.dumps({
-        "name": "search_box_recover",
-        "description": "Tap search box",
-        "app": "com.zhihu.android",
-        "platform": "android",
-        "steps": [
-            {
-                "action_type": "tap",
-                "target": "Home",
-                "parameters": {"x": 607.0, "y": 243.0, "relative": True},
-                "valid_state": "No need to verify",
-                "expected_state": "Home screen is shown",
-                "fixed": True,
-            },
-            {
-                "action_type": "tap",
-                "target": "com.zhihu.android:id/query_container",
-                "parameters": {},
-                "valid_state": "Search bar is visible",
-                "expected_state": "Search box receives focus",
-                "fixed": True,
-            },
-        ],
-    })
+    response = """from opengui.skills.flat import C, R, action, skill, tag
 
+@skill(app="com.zhihu.android", platform="android", name="search_box_recover", description="Tap search box")
+async def search_box_recover(device):
+    await action("tap", target="Home", fixed=True, fixed_values={"x": 607, "y": 243, "relative": True}, valid_state="No need to verify")
+    await action("tap", target="Search box", fixed=True, fixed_values={"x": 436, "y": 76, "relative": True},
+                 valid_state="Search bar is visible",
+                 state_contract=C(app="com.zhihu.android", required=[R(resource_id="com.zhihu.android:id/query_container", visible=True, clickable=True)]))
+"""
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps(
-        [
-            {
-                "type": "step",
-                "action": {"action_type": "tap", "x": 607.0, "y": 243.0, "relative": True},
-                "model_output": "tap home",
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                    "screen_width": 488,
-                    "screen_height": 1080,
-                    "extra": {
-                        "ui_tree": [
-                            {
-                                "resource_id": "com.zhihu.android:id/home_tab",
-                                "bounds": "[0,0][200,100]",
-                            },
-                            {
-                                "resource_id": "com.zhihu.android:id/query_container",
-                                "bounds": "[50,120][430,180]",
-                                "clickable": True,
-                            }
-                            ],
-                            "resource_ids": [
-                                "com.zhihu.android:id/home_tab",
-                                "com.zhihu.android:id/query_container",
-                            ],
-                        },
-                    },
-                },
-            {
-                "type": "step",
-                "action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True},
-                "model_output": "tap search box",
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                    "screen_width": 488,
-                    "screen_height": 1080,
-                    "extra": {
-                        "ui_tree": [
-                            {
-                                "resource_id": "com.zhihu.android:id/input_text",
-                                "bounds": "[165,171][996,232]",
-                                "clickable": True,
-                            }
-                        ],
-                        "resource_ids": ["com.zhihu.android:id/input_text"],
-                    },
-                },
-            },
-            {
-                "type": "step",
-                "action": {"action_type": "done"},
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                },
-            },
-        ],
-        is_success=True,
-    )
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "tap", "x": 607.0, "y": 243.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
+        {"action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
+    ], is_success=True)
 
     assert skill is not None
     assert skill.steps[1].state_contract is not None
     required = skill.steps[1].state_contract["signature"]["required"]
-    assert required[0]["selector"] == {
-        "resource_id": "com.zhihu.android:id/query_container",
-    }
+    assert required[0]["selector"] == {"resource_id": "com.zhihu.android:id/query_container"}
 
 
 @pytest.mark.asyncio
 async def test_skill_extractor_input_text_uses_previous_observation_for_state_contract() -> None:
-    response = json.dumps({
-        "name": "zhihu_search_text",
-        "description": "Enter search text",
-        "app": "com.zhihu.android",
-        "platform": "android",
-        "steps": [
-            {
-                "action_type": "input_text",
-                "target": "com.zhihu.android:id/input_text",
-                "parameters": {"text": "强化学习"},
-                "expected_state": "Search results are loading",
-                "valid_state": "Search input field is visible and focused",
-                "fixed": False,
-            },
-        ],
-    })
+    response = """from opengui.skills.flat import C, R, action, skill, tag
 
+@skill(app="com.zhihu.android", platform="android", name="zhihu_search_text", description="Enter search text")
+async def zhihu_search_text(device):
+    await action("input_text", target="com.zhihu.android:id/input_text",
+                 fixed_values={"text": "强化学习"},
+                 valid_state="Search input field is visible and focused",
+                 state_contract=C(app="com.zhihu.android", required=[R(resource_id="com.zhihu.android:id/input_text", visible=True, enabled=True)]))
+"""
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps(
-        [
-            {
-                "type": "step",
-                "action": {
-                    "action_type": "tap",
-                    "x": 436.0,
-                    "y": 76.0,
-                    "relative": True,
-                },
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                    "screen_width": 488,
-                    "screen_height": 1080,
-                    "extra": {
-                        "ui_tree": [
-                            {
-                                "resource_id": "com.zhihu.android:id/input_text",
-                                "bounds": "[165,171][996,232]",
-                                "enabled": True,
-                                "clickable": True,
-                            },
-                        ],
-                        "resource_ids": ["com.zhihu.android:id/input_text"],
-                        "enabled_text": ["query"],
-                    },
-                },
-            },
-            {
-                "type": "step",
-                "action": {
-                    "action_type": "input_text",
-                    "text": "强化学习",
-                },
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                    "screen_width": 488,
-                    "screen_height": 1080,
-                    "extra": {
-                        "ui_tree": [
-                            {
-                                "resource_id": "com.zhihu.android:id/search_button",
-                                "bounds": "[828,276][996,366]",
-                                "clickable": True,
-                            }
-                        ],
-                        "resource_ids": ["com.zhihu.android:id/search_button"],
-                    },
-                },
-            },
-            {
-                "type": "step",
-                "action": {"action_type": "done"},
-                "observation": {
-                    "platform": "android",
-                    "foreground_app": "com.zhihu.android",
-                },
-            },
-        ],
-        is_success=True,
-    )
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "input_text", "text": "强化学习"}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
+    ], is_success=True)
 
     assert skill is not None
     assert skill.steps[0].action_type == "input_text"
     assert skill.steps[0].state_contract is not None
     required = skill.steps[0].state_contract["signature"]["required"]
+    assert required[0]["selector"] == {"resource_id": "com.zhihu.android:id/input_text"}
+
+
+def test_infer_focused_input_contract_prefers_resource_id_and_class() -> None:
+    contract = infer_focused_input_contract(_focused_input_extra(), app="com.zhihu.android")
+
+    assert contract is not None
+    required = contract["signature"]["required"]
     assert required[0]["selector"] == {
         "resource_id": "com.zhihu.android:id/input_text",
+        "class": "android.widget.EditText",
     }
+    assert required[0]["state"] == ["visible", "enabled", "focused"]
+
+
+def test_codegen_scales_coordinates_and_prefers_previous_observation_for_tap(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Open first result", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "wait"},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "com.example",
+                "screen_width": 496,
+                "screen_height": 1080,
+                "extra": {
+                    "ui_tree": [
+                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "resource_id": "com.example:id/search_results_list",
+                            "class": "androidx.recyclerview.widget.RecyclerView",
+                            "enabled": True,
+                            "bounds": "[0,460][1440,3036]",
+                        },
+                        {
+                            "class": "android.view.ViewGroup",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[0,460][1440,1024]",
+                        },
+                    ],
+                },
+            },
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 248, "y": 235},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "com.example",
+                "screen_width": 496,
+                "screen_height": 1080,
+                "extra": {
+                    "ui_tree": [
+                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "text": "query",
+                            "resource_id": "com.example:id/search_fake_text",
+                            "class": "android.widget.TextView",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[225,179][1030,284]",
+                        },
+                    ],
+                },
+            },
+        },
+    ])
+
+    result = codegen_trajectory(trace_path)
+
+    assert result is not None
+    contract = json.loads(result.steps[1].contract_json)
+    required = contract["signature"]["required"]
+    assert required[0]["selector"] == {"resource_id": "com.example:id/search_results_list"}
+
+
+def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Tap search", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 206, "y": 81},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "tv.danmaku.bili",
+                "screen_width": 496,
+                "screen_height": 1080,
+                "extra": {
+                    "ui_tree": [
+                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "resource_id": "tv.danmaku.bili:id/search_bar",
+                            "class": "android.widget.FrameLayout",
+                            "enabled": True,
+                            "bounds": "[225,172][1156,291]",
+                        },
+                        {
+                            "text": "Search for videos, series, or UPs",
+                            "content_desc": "Search query",
+                            "resource_id": "tv.danmaku.bili:id/search_src_text",
+                            "class": "android.widget.EditText",
+                            "clickable": True,
+                            "focused": True,
+                            "enabled": True,
+                            "bounds": "[225,179][1156,284]",
+                        },
+                    ],
+                },
+            },
+        },
+    ])
+
+    result = codegen_trajectory(trace_path)
+
+    assert result is not None
+    assert result.steps[0].control_info == "post-action focused input; omit state_contract"
+    assert result.steps[0].contract_json == ""
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_strips_tap_contract_from_post_action_focused_input(
+    tmp_path: Path,
+) -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="tv.danmaku.bili", platform="android", name="search_bilibili", description="Search Bilibili")
+async def search_bilibili(device, query):
+    await action("open_app", target="Bilibili", valid_state="No need to verify")
+    await action("tap", target="search bar", valid_state="search bar is visible",
+                 state_contract=C(app="tv.danmaku.bili", required=[R(resource_id="tv.danmaku.bili:id/search_src_text", visible=True)]))
+    await action("input_text", target=query, valid_state="search input is focused")
+"""
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Search Bilibili", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 400, "y": 800},
+            "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 206, "y": 81},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "tv.danmaku.bili",
+                "screen_width": 496,
+                "screen_height": 1080,
+                "extra": {
+                    "ui_tree": [
+                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "resource_id": "tv.danmaku.bili:id/search_src_text",
+                            "class": "android.widget.EditText",
+                            "clickable": True,
+                            "focused": True,
+                            "enabled": True,
+                            "bounds": "[225,179][1156,284]",
+                        },
+                    ],
+                },
+            },
+        },
+        {
+            "type": "step",
+            "step_index": 2,
+            "action": {"action_type": "input_text", "text": "Never Gonna Give You Up MV"},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "tv.danmaku.bili",
+                "extra": {"ui_tree": []},
+            },
+        },
+    ])
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+
+    skill = await extractor.extract_from_file(trace_path)
+
+    assert skill is not None
+    tap_step = [step for step in skill.steps if step.action_type == "tap"][0]
+    assert tap_step.state_contract is None
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_injects_focused_input_contract_when_llm_omits_it(
+    tmp_path: Path,
+) -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.zhihu.android", platform="android", name="zhihu_search_text", description="Enter search text")
+async def zhihu_search_text(device, query):
+    await action("tap", target="Search box", valid_state="Search box is visible")
+    await action("input_text", target=query, valid_state="Search input field is focused")
+"""
+    trace_path = tmp_path / "trace.jsonl"
+    trace_path.write_text(
+        "\n".join([
+            json.dumps({"type": "metadata", "task": "Search Zhihu", "platform": "android"}),
+            json.dumps({
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 40},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.zhihu.android",
+                    "extra": _focused_input_extra(),
+                },
+            }),
+            json.dumps({
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "input_text", "text": "强化学习"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.zhihu.android",
+                    "extra": {"ui_tree": []},
+                },
+            }),
+        ]),
+        encoding="utf-8",
+    )
+
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+    skill = await extractor.extract_from_file(trace_path)
+
+    assert skill is not None
+    input_step = [step for step in skill.steps if step.action_type == "input_text"][0]
+    required = input_step.state_contract["signature"]["required"]
+    assert required[0]["selector"] == {
+        "resource_id": "com.zhihu.android:id/input_text",
+        "class": "android.widget.EditText",
+    }
+    assert required[0]["state"] == ["visible", "enabled", "focused"]
 
 
 @pytest.mark.asyncio

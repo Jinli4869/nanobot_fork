@@ -335,7 +335,6 @@ class PostRunProcessor:
 
         try:
             from opengui.skills.extractor import SkillExtractor
-            from opengui.skills.flat import FlatSkillLibrary
 
             extractor = SkillExtractor(llm=self._llm)
             skills = await extractor.extract_from_file_multi(trace_path, is_success=is_success)
@@ -364,6 +363,8 @@ class PostRunProcessor:
             compiled_skill_ids: list[str] = []
 
             async with lock:
+                from opengui.skills.flat import FlatSkillLibrary
+
                 library = FlatSkillLibrary(
                     store_dir=store_root,
                     embedding_provider=self._embedding_provider,

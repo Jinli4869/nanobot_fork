@@ -20,7 +20,8 @@ from typing import Any
 from opengui.skills.data import Skill, SkillStep
 from opengui.skills.flat import FlatSkillLibrary, _cosine_similarity, _skill_search_text
 from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
-from opengui.skills.state_contract import normalize_state_contract
+from opengui.skills.state_contract import infer_focused_input_contract, normalize_state_contract
+from opengui.skills.trajectory_codegen import apply_focused_input_contracts
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,10 @@ async def evolve_failed_skill_from_trace(
             "compiled_skill_ids": [],
             "token_usage": dict(getattr(response, "usage", {}) or {}),
         }
+    candidate = apply_focused_input_contracts(
+        candidate,
+        _focused_input_contracts_from_events(events, app=candidate.app),
+    )
 
     rejection_reason = await _evolution_rejection_reason(
         original,
@@ -273,6 +278,29 @@ def _parse_skill_response(text: str, *, original: Skill) -> Skill | None:
         success_streak=original.success_streak,
         failure_streak=original.failure_streak,
     ))
+
+
+def _focused_input_contracts_from_events(
+    events: list[dict[str, Any]],
+    *,
+    app: str,
+) -> list[dict[str, Any]]:
+    contracts: list[dict[str, Any]] = []
+    previous_observation: dict[str, Any] | None = None
+    for event in events:
+        if event.get("type") != "step":
+            continue
+        action = event.get("action") if isinstance(event.get("action"), dict) else {}
+        if action.get("action_type") == "input_text" and previous_observation is not None:
+            contract = infer_focused_input_contract(
+                previous_observation.get("extra") or {},
+                app=str(previous_observation.get("foreground_app") or previous_observation.get("app") or app),
+            )
+            if contract:
+                contracts.append(contract)
+        observation = event.get("observation")
+        previous_observation = observation if isinstance(observation, dict) else None
+    return contracts
 
 
 async def _evolution_rejection_reason(

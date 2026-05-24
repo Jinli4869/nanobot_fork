@@ -44,7 +44,7 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _POST_ACTION_SETTLE_SECONDS: float = 0.50
-_OPEN_APP_SETTLE_SECONDS: float = 4.00
+_OPEN_APP_SETTLE_SECONDS: float = 5.00
 _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
 _OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
 _NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
@@ -298,6 +298,18 @@ class LLMStateValidator:
         return False
 
 
+from opengui.image_utils import (
+    normalize_image_scale_ratio,
+    scale_image,
+    scale_image_half,
+)
+
+# Backward-compatible aliases for callers that import directly from executor
+_normalize_image_scale_ratio = normalize_image_scale_ratio
+_scale_image = scale_image
+_scale_image_half = scale_image_half
+
+
 def _should_skip_validation(valid_state: str | None) -> bool:
     """Return True when valid_state indicates no verification is needed."""
     if not valid_state:
@@ -305,48 +317,6 @@ def _should_skip_validation(valid_state: str | None) -> bool:
     lowered = valid_state.strip().lower()
     skip_hints = ("no need to verify", "return true", "skip", "none", "n/a")
     return any(hint in lowered for hint in skip_hints)
-
-
-def _normalize_image_scale_ratio(scale_ratio: float | None) -> float:
-    """Normalize user-provided image scaling ratio to a safe range."""
-    if scale_ratio is None:
-        return 0.5
-    try:
-        value = float(scale_ratio)
-    except (TypeError, ValueError):
-        return 0.5
-    if value <= 0:
-        return 0.5
-    return min(1.0, value)
-
-
-def _scale_image(data: bytes, *, scale_ratio: float = 0.5) -> bytes:
-    """Return *data* scaled by *scale_ratio* as PNG bytes.
-
-    Falls back to the original bytes if PIL is unavailable or the image cannot
-    be decoded (e.g. non-PNG/JPEG formats the LLM provider may still accept).
-    """
-    scale_ratio = _normalize_image_scale_ratio(scale_ratio)
-    if scale_ratio >= 1.0:
-        return data
-    try:
-        from PIL import Image
-        with Image.open(io.BytesIO(data)) as img:
-            w, h = img.size
-            scaled = img.resize(
-                (max(1, int(w * scale_ratio)), max(1, int(h * scale_ratio))),
-                Image.LANCZOS,
-            )
-            buf = io.BytesIO()
-            scaled.save(buf, format="PNG")
-            return buf.getvalue()
-    except Exception:
-        return data
-
-
-def _scale_image_half(data: bytes) -> bytes:
-    """Backward-compatible helper for existing call sites."""
-    return _scale_image(data, scale_ratio=0.5)
 
 
 # ---------------------------------------------------------------------------
