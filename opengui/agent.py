@@ -49,6 +49,12 @@ from opengui.observation import Observation
 from opengui.skills.deeplink import AppShortcutProfile
 from opengui.skills.normalization import normalize_app_identifier
 from opengui.skills.state_contract import evaluate_state_contract, infer_interaction_target
+from opengui.tool_schemas import (
+    COMPUTER_USE_TOOL,
+    build_shortcut_tool_defs,
+    image_dimensions,
+    minimal_tool_schema,
+)
 from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from opengui.trajectory.summarizer import build_state_note, is_state_note
 
@@ -153,811 +159,12 @@ class _StepExecutionError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
-# Tool schema
-# ---------------------------------------------------------------------------
-
-def _minimal_tool_schema(action_type: str) -> dict[str, Any]:
-    """Build a minimal computer_use tool schema restricted to *action_type*.
-
-    Sending the full 13-action schema on every grounder call adds ~200-300
-    unnecessary input tokens.  Since the target action type is already known
-    at call time, we strip the schema down to only the properties that are
-    relevant for that action, cutting prompt size by ~60-70 %.
-    """
-    _coord = {
-        "x": {"type": "number", "description": "Primary X coordinate."},
-        "y": {"type": "number", "description": "Primary Y coordinate."},
-        "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
-    }
-    _coord2 = {
-        "x2": {"type": "number", "description": "End X for swipe/drag."},
-        "y2": {"type": "number", "description": "End Y for swipe/drag."},
-    }
-    _text = {"text": {"type": "string", "description": "Text input or app identifier."}}
-    _dur = {"duration_ms": {"type": "integer", "description": "Duration in ms."}}
-    _summary = {
-        "intent": {
-            "type": "string",
-            "description": "The purpose of the selected next action.",
-        },
-        "summary": {
-            "type": "string",
-            "description": "The current task progress and visible UI state.",
-        },
-    }
-
-    prop_sets: dict[str, dict] = {
-        "tap":               {**_coord},
-        "double_tap":        {**_coord},
-        "long_press":        {**_coord, **_dur},
-        "swipe":             {**_coord, **_coord2},
-        "drag":              {**_coord, **_coord2, **_dur},
-        "input_text":        {**_text, **_coord},
-        "hotkey":            {"key": {"type": "array", "items": {"type": "string"}, "description": "Keys for hotkey."}},
-        "scroll":            {**_coord, "text": {"type": "string", "description": "Direction."}, "pixels": {"type": "integer", "description": "Scroll distance."}},
-        "wait":              {},
-        "open_app":          {**_text},
-        "close_app":         {**_text},
-        "back":              {},
-        "home":              {},
-        "done":              {"status": {"type": "string", "enum": ["success", "failure"]}},
-        "request_intervention": {**_text},
-    }
-    props = prop_sets.get(action_type, {})
-    props = {"action_type": {"type": "string", "enum": [action_type]}, **props, **_summary}
-    return {
-        "type": "function",
-        "function": {
-            "name": "computer_use",
-            "description": f"Perform a {action_type} GUI action on the device screen.",
-            "parameters": {
-                "type": "object",
-                "properties": props,
-                "required": ["action_type"],
-            },
-        },
-    }
-
-
-def _build_shortcut_tool_defs(
-    shortcuts: dict[str, AppShortcutProfile],
-) -> tuple[list[dict[str, Any]], dict[str, tuple[str, str, str, str | None]]]:
-    """Convert AppShortcutProfile entries into independent function tool definitions."""
-    tools: list[dict[str, Any]] = []
-    action_map: dict[str, tuple[str, str, str, str | None]] = {}
-    for profile in shortcuts.values():
-        pkg = re.sub(r"[^a-zA-Z0-9_]+", "_", profile.package).strip("_").lower()
-        for dl in profile.deep_links:
-            safe = _shortcut_slug("_".join(x for x in (dl.scheme, dl.host or "", dl.path or "") if x))
-            digest = _shortcut_hash(f"{profile.package}|{dl.component}|{dl.uri_template}|{dl.path_kind or ''}")
-            name = f"{pkg}__{safe}__{digest}" if safe else f"{pkg}__{digest}"
-            params: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": dl.description,
-                    "parameters": params,
-                },
-            })
-            action_map[name] = ("open_deeplink", dl.uri_template, dl.component, None)
-        for di in profile.deep_intents:
-            safe = _shortcut_slug("_".join(x for x in (di.action.split(".")[-1], di.mime_type or "") if x))
-            digest = _shortcut_hash(f"{profile.package}|{di.component}|{di.action}|{di.mime_type or ''}")
-            name = f"{pkg}__{safe}__{digest}" if safe else f"{pkg}__{digest}"
-            params: dict[str, Any] = {"type": "object", "properties": {}, "required": []}
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": di.description,
-                    "parameters": params,
-                },
-            })
-            action_map[name] = ("open_intent", di.action, di.component, di.mime_type)
-    return tools, action_map
-
-
-def _shortcut_hash(text: str, n: int = 10) -> str:
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:n]
-
-
-def _shortcut_slug(value: str, *, max_len: int = 40) -> str:
-    return re.sub(r"[^a-zA-Z0-9_]+", "_", value).strip("_").lower()[:max_len]
-
-
-_COMPUTER_USE_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": "computer_use",
-        "description": "Perform a GUI action on the device screen.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action_type": {
-                    "type": "string",
-                    "enum": [
-                        "tap", "double_tap", "long_press", "swipe", "drag",
-                        "input_text", "hotkey", "scroll",
-                        "wait", "open_app", "close_app",
-                        "back", "home", "done", "request_intervention",
-                    ],
-                },
-                "x": {"type": "number", "description": "Primary X coordinate."},
-                "y": {"type": "number", "description": "Primary Y coordinate."},
-                "x2": {"type": "number", "description": "End X for swipe/drag."},
-                "y2": {"type": "number", "description": "End Y for swipe/drag."},
-                "text": {
-                    "type": "string",
-                    "description": (
-                        "Text for input_text, direction for scroll, or app identifier "
-                        "for open_app/close_app. Use a short reason for "
-                        "request_intervention. On Android, use package names."
-                    ),
-                },
-                "key": {"type": "array", "items": {"type": "string"}, "description": "Keys for hotkey."},
-                "pixels": {"type": "integer", "description": "Scroll distance."},
-                "duration_ms": {"type": "integer", "description": "Duration in ms."},
-                "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
-                "status": {"type": "string", "enum": ["success", "failure"], "description": "For done action."},
-                "intent": {
-                    "type": "string",
-                    "description": "The purpose of the selected next action.",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "The current task progress and visible UI state.",
-                },
-            },
-            "required": ["action_type", "intent", "summary"],
-        },
-    },
-}
-
-
-def _image_dimensions(raw: bytes) -> tuple[int, int]:
-    with Image.open(BytesIO(raw)) as image:
-        return image.size
-
-
-# ---------------------------------------------------------------------------
 # Agent-side protocol implementations for SkillExecutor
 # ---------------------------------------------------------------------------
 
-class _AgentActionGrounder:
-    """Ground a non-fixed SkillStep into a concrete Action via vision LLM.
-
-    Sends the current screenshot and step description to the LLM with the
-    ``computer_use`` tool and parses the returned tool call into an Action.
-    """
-
-    _MAX_RETRIES = 2
-
-    def __init__(
-        self,
-        llm: LLMProvider,
-        model: str,
-        agent_profile: str | None = None,
-        image_scale_ratio: float = 0.5,
-    ) -> None:
-        self._llm = llm
-        self._model = model
-        self._agent_profile = canonicalize_agent_profile(agent_profile)
-        self._image_scale_ratio = image_scale_ratio
-        self._usage_accum: dict[str, int] = {}
-        self._ttft_samples: list[float] = []
-        self._latency_samples: list[float] = []
-
-    def drain_usage(self) -> dict[str, int]:
-        """Return accumulated token usage since last drain and reset the counter."""
-        usage = dict(self._usage_accum)
-        self._usage_accum.clear()
-        return usage
-
-    def drain_timings(self) -> dict[str, float]:
-        out: dict[str, float] = {}
-        if self._ttft_samples:
-            out["ttft_s"] = sum(self._ttft_samples) / len(self._ttft_samples)
-        if self._latency_samples:
-            out["chat_latency_s"] = sum(self._latency_samples) / len(self._latency_samples)
-        self._ttft_samples.clear()
-        self._latency_samples.clear()
-        return out
-
-    async def ground(
-        self,
-        step: Any,  # SkillStep — avoid circular import
-        screenshot: "Path | bytes",
-        params: dict[str, str],
-    ) -> "Action":
-        from opengui.action import parse_action
-        from opengui.skills.executor import _ground_text
-
-        target = _ground_text(step.target, params)
-        extra_ctx = ""
-        if step.parameters:
-            resolved_params = {
-                k: _ground_text(str(v), params) if isinstance(v, str) else v
-                for k, v in step.parameters.items()
-            }
-            extra_ctx = f"\nContext: {resolved_params}"
-
-        prompt = (
-            f"Locate the target UI element on screen and execute the action.\n"
-            f"  action_type: {step.action_type}\n"
-            f"  target: {target}{extra_ctx}\n\n"
-            f"{self._profile_response_instruction(target_action=step.action_type)}"
-        )
-        from opengui.skills.executor import _scale_image
-        raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
-        screen_width, screen_height = _image_dimensions(raw)
-        image_data = base64.b64encode(
-            _scale_image(raw, scale_ratio=self._image_scale_ratio)
-        ).decode()
-
-        messages: list[dict[str, Any]] = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}},
-            ],
-        }]
-
-        for attempt in range(self._MAX_RETRIES + 1):
-            try:
-                native_tools_enabled = profile_uses_native_tools(self._agent_profile)
-                response = await self._llm.chat(
-                    messages=messages,
-                    tools=[_minimal_tool_schema(step.action_type)] if native_tools_enabled else None,
-                    tool_choice="required" if native_tools_enabled else None,
-                    model=self._model or None,
-                    max_tokens=256,
-                )
-            except Exception as exc:
-                raise RuntimeError(f"ActionGrounder LLM call failed: {exc}") from exc
-
-            for k, v in (response.usage or {}).items():
-                self._usage_accum[k] = self._usage_accum.get(k, 0) + v
-            if getattr(response, "ttft_s", None) is not None:
-                self._ttft_samples.append(response.ttft_s)
-            if getattr(response, "latency_s", None) is not None:
-                self._latency_samples.append(response.latency_s)
-
-            try:
-                response = normalize_profile_response_for_screen(
-                    self._agent_profile,
-                    response,
-                    screen_width=screen_width,
-                    screen_height=screen_height,
-                    model_name=self._model,
-                )
-            except Exception as exc:
-                if attempt < self._MAX_RETRIES:
-                    messages.append({"role": "assistant", "content": response.content or ""})
-                    messages.append({
-                        "role": "user",
-                        "content": f"Format error: {exc}. Follow the configured profile format exactly.",
-                    })
-                    continue
-                raise RuntimeError(f"ActionGrounder profile parse failed: {exc}") from exc
-
-            if response.tool_calls:
-                tc = response.tool_calls[0]
-                if tc.name == "computer_use" or not native_tools_enabled:
-                    try:
-                        return parse_action(tc.arguments)
-                    except Exception as exc:
-                        if attempt < self._MAX_RETRIES:
-                            messages.append({"role": "assistant", "content": response.content or ""})
-                            if native_tools_enabled:
-                                messages.append({
-                                    "role": "tool",
-                                    "tool_call_id": tc.id,
-                                    "content": f"Error parsing action: {exc}. Please fix.",
-                                })
-                            else:
-                                messages.append({
-                                    "role": "user",
-                                    "content": f"Format error: {exc}. Please fix and retry.",
-                                })
-                            continue
-                        raise RuntimeError(f"ActionGrounder parse failed: {exc}") from exc
-
-            if attempt < self._MAX_RETRIES:
-                messages.append({"role": "assistant", "content": response.content or ""})
-                messages.append({
-                    "role": "user",
-                    "content": "Error: no computer_use tool call. You must use it." if native_tools_enabled else "Error: no Action block found. Use configured profile format (Thought:/Action:).",
-                })
-            else:
-                if native_tools_enabled:
-                    raise RuntimeError("ActionGrounder: LLM did not return a computer_use call after retries.")
-                raise RuntimeError("ActionGrounder: LLM did not return a valid profile action after retries.")
-
-        raise RuntimeError("ActionGrounder: unexpected exit from retry loop.")
-
-    def _profile_response_instruction(self, *, target_action: str) -> str:
-        if self._agent_profile == "default":
-            return f"Respond with ONLY a computer_use tool call. You MUST use action_type='{target_action}'."
-        contract = prompt_contract_for_profile(self._agent_profile)
-        format_lines = " ".join(contract["format"])
-        rules = " ".join(contract["rules"][:2])
-        return (
-            f"Respond using the configured `{self._agent_profile}` profile format. "
-            f"Choose the profile-native action that corresponds to canonical action_type='{target_action}'. "
-            f"{format_lines} {rules}"
-        )
-
-
-class _AgentSubgoalRunner:
-    """Mini vision-action loop to recover to a desired screen state.
-
-    Maintains an isolated history (not shared with the main agent loop) and
-    runs up to ``max_steps`` observe → LLM → execute → validate cycles.
-    """
-
-    _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
-    _POST_ACTION_SETTLE_SECONDS = 0.50
-    _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
-
-    def __init__(
-        self,
-        llm: LLMProvider,
-        backend: "DeviceBackend",
-        state_validator: Any,
-        model: str,
-        artifacts_root: "Path",
-        trajectory_recorder: TrajectoryRecorder | None = None,
-        agent_profile: str | None = None,
-        step_timeout: float = 30.0,
-        image_scale_ratio: float = 0.5,
-    ) -> None:
-        self._llm = llm
-        self._backend = backend
-        self._state_validator = state_validator
-        self._model = model
-        self._artifacts_root = Path(artifacts_root)
-        self._trajectory_recorder = trajectory_recorder
-        self._step_counter = 0
-        self._agent_profile = canonicalize_agent_profile(agent_profile)
-        self._step_timeout = step_timeout
-        self._image_scale_ratio = image_scale_ratio
-
-    async def run_subgoal(
-        self,
-        goal: str,
-        screenshot: "Path | bytes",
-        *,
-        max_steps: int = 3,
-    ) -> "Any":  # SubgoalResult
-        from opengui.action import ActionError, parse_action
-        from opengui.skills.executor import SubgoalResult, _should_skip_validation
-
-        summaries: list[str] = []
-        current_screenshot: Path | bytes = screenshot
-        subgoal_usage: dict[str, int] = {}
-
-        if self._trajectory_recorder is not None:
-            self._trajectory_recorder.record_event(
-                "subgoal_start",
-                goal=goal,
-                max_steps=max_steps,
-            )
-
-        for i in range(max_steps):
-            substep_start = time.monotonic()
-
-            # Build a minimal prompt for the subgoal
-            history_text = (
-                "\n".join(f"  Sub-step {j+1}: {s}" for j, s in enumerate(summaries))
-                if summaries else "  None"
-            )
-            prompt = (
-                f"Your current sub-goal is: {goal}\n\n"
-                f"Previous sub-steps:\n{history_text}\n\n"
-                f"Look at the screenshot and choose ONE action that moves you "
-                f"closer to the sub-goal. {self._profile_subgoal_instruction()}"
-            )
-
-            from opengui.skills.executor import _scale_image
-            img_bytes = current_screenshot.read_bytes() if isinstance(current_screenshot, Path) else current_screenshot
-            screen_width, screen_height = _image_dimensions(img_bytes)
-            image_data = base64.b64encode(
-                _scale_image(img_bytes, scale_ratio=self._image_scale_ratio)
-            ).decode()
-
-            messages: list[dict[str, Any]] = [{
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_data}"}},
-                ],
-            }]
-
-            try:
-                native_tools_enabled = profile_uses_native_tools(self._agent_profile)
-                response = await self._llm.chat(
-                    messages=messages,
-                    tools=[_COMPUTER_USE_TOOL] if native_tools_enabled else None,
-                    tool_choice="required" if native_tools_enabled else None,
-                    model=self._model or None,
-                )
-            except Exception as exc:
-                logger.error("Subgoal LLM call failed at sub-step %d: %s", i, exc)
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=None,
-                    action=None,
-                    action_summary=None,
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error=str(exc),
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                if self._trajectory_recorder is not None:
-                    self._trajectory_recorder.record_event(
-                        "subgoal_result",
-                        goal=goal,
-                        success=False,
-                        steps_taken=i,
-                        action_summaries=summaries,
-                        error=str(exc),
-                    )
-                return SubgoalResult(
-                    success=False, steps_taken=i, action_summaries=summaries,
-                    error=str(exc), token_usage=dict(subgoal_usage),
-                )
-
-            for k, v in (response.usage or {}).items():
-                subgoal_usage[k] = subgoal_usage.get(k, 0) + v
-
-            try:
-                response = normalize_profile_response_for_screen(
-                    self._agent_profile,
-                    response,
-                    screen_width=screen_width,
-                    screen_height=screen_height,
-                    model_name=self._model,
-                )
-            except Exception as exc:
-                logger.warning("Subgoal profile parse failed at sub-step %d: %s", i, exc)
-                summaries.append(f"Sub-step {i+1}: profile parse error — {exc}")
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=None,
-                    action_summary=None,
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error=f"profile parse error: {exc}",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                continue
-
-            if not response.tool_calls:
-                logger.warning("Subgoal LLM returned no valid tool call at sub-step %d", i)
-                summaries.append(f"Sub-step {i+1}: no valid action returned")
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=None,
-                    action_summary=None,
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error="no valid action returned",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                continue
-
-            tc = response.tool_calls[0]
-            if self._agent_profile == "default" and tc.name != "computer_use":
-                logger.warning("Subgoal returned unsupported tool %s at sub-step %d", tc.name, i)
-                summaries.append(f"Sub-step {i+1}: no valid action returned")
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=None,
-                    action_summary=None,
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error="no valid action returned",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                continue
-
-            try:
-                action = parse_action(tc.arguments)
-                action = self._normalize_relative_coordinates(action)
-            except ActionError as exc:
-                logger.warning("Subgoal action parse failed at sub-step %d: %s", i, exc)
-                summaries.append(f"Sub-step {i+1}: action parse error — {exc}")
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=None,
-                    action_summary=None,
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error=f"action parse error: {exc}",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                continue
-
-            # Handle terminal actions inside a subgoal
-            if action.action_type == "done":
-                substep_dur = time.monotonic() - substep_start
-                goal_reached = getattr(action, "status", None) == "success"
-                summary = "goal reached by model judgment" if goal_reached else "model declared goal unreachable"
-                summaries.append(f"Sub-step {i+1}: {summary}")
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=action,
-                    action_summary=summary,
-                    screenshot_path=None,
-                    goal_reached=goal_reached,
-                    error=None if goal_reached else "model declared goal unreachable",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                if goal_reached:
-                    if self._trajectory_recorder is not None:
-                        self._trajectory_recorder.record_event(
-                            "subgoal_result",
-                            goal=goal,
-                            success=True,
-                            steps_taken=i + 1,
-                            action_summaries=summaries,
-                            error=None,
-                        )
-                    return SubgoalResult(
-                        success=True,
-                        steps_taken=i + 1,
-                        action_summaries=summaries,
-                        final_screenshot=current_screenshot,
-                        done_judgment=True,
-                        token_usage=dict(subgoal_usage),
-                    )
-                break  # model says goal unreachable — let caller fall back
-
-            if action.action_type == "request_intervention":
-                summaries.append(f"Sub-step {i+1}: terminal action skipped in subgoal")
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=action,
-                    action_summary="terminal action skipped in subgoal",
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error="terminal action skipped in subgoal",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                continue
-
-            try:
-                await self._backend.execute(action, timeout=self._step_timeout)
-            except Exception as exc:
-                logger.warning("Subgoal execution failed at sub-step %d: %s", i, exc)
-                summaries.append(f"Sub-step {i+1}: {action.action_type} — execution error: {exc}")
-                substep_dur = time.monotonic() - substep_start
-                self._record_subgoal_step(
-                    goal=goal,
-                    substep_index=i + 1,
-                    model_output=response.content,
-                    action=action,
-                    action_summary=f"{action.action_type}",
-                    screenshot_path=None,
-                    goal_reached=False,
-                    error=f"execution error: {exc}",
-                    duration_s=substep_dur,
-                    token_usage=None,
-                )
-                continue
-
-            settle = self._post_action_settle_seconds(action)
-            if settle > 0:
-                await asyncio.sleep(settle)
-
-            # Observe new screen
-            self._step_counter += 1
-            subgoal_dir = self._artifacts_root / "subgoal_screenshots"
-            subgoal_dir.mkdir(parents=True, exist_ok=True)
-            next_path = subgoal_dir / f"subgoal_{int(time.time() * 1000)}_{self._step_counter}.png"
-            screenshot_path: str | None = None
-            try:
-                obs = await self._backend.observe(next_path, timeout=self._step_timeout)
-                current_screenshot = Path(obs.screenshot_path) if obs.screenshot_path else current_screenshot
-                screenshot_path = obs.screenshot_path
-            except Exception as exc:
-                logger.warning("Subgoal observe failed at sub-step %d: %s", i, exc)
-
-            action_desc = f"{action.action_type}"
-            if hasattr(action, "x") and action.x is not None:
-                action_desc += f" at ({action.x}, {action.y})"
-            elif hasattr(action, "text") and action.text:
-                action_desc += f" '{action.text}'"
-            summaries.append(f"Sub-step {i+1}: {action_desc}")
-
-            # Check if the goal state has been reached
-            reached = False
-            validate_dur = 0.0
-            if not _should_skip_validation(goal) and self._state_validator is not None:
-                validate_t0 = time.monotonic()
-                try:
-                    reached = await self._state_validator.validate(goal, screenshot=current_screenshot)
-                except Exception:
-                    reached = False
-                validate_dur = time.monotonic() - validate_t0
-                if hasattr(self._state_validator, "drain_usage"):
-                    for k, v in self._state_validator.drain_usage().items():
-                        subgoal_usage[k] = subgoal_usage.get(k, 0) + v
-
-            substep_dur = time.monotonic() - substep_start
-            # Snapshot usage for this substep (LLM call + validation)
-            substep_usage = dict(subgoal_usage)
-            self._record_subgoal_step(
-                goal=goal,
-                substep_index=i + 1,
-                model_output=response.content,
-                action=action,
-                action_summary=action_desc,
-                screenshot_path=screenshot_path,
-                goal_reached=reached,
-                error=None,
-                duration_s=substep_dur,
-                validate_duration_s=validate_dur,
-                token_usage=substep_usage,
-            )
-            if reached:
-                logger.info("Subgoal reached after %d sub-steps", i + 1)
-                if self._trajectory_recorder is not None:
-                    self._trajectory_recorder.record_event(
-                        "subgoal_result",
-                        goal=goal,
-                        success=True,
-                        steps_taken=i + 1,
-                        action_summaries=summaries,
-                        error=None,
-                    )
-                return SubgoalResult(
-                    success=True,
-                    steps_taken=i + 1,
-                    action_summaries=summaries,
-                    final_screenshot=current_screenshot,
-                    token_usage=dict(subgoal_usage),
-                )
-        if self._trajectory_recorder is not None:
-            self._trajectory_recorder.record_event(
-                "subgoal_result",
-                goal=goal,
-                success=False,
-                steps_taken=max_steps,
-                action_summaries=summaries,
-                error=f"Subgoal not reached after {max_steps} sub-steps",
-            )
-        return SubgoalResult(
-            success=False,
-            steps_taken=max_steps,
-            action_summaries=summaries,
-            error=f"Subgoal not reached after {max_steps} sub-steps",
-            token_usage=dict(subgoal_usage),
-        )
-
-    def _profile_subgoal_instruction(self) -> str:
-        if self._agent_profile == "default":
-            return "Respond with ONLY a computer_use tool call."
-        contract = prompt_contract_for_profile(self._agent_profile)
-        return (
-            f"Respond using the configured `{self._agent_profile}` profile format. "
-            f"{' '.join(contract['format'])}"
-        )
-
-    def _record_subgoal_step(
-        self,
-        *,
-        goal: str,
-        substep_index: int,
-        model_output: str | None,
-        action: Action | None,
-        action_summary: str | None,
-        screenshot_path: str | None,
-        goal_reached: bool,
-        error: str | None,
-        duration_s: float = 0.0,
-        validate_duration_s: float = 0.0,
-        token_usage: dict[str, int] | None = None,
-    ) -> None:
-        if self._trajectory_recorder is None:
-            return
-        self._trajectory_recorder.record_event(
-            "subgoal_step",
-            goal=goal,
-            substep_index=substep_index,
-            model_output=model_output,
-            action=self._serialize_action(action) if action is not None else None,
-            action_summary=action_summary,
-            screenshot_path=screenshot_path,
-            goal_reached=goal_reached,
-            error=error,
-            duration_s=round(duration_s, 3) if duration_s else None,
-            validate_duration_s=round(validate_duration_s, 3) if validate_duration_s else None,
-            token_usage=token_usage or None,
-        )
-
-    @staticmethod
-    def _serialize_action(action: Action) -> dict[str, Any]:
-        payload = dataclasses.asdict(action)
-        return {
-            key: value
-            for key, value in payload.items()
-            if value is not None and not (key == "relative" and value is False)
-        }
-
-    def _coordinate_mode(self) -> str:
-        return coordinate_mode_for_profile(self._agent_profile, self._model)
-
-    def _model_uses_relative_grid(self) -> bool:
-        return self._coordinate_mode() == "relative_999"
-
-    def _normalize_relative_coordinates(self, action: Action) -> Action:
-        if action.relative or action.action_type not in self._COORDINATE_ACTIONS:
-            return action
-        if not self._model_uses_relative_grid():
-            return action
-        coords = [v for v in (action.x, action.y, action.x2, action.y2) if v is not None]
-        if coords and all(0 <= v <= 999 for v in coords):
-            return replace(action, relative=True)
-        return action
-
-    def _post_action_settle_seconds(self, action: Action) -> float:
-        if action.action_type in self._NO_SETTLE_ACTIONS:
-            return 0.0
-        return self._POST_ACTION_SETTLE_SECONDS
-
-
-class _AgentScreenshotProvider:
-    """Provide the current screenshot via ``DeviceBackend.observe()``."""
-
-    def __init__(self, backend: "DeviceBackend", artifacts_root: "Path") -> None:
-        self._backend = backend
-        self._artifacts_root = Path(artifacts_root)
-        self._counter = 0
-
-    async def get_observation(self) -> Observation | None:
-        self._counter += 1
-        skill_dir = self._artifacts_root / "skill_screenshots"
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        path = skill_dir / f"skill_{int(time.time() * 1000)}_{self._counter}.png"
-        try:
-            return await self._backend.observe(path)
-        except Exception as exc:
-            logger.warning("ScreenshotProvider observe failed: %s", exc)
-        return None
-
-    async def get_screenshot(self) -> Path | None:
-        obs = await self.get_observation()
-        if obs is not None and obs.screenshot_path:
-            return Path(obs.screenshot_path)
-        return None
+from opengui.skills.action_grounder import ActionGrounder as _AgentActionGrounder  # noqa: E402
+from opengui.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner  # noqa: E402
+from opengui.skills.observation_provider import AgentScreenshotProvider as _AgentScreenshotProvider  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -1074,11 +281,12 @@ class GuiAgent:
     _MAX_TOOL_RETRIES = 2
     _COORDINATE_ACTIONS = frozenset({"tap", "double_tap", "long_press", "swipe", "drag", "scroll"})
     _POST_ACTION_SETTLE_SECONDS = 0.50
+    _OPEN_APP_SETTLE_SECONDS = 5.00
     _POST_ACTION_STABILITY_WINDOW_SECONDS = 2.0
     _POST_ACTION_STABILITY_POLL_SECONDS = 0.15
     _POST_ACTION_STABILITY_MAX_ATTEMPTS = 4
     _POST_ACTION_STABILITY_FRAMES_REQUIRED = 2
-    _POST_ACTION_OBSERVE_TIMEOUT_SECONDS = 5.0
+    _POST_ACTION_OBSERVE_TIMEOUT_SECONDS = 8.0
     _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
     _STAGNATION_SSIM_SIZE = 64
     _STAGNATION_SSIM_THRESHOLD = 0.985
@@ -1103,7 +311,6 @@ class GuiAgent:
         memory_top_k: int = 5,
         skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
-        shortcuts: dict[str, AppShortcutProfile] | None = None,
         shortcut_backend: DeviceBackend | None = None,
         shortcut_cache_dir: Path | str | None = None,
         intervention_handler: InterventionHandler | None = None,
@@ -1136,7 +343,6 @@ class GuiAgent:
         self._skill_reuser = skill_reuser
         self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
-        del shortcuts
         self._shortcuts: dict[str, AppShortcutProfile] = {}
         self._shortcut_backend = shortcut_backend
         self._shortcut_cache_dir = Path(shortcut_cache_dir) if shortcut_cache_dir else None
@@ -1153,7 +359,7 @@ class GuiAgent:
         self.stagnation_limit = max(0, parsed_stagnation_limit)
 
     def _build_tools_list(self) -> list[dict[str, Any]]:
-        tools = [_COMPUTER_USE_TOOL]
+        tools = [COMPUTER_USE_TOOL]
         tools.extend(self._shortcut_tools)
         return tools
 
@@ -1185,7 +391,7 @@ class GuiAgent:
 
         self._shortcuts[app] = profile
         if profile.deep_links or profile.deep_intents:
-            self._shortcut_tools, self._shortcut_action_map = _build_shortcut_tool_defs(self._shortcuts)
+            self._shortcut_tools, self._shortcut_action_map = build_shortcut_tool_defs(self._shortcuts)
 
     # ------------------------------------------------------------------
     # Public API
@@ -1482,9 +688,6 @@ class GuiAgent:
                 task=task,
                 current_observation=obs,
                 history=history,
-                app_hint=app_hint,
-                memory_context=memory_context,
-                skill_context=skill_context,
             )
             prompt_snapshot = self._snapshot_step_prompt(
                 task=task,
@@ -2287,6 +1490,8 @@ class GuiAgent:
     def _post_action_settle_seconds(self, action: Action) -> float:
         if action.action_type in self._NO_SETTLE_ACTIONS:
             return 0.0
+        if action.action_type == "open_app":
+            return self._OPEN_APP_SETTLE_SECONDS
         return self._POST_ACTION_SETTLE_SECONDS
 
     async def _observe_after_action(
@@ -2473,12 +1678,7 @@ class GuiAgent:
         task: str,
         current_observation: Observation,
         history: list[HistoryTurn],
-        app_hint: str | None,
-        memory_context: str | None = None,
-        skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Build the MobileWorld-profile prompt for the current step."""
-        del app_hint, memory_context, skill_context
         return build_mobileworld_messages(
             self.agent_profile,
             task=task,

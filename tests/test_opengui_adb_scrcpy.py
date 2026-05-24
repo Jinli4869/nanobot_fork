@@ -383,7 +383,7 @@ async def test_adb_observe_can_attach_compact_ui_tree_metadata(
     run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
-    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
+    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (320, 640))
 
     observation = await backend.observe(tmp_path / "screen.png")
 
@@ -417,7 +417,7 @@ async def test_adb_observe_writes_raw_ui_tree_xml_sibling_dir(
     run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
-    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
+    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (320, 640))
 
     screenshot = tmp_path / "run" / "screenshots" / "step_000.png"
     observation = await backend.observe(screenshot)
@@ -469,9 +469,10 @@ async def test_adb_collect_ui_tree_uses_longer_timeout_window(
     run_mock = AsyncMock(side_effect=["UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
 
-    extra = await backend._collect_ui_tree_extra(timeout=5.0)
+    extra = await backend._collect_ui_tree_extra(timeout=30.0)
 
-    assert run_mock.await_args_list[0].kwargs["timeout"] == 3.0
+    assert run_mock.await_args_list[0].kwargs["timeout"] == 10.0
+    assert run_mock.await_args_list[1].kwargs["timeout"] == 10.0
     assert extra["ui_tree_node_count"] == 1
     assert extra["visible_text"] == ["设置"]
 

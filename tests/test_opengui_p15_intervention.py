@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from opengui.action import ActionError, parse_action
-from opengui.agent import GuiAgent, _COMPUTER_USE_TOOL
+from opengui.agent import GuiAgent
+from opengui.tool_schemas import COMPUTER_USE_TOOL
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
@@ -94,7 +95,7 @@ def test_system_prompt_lists_request_intervention_action() -> None:
 
 
 def test_agent_tool_schema_lists_request_intervention() -> None:
-    action_types = _COMPUTER_USE_TOOL["function"]["parameters"]["properties"]["action_type"]["enum"]
+    action_types = COMPUTER_USE_TOOL["function"]["parameters"]["properties"]["action_type"]["enum"]
 
     assert "request_intervention" in action_types
 

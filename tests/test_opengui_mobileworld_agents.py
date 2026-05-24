@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from opengui.action import parse_action
 from opengui.agent import GuiAgent
 from opengui.agent_profiles import (
     build_mobileworld_messages,
@@ -89,6 +90,30 @@ def test_general_e2e_parse_uses_real_screen_dimensions() -> None:
     assert normalized.tool_calls[0].arguments["x"] == 540
     assert normalized.tool_calls[0].arguments["y"] == 480
     assert "relative" not in normalized.tool_calls[0].arguments
+
+
+def test_general_e2e_scroll_adds_opengui_default_pixels() -> None:
+    response = LLMResponse(
+        content='Thought: scroll\nAction: {"action_type":"scroll","direction":"up"}',
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response_for_screen(
+        "general_e2e",
+        response,
+        screen_width=1080,
+        screen_height=1920,
+    )
+
+    assert normalized.tool_calls is not None
+    arguments = normalized.tool_calls[0].arguments
+    assert arguments["action_type"] == "scroll"
+    assert arguments["direction"] == "up"
+    assert arguments["pixels"] == 40
+    action = parse_action(arguments)
+    assert action.action_type == "scroll"
+    assert action.text == "up"
+    assert action.pixels == 40
 
 
 def test_qwen3vl_parse_uses_real_screen_dimensions() -> None:

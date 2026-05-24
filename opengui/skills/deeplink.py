@@ -6,6 +6,8 @@ import hashlib
 import re
 import tempfile
 import xml.etree.ElementTree as ET
+
+from opengui.skills.state_contract import _clean_string
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -412,13 +414,6 @@ def _stable_short_hash(text: str, n: int = 10) -> str:
 def _slug(value: str, *, max_len: int = 80) -> str:
     text = re.sub(r"[^a-zA-Z0-9_]+", "_", value).strip("_").lower()
     return (text or "shortcut")[:max_len]
-
-
-def _clean_string(value: Any) -> str:
-    if value is None:
-        return ""
-    text = str(value).strip()
-    return re.sub(r"\s+", " ", text)
 
 
 def _clean_app(value: Any) -> str:

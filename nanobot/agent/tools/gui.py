@@ -853,7 +853,6 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
-            shortcuts={},
             shortcut_backend=active_backend,
             shortcut_cache_dir=str(sc_dir),
         )

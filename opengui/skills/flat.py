@@ -25,6 +25,33 @@ from typing import Any, Callable
 
 import numpy as np
 
+from opengui.skills import _merger
+from opengui.skills._merger import (
+    CLEANUP_EMBEDDING_THRESHOLD,
+    EMBEDDING_CONFLICT_THRESHOLD,
+    STOPWORDS,
+    STRUCTURAL_CONFLICT_THRESHOLD,
+    SkillConflict as _SkillConflict,
+    _StepSignature,
+    action_signature as _action_signature,
+    action_similarity as _action_similarity,
+    cleanup_same_intent as _cleanup_same_intent,
+    cleanup_superseded_prefixes as _cleanup_superseded_prefixes,
+    cosine_similarity as _cosine_similarity,
+    find_best_conflict as _find_best_conflict,
+    heuristic_merge_decision as _heuristic_merge_decision,
+    is_strict_rich_prefix as _is_strict_rich_prefix,
+    merge_skills as _merge_skills,
+    name_token_similarity as _name_token_similarity,
+    skill_semantic_similarity as _skill_semantic_similarity,
+    stable_json as _stable_json,
+    step_signature as _step_signature,
+    step_similarity as _step_similarity,
+    text_hash as _text_hash,
+    tokens as _tokens,
+    tuple_jaccard as _tuple_jaccard,
+    weighted_tuple_jaccard as _weighted_tuple_jaccard,
+)
 from opengui.skills.data import Skill, SkillStep, compute_confidence
 from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
 from opengui.skills.state_contract import normalize_state_contract
@@ -46,45 +73,11 @@ _SELECTOR_KEYS = ("text", "content_desc", "resource_id", "class", "xpath")
 _R_ALLOWED_KEYS = frozenset((*_STATE_FLAGS, *_SELECTOR_KEYS, "class_"))
 _C_ALLOWED_KEYS = frozenset(("required", "forbidden", "app", "activity"))
 _PLACEHOLDER_RE = re.compile(r"\{\{([^{}]+)\}\}")
-_STOPWORDS = frozenset({
-    "a",
-    "an",
-    "the",
-    "to",
-    "in",
-    "on",
-    "of",
-    "for",
-    "and",
-    "or",
-    "is",
-    "it",
-    "with",
-    "from",
-    "by",
-    "at",
-    "be",
-    "this",
-    "that",
-    "do",
-    "does",
-    "did",
-})
-_EMBEDDING_CONFLICT_THRESHOLD = 0.72
-_STRUCTURAL_CONFLICT_THRESHOLD = 0.70
-_CLEANUP_EMBEDDING_THRESHOLD = 0.72
-
-
-@dataclass(frozen=True)
-class _SkillConflict:
-    skill: Skill
-    score: float
-    embedding_similarity: float | None
-    sequence_similarity: float
-    semantic_similarity: float
-
-
-_StepSignature = tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+_STOPWORDS = STOPWORDS
+_EMBEDDING_CONFLICT_THRESHOLD = EMBEDDING_CONFLICT_THRESHOLD
+_STRUCTURAL_CONFLICT_THRESHOLD = STRUCTURAL_CONFLICT_THRESHOLD
+_CLEANUP_EMBEDDING_THRESHOLD = CLEANUP_EMBEDDING_THRESHOLD
+_UNKNOWN_APP_IDS = {"", "unknown", "app-package-or-name"}
 
 
 def _store_lock(store_dir: Path) -> threading.RLock:
@@ -456,6 +449,9 @@ class FlatSkillLibrary:
 
     async def add_or_merge(self, skill_obj: Skill) -> tuple[str, str | None]:
         skill_obj = self._normalize_skill(skill_obj)
+        if _is_unknown_app(skill_obj.app):
+            logger.warning("Reject skill %s: app is unknown", skill_obj.name)
+            return "REJECT_UNKNOWN_APP", None
         with self._store_lock:
             skills_for_embedding = self._repository.list_all()
         incoming_embedding = await self._embed_skill_for_conflict(skill_obj, skills_for_embedding)
@@ -545,110 +541,19 @@ class FlatSkillLibrary:
         incoming_embedding: np.ndarray | None,
         existing_embeddings: dict[str, np.ndarray],
     ) -> _SkillConflict | None:
-        best: _SkillConflict | None = None
-        best_score = 0.0
-        incoming_signature = _action_signature(incoming)
-        for existing in skills:
-            if existing.platform != incoming.platform or existing.app != incoming.app:
-                continue
-            if existing.skill_id == incoming.skill_id:
-                return _SkillConflict(
-                    skill=existing,
-                    score=1.0,
-                    embedding_similarity=1.0,
-                    sequence_similarity=1.0,
-                    semantic_similarity=1.0,
-                )
-
-            existing_signature = _action_signature(existing)
-            sequence_sim = _action_similarity(existing_signature, incoming_signature)
-            semantic_sim = _skill_semantic_similarity(existing, incoming)
-            if (
-                _is_strict_rich_prefix(existing_signature, incoming_signature)
-                or _is_strict_rich_prefix(incoming_signature, existing_signature)
-            ):
-                continue
-            embedding_sim: float | None = None
-            score = 0.20 * sequence_sim + 0.05 * semantic_sim
-            existing_embedding = existing_embeddings.get(existing.skill_id)
-            if incoming_embedding is not None and existing_embedding is not None:
-                embedding_sim = _cosine_similarity(incoming_embedding, existing_embedding)
-                score += 0.75 * embedding_sim
-
-            if score > best_score:
-                best = _SkillConflict(
-                    skill=existing,
-                    score=score,
-                    embedding_similarity=embedding_sim,
-                    sequence_similarity=sequence_sim,
-                    semantic_similarity=semantic_sim,
-                )
-                best_score = score
-
-        if best is None:
-            return None
-
-        if best.embedding_similarity is not None:
-            if (
-                best.embedding_similarity >= _EMBEDDING_CONFLICT_THRESHOLD
-                and best.sequence_similarity >= _STRUCTURAL_CONFLICT_THRESHOLD
-            ):
-                return best
-            if (
-                best.embedding_similarity >= 0.60
-                and best.sequence_similarity >= 0.78
-            ):
-                return best
-            return None
-
-        if best.sequence_similarity >= 0.82 and best.semantic_similarity >= 0.25:
-            return best
-        if best.sequence_similarity >= 0.92:
-            return best
-        return None
+        return _merger.find_best_conflict(
+            incoming, skills,
+            incoming_embedding=incoming_embedding,
+            existing_embeddings=existing_embeddings,
+        )
 
     @staticmethod
     def _heuristic_merge_decision(conflict: _SkillConflict, new: Skill) -> str:
-        old = conflict.skill
-        if old.success_count > 0 and new.success_count == 0 and conflict.sequence_similarity < 0.85:
-            return "KEEP_OLD"
-        if new.success_count > old.success_count and old.success_count == 0:
-            return "KEEP_NEW"
-        return "MERGE"
+        return _merger.heuristic_merge_decision(conflict, new)
 
     @staticmethod
     def _merge_skills(old: Skill, new: Skill) -> Skill:
-        old_signature = _action_signature(old)
-        new_signature = _action_signature(new)
-        if old.success_count > 0 and new.success_count == 0:
-            steps = old.steps
-        elif new.success_count > 0 and old.success_count == 0:
-            steps = new.steps
-        elif _is_strict_rich_prefix(old_signature, new_signature):
-            steps = new.steps
-        elif _is_strict_rich_prefix(new_signature, old_signature):
-            steps = old.steps
-        elif compute_confidence(new) > compute_confidence(old):
-            steps = new.steps or old.steps
-        else:
-            steps = old.steps or new.steps
-        prefer_old_text = old.success_count > 0 and new.success_count == 0
-        return Skill(
-            skill_id=old.skill_id,
-            name=old.name if prefer_old_text and old.name else (new.name or old.name),
-            description=old.description if prefer_old_text and old.description else (new.description or old.description),
-            app=new.app or old.app,
-            platform=new.platform or old.platform,
-            steps=steps,
-            parameters=tuple(sorted(set(old.parameters) | set(new.parameters))),
-            preconditions=tuple(sorted(set(old.preconditions) | set(new.preconditions))),
-            tags=tuple(sorted(set(old.tags) | set(new.tags))),
-            created_at=old.created_at,
-            success_count=old.success_count + new.success_count,
-            failure_count=old.failure_count + new.failure_count,
-            success_streak=max(old.success_streak, new.success_streak),
-            failure_streak=max(old.failure_streak, new.failure_streak),
-        )
+        return _merger.merge_skills(old, new)
 
     @staticmethod
     def _cleanup_superseded_prefixes(
@@ -658,31 +563,9 @@ class FlatSkillLibrary:
         *,
         embeddings: dict[str, np.ndarray] | None = None,
     ) -> list[Skill]:
-        normalized_app = _normalize_app_filter(platform, app) or app
-        candidates = [
-            skill
-            for skill in skills
-            if skill.platform == platform and skill.app == normalized_app
-        ]
-        removed: set[str] = set()
-        for skill in candidates:
-            if skill.success_count > 0:
-                continue
-            signature = _action_signature(skill)
-            for other in candidates:
-                if other.skill_id == skill.skill_id:
-                    continue
-                other_signature = _action_signature(other)
-                if (
-                    _is_strict_rich_prefix(signature, other_signature)
-                    and compute_confidence(other) > compute_confidence(skill)
-                    and _cleanup_same_intent(skill, other, embeddings=embeddings)
-                ):
-                    removed.add(skill.skill_id)
-                    break
-        if not removed:
-            return skills
-        return [skill for skill in skills if skill.skill_id not in removed]
+        return _merger.cleanup_superseded_prefixes(
+            skills, platform, app, embeddings=embeddings,
+        )
 
     @staticmethod
     def _replace_in_list(skills: list[Skill], skill_id: str, updated_skill: Skill) -> list[Skill]:
@@ -732,63 +615,59 @@ class FlatSkillLibrary:
         ]
         candidate_positions = [index for index, _skill in candidate_pairs]
         candidates = [skill for _index, skill in candidate_pairs]
-        if not candidates:
+        n = len(candidates)
+        if n == 0:
             return []
-        if self.embedding_provider is not None:
-            return await self._search_with_embeddings(
-                query,
-                skills=skills,
-                candidates=candidates,
-                candidate_positions=candidate_positions,
-                top_k=top_k,
-            )
 
         from opengui.memory.retrieval import _BM25Index
 
-        documents = [_skill_search_text(skill) for skill in candidates]
         bm25 = _BM25Index()
-        bm25.build(documents)
-        scores = np.array(bm25.score(query), dtype=np.float32)
-        #max_score = float(scores.max()) if scores.size else 0.0
-        #if max_score > 0:
-        #    scores = scores / max_score
-        ranked = np.argsort(-scores)
+        bm25.build([_skill_search_text(skill) for skill in candidates])
+        bm25_scores = np.array(bm25.score(query), dtype=np.float32)
+
+        if self.embedding_provider is not None:
+            emb_scores = await self._embedding_scores(query, skills, candidate_positions)
+            # BM25 rank bonus — boosts candidates that match keywords, no score normalisation
+            bm25_order = np.argsort(np.argsort(-bm25_scores)).astype(np.float32)
+            bm25_bonus = np.where(bm25_order < 3, (3.0 - bm25_order) * 0.03, 0.0)
+            blended = emb_scores + bm25_bonus
+        else:
+            blended = bm25_scores
+
+        ranked = np.argsort(-blended)
         results: list[tuple[Skill, float]] = []
-        for index in ranked:
-            score = float(scores[int(index)])
+        for idx in ranked:
+            score = float(blended[int(idx)])
             if score <= 0:
                 break
-            results.append((candidates[int(index)], score))
+            results.append((candidates[int(idx)], score))
             if len(results) >= top_k:
                 break
         return results
 
-    async def _search_with_embeddings(
-        self,
-        query: str,
-        *,
-        skills: list[Skill],
-        candidates: list[Skill],
-        candidate_positions: list[int],
-        top_k: int,
-    ) -> list[tuple[Skill, float]]:
+    async def _embedding_scores(
+        self, query: str, skills: list[Skill], candidate_positions: list[int],
+    ) -> np.ndarray:
         import faiss
 
         embeddings = await self._ensure_skill_embeddings(skills)
-        candidate_embeddings = np.ascontiguousarray(embeddings[candidate_positions], dtype=np.float32)
-        faiss.normalize_L2(candidate_embeddings)
-        index = faiss.IndexFlatIP(candidate_embeddings.shape[1])
-        index.add(candidate_embeddings)
+        candidate_embs = np.ascontiguousarray(embeddings[candidate_positions], dtype=np.float32)
+        faiss.normalize_L2(candidate_embs)
+        idx = faiss.IndexFlatIP(candidate_embs.shape[1])
+        idx.add(candidate_embs)
 
-        query_embedding = await self.embedding_provider.embed([query])
-        query_vector = np.ascontiguousarray(np.asarray(query_embedding[0], dtype=np.float32).reshape(1, -1))
-        faiss.normalize_L2(query_vector)
-        scores, indices = index.search(query_vector, min(top_k, len(candidates)))
-        return [
-            (candidates[int(index)], float(score))
-            for score, index in zip(scores[0], indices[0])
-            if int(index) >= 0
-        ]
+        q_emb = await self.embedding_provider.embed([query])
+        q_vec = np.ascontiguousarray(np.asarray(q_emb[0], dtype=np.float32).reshape(1, -1))
+        faiss.normalize_L2(q_vec)
+        raw_scores, raw_indices = idx.search(q_vec, len(candidate_positions))
+        # Reorder FAISS output (sorted by score desc) back to candidate order
+        n = len(candidate_positions)
+        scores = np.zeros(n, dtype=np.float32)
+        for i in range(n):
+            idx_i = int(raw_indices[0, i])
+            if 0 <= idx_i < n:
+                scores[idx_i] = float(raw_scores[0, i])
+        return scores
 
     async def _ensure_skill_embeddings(self, skills: list[Skill]) -> np.ndarray:
         current_records = [
@@ -1447,10 +1326,6 @@ def _skill_search_text(skill_obj: Skill) -> str:
     ])
 
 
-def _text_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
 def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
     return [
         (str(record["skill_id"]), str(record["search_text_hash"]))
@@ -1458,145 +1333,14 @@ def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
     ]
 
 
-def _name_token_similarity(a: str, b: str) -> float:
-    left = set(re.findall(r"\w+", a.lower())) - _STOPWORDS
-    right = set(re.findall(r"\w+", b.lower())) - _STOPWORDS
-    if not left and not right:
-        return 1.0
-    if not left or not right:
-        return 0.0
-    return len(left & right) / len(left | right)
-
-
-def _skill_semantic_similarity(left: Skill, right: Skill) -> float:
-    name_sim = _name_token_similarity(left.name, right.name)
-    description_sim = _name_token_similarity(left.description, right.description)
-    if left.description.strip() and right.description.strip():
-        return max(description_sim, 0.7 * description_sim + 0.3 * name_sim)
-    return name_sim
-
-
-def _action_signature(skill_obj: Skill) -> tuple[_StepSignature, ...]:
-    return tuple(_step_signature(step) for step in skill_obj.steps)
-
-
-def _action_similarity(
-    left: tuple[_StepSignature, ...],
-    right: tuple[_StepSignature, ...],
-) -> float:
-    if not left and not right:
-        return 1.0
-    min_len = min(len(left), len(right))
-    max_len = max(len(left), len(right))
-    if max_len == 0:
-        return 1.0
-    if min_len == 0:
-        return 0.0
-    pair_scores = [
-        _step_similarity(left_step, right_step)
-        for left_step, right_step in zip(left, right, strict=False)
-    ]
-    overlap_quality = sum(pair_scores) / min_len
-    tail_len = max_len - min_len
-    length_penalty = 1.0 - 0.3 * (tail_len / max_len)
-    return overlap_quality * length_penalty
-
-
-def _step_signature(step: SkillStep) -> _StepSignature:
-    return (
-        step.action_type,
-        _tokens(step.target),
-        _tokens(" ".join([*map(str, step.parameters.keys()), *map(str, step.parameters.values())])),
-        _tokens(" ".join(filter(None, (step.expected_state, step.valid_state)))),
-        _tokens(_stable_json(step.state_contract)),
-    )
-
-
-def _step_similarity(
-    left: _StepSignature,
-    right: _StepSignature,
-) -> float:
-    if left[0] != right[0]:
-        return 0.0
-    return (
-        0.35
-        + 0.30 * _weighted_tuple_jaccard(left[1], right[1], empty_score=0.15)
-        + 0.10 * _weighted_tuple_jaccard(left[2], right[2], empty_score=0.50)
-        + 0.15 * _weighted_tuple_jaccard(left[3], right[3], empty_score=0.35)
-        + 0.10 * _weighted_tuple_jaccard(left[4], right[4], empty_score=0.50)
-    )
-
-
-def _is_strict_rich_prefix(
-    shorter: tuple[_StepSignature, ...],
-    longer: tuple[_StepSignature, ...],
-) -> bool:
-    if len(shorter) >= len(longer) or not shorter:
-        return False
-    return all(
-        _step_similarity(short_step, long_step) >= 0.80
-        for short_step, long_step in zip(shorter, longer, strict=False)
-    )
-
-
-def _tuple_jaccard(left: tuple[str, ...], right: tuple[str, ...]) -> float:
-    if not left and not right:
-        return 1.0
-    if not left or not right:
-        return 0.0
-    left_set = set(left)
-    right_set = set(right)
-    return len(left_set & right_set) / len(left_set | right_set)
-
-
-def _weighted_tuple_jaccard(left: tuple[str, ...], right: tuple[str, ...], *, empty_score: float) -> float:
-    if not left and not right:
-        return empty_score
-    return _tuple_jaccard(left, right)
-
-
-def _tokens(value: Any) -> tuple[str, ...]:
-    return tuple(
-        token
-        for token in re.findall(r"\w+", str(value).lower())
-        if token not in _STOPWORDS
-    )
-
-
-def _stable_json(value: Any) -> str:
-    if not value:
-        return ""
-    try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    except TypeError:
-        return str(value)
-
-
-def _cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
-    denom = float(np.linalg.norm(left) * np.linalg.norm(right))
-    if denom < 1e-12:
-        return 0.0
-    return float(np.dot(left, right) / denom)
-
-
-def _cleanup_same_intent(
-    left: Skill,
-    right: Skill,
-    *,
-    embeddings: dict[str, np.ndarray] | None,
-) -> bool:
-    if embeddings:
-        left_embedding = embeddings.get(left.skill_id)
-        right_embedding = embeddings.get(right.skill_id)
-        if left_embedding is not None and right_embedding is not None:
-            return _cosine_similarity(left_embedding, right_embedding) >= _CLEANUP_EMBEDDING_THRESHOLD
-    return _skill_semantic_similarity(left, right) >= 0.20
-
-
 def _normalize_app_filter(platform: str | None, app: str | None) -> str | None:
     if app is None:
         return None
     return normalize_app_identifier(platform or "unknown", app)
+
+
+def _is_unknown_app(app: str) -> bool:
+    return (app or "").strip().lower() in _UNKNOWN_APP_IDS
 
 
 def _feedback_failure_reason(failure_case: dict[str, Any]) -> str:

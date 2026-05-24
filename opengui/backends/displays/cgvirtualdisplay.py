@@ -201,7 +201,12 @@ def _has_virtual_display_runtime(objc_module: Any) -> bool:
     try:
         objc_module.lookUpClass("CGVirtualDisplay")
         objc_module.lookUpClass("CGVirtualDisplayMode")
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            "macOS CGVirtualDisplay runtime probe failed: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return False
     return True
 
@@ -212,7 +217,12 @@ def _screen_recording_allowed(quartz_module: Any) -> bool:
         return False
     try:
         return bool(check())
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "macOS screen recording permission probe failed: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return False
 
 
@@ -221,7 +231,12 @@ def _accessibility_allowed(quartz_module: Any) -> bool:
     if check is not None:
         try:
             return bool(check())
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "macOS Quartz accessibility probe failed, trying ctypes fallback: %s",
+                type(exc).__name__,
+                exc_info=True,
+            )
             pass
     return _accessibility_allowed_via_ctypes()
 
@@ -231,7 +246,12 @@ def _accessibility_allowed_via_ctypes() -> bool:
         application_services = ctypes.cdll.LoadLibrary(
             "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
         )
-    except Exception:
+    except Exception as exc:
+        logger.debug(
+            "macOS ctypes accessibility framework load failed: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return False
 
     check = getattr(application_services, "AXIsProcessTrusted", None)
@@ -240,7 +260,12 @@ def _accessibility_allowed_via_ctypes() -> bool:
     try:
         check.restype = ctypes.c_bool
         return bool(check())
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "macOS ctypes accessibility permission probe failed: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return False
 
 
@@ -250,5 +275,10 @@ def _event_post_allowed(quartz_module: Any) -> bool:
         return False
     try:
         return bool(check())
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "macOS event-post permission probe failed: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
         return False

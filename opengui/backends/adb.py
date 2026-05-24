@@ -44,31 +44,7 @@ logger = logging.getLogger(__name__)
 # Keycode mapping
 # ---------------------------------------------------------------------------
 
-_KEYCODE_MAP: dict[str, str] = {
-    "home": "KEYCODE_HOME",
-    "back": "KEYCODE_BACK",
-    "enter": "KEYCODE_ENTER",
-    "return": "KEYCODE_ENTER",
-    "tab": "KEYCODE_TAB",
-    "delete": "KEYCODE_DEL",
-    "backspace": "KEYCODE_DEL",
-    "volumeup": "KEYCODE_VOLUME_UP",
-    "volume_up": "KEYCODE_VOLUME_UP",
-    "volumedown": "KEYCODE_VOLUME_DOWN",
-    "volume_down": "KEYCODE_VOLUME_DOWN",
-    "power": "KEYCODE_POWER",
-    "menu": "KEYCODE_MENU",
-    "recents": "KEYCODE_APP_SWITCH",
-    "app_switch": "KEYCODE_APP_SWITCH",
-    "escape": "KEYCODE_ESCAPE",
-    "space": "KEYCODE_SPACE",
-    "search": "KEYCODE_SEARCH",
-    "camera": "KEYCODE_CAMERA",
-    "left": "KEYCODE_DPAD_LEFT",
-    "right": "KEYCODE_DPAD_RIGHT",
-    "up": "KEYCODE_DPAD_UP",
-    "down": "KEYCODE_DPAD_DOWN",
-}
+from opengui.backends.keycodes import ANDROID_KEYCODE_MAP as _KEYCODE_MAP, canonical_key_name  # noqa: E402
 
 _WM_SIZE_RE = re.compile(r"Physical size:\s*(\d+)x(\d+)", re.IGNORECASE)
 _RESUMED_ACTIVITY_RE = re.compile(
@@ -435,6 +411,57 @@ class AdbError(Exception):
         self.stderr = stderr
 
 
+# -- root probe error classification -----------------------------------------
+
+_ADB_TRANSPORT_ERROR_SUBSTRINGS: tuple[str, ...] = (
+    "device offline",
+    "device unauthorized",
+    "no devices/emulators found",
+    "device not found",
+    "more than one device/emulator",
+)
+
+
+def _is_adb_transport_error(exc: Exception) -> bool:
+    """Return True when *exc* indicates a device/adb connection problem."""
+    detail = str(exc).lower()
+    return any(marker in detail for marker in _ADB_TRANSPORT_ERROR_SUBSTRINGS)
+
+
+def _is_expected_root_probe_failure(exc: Exception) -> bool:
+    """Return True when *exc* is an expected "root not available" response.
+
+    Transport errors (device offline, etc.) return False so they propagate.
+    Root-unavailable errors (permission denied, su not found) return True.
+    Unknown AdbError variants also return False.
+    """
+    if isinstance(exc, AdbError):
+        detail = f"{exc.stderr}\n{exc}".lower()
+        # Re-raise transport errors so callers can detect connection problems
+        if any(marker in detail for marker in _ADB_TRANSPORT_ERROR_SUBSTRINGS):
+            return False
+        # Expected "no root" signatures — device has no su, or su rejects us
+        if any(marker in detail for marker in (
+            "permission denied",
+            "operation not permitted",
+            "not permitted",
+            "inaccessible or not found",
+            "su: inaccessible",
+            "su: not found",
+            "not found",
+            "invalid uid/gid",
+            "invalid option",
+            "usage: su",
+        )):
+            return True
+        # Unknown adb error — propagate for visibility
+        return False
+    # Timeout or unexpected exception type — propagate
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return False
+    return False
+
+
 def _escape_shell_text(text: str) -> str:
     """Escape text for ``adb shell input text``."""
     # Android's `input text` command treats `%s` as a space placeholder.
@@ -625,17 +652,26 @@ class AdbBackend:
 
     async def root_available(self, *, timeout: float = 3.0) -> bool:
         cached = getattr(self, "_root_available_cache", None)
-        if isinstance(cached, bool):
-            return cached
+        if cached is True:
+            return True
         for probe in ("su 0 id", "su -c id"):
             try:
                 output = await self._run("shell", probe, timeout=timeout)
-            except Exception:
+            except AdbError as exc:
+                if not _is_expected_root_probe_failure(exc):
+                    raise
+                logger.debug(
+                    "ADB root probe not available: probe=%r error_type=%s",
+                    probe,
+                    type(exc).__name__,
+                )
                 continue
+            except (asyncio.TimeoutError, TimeoutError):
+                raise
             if "uid=0" in output or "root" in output.lower():
                 self._root_available_cache = True
                 return True
-        self._root_available_cache = False
+            logger.debug("ADB root probe did not succeed: probe=%r", probe)
         return False
 
     async def run_as_root(self, command: str, *, timeout: float = 10.0) -> str:
@@ -946,9 +982,8 @@ class AdbBackend:
     ) -> dict[str, Any]:
         if not self._collect_ui_tree:
             return {}
-        # uiautomator dump is noticeably slower than screenshot capture on real
-        # devices; a 1s cap is too aggressive and silently drops the tree.
-        ui_timeout = max(0.2, min(timeout, 5.0))
+        # uiautomator dump can be slow on accessibility-heavy app pages.
+        ui_timeout = max(0.2, min(timeout, 10.0))
         attempts = [
             ("uiautomator", "dump", "--compressed", _DEVICE_UI_XML_PATH),
             ("uiautomator", "dump", _DEVICE_UI_XML_PATH),
@@ -971,8 +1006,12 @@ class AdbBackend:
             except Exception as exc:
                 last_error = exc
                 continue
-        logger.warning("ADB UI-tree capture unavailable after retries: %s", last_error)
-        return {}
+        message = str(last_error or "unknown error")
+        logger.warning("ADB UI-tree capture unavailable after retries: %s", message)
+        return {
+            "ui_tree_error": message,
+            "ui_tree_timeout_s": ui_timeout,
+        }
 
     async def shutdown(self) -> None:
         if self._frame_source is not None:
@@ -1264,7 +1303,8 @@ class AdbBackend:
             keys = action.key or []
             keycodes: list[str] = []
             for k in keys:
-                keycode = _KEYCODE_MAP.get(k.lower().strip())
+                canonical = canonical_key_name(k)
+                keycode = _KEYCODE_MAP.get(canonical)
                 if keycode is None:
                     raise ValueError(
                         f"Unknown key {k!r}. Supported: {sorted(_KEYCODE_MAP.keys())}"

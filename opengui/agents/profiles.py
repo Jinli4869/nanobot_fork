@@ -82,6 +82,7 @@ _PROFILE_ALIASES: dict[str | None, str] = {
 
 _CLAUDE_IMAGE_SIZE = (1280, 720)
 _CLAUDE_OPUS_MAX_DIMENSION = 1280
+DEFAULT_SCROLL_PIXELS = 500
 
 _MOBILEWORLD_TOOL = {
     "type": "function",
@@ -784,6 +785,7 @@ def _to_opengui_payload(action: dict[str, Any], *, summary: str) -> dict[str, An
         payload.update({
             "action_type": "scroll",
             "direction": action.get("direction", action.get("text", "down")),
+            "pixels": action.get("pixels", DEFAULT_SCROLL_PIXELS),
             "x": action.get("x"),
             "y": action.get("y"),
         })
