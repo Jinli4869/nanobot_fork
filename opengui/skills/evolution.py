@@ -12,7 +12,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -128,13 +127,15 @@ async def evolve_failed_skill_from_trace(
         }
     feedback = library.feedback_for_skill(original.skill_id)
 
-    response = await llm.chat(_build_messages(
-        task=task or failure_case.task,
-        original=original,
-        failure_case=failure_case,
-        feedback=feedback,
-        events=events,
-    ))
+    response = await llm.chat(
+        _build_messages(
+            task=task or failure_case.task,
+            original=original,
+            failure_case=failure_case,
+            feedback=feedback,
+            events=events,
+        )
+    )
     candidate = _parse_skill_response(response.content, original=original)
     if candidate is None:
         return {
@@ -222,10 +223,12 @@ def _build_messages(
         if encoded is None:
             continue
         content.append({"type": "text", "text": f"\nScreenshot {index}: {path.name}"})
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/png;base64,{encoded}"},
-        })
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{encoded}"},
+            }
+        )
     return [{"role": "user", "content": content}]
 
 
@@ -235,13 +238,17 @@ def _parse_skill_response(text: str, *, original: Skill) -> Skill | None:
         first_newline = cleaned.find("\n")
         last_fence = cleaned.rfind("```")
         if first_newline >= 0 and last_fence > first_newline:
-            cleaned = cleaned[first_newline + 1:last_fence].strip()
+            cleaned = cleaned[first_newline + 1 : last_fence].strip()
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
         logger.warning("Failed to parse skill evolution response as JSON")
         return None
-    if not isinstance(data, dict) or not isinstance(data.get("steps"), list) or not data.get("steps"):
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("steps"), list)
+        or not data.get("steps")
+    ):
         return None
 
     platform = str(data.get("platform") or original.platform)
@@ -250,34 +257,40 @@ def _parse_skill_response(text: str, *, original: Skill) -> Skill | None:
     for raw_step in data.get("steps") or []:
         if not isinstance(raw_step, dict) or not raw_step.get("action_type"):
             continue
-        steps.append(SkillStep(
-            action_type=str(raw_step["action_type"]),
-            target=str(raw_step.get("target") or ""),
-            parameters=dict(raw_step.get("parameters") or {}),
-            expected_state=raw_step.get("expected_state"),
-            valid_state=raw_step.get("valid_state"),
-            state_contract=normalize_state_contract(raw_step.get("state_contract")),
-            fixed=bool(raw_step.get("fixed", False)),
-            fixed_values=dict(raw_step.get("fixed_values") or {}),
-        ))
+        steps.append(
+            SkillStep(
+                action_type=str(raw_step["action_type"]),
+                target=str(raw_step.get("target") or ""),
+                parameters=dict(raw_step.get("parameters") or {}),
+                expected_state=raw_step.get("expected_state"),
+                valid_state=raw_step.get("valid_state"),
+                state_contract=normalize_state_contract(raw_step.get("state_contract")),
+                fixed=bool(raw_step.get("fixed", False)),
+                fixed_values=dict(raw_step.get("fixed_values") or {}),
+            )
+        )
     if not steps:
         return None
-    return normalize_skill_app(Skill(
-        skill_id=original.skill_id,
-        name=str(data.get("name") or original.name),
-        description=str(data.get("description") or original.description),
-        app=app,
-        platform=platform,
-        steps=tuple(steps),
-        parameters=tuple(str(item) for item in (data.get("parameters") or original.parameters)),
-        preconditions=tuple(str(item) for item in (data.get("preconditions") or original.preconditions)),
-        tags=tuple(str(item) for item in (data.get("tags") or original.tags)),
-        created_at=original.created_at,
-        success_count=original.success_count,
-        failure_count=original.failure_count,
-        success_streak=original.success_streak,
-        failure_streak=original.failure_streak,
-    ))
+    return normalize_skill_app(
+        Skill(
+            skill_id=original.skill_id,
+            name=str(data.get("name") or original.name),
+            description=str(data.get("description") or original.description),
+            app=app,
+            platform=platform,
+            steps=tuple(steps),
+            parameters=tuple(str(item) for item in (data.get("parameters") or original.parameters)),
+            preconditions=tuple(
+                str(item) for item in (data.get("preconditions") or original.preconditions)
+            ),
+            tags=tuple(str(item) for item in (data.get("tags") or original.tags)),
+            created_at=original.created_at,
+            success_count=original.success_count,
+            failure_count=original.failure_count,
+            success_streak=original.success_streak,
+            failure_streak=original.failure_streak,
+        )
+    )
 
 
 def _focused_input_contracts_from_events(
@@ -294,7 +307,11 @@ def _focused_input_contracts_from_events(
         if action.get("action_type") == "input_text" and previous_observation is not None:
             contract = infer_focused_input_contract(
                 previous_observation.get("extra") or {},
-                app=str(previous_observation.get("foreground_app") or previous_observation.get("app") or app),
+                app=str(
+                    previous_observation.get("foreground_app")
+                    or previous_observation.get("app")
+                    or app
+                ),
             )
             if contract:
                 contracts.append(contract)
@@ -317,10 +334,12 @@ async def _evolution_rejection_reason(
         return "empty_steps"
     if embedding_provider is None:
         return None
-    vectors = await embedding_provider.embed([
-        _skill_search_text(original),
-        _skill_search_text(candidate),
-    ])
+    vectors = await embedding_provider.embed(
+        [
+            _skill_search_text(original),
+            _skill_search_text(candidate),
+        ]
+    )
     if vectors is None or len(vectors) < 2:
         return None
     similarity = _cosine_similarity(vectors[0], vectors[1])
@@ -352,7 +371,9 @@ def _build_failure_case(
         skill_id = str(failed_step.get("skill_id") or "")
     if not skill_id:
         return None
-    observation = failed_step.get("observation") if isinstance(failed_step.get("observation"), dict) else None
+    observation = (
+        failed_step.get("observation") if isinstance(failed_step.get("observation"), dict) else None
+    )
     return SkillFailureCase(
         trace=str(trace_path),
         task=str(task or ""),
@@ -362,7 +383,9 @@ def _build_failure_case(
         failed_step_index=_optional_int(failed_step.get("step_index")),
         failed_target=str(failed_step.get("target") or ""),
         failed_valid_state=failed_step.get("valid_state"),
-        failed_state_contract=failed_step.get("state_contract") if isinstance(failed_step.get("state_contract"), dict) else None,
+        failed_state_contract=failed_step.get("state_contract")
+        if isinstance(failed_step.get("state_contract"), dict)
+        else None,
         failure_observation=observation,
         failure_screenshot_path=failed_step.get("screenshot_path"),
         failure_error=failed_step.get("error"),
@@ -372,7 +395,8 @@ def _build_failure_case(
 
 def _failed_skill_step(events: list[dict[str, Any]], *, skill_id: str) -> dict[str, Any]:
     matching = [
-        event for event in events
+        event
+        for event in events
         if event.get("type") == "skill_step"
         and (not skill_id or str(event.get("skill_id") or "") == skill_id)
     ]
