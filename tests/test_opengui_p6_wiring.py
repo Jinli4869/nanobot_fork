@@ -29,9 +29,16 @@ def test_gui_config_accepts_embedding_model_alias() -> None:
     """GuiConfig must deserialise the camelCase alias 'embeddingModel'."""
     from nanobot.config.schema import Config
 
-    config = Config(gui={"backend": "dry-run", "embeddingModel": "text-embedding-3-small"})
+    config = Config(gui={
+        "backend": "dry-run",
+        "embeddingModel": "text-embedding-3-small",
+        "embeddingApiKey": "embed-key",
+        "embeddingApiBase": "https://embed.example/v1",
+    })
     assert config.gui is not None
     assert config.gui.embedding_model == "text-embedding-3-small"
+    assert config.gui.embedding_api_key == "embed-key"
+    assert config.gui.embedding_api_base == "https://embed.example/v1"
 
 
 def test_gui_config_accepts_model_provider_and_evaluation_aliases() -> None:
@@ -154,6 +161,48 @@ async def test_gui_tool_wires_embedding_adapter_when_configured(
     assert call_kwargs.get("model") == "resolved/embed-model"
     assert call_kwargs.get("input") == ["hello", "world"]
     assert call_kwargs.get("api_key") == "sk-test"
+
+
+@pytest.mark.asyncio
+async def test_gui_tool_embedding_endpoint_overrides_gui_provider_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import litellm
+
+    from nanobot.agent.tools.gui import GuiSubagentTool
+    from nanobot.config.schema import Config
+
+    fake_response = SimpleNamespace(data=[SimpleNamespace(embedding=[1.0, 2.0])])
+    aembedding_mock = AsyncMock(return_value=fake_response)
+    monkeypatch.setattr(litellm, "aembedding", aembedding_mock)
+
+    provider = _FakeCustomLikeProvider(SimpleNamespace(data=[]))
+    config = Config(gui={
+        "backend": "dry-run",
+        "embeddingModel": "openai/text-embedding-v4",
+        "embeddingApiKey": "embed-key",
+        "embeddingApiBase": "https://embed.example/v1",
+    })
+    assert config.gui is not None
+
+    tool = GuiSubagentTool(
+        gui_config=config.gui,
+        provider=provider,  # type: ignore[arg-type]
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    result = await tool._embedding_adapter.embed(["hello"])
+
+    assert result.shape == (1, 2)
+    provider._client.embeddings.create.assert_not_awaited()
+    aembedding_mock.assert_awaited_once()
+    call_kwargs = aembedding_mock.await_args.kwargs
+    assert call_kwargs["model"] == "openai/text-embedding-v4"
+    assert call_kwargs["api_key"] == "embed-key"
+    assert call_kwargs["api_base"] == "https://embed.example/v1"
+    assert "https://embed.example/v1" in (tool._embedding_signature or "")
 
 
 @pytest.mark.asyncio

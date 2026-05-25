@@ -367,6 +367,8 @@ def _apply_runner_config(config: Any, args: argparse.Namespace, runner_config: d
     config.gui.grounder_model = args.grounder_model or gui.get("grounder_model") or config.gui.grounder_model
     config.gui.reuser_model = args.reuser_model or gui.get("reuser_model") or config.gui.reuser_model
     config.gui.embedding_model = args.embedding_model or gui.get("embedding_model") or config.gui.embedding_model
+    config.gui.embedding_api_key = args.embedding_api_key or gui.get("embedding_api_key") or config.gui.embedding_api_key
+    config.gui.embedding_api_base = args.embedding_api_base or gui.get("embedding_api_base") or config.gui.embedding_api_base
     config.gui.agent_profile = args.gui_agent_profile or gui.get("agent_profile") or config.gui.agent_profile
     config.gui.skill_threshold = float(args.skill_threshold if args.skill_threshold is not None else gui.get("skill_threshold", config.gui.skill_threshold))
     if args.enable_skill_execution is not None:
@@ -882,6 +884,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grounder-model", default=None)
     parser.add_argument("--reuser-model", default=None)
     parser.add_argument("--embedding-model", default=None)
+    parser.add_argument("--embedding-api-key", default=None)
+    parser.add_argument("--embedding-api-base", default=None)
     parser.add_argument("--skill-threshold", type=float, default=None)
     parser.add_argument("--enable-skill-execution", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--enable-skill-extraction", action=argparse.BooleanOptionalAction, default=None)
