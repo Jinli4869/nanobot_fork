@@ -26,8 +26,7 @@ logger = logging.getLogger(__name__)
 _UNKNOWN_APP_IDS = {"", "unknown", "app-package-or-name"}
 
 _EXTRACT_PROMPT = """\
-Extract ALL reusable GUI skills as Python code from this trajectory.
-Output every distinct logical skill as a separate @skill function in ONE valid Python file.
+Extract a reusable GUI skill as Python code from this trajectory.
 
 Target format:
 {code_header}
@@ -44,7 +43,7 @@ async def skill_name(device, param1, param2):
                  valid_state="input field is focused")
 
 Rules:
-- Output ALL distinct logical skills as separate @skill functions in the same file.
+- Extract ONE cohesive skill that covers the core action sequence. Do NOT split into multiple tiny @skill functions.
 - fixed=true + fixed_values: static UI (nav bars, toolbar, system actions, open_app). Copy exact x/y/text from the trajectory step params shown after "|".
 - fixed=false: dynamic content (search results, variable input). Use {{{{param}}}} placeholders, omit fixed_values.
 - Collapse all app-launch steps into ONE open_app as the first step.
