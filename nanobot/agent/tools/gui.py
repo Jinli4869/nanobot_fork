@@ -1098,7 +1098,10 @@ class GuiSubagentTool(Tool):
 
         embedding_model = resolved_model
 
-        direct_client = getattr(self._provider, "_client", None)
+        use_independent_endpoint = bool(
+            self._gui_config.embedding_api_key or self._gui_config.embedding_api_base
+        )
+        direct_client = None if use_independent_endpoint else getattr(self._provider, "_client", None)
         if direct_client is not None and hasattr(direct_client, "embeddings"):
             direct_model = self._normalize_direct_embedding_model(embedding_model)
 
@@ -1125,10 +1128,10 @@ class GuiSubagentTool(Tool):
                 # expect an explicit encoding_format. LiteLLM may default to an unsupported
                 # format for some providers if omitted.
                 kwargs["encoding_format"] = "float"
-                api_key = getattr(provider, "api_key", None)
+                api_key = self._gui_config.embedding_api_key or getattr(provider, "api_key", None)
                 if api_key:
                     kwargs["api_key"] = api_key
-                api_base = getattr(provider, "api_base", None)
+                api_base = self._gui_config.embedding_api_base or getattr(provider, "api_base", None)
                 if not api_base:
                     api_base = self._default_embedding_api_base(resolved_model)
                 if api_base:
@@ -1158,8 +1161,11 @@ class GuiSubagentTool(Tool):
         if not embedding_model:
             raise ValueError("embedding model is required to build embedding adapter")
 
-        resolve = getattr(self._provider, "_resolve_model", None)
-        resolved = resolve(embedding_model) if callable(resolve) else embedding_model
+        if self._gui_config.embedding_api_key or self._gui_config.embedding_api_base:
+            resolved = embedding_model
+        else:
+            resolve = getattr(self._provider, "_resolve_model", None)
+            resolved = resolve(embedding_model) if callable(resolve) else embedding_model
 
         # DashScope's compatible-mode endpoint is OpenAI-style under LiteLLM.
         # When users configure bare model names like "text-embedding-v4", normalize
@@ -1167,7 +1173,7 @@ class GuiSubagentTool(Tool):
         if (
             isinstance(resolved, str)
             and "/" not in resolved
-            and (self._gui_config.provider or "").strip().lower() == "dashscope"
+            and self._embedding_uses_dashscope()
         ):
             return f"openai/{resolved}"
         return resolved
@@ -1178,17 +1184,23 @@ class GuiSubagentTool(Tool):
             return None
 
         resolved_model = self._resolve_embedding_model()
-        direct_client = getattr(self._provider, "_client", None)
+        use_independent_endpoint = bool(
+            self._gui_config.embedding_api_key or self._gui_config.embedding_api_base
+        )
+        direct_client = None if use_independent_endpoint else getattr(self._provider, "_client", None)
         if direct_client is not None and hasattr(direct_client, "embeddings"):
             resolved_model = self._normalize_direct_embedding_model(resolved_model)
 
         gateway = getattr(self._provider, "_gateway", None)
-        provider_name = (
-            getattr(gateway, "name", None)
-            or getattr(gateway, "litellm_prefix", None)
-            or self._provider.__class__.__name__
-        )
-        api_base = getattr(self._provider, "api_base", None)
+        if use_independent_endpoint:
+            provider_name = "embedding_endpoint"
+        else:
+            provider_name = (
+                getattr(gateway, "name", None)
+                or getattr(gateway, "litellm_prefix", None)
+                or self._provider.__class__.__name__
+            )
+        api_base = self._gui_config.embedding_api_base or getattr(self._provider, "api_base", None)
         if not api_base:
             api_base = getattr(self._provider, "_api_base", None)
         if not api_base:
@@ -1200,10 +1212,14 @@ class GuiSubagentTool(Tool):
         parts.append(resolved_model)
         return "|".join(parts)
 
+    def _embedding_uses_dashscope(self) -> bool:
+        provider_name = (self._gui_config.provider or "").strip().lower()
+        api_base = (self._gui_config.embedding_api_base or "").strip().lower()
+        return provider_name == "dashscope" or "dashscope" in api_base
+
     def _default_embedding_api_base(self, resolved_model: str) -> str | None:
         """Return provider-specific fallback API base for embedding requests."""
-        provider_name = (self._gui_config.provider or "").strip().lower()
-        if provider_name == "dashscope" and resolved_model.startswith("openai/"):
+        if self._embedding_uses_dashscope() and resolved_model.startswith("openai/"):
             return "https://dashscope.aliyuncs.com/compatible-mode/v1"
         return None
 
