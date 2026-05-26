@@ -36,7 +36,7 @@ def _nanobot_tool_response(
     call_id: str,
 ) -> Any:
     return NanobotLLMResponse(
-        content=content,
+        content=_profile_content(content, arguments),
         tool_calls=[
             ToolCallRequest(
                 id=call_id,
@@ -45,6 +45,22 @@ def _nanobot_tool_response(
             )
         ],
     )
+
+
+def _profile_content(thought: str, arguments: dict[str, Any]) -> str:
+    action_type = arguments.get("action_type")
+    if action_type == "done":
+        goal_status = "complete" if arguments.get("status", "success") == "success" else "failed"
+        action = {"action_type": "status", "goal_status": goal_status}
+    elif action_type == "wait":
+        action = {"action_type": "wait"}
+    elif action_type == "input_text":
+        action = {"action_type": "input_text", "text": arguments.get("text", "")}
+    elif action_type == "request_intervention":
+        action = {"action_type": "request_intervention", "text": arguments.get("text", "")}
+    else:
+        action = arguments
+    return f"Thought: {thought}\nAction: {json.dumps(action, ensure_ascii=False)}"
 
 
 if _NANOBOT_IMPORT_ERROR is None:
@@ -109,6 +125,7 @@ def _dry_run_tool(
     from nanobot.agent.tools.gui import GuiSubagentTool
 
     responses = [
+        NanobotLLMResponse(content='{"mode":"single","subtasks":[]}'),
         _nanobot_tool_response(
             content="Action: wait",
             arguments={"action_type": "wait", "duration_ms": 1},

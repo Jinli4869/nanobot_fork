@@ -129,11 +129,11 @@ def test_general_e2e_scroll_adds_opengui_default_pixels() -> None:
     arguments = normalized.tool_calls[0].arguments
     assert arguments["action_type"] == "scroll"
     assert arguments["direction"] == "up"
-    assert arguments["pixels"] == 40
+    assert arguments["pixels"] == 400
     action = parse_action(arguments)
     assert action.action_type == "scroll"
     assert action.text == "up"
-    assert action.pixels == 40
+    assert action.pixels == 400
 
 
 def test_qwen3vl_parse_uses_real_screen_dimensions() -> None:
@@ -163,10 +163,12 @@ def test_qwen3vl_parse_uses_real_screen_dimensions() -> None:
 async def test_gui_agent_uses_mobileworld_messages_and_raw_history(tmp_path: Path) -> None:
     first_response = 'Thought: wait\nAction: {"action_type":"wait"}'
     second_response = 'Thought: done\nAction: {"action_type":"status","goal_status":"complete"}'
-    llm = _RecordingLLM([
-        LLMResponse(content=first_response, tool_calls=None),
-        LLMResponse(content=second_response, tool_calls=None),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(content=first_response, tool_calls=None),
+            LLMResponse(content=second_response, tool_calls=None),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),

@@ -40,6 +40,8 @@ _ANDROID_PACKAGE_DISPLAY_NAMES: dict[str, str] = {
     # Transport & Maps
     "com.sdu.didi.psnger": "滴滴出行/DiDi",
     "com.autonavi.minimap": "高德地图/Amap",
+    "com.baidu.BaiduMap": "百度地图/Baidu Maps",
+    "com.tencent.map": "腾讯地图/Tencent Maps",
     "cn.caocaokeji.user": "曹操出行/CaoCao",
     "com.lalamove.huolala.client": "货拉拉/Huolala",
     "com.jingyao.easybike": "哈啰/Hellobike",
@@ -67,10 +69,21 @@ _ANDROID_PACKAGE_DISPLAY_NAMES: dict[str, str] = {
     # Entertainment
     "com.ss.android.ugc.aweme": "抖音/Douyin",
     "com.netease.cloudmusic": "网易云音乐/NetEase Music",
+    "com.ximalaya.ting.android": "喜马拉雅/Ximalaya/Himalaya",
+    "com.tencent.qqmusic": "QQ音乐/QQ Music",
+    "com.kugou.android": "酷狗音乐/Kugou Music",
+    "com.tencent.karaoke": "全民K歌/WeSing",
+    "com.qiyi.video": "爱奇艺/iQIYI",
+    "com.tencent.qqlive": "腾讯视频/Tencent Video",
+    "com.youku.phone": "优酷/Youku",
+    "com.smile.gifmaker": "快手/Kuaishou",
+    "com.kuaishou.nebula": "快手极速版/Kuaishou Lite",
+    "com.ss.android.article.news": "今日头条/Toutiao",
     "com.google.android.youtube": "YouTube",
     "com.bytedance.dreamina": "即梦/Dreamina",
     # Work & Productivity
     "com.ss.android.lark": "飞书/Lark",
+    "com.alibaba.android.rimet": "钉钉/DingTalk",
     "com.tencent.wework": "企业微信/WeCom",
     "com.tencent.wemeet.app": "腾讯会议/VooV",
     "com.tencent.docs": "腾讯文档/Tencent Docs",
@@ -91,6 +104,9 @@ _ANDROID_PACKAGE_DISPLAY_NAMES: dict[str, str] = {
     "com.pocketpalai": "PocketPal AI",
     # Reading & Cloud
     "com.tencent.weread": "微信读书/WeRead",
+    "com.dragon.read": "番茄小说/Fanqie Novel",
+    "com.qidian.QDReader": "起点读书/Qidian",
+    "com.baidu.searchbox": "百度/Baidu",
     "com.baidu.netdisk": "百度网盘/Baidu Netdisk",
     "net.csdn.csdnplus": "CSDN",
     # Google
@@ -145,6 +161,8 @@ _ANDROID_PACKAGE_DISPLAY_NAMES: dict[str, str] = {
     "org.zotero.android": "Zotero",
     "com.server.auditor.ssh.client": "Termius",
     "com.quark.browser": "夸克/Quark",
+    "com.tencent.mtt": "QQ浏览器/QQ Browser",
+    "com.UCMobile": "UC浏览器/UC Browser",
     "mark.via": "Via Browser",
     # VPN & Security
     "com.tailscale.ipn": "Tailscale",
@@ -197,8 +215,11 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "google mail": "com.google.android.gm",
     "google gmail": "com.google.android.gm",
     "google chrome": "com.android.chrome",
+    "chrome browser": "com.android.chrome",
     "wechat": "com.tencent.mm",
+    "weixin": "com.tencent.mm",
     "alipay": "com.eg.android.AlipayGphone",
+    "zhifubao": "com.eg.android.AlipayGphone",
     "taobao": "com.taobao.taobao",
     "jd": "com.jingdong.app.mall",
     "jingdong": "com.jingdong.app.mall",
@@ -209,9 +230,18 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "bili": "tv.danmaku.bili",
     "b站": "tv.danmaku.bili",
     "哔站": "tv.danmaku.bili",
+    "ximalaya": "com.ximalaya.ting.android",
+    "himalaya": "com.ximalaya.ting.android",
+    "qqmusic": "com.tencent.qqmusic",
+    "kugou": "com.kugou.android",
+    "iqiyi": "com.qiyi.video",
+    "kuaishou": "com.smile.gifmaker",
+    "kwai": "com.smile.gifmaker",
+    "toutiao": "com.ss.android.article.news",
     "didi": "com.sdu.didi.psnger",
     "weibo": "com.sina.weibo",
     "zhihu": "com.zhihu.android",
+    "xhs": "com.xingin.xhs",
     "redbook": "com.xingin.xhs",
     "rednote": "com.xingin.xhs",
     "xiaohongshu": "com.xingin.xhs",
@@ -222,14 +252,50 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "携程旅行": "ctrip.android.view",
     "lark": "com.ss.android.lark",
     "feishu": "com.ss.android.lark",
+    "dingtalk": "com.alibaba.android.rimet",
     "wecom": "com.tencent.wework",
+    "voov": "com.tencent.wemeet.app",
+    "tencent meeting": "com.tencent.wemeet.app",
+    "tencent docs": "com.tencent.docs",
     "weread": "com.tencent.weread",
+    "fanqie": "com.dragon.read",
+    "qidian": "com.qidian.QDReader",
+    "baidu": "com.baidu.searchbox",
     "amap": "com.autonavi.minimap",
     "gaode": "com.autonavi.minimap",
+    "google map": "com.google.android.apps.maps",
+    "google maps": "com.google.android.apps.maps",
+    "baidu map": "com.baidu.BaiduMap",
+    "baidu maps": "com.baidu.BaiduMap",
+    "tencent map": "com.tencent.map",
+    "tencent maps": "com.tencent.map",
     "play store": "com.android.vending",
     "google play": "com.android.vending",
     "twitter": "com.twitter.android",
 }
+
+
+_ANDROID_ALIAS_SUFFIXES = (
+    " app",
+    " application",
+    " 应用",
+    " 软件",
+    " 客户端",
+    "app",
+    "应用",
+    "软件",
+    "客户端",
+)
+_ANDROID_ALIAS_PREFIXES = (
+    "打开",
+    "启动",
+    "开启",
+    "运行",
+    "进入",
+    "open ",
+    "launch ",
+    "start ",
+)
 
 
 def _build_android_aliases() -> dict[str, str]:
@@ -251,6 +317,25 @@ def _build_android_aliases() -> dict[str, str]:
 
 
 _ANDROID_APP_ALIASES = _build_android_aliases()
+
+
+def _lookup_android_alias(lowered: str) -> str | None:
+    candidates = [lowered]
+    for prefix in _ANDROID_ALIAS_PREFIXES:
+        if lowered.startswith(prefix) and len(lowered) > len(prefix):
+            candidates.append(lowered[len(prefix):].strip())
+    for candidate in candidates:
+        package = _ANDROID_APP_ALIASES.get(candidate)
+        if package:
+            return package
+        for suffix in _ANDROID_ALIAS_SUFFIXES:
+            if candidate.endswith(suffix) and len(candidate) > len(suffix):
+                stem = candidate[: -len(suffix)].strip()
+                if stem:
+                    package = _ANDROID_APP_ALIASES.get(stem)
+                    if package:
+                        return package
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -289,8 +374,9 @@ def resolve_android_package(app_text: str) -> str:
     if not cleaned:
         return app_text or ""
     lowered = cleaned.lower()
-    if lowered in _ANDROID_APP_ALIASES:
-        return _ANDROID_APP_ALIASES[lowered]
+    package = _lookup_android_alias(lowered)
+    if package:
+        return package
     return cleaned
 
 
@@ -478,8 +564,9 @@ def normalize_app_identifier(platform: str, app: str) -> str:
     lowered = cleaned.lower()
 
     if platform_key == "android":
-        if lowered in _ANDROID_APP_ALIASES:
-            return _ANDROID_APP_ALIASES[lowered]
+        package = _lookup_android_alias(lowered)
+        if package:
+            return package
         if "." in cleaned:
             return lowered
 

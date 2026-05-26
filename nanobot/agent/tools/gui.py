@@ -163,11 +163,19 @@ class GuiWorkflowRunner:
                         "information from one app into another.\n"
                         "3. For multi_app, split into the fewest ordered app-scoped subtasks. "
                         "All operations within the same app must be merged into one subtask.\n"
-                        "4. Return at most 3 subtasks. Each subtask must have: "
+                        "4. Each subtask.task must be a high-level app-scoped goal, not a UI action script. "
+                        "Do not invent tap/click/swipe/type sequences, menu paths, button names, "
+                        "or screen-by-screen steps. Preserve the user's concrete values and constraints, "
+                        "and leave UI action planning to GuiAgent.\n"
+                        "5. Return at most 3 subtasks. Each subtask must have: "
                         "app_hint (string or null), task (string), inputs (array of blackboard keys), "
                         "outputs (array of string keys to extract after the subtask). "
-                        "Use inputs only for values produced by earlier subtasks. "
-                        "Only string values can be transferred.\n\n"
+                        "Declare outputs for values needed by later subtasks or by the final answer, "
+                        "even when no later subtask consumes them. Use inputs only for values produced "
+                        "by earlier subtasks. Only string values can be transferred.\n"
+                        "6. For comparison or research tasks across apps, each app subtask should output "
+                        "the comparable facts it found, while inputs usually stay empty unless one app "
+                        "needs a value from an earlier app.\n\n"
                         "Examples:\n"
                         "Input: Open Settings and turn on mobile network\n"
                         "Output: {\"mode\":\"single\",\"subtasks\":[]}\n"
@@ -602,8 +610,11 @@ class GuiSubagentTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Execute a GUI automation task on a device. The task is performed by "
-            "a vision-action agent that observes screenshots and executes actions. "
+            "Execute a GUI automation goal on a device through a vision-action agent "
+            "that observes screenshots and executes actions. Pass a high-level app-scoped "
+            "goal with user-provided constraints and values; do not invent low-level UI "
+            "paths, menu locations, button names, or tap-by-tap instructions unless the "
+            "user explicitly provided them or they come from reliable known context. "
             "Returns a structured result with success status, summary, and trace path."
         )
 
@@ -614,7 +625,14 @@ class GuiSubagentTool(Tool):
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "The GUI task to perform.",
+                    "description": (
+                        "The GUI goal to perform. Include the target app, desired final "
+                        "state, and values to use. Preserve explicit user instructions, "
+                        "but avoid speculative step-by-step UI navigation. Prefer "
+                        "'In Bilibili, search for X and play the first relevant result' "
+                        "over 'tap the search bar, type X, tap search, tap the first result' "
+                        "unless those exact steps were provided by the user."
+                    ),
                 },
                 "backend": {
                     "type": "string",

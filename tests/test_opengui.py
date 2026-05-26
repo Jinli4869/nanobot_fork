@@ -66,7 +66,7 @@ def _qwen_response(
     return LLMResponse(
         content=(
             f"Thought: {thought}\n"
-            f"Action: \"{action_text}\"\n"
+            f'Action: "{action_text}"\n'
             f"<tool_call>{json.dumps(tool_call, ensure_ascii=False)}</tool_call>"
         ),
         tool_calls=None,
@@ -92,7 +92,10 @@ def _mobileworld_action_from_tool_args(args: dict) -> dict:
             "end_coordinate": [args.get("x2", 500), args.get("y2", 500)],
         }
     if action_type == "scroll":
-        return {"action_type": "scroll", "direction": args.get("direction") or args.get("text", "down")}
+        return {
+            "action_type": "scroll",
+            "direction": args.get("direction") or args.get("text", "down"),
+        }
     if action_type == "input_text":
         return {"action_type": "input_text", "text": args.get("text", "")}
     if action_type == "open_app":
@@ -148,7 +151,9 @@ class _RecordingLLM(_ScriptedLLM):
         super().__init__(responses)
         self.calls: list[list[dict]] = []
 
-    async def chat(self, messages, tools=None, tool_choice=None, model=None, max_tokens=None) -> LLMResponse:
+    async def chat(
+        self, messages, tools=None, tool_choice=None, model=None, max_tokens=None
+    ) -> LLMResponse:
         self.calls.append(copy.deepcopy(messages))
         return await super().chat(messages, tools=tools, tool_choice=tool_choice)
 
@@ -205,11 +210,13 @@ class _SkillTestBackend:
 
 
 def test_parse_scroll_allows_center_default() -> None:
-    action = parse_action({
-        "action_type": "scroll",
-        "direction": "left",
-        "pixels": 180,
-    })
+    action = parse_action(
+        {
+            "action_type": "scroll",
+            "direction": "left",
+            "pixels": 180,
+        }
+    )
 
     assert action.x is None
     assert action.y is None
@@ -218,20 +225,24 @@ def test_parse_scroll_allows_center_default() -> None:
 
 def test_parse_scroll_rejects_partial_coordinates() -> None:
     with pytest.raises(ActionError, match="requires both 'x' and 'y'"):
-        parse_action({
-            "action_type": "scroll",
-            "x": 100,
-            "pixels": 180,
-        })
+        parse_action(
+            {
+                "action_type": "scroll",
+                "x": 100,
+                "pixels": 180,
+            }
+        )
 
 
 def test_parse_action_unwraps_singleton_coordinate_lists() -> None:
-    action = parse_action({
-        "action": "tap",
-        "x": [417],
-        "y": [129],
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action": "tap",
+            "x": [417],
+            "y": [129],
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 417.0
@@ -240,11 +251,13 @@ def test_parse_action_unwraps_singleton_coordinate_lists() -> None:
 
 
 def test_parse_action_splits_paired_coordinates_from_x_list() -> None:
-    action = parse_action({
-        "action": "tap",
-        "x": [498, 441],
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action": "tap",
+            "x": [498, 441],
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 498.0
@@ -253,11 +266,13 @@ def test_parse_action_splits_paired_coordinates_from_x_list() -> None:
 
 
 def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> None:
-    action = parse_action({
-        "action": "tap",
-        "x": "[903, 130]",
-        "relative": "true",
-    })
+    action = parse_action(
+        {
+            "action": "tap",
+            "x": "[903, 130]",
+            "relative": "true",
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 903.0
@@ -266,11 +281,13 @@ def test_parse_action_splits_paired_coordinates_from_stringified_x_list() -> Non
 
 
 def test_parse_action_maps_coordinate_alias_pair() -> None:
-    action = parse_action({
-        "action": "tap",
-        "coordinate": [500, 261],
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action": "tap",
+            "coordinate": [500, 261],
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 500.0
@@ -279,10 +296,12 @@ def test_parse_action_maps_coordinate_alias_pair() -> None:
 
 
 def test_parse_action_maps_stringified_coordinate_alias_pair() -> None:
-    action = parse_action({
-        "action": "tap",
-        "coordinate": "[780, 503]",
-    })
+    action = parse_action(
+        {
+            "action": "tap",
+            "coordinate": "[780, 503]",
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 780.0
@@ -382,7 +401,9 @@ async def test_adb_ui_tree_capture_retries_without_compressed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_adb_ui_tree_capture_logs_warning_after_retry_failure(caplog: pytest.LogCaptureFixture) -> None:
+async def test_adb_ui_tree_capture_logs_warning_after_retry_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     backend = AdbBackend(use_scrcpy=False, collect_ui_tree=True)
     calls: list[tuple[str, ...]] = []
 
@@ -612,12 +633,14 @@ def test_shortcut_skill_ids_and_agent_tool_names_do_not_collide() -> None:
 
 
 def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
-    action = parse_action({
-        "action_type": "swipe",
-        "start_coordinate": [120, 340],
-        "end_coordinate": [760, 355],
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "swipe",
+            "start_coordinate": [120, 340],
+            "end_coordinate": [760, 355],
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "swipe"
     assert action.x == 120.0
@@ -628,11 +651,13 @@ def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
 
 
 def test_parse_swipe_maps_coordinate_and_coordinate2_aliases() -> None:
-    action = parse_action({
-        "action": "swipe",
-        "coordinate": [120, 340],
-        "coordinate2": [760, 355],
-    })
+    action = parse_action(
+        {
+            "action": "swipe",
+            "coordinate": [120, 340],
+            "coordinate2": [760, 355],
+        }
+    )
 
     assert action.action_type == "swipe"
     assert action.x == 120.0
@@ -642,12 +667,14 @@ def test_parse_swipe_maps_coordinate_and_coordinate2_aliases() -> None:
 
 
 def test_parse_action_unwraps_duplicated_y_list() -> None:
-    action = parse_action({
-        "action_type": "tap",
-        "x": 321,
-        "y": [957, 957],
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "tap",
+            "x": 321,
+            "y": [957, 957],
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 321.0
@@ -656,12 +683,14 @@ def test_parse_action_unwraps_duplicated_y_list() -> None:
 
 
 def test_parse_action_unwraps_duplicated_stringified_y_list() -> None:
-    action = parse_action({
-        "action_type": "tap",
-        "x": 321,
-        "y": "[957, 957]",
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "tap",
+            "x": 321,
+            "y": "[957, 957]",
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "tap"
     assert action.x == 321.0
@@ -690,11 +719,13 @@ def test_scale_image_ratio_one_keeps_original_bytes() -> None:
 
 
 def test_parse_swipe_splits_all_coordinates_from_x_list() -> None:
-    action = parse_action({
-        "action_type": "swipe",
-        "x": [120, 340, 760, 355],
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "swipe",
+            "x": [120, 340, 760, 355],
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "swipe"
     assert action.x == 120.0
@@ -705,11 +736,13 @@ def test_parse_swipe_splits_all_coordinates_from_x_list() -> None:
 
 
 def test_parse_swipe_splits_all_coordinates_from_stringified_x_list() -> None:
-    action = parse_action({
-        "action_type": "swipe",
-        "x": "[120, 340, 760, 355]",
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "swipe",
+            "x": "[120, 340, 760, 355]",
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "swipe"
     assert action.x == 120.0
@@ -721,23 +754,27 @@ def test_parse_swipe_splits_all_coordinates_from_stringified_x_list() -> None:
 
 def test_parse_swipe_rejects_noop_path() -> None:
     with pytest.raises(ActionError, match="start and end coordinates must differ"):
-        parse_action({
-            "action_type": "swipe",
-            "x": 500,
-            "y": 700,
-            "x2": 500,
-            "y2": 700,
-            "relative": True,
-        })
+        parse_action(
+            {
+                "action_type": "swipe",
+                "x": 500,
+                "y": 700,
+                "x2": 500,
+                "y2": 700,
+                "relative": True,
+            }
+        )
 
 
 def test_parse_swipe_accepts_endpoint_only_coordinates() -> None:
-    action = parse_action({
-        "action_type": "swipe",
-        "x2": 500,
-        "y2": 749,
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "swipe",
+            "x2": 500,
+            "y2": 749,
+            "relative": True,
+        }
+    )
 
     assert action.action_type == "swipe"
     assert action.x == 500.0
@@ -795,6 +832,30 @@ def test_annotate_android_apps_filters_unmapped_packages() -> None:
     assert not any("com.unknown.xyz" in entry for entry in result)
 
 
+def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
+    from opengui.skills.normalization import normalize_app_identifier, resolve_android_package
+
+    cases = {
+        "喜马拉雅": "com.ximalaya.ting.android",
+        "喜马拉雅App": "com.ximalaya.ting.android",
+        "打开喜马拉雅App": "com.ximalaya.ting.android",
+        "ximalaya app": "com.ximalaya.ting.android",
+        "open ximalaya app": "com.ximalaya.ting.android",
+        "himalaya": "com.ximalaya.ting.android",
+        "B站": "tv.danmaku.bili",
+        "小红书客户端": "com.xingin.xhs",
+        "QQ音乐": "com.tencent.qqmusic",
+        "百度地图": "com.baidu.BaiduMap",
+        "Google Maps app": "com.google.android.apps.maps",
+        "Chrome browser": "com.android.chrome",
+        "钉钉": "com.alibaba.android.rimet",
+    }
+
+    for alias, package in cases.items():
+        assert resolve_android_package(alias) == package
+        assert normalize_app_identifier("android", alias) == package
+
+
 def test_build_system_prompt_android_apps_shows_display_names_only() -> None:
     prompt = build_system_prompt(
         platform="android",
@@ -829,11 +890,13 @@ async def test_adb_backend_ensure_yadb_pushes_packaged_asset_when_missing(
     yadb_asset.write_bytes(b"jar-data")
 
     monkeypatch.setattr(backend, "_get_packaged_yadb_path", lambda: yadb_asset)
-    run_mock = AsyncMock(side_effect=[
-        AdbError("missing"),
-        "",
-        "",
-    ])
+    run_mock = AsyncMock(
+        side_effect=[
+            AdbError("missing"),
+            "",
+            "",
+        ]
+    )
     monkeypatch.setattr(backend, "_run", run_mock)
 
     assert await backend._ensure_yadb_available(timeout=5.0) is True
@@ -867,18 +930,25 @@ async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch
     run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
 
-    action = parse_action({
-        "action_type": "tap",
-        "x": 500,
-        "y": 250,
-        "relative": True,
-    })
+    action = parse_action(
+        {
+            "action_type": "tap",
+            "x": 500,
+            "y": 250,
+            "relative": True,
+        }
+    )
     await backend.execute(action)
 
     expected_x = resolve_coordinate(500, 200, relative=True)
     expected_y = resolve_coordinate(250, 400, relative=True)
     run_mock.assert_awaited_once_with(
-        "shell", "input", "tap", str(expected_x), str(expected_y), timeout=5.0,
+        "shell",
+        "input",
+        "tap",
+        str(expected_x),
+        str(expected_y),
+        timeout=5.0,
     )
 
 
@@ -931,9 +1001,11 @@ async def test_adb_backend_foreground_app_uses_activity_dump_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(return_value="""
+    run_mock = AsyncMock(
+        return_value="""
       mResumedActivity: ActivityRecord{123 u0 com.coloros.calendar/.MainActivity t12}
-    """)
+    """
+    )
     monkeypatch.setattr(backend, "_run", run_mock)
 
     assert await backend._query_foreground_app(timeout=5.0) == "com.coloros.calendar"
@@ -951,10 +1023,12 @@ async def test_adb_backend_foreground_app_falls_back_to_window_dump(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "header without resumed activity",
-        "mCurrentFocus=Window{42 u0 com.android.settings/com.android.settings.Settings}",
-    ])
+    run_mock = AsyncMock(
+        side_effect=[
+            "header without resumed activity",
+            "mCurrentFocus=Window{42 u0 com.android.settings/com.android.settings.Settings}",
+        ]
+    )
     monkeypatch.setattr(backend, "_run", run_mock)
 
     assert await backend._query_foreground_app(timeout=5.0) == "com.android.settings"
@@ -963,12 +1037,18 @@ async def test_adb_backend_foreground_app_falls_back_to_window_dump(
 
 
 def test_adb_backend_extract_foreground_app_supports_multiple_android_signals() -> None:
-    assert AdbBackend._extract_foreground_app(
-        "topResumedActivity=ActivityRecord{7 u0 com.heytap.browser/.Main t11}"
-    ) == "com.heytap.browser"
-    assert AdbBackend._extract_foreground_app(
-        "mFocusedApp=AppWindowToken{ token=Token{ ActivityRecord{7 u0 com.android.settings/.Settings t11}}}"
-    ) == "com.android.settings"
+    assert (
+        AdbBackend._extract_foreground_app(
+            "topResumedActivity=ActivityRecord{7 u0 com.heytap.browser/.Main t11}"
+        )
+        == "com.heytap.browser"
+    )
+    assert (
+        AdbBackend._extract_foreground_app(
+            "mFocusedApp=AppWindowToken{ token=Token{ ActivityRecord{7 u0 com.android.settings/.Settings t11}}}"
+        )
+        == "com.android.settings"
+    )
     assert AdbBackend._extract_foreground_app("no foreground info here") == "unknown"
 
 
@@ -1082,15 +1162,26 @@ async def test_hdc_backend_scroll_vertical_direction_is_inverted(
     run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
 
-    action = parse_action({
-        "action_type": "scroll",
-        "direction": direction,
-        "pixels": 120,
-    })
+    action = parse_action(
+        {
+            "action_type": "scroll",
+            "direction": direction,
+            "pixels": 120,
+        }
+    )
     await backend.execute(action)
 
     run_mock.assert_awaited_once_with(
-        "shell", "uitest", "uiInput", "swipe", "200", "400", "200", str(expected_y2), "2000", timeout=5.0,
+        "shell",
+        "uitest",
+        "uiInput",
+        "swipe",
+        "200",
+        "400",
+        "200",
+        str(expected_y2),
+        "2000",
+        timeout=5.0,
     )
 
 
@@ -1215,11 +1306,13 @@ async def test_ios_backend_scroll_vertical_direction_is_inverted(
     backend._screen_width = 400
     backend._screen_height = 800
 
-    action = parse_action({
-        "action_type": "scroll",
-        "direction": direction,
-        "pixels": 120,
-    })
+    action = parse_action(
+        {
+            "action_type": "scroll",
+            "direction": direction,
+            "pixels": 120,
+        }
+    )
     await backend.execute(action)
 
     assert backend._client._session.swipe_calls == [(200, 400, 200, expected_y2, 0.3)]
@@ -1263,7 +1356,7 @@ def test_agent_keeps_absolute_coordinates_for_other_models(tmp_path: Path) -> No
 def test_qwen3vl_profile_normalizes_content_only_response() -> None:
     response = LLMResponse(
         content=(
-            'Thought: I found the target\n'
+            "Thought: I found the target\n"
             'Action: "Tap target"\n'
             '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>'
         ),
@@ -1286,10 +1379,7 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
 
 def test_qwen3vl_profile_rejects_action_json_without_tool_call() -> None:
     response = LLMResponse(
-        content=(
-            'Thought: I found a target\n'
-            'Action: {"action":"click","coordinate":[500,250]}'
-        ),
+        content=('Thought: I found a target\nAction: {"action":"click","coordinate":[500,250]}'),
         tool_calls=None,
     )
 
@@ -1300,7 +1390,7 @@ def test_qwen3vl_profile_rejects_action_json_without_tool_call() -> None:
 def test_qwen3vl_profile_uses_mobileworld_conclusion_as_summary() -> None:
     response = LLMResponse(
         content=(
-            'Thought: I found the target\n'
+            "Thought: I found the target\n"
             'Action: "Tap login"\n'
             '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250],"summary":"tap login button","intent":"tap login button"}}</tool_call>'
         ),
@@ -1323,7 +1413,7 @@ def test_qwen3vl_profile_uses_mobileworld_conclusion_as_summary() -> None:
 def test_qwen3vl_profile_parses_action_type_key() -> None:
     response = LLMResponse(
         content=(
-            'Thought: Wait here\n'
+            "Thought: Wait here\n"
             'Action: "Wait"\n'
             '<tool_call>{"name":"mobile_use","arguments":{"action":"wait"}}</tool_call>'
         ),
@@ -1343,7 +1433,7 @@ def test_qwen3vl_profile_parses_action_type_key() -> None:
 def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> None:
     response = LLMResponse(
         content=(
-            'Thought: Open Chrome\n'
+            "Thought: Open Chrome\n"
             'Action: "Open Chrome"\n'
             '<tool_call>{"name":"mobile_use","arguments":{"action":"open","text":"chrome"}}</tool_call>'
         ),
@@ -1371,7 +1461,7 @@ def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> 
 
 def test_qwen3vl_profile_rejects_provider_tool_calls_when_content_contract_is_missing() -> None:
     response = LLMResponse(
-        content='Thought: Continue\nAction: Tap the next result',
+        content="Thought: Continue\nAction: Tap the next result",
         tool_calls=[
             ToolCall(
                 id="provider-tool-call-0",
@@ -1446,7 +1536,7 @@ def test_mai_ui_profile_parses_swipe_direction_scroll() -> None:
     assert normalized.tool_calls[0].arguments == {
         "action_type": "scroll",
         "direction": "up",
-        "pixels": 40,
+        "pixels": 400,
         "relative": True,
         "x": 300,
         "y": 700,
@@ -1457,10 +1547,7 @@ def test_mai_ui_profile_parses_swipe_direction_scroll() -> None:
 
 def test_mai_ui_profile_rejects_action_json_without_tool_call() -> None:
     response = LLMResponse(
-        content=(
-            "<thinking>open app</thinking>\n"
-            'Action: {"action":"open","text":"Settings"}\n'
-        ),
+        content=('<thinking>open app</thinking>\nAction: {"action":"open","text":"Settings"}\n'),
         tool_calls=None,
     )
 
@@ -1472,7 +1559,7 @@ def test_qwen3vl_profile_parses_tool_call_block_with_text_action() -> None:
     response = LLMResponse(
         content=(
             "Thought: Continue\n"
-            'Action: Tap the next result\n'
+            "Action: Tap the next result\n"
             '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[700,240]}}</tool_call>'
         ),
         tool_calls=None,
@@ -1519,16 +1606,18 @@ def test_mai_ui_profile_parses_tool_call_block() -> None:
 async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "grounder.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([
-        LLMResponse(
-            content=(
-                'Thought: Tap the button\n'
-                'Action: "Tap login"\n'
-                '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>'
-            ),
-            tool_calls=None,
-        )
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content=(
+                    "Thought: Tap the button\n"
+                    'Action: "Tap login"\n'
+                    '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[500,250]}}</tool_call>'
+                ),
+                tool_calls=None,
+            )
+        ]
+    )
     grounder = _AgentActionGrounder(llm, model="qwen-vl-max", agent_profile="qwen3vl")
     step = SkillStep(action_type="tap", target="Login button", parameters={"x_hint": "unused"})
 
@@ -1546,16 +1635,18 @@ async def test_agent_action_grounder_uses_profile_seam_for_qwen3vl(tmp_path: Pat
 async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([
-        LLMResponse(
-            content=(
-                'Thought: Move toward the target\n'
-                'Action: "Tap settings"\n'
-                '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[400,300]}}</tool_call>'
-            ),
-            tool_calls=None,
-        )
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content=(
+                    "Thought: Move toward the target\n"
+                    'Action: "Tap settings"\n'
+                    '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[400,300]}}</tool_call>'
+                ),
+                tool_calls=None,
+            )
+        ]
+    )
     backend = _SkillTestBackend()
     validator = _RecordingValidator([True])
     runner = _AgentSubgoalRunner(
@@ -1581,22 +1672,24 @@ async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path
 async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal-record.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([
-        LLMResponse(
-            content=(
-                'Thought: Move toward the target\n'
-                'Action: "Tap settings"\n'
-                '<tool_call>{"name":"computer_use","arguments":{"action_type":"tap","x":400,"y":300,"relative":true}}</tool_call>'
-            ),
-            tool_calls=[
-                ToolCall(
-                    id="subgoal-tool-0",
-                    name="computer_use",
-                    arguments={"action_type": "tap", "x": 400, "y": 300, "relative": True},
-                )
-            ],
-        )
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content=(
+                    "Thought: Move toward the target\n"
+                    'Action: "Tap settings"\n'
+                    '<tool_call>{"name":"computer_use","arguments":{"action_type":"tap","x":400,"y":300,"relative":true}}</tool_call>'
+                ),
+                tool_calls=[
+                    ToolCall(
+                        id="subgoal-tool-0",
+                        name="computer_use",
+                        arguments={"action_type": "tap", "x": 400, "y": 300, "relative": True},
+                    )
+                ],
+            )
+        ]
+    )
     backend = _SkillTestBackend()
     validator = _RecordingValidator([True])
     recorder = _make_recorder(tmp_path, "subgoal trace")
@@ -1678,7 +1771,11 @@ def test_recorder_metrics_include_skill_and_agent_totals(tmp_path: Path) -> None
 
     assert recorder.metrics_path is not None
     metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
-    assert metrics["token_usage"] == {"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11}
+    assert metrics["token_usage"] == {
+        "prompt_tokens": 8,
+        "completion_tokens": 3,
+        "total_tokens": 11,
+    }
     assert metrics["total_token_usage"] == metrics["token_usage"]
     assert metrics["total_duration_s"] == metrics["duration_s"]
     assert metrics["total_steps"] == 1
@@ -1717,16 +1814,20 @@ async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_pat
     """MobileWorld profiles parse textual actions into absolute screenshot pixels."""
     screenshot = tmp_path / "subgoal.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="tap the target",
-            tool_calls=[ToolCall(
-                id="tc-0",
-                name="computer_use",
-                arguments={"action_type": "tap", "x": 900, "y": 941},
-            )],
-        )
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="tap the target",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-0",
+                        name="computer_use",
+                        arguments={"action_type": "tap", "x": 900, "y": 941},
+                    )
+                ],
+            )
+        ]
+    )
     backend = _SkillTestBackend()
     validator = _RecordingValidator([True])
     runner = _AgentSubgoalRunner(
@@ -1764,16 +1865,20 @@ async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> No
             observe_timeouts.append(timeout)
             return await super().observe(screenshot_path, timeout=timeout)
 
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="tap",
-            tool_calls=[ToolCall(
-                id="tc-0",
-                name="computer_use",
-                arguments={"action_type": "tap", "x": 10, "y": 20},
-            )],
-        )
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="tap",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-0",
+                        name="computer_use",
+                        arguments={"action_type": "tap", "x": 10, "y": 20},
+                    )
+                ],
+            )
+        ]
+    )
     runner = _AgentSubgoalRunner(
         llm=llm,
         backend=_TimeoutCapturingBackend(),
@@ -1843,24 +1948,30 @@ async def test_subgoal_runner_settle_behavior(
     monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
 
     # First LLM call returns tap; second returns wait
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="tap",
-            tool_calls=[ToolCall(
-                id="tc-0",
-                name="computer_use",
-                arguments={"action_type": "tap", "x": 10, "y": 20},
-            )],
-        ),
-        LLMResponse(
-            content="wait",
-            tool_calls=[ToolCall(
-                id="tc-1",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 500},
-            )],
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="tap",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-0",
+                        name="computer_use",
+                        arguments={"action_type": "tap", "x": 10, "y": 20},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="wait",
+                tool_calls=[
+                    ToolCall(
+                        id="tc-1",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 500},
+                    )
+                ],
+            ),
+        ]
+    )
     runner = _AgentSubgoalRunner(
         llm=llm,
         backend=_SkillTestBackend(),
@@ -1879,24 +1990,26 @@ async def test_subgoal_runner_settle_behavior(
 
 @pytest.mark.asyncio
 async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content=(
-                'Thought: I should wait briefly\n'
-                'Action: Wait briefly\n'
-                '<tool_call>{"name":"mobile_use","arguments":{"action":"wait"}}</tool_call>'
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content=(
+                    "Thought: I should wait briefly\n"
+                    "Action: Wait briefly\n"
+                    '<tool_call>{"name":"mobile_use","arguments":{"action":"wait"}}</tool_call>'
+                ),
+                tool_calls=None,
             ),
-            tool_calls=None,
-        ),
-        LLMResponse(
-            content=(
-                'Thought: The task is complete\n'
-                'Action: Finish successfully\n'
-                '<tool_call>{"name":"mobile_use","arguments":{"action":"terminate","status":"success"}}</tool_call>'
+            LLMResponse(
+                content=(
+                    "Thought: The task is complete\n"
+                    "Action: Finish successfully\n"
+                    '<tool_call>{"name":"mobile_use","arguments":{"action":"terminate","status":"success"}}</tool_call>'
+                ),
+                tool_calls=None,
             ),
-            tool_calls=None,
-        ),
-    ])
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -1919,10 +2032,16 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
 async def test_agent_runs_with_qwen3vl_mobileworld_coordinates(
     tmp_path: Path,
 ) -> None:
-    llm = _RecordingLLM([
-        _qwen_response({"action": "click", "coordinate": [410, 125]}, action_text="Tap the search bar"),
-        _qwen_response({"action": "terminate", "status": "success"}, action_text="Finish successfully"),
-    ])
+    llm = _RecordingLLM(
+        [
+            _qwen_response(
+                {"action": "click", "coordinate": [410, 125]}, action_text="Tap the search bar"
+            ),
+            _qwen_response(
+                {"action": "terminate", "status": "success"}, action_text="Finish successfully"
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -1941,10 +2060,14 @@ async def test_agent_runs_with_qwen3vl_mobileworld_coordinates(
 
 @pytest.mark.asyncio
 async def test_qwen_profile_history_assistant_has_no_tool_calls(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        _qwen_response({"action": "wait"}, action_text="Wait briefly"),
-        _qwen_response({"action": "terminate", "status": "success"}, action_text="Finish successfully"),
-    ])
+    llm = _RecordingLLM(
+        [
+            _qwen_response({"action": "wait"}, action_text="Wait briefly"),
+            _qwen_response(
+                {"action": "terminate", "status": "success"}, action_text="Finish successfully"
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -1967,9 +2090,13 @@ async def test_qwen_profile_history_assistant_has_no_tool_calls(tmp_path: Path) 
 
 @pytest.mark.asyncio
 async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        _qwen_response({"action": "terminate", "status": "success"}, action_text="Finish successfully"),
-    ])
+    llm = _RecordingLLM(
+        [
+            _qwen_response(
+                {"action": "terminate", "status": "success"}, action_text="Finish successfully"
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -1988,21 +2115,23 @@ async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[
-                ToolCall(
-                    id="provider-tool-call-0",
-                    name="computer_use",
-                    arguments={
-                        "action_type": "done",
-                        "text": "Task completed successfully and search results are visible.",
-                    },
-                )
-            ],
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="provider-tool-call-0",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "done",
+                            "text": "Task completed successfully and search results are visible.",
+                        },
+                    )
+                ],
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -2020,21 +2149,23 @@ async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> 
 
 @pytest.mark.asyncio
 async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[
-                ToolCall(
-                    id="provider-tool-call-0",
-                    name="computer_use",
-                    arguments={
-                        "action_type": "done",
-                        "text": "Task failed because login is required.",
-                    },
-                )
-            ],
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="provider-tool-call-0",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "done",
+                            "text": "Task failed because login is required.",
+                        },
+                    )
+                ],
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -2052,26 +2183,32 @@ async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_pat
 
 @pytest.mark.asyncio
 async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: wait briefly",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-            usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
-        ),
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-            usage={"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: wait briefly",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+                usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
+            ),
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+                usage={"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
+            ),
+        ]
+    )
     recorder = _make_recorder(tmp_path, "Open Settings")
     agent = GuiAgent(
         llm,
@@ -2136,15 +2273,25 @@ async def test_adb_backend_scrolls_horizontally_from_center(
     run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
 
-    action = parse_action({
-        "action_type": "scroll",
-        "direction": "left",
-        "pixels": 120,
-    })
+    action = parse_action(
+        {
+            "action_type": "scroll",
+            "direction": "left",
+            "pixels": 120,
+        }
+    )
     await backend.execute(action)
 
     run_mock.assert_awaited_once_with(
-        "shell", "input", "swipe", "200", "400", "80", "400", "300", timeout=5.0,
+        "shell",
+        "input",
+        "swipe",
+        "200",
+        "400",
+        "80",
+        "400",
+        "300",
+        timeout=5.0,
     )
 
 
@@ -2164,15 +2311,25 @@ async def test_adb_backend_scroll_vertical_direction_is_inverted(
     run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
 
-    action = parse_action({
-        "action_type": "scroll",
-        "direction": direction,
-        "pixels": 120,
-    })
+    action = parse_action(
+        {
+            "action_type": "scroll",
+            "direction": direction,
+            "pixels": 120,
+        }
+    )
     await backend.execute(action)
 
     run_mock.assert_awaited_once_with(
-        "shell", "input", "swipe", "200", "400", "200", expected_y2, "300", timeout=5.0,
+        "shell",
+        "input",
+        "swipe",
+        "200",
+        "400",
+        "200",
+        expected_y2,
+        "300",
+        timeout=5.0,
     )
 
 
@@ -2185,10 +2342,18 @@ async def test_adb_backend_input_text_prefers_yadb(
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
-    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt"))
-    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt")
-    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh"))
-    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh")
+    monkeypatch.setattr(
+        backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt")
+    )
+    monkeypatch.setattr(
+        backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt"
+    )
+    monkeypatch.setattr(
+        backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh")
+    )
+    monkeypatch.setattr(
+        backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh"
+    )
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
@@ -2196,22 +2361,38 @@ async def test_adb_backend_input_text_prefers_yadb(
 
     ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[0].args == (
-        "push", "/tmp/opengui-yadb-input.txt", "/data/local/tmp/opengui-yadb-input.txt",
+        "push",
+        "/tmp/opengui-yadb-input.txt",
+        "/data/local/tmp/opengui-yadb-input.txt",
     )
     assert run_mock.await_args_list[1].args == (
-        "push", "/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.sh",
+        "push",
+        "/tmp/opengui-yadb-input.sh",
+        "/data/local/tmp/opengui-yadb-input.sh",
     )
     assert run_mock.await_args_list[2].args == (
-        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input.sh",
+        "shell",
+        "chmod",
+        "755",
+        "/data/local/tmp/opengui-yadb-input.sh",
     )
     assert run_mock.await_args_list[3].args == (
-        "shell", "sh", "/data/local/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.txt",
+        "shell",
+        "sh",
+        "/data/local/tmp/opengui-yadb-input.sh",
+        "/data/local/tmp/opengui-yadb-input.txt",
     )
     assert run_mock.await_args_list[4].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.txt",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input.txt",
     )
     assert run_mock.await_args_list[5].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.sh",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input.sh",
     )
 
 
@@ -2228,22 +2409,30 @@ async def test_adb_backend_input_text_multiline_sends_each_line_and_enter(
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
-    local_paths = iter([
-        Path("/tmp/opengui-yadb-input-1.txt"),
-        Path("/tmp/opengui-yadb-input-2.txt"),
-    ])
-    device_paths = iter([
-        "/data/local/tmp/opengui-yadb-input-1.txt",
-        "/data/local/tmp/opengui-yadb-input-2.txt",
-    ])
-    script_local_paths = iter([
-        Path("/tmp/opengui-yadb-input-1.sh"),
-        Path("/tmp/opengui-yadb-input-2.sh"),
-    ])
-    script_device_paths = iter([
-        "/data/local/tmp/opengui-yadb-input-1.sh",
-        "/data/local/tmp/opengui-yadb-input-2.sh",
-    ])
+    local_paths = iter(
+        [
+            Path("/tmp/opengui-yadb-input-1.txt"),
+            Path("/tmp/opengui-yadb-input-2.txt"),
+        ]
+    )
+    device_paths = iter(
+        [
+            "/data/local/tmp/opengui-yadb-input-1.txt",
+            "/data/local/tmp/opengui-yadb-input-2.txt",
+        ]
+    )
+    script_local_paths = iter(
+        [
+            Path("/tmp/opengui-yadb-input-1.sh"),
+            Path("/tmp/opengui-yadb-input-2.sh"),
+        ]
+    )
+    script_device_paths = iter(
+        [
+            "/data/local/tmp/opengui-yadb-input-1.sh",
+            "/data/local/tmp/opengui-yadb-input-2.sh",
+        ]
+    )
     monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: next(local_paths))
     monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: next(device_paths))
     monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: next(script_local_paths))
@@ -2253,43 +2442,78 @@ async def test_adb_backend_input_text_multiline_sends_each_line_and_enter(
     await backend.execute(action)
 
     assert run_mock.await_args_list[0].args == (
-        "push", "/tmp/opengui-yadb-input-1.txt", "/data/local/tmp/opengui-yadb-input-1.txt",
+        "push",
+        "/tmp/opengui-yadb-input-1.txt",
+        "/data/local/tmp/opengui-yadb-input-1.txt",
     )
     assert run_mock.await_args_list[1].args == (
-        "push", "/tmp/opengui-yadb-input-1.sh", "/data/local/tmp/opengui-yadb-input-1.sh",
+        "push",
+        "/tmp/opengui-yadb-input-1.sh",
+        "/data/local/tmp/opengui-yadb-input-1.sh",
     )
     assert run_mock.await_args_list[2].args == (
-        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input-1.sh",
+        "shell",
+        "chmod",
+        "755",
+        "/data/local/tmp/opengui-yadb-input-1.sh",
     )
     assert run_mock.await_args_list[3].args == (
-        "shell", "sh", "/data/local/tmp/opengui-yadb-input-1.sh", "/data/local/tmp/opengui-yadb-input-1.txt",
+        "shell",
+        "sh",
+        "/data/local/tmp/opengui-yadb-input-1.sh",
+        "/data/local/tmp/opengui-yadb-input-1.txt",
     )
     assert run_mock.await_args_list[4].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-1.txt",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input-1.txt",
     )
     assert run_mock.await_args_list[5].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-1.sh",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input-1.sh",
     )
     assert run_mock.await_args_list[6].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_ENTER",
     )
     assert run_mock.await_args_list[7].args == (
-        "push", "/tmp/opengui-yadb-input-2.txt", "/data/local/tmp/opengui-yadb-input-2.txt",
+        "push",
+        "/tmp/opengui-yadb-input-2.txt",
+        "/data/local/tmp/opengui-yadb-input-2.txt",
     )
     assert run_mock.await_args_list[8].args == (
-        "push", "/tmp/opengui-yadb-input-2.sh", "/data/local/tmp/opengui-yadb-input-2.sh",
+        "push",
+        "/tmp/opengui-yadb-input-2.sh",
+        "/data/local/tmp/opengui-yadb-input-2.sh",
     )
     assert run_mock.await_args_list[9].args == (
-        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input-2.sh",
+        "shell",
+        "chmod",
+        "755",
+        "/data/local/tmp/opengui-yadb-input-2.sh",
     )
     assert run_mock.await_args_list[10].args == (
-        "shell", "sh", "/data/local/tmp/opengui-yadb-input-2.sh", "/data/local/tmp/opengui-yadb-input-2.txt",
+        "shell",
+        "sh",
+        "/data/local/tmp/opengui-yadb-input-2.sh",
+        "/data/local/tmp/opengui-yadb-input-2.txt",
     )
     assert run_mock.await_args_list[11].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-2.txt",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input-2.txt",
     )
     assert run_mock.await_args_list[12].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input-2.sh",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input-2.sh",
     )
 
 
@@ -2298,13 +2522,15 @@ async def test_adb_backend_input_text_falls_back_to_adb_keyboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.example.ime/.ExampleIme",
-        "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
-        "",
-        "",
-        "",
-    ])
+    run_mock = AsyncMock(
+        side_effect=[
+            "com.example.ime/.ExampleIme",
+            "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
+            "",
+            "",
+            "",
+        ]
+    )
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=False)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
@@ -2316,20 +2542,39 @@ async def test_adb_backend_input_text_falls_back_to_adb_keyboard(
     expected_b64 = base64.b64encode(text.encode("utf-8")).decode("ascii")
     ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[0].args == (
-        "shell", "settings", "get", "secure", "default_input_method",
+        "shell",
+        "settings",
+        "get",
+        "secure",
+        "default_input_method",
     )
     assert run_mock.await_args_list[1].args == (
-        "shell", "ime", "list", "-s",
+        "shell",
+        "ime",
+        "list",
+        "-s",
     )
     assert run_mock.await_args_list[2].args == (
-        "shell", "ime", "set", "com.android.adbkeyboard/.AdbIME",
+        "shell",
+        "ime",
+        "set",
+        "com.android.adbkeyboard/.AdbIME",
     )
     assert run_mock.await_args_list[3].args == (
-        "shell", "am", "broadcast",
-        "-a", "ADB_INPUT_B64", "--es", "msg", expected_b64,
+        "shell",
+        "am",
+        "broadcast",
+        "-a",
+        "ADB_INPUT_B64",
+        "--es",
+        "msg",
+        expected_b64,
     )
     assert run_mock.await_args_list[4].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_ENTER",
     )
 
 
@@ -2338,14 +2583,16 @@ async def test_adb_backend_input_text_enables_adb_keyboard_before_switching(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.example.ime/.ExampleIme",
-        "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
-        "",
-        "",
-        "",
-        "",
-    ])
+    run_mock = AsyncMock(
+        side_effect=[
+            "com.example.ime/.ExampleIme",
+            "com.android.adbkeyboard/.AdbIME\ncom.example.ime/.ExampleIme",
+            "",
+            "",
+            "",
+            "",
+        ]
+    )
     monkeypatch.setattr(backend, "_run", run_mock)
     enable_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_needs_ime_enable_before_set", enable_mock)
@@ -2356,10 +2603,16 @@ async def test_adb_backend_input_text_enables_adb_keyboard_before_switching(
 
     enable_mock.assert_awaited_once_with(timeout=5.0)
     assert run_mock.await_args_list[2].args == (
-        "shell", "ime", "enable", "com.android.adbkeyboard/.AdbIME",
+        "shell",
+        "ime",
+        "enable",
+        "com.android.adbkeyboard/.AdbIME",
     )
     assert run_mock.await_args_list[3].args == (
-        "shell", "ime", "set", "com.android.adbkeyboard/.AdbIME",
+        "shell",
+        "ime",
+        "set",
+        "com.android.adbkeyboard/.AdbIME",
     )
 
 
@@ -2372,10 +2625,18 @@ async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=True)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
-    monkeypatch.setattr(backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt"))
-    monkeypatch.setattr(backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt")
-    monkeypatch.setattr(backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh"))
-    monkeypatch.setattr(backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh")
+    monkeypatch.setattr(
+        backend, "_write_local_temp_text", lambda text: Path("/tmp/opengui-yadb-input.txt")
+    )
+    monkeypatch.setattr(
+        backend, "_make_yadb_device_text_path", lambda: "/data/local/tmp/opengui-yadb-input.txt"
+    )
+    monkeypatch.setattr(
+        backend, "_write_local_temp_yadb_script", lambda: Path("/tmp/opengui-yadb-input.sh")
+    )
+    monkeypatch.setattr(
+        backend, "_make_yadb_device_script_path", lambda: "/data/local/tmp/opengui-yadb-input.sh"
+    )
 
     text = "你好，OpenGUI"
     action = parse_action({"action_type": "input_text", "text": text})
@@ -2384,22 +2645,38 @@ async def test_adb_backend_input_text_falls_back_to_yadb_for_unicode(
     ensure_yadb_mock.assert_awaited_once_with(5.0)
 
     assert run_mock.await_args_list[0].args == (
-        "push", "/tmp/opengui-yadb-input.txt", "/data/local/tmp/opengui-yadb-input.txt",
+        "push",
+        "/tmp/opengui-yadb-input.txt",
+        "/data/local/tmp/opengui-yadb-input.txt",
     )
     assert run_mock.await_args_list[1].args == (
-        "push", "/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.sh",
+        "push",
+        "/tmp/opengui-yadb-input.sh",
+        "/data/local/tmp/opengui-yadb-input.sh",
     )
     assert run_mock.await_args_list[2].args == (
-        "shell", "chmod", "755", "/data/local/tmp/opengui-yadb-input.sh",
+        "shell",
+        "chmod",
+        "755",
+        "/data/local/tmp/opengui-yadb-input.sh",
     )
     assert run_mock.await_args_list[3].args == (
-        "shell", "sh", "/data/local/tmp/opengui-yadb-input.sh", "/data/local/tmp/opengui-yadb-input.txt",
+        "shell",
+        "sh",
+        "/data/local/tmp/opengui-yadb-input.sh",
+        "/data/local/tmp/opengui-yadb-input.txt",
     )
     assert run_mock.await_args_list[4].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.txt",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input.txt",
     )
     assert run_mock.await_args_list[5].args == (
-        "shell", "rm", "-f", "/data/local/tmp/opengui-yadb-input.sh",
+        "shell",
+        "rm",
+        "-f",
+        "/data/local/tmp/opengui-yadb-input.sh",
     )
 
 
@@ -2408,12 +2685,14 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = AdbBackend()
-    run_mock = AsyncMock(side_effect=[
-        "com.example.ime/.ExampleIme",
-        "com.other.ime/.OtherIme",
-        "",
-        "",
-    ])
+    run_mock = AsyncMock(
+        side_effect=[
+            "com.example.ime/.ExampleIme",
+            "com.other.ime/.OtherIme",
+            "",
+            "",
+        ]
+    )
     monkeypatch.setattr(backend, "_run", run_mock)
     ensure_yadb_mock = AsyncMock(return_value=False)
     monkeypatch.setattr(backend, "_ensure_yadb_available", ensure_yadb_mock)
@@ -2424,11 +2703,17 @@ async def test_adb_backend_input_text_falls_back_to_shell_input_for_ascii(
 
     ensure_yadb_mock.assert_awaited_once_with(5.0)
     assert run_mock.await_args_list[2].args == (
-        "shell", "input", "text", "hello%sworld",
+        "shell",
+        "input",
+        "text",
+        "hello%sworld",
     )
     assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[3].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_ENTER",
     )
 
 
@@ -2464,7 +2749,10 @@ async def test_adb_backend_input_text_sends_text_after_emoji_as_later_segment(
 
     assert segments == ["已发送给苏", "✅", "请查收"]
     assert run_mock.await_args_list[0].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_ENTER",
     )
 
 
@@ -2481,15 +2769,24 @@ async def test_adb_backend_enter_and_app_switch_mapping(
     await backend.execute(Action(action_type="app_switch"))
 
     assert run_mock.await_args_list[0].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_ENTER",
     )
     assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[1].args == (
-        "shell", "input", "keyevent", "KEYCODE_ENTER",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_ENTER",
     )
     assert run_mock.await_args_list[1].kwargs == {"timeout": 5.0}
     assert run_mock.await_args_list[2].args == (
-        "shell", "input", "keyevent", "KEYCODE_APP_SWITCH",
+        "shell",
+        "input",
+        "keyevent",
+        "KEYCODE_APP_SWITCH",
     )
     assert run_mock.await_args_list[2].kwargs == {"timeout": 5.0}
 
@@ -2502,13 +2799,15 @@ async def test_adb_backend_hotkey_uses_keycombination_for_multiple_keys(
     run_mock = AsyncMock(return_value="")
     monkeypatch.setattr(backend, "_run", run_mock)
 
-    await backend.execute(
-        parse_action({"action_type": "hotkey", "key": ["power", "volume_down"]})
-    )
+    await backend.execute(parse_action({"action_type": "hotkey", "key": ["power", "volume_down"]}))
 
     assert run_mock.await_count == 1
     assert run_mock.await_args_list[0].args == (
-        "shell", "input", "keycombination", "KEYCODE_POWER", "KEYCODE_VOLUME_DOWN",
+        "shell",
+        "input",
+        "keycombination",
+        "KEYCODE_POWER",
+        "KEYCODE_VOLUME_DOWN",
     )
     assert run_mock.await_args_list[0].kwargs == {"timeout": 5.0}
 
@@ -2557,7 +2856,9 @@ async def test_root_available_does_not_cache_false_on_unavailable(
 
     monkeypatch.setattr(AdbBackend, "_run", fake_run)
     assert await backend.root_available(timeout=0.1) is False
-    assert not hasattr(backend, "_root_available_cache") or backend._root_available_cache is not False
+    assert (
+        not hasattr(backend, "_root_available_cache") or backend._root_available_cache is not False
+    )
     # Verify both probes were attempted (no early cache return)
     assert len(probe_order) == 2
 
@@ -2624,16 +2925,20 @@ async def test_root_available_propagates_timeout(
 @pytest.mark.asyncio
 async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:
     agent = GuiAgent(
-        _ScriptedLLM([
-            LLMResponse(
-                content="wait",
-                tool_calls=[ToolCall(
-                    id="call-1",
-                    name="computer_use",
-                    arguments={"action_type": "wait", "duration_ms": 1},
-                )],
-            ),
-        ]),
+        _ScriptedLLM(
+            [
+                LLMResponse(
+                    content="wait",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "wait", "duration_ms": 1},
+                        )
+                    ],
+                ),
+            ]
+        ),
         DryRunBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "never finishes"),
         artifacts_root=tmp_path / "runs",
@@ -2659,11 +2964,13 @@ async def test_agent_stagnation_detection_terminates_before_max_steps(tmp_path: 
     responses = [
         LLMResponse(
             content=f"wait #{idx}",
-            tool_calls=[ToolCall(
-                id=f"call-{idx}",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
+            tool_calls=[
+                ToolCall(
+                    id=f"call-{idx}",
+                    name="computer_use",
+                    arguments={"action_type": "wait", "duration_ms": 1},
+                )
+            ],
         )
         for idx in range(1, 7)
     ]
@@ -2692,24 +2999,30 @@ async def test_agent_stagnation_detection_terminates_before_max_steps(tmp_path: 
 @pytest.mark.asyncio
 async def test_agent_success_uses_compact_state_note(tmp_path: Path) -> None:
     agent = GuiAgent(
-        _ScriptedLLM([
-            LLMResponse(
-                content="wait",
-                tool_calls=[ToolCall(
-                    id="call-1",
-                    name="computer_use",
-                    arguments={"action_type": "wait", "duration_ms": 1},
-                )],
-            ),
-            LLMResponse(
-                content="finish task",
-                tool_calls=[ToolCall(
-                    id="call-2",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
-            ),
-        ]),
+        _ScriptedLLM(
+            [
+                LLMResponse(
+                    content="wait",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "wait", "duration_ms": 1},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="finish task",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="computer_use",
+                            arguments={"action_type": "done", "status": "success"},
+                        )
+                    ],
+                ),
+            ]
+        ),
         DryRunBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "completed note"),
         artifacts_root=tmp_path / "runs",
@@ -2730,16 +3043,23 @@ async def test_agent_success_uses_compact_state_note(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_agent_intervention_cancelled_returns_blocked_note(tmp_path: Path) -> None:
     agent = GuiAgent(
-        _ScriptedLLM([
-            LLMResponse(
-                content="request help",
-                tool_calls=[ToolCall(
-                    id="call-1",
-                    name="computer_use",
-                    arguments={"action_type": "request_intervention", "text": "Need human input"},
-                )],
-            ),
-        ]),
+        _ScriptedLLM(
+            [
+                LLMResponse(
+                    content="request help",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={
+                                "action_type": "request_intervention",
+                                "text": "Need human input",
+                            },
+                        )
+                    ],
+                ),
+            ]
+        ),
         DryRunBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "intervention note"),
         artifacts_root=tmp_path / "runs",
@@ -2774,9 +3094,9 @@ async def test_agent_stagnation_counter_resets_when_screen_changes(tmp_path: Pat
             img = Image.new("L", (32, 32), color=0)
             draw = ImageDraw.Draw(img)
             if self._observe_calls in {1, 2}:
-                draw.rectangle((16, 0, 31, 31), fill=255)   # right half bright
+                draw.rectangle((16, 0, 31, 31), fill=255)  # right half bright
             else:
-                draw.rectangle((0, 16, 31, 31), fill=255)   # bottom half bright
+                draw.rectangle((0, 16, 31, 31), fill=255)  # bottom half bright
             img.save(screenshot_path, format="PNG")
             return Observation(
                 screenshot_path=str(screenshot_path),
@@ -2786,48 +3106,60 @@ async def test_agent_stagnation_counter_resets_when_screen_changes(tmp_path: Pat
                 platform=self.platform,
             )
 
-    llm = _ScriptedLLM([
-        LLMResponse(
-            content="wait 1",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="wait 2",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="wait 3",
-            tool_calls=[ToolCall(
-                id="call-3",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="wait 4",
-            tool_calls=[ToolCall(
-                id="call-4",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="finish",
-            tool_calls=[ToolCall(
-                id="call-5",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
+    llm = _ScriptedLLM(
+        [
+            LLMResponse(
+                content="wait 1",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="wait 2",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="wait 3",
+                tool_calls=[
+                    ToolCall(
+                        id="call-3",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="wait 4",
+                tool_calls=[
+                    ToolCall(
+                        id="call-4",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="finish",
+                tool_calls=[
+                    ToolCall(
+                        id="call-5",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         _ChangingBackend(),
@@ -2879,25 +3211,31 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_stagnation_detection_generates_termination_summary(tmp_path: Path) -> None:
     summary_text = "Task appears to loop on the same screen. Aborted to avoid repeated actions."
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="wait briefly",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="wait again",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(content=summary_text),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="wait briefly",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="wait again",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(content=summary_text),
+        ]
+    )
 
     agent = GuiAgent(
         llm,
@@ -2922,11 +3260,7 @@ async def test_stagnation_detection_generates_termination_summary(tmp_path: Path
     content = summary_call[-1]["content"]
     assert isinstance(content, list)
     assert content[0]["type"] == "text"
-    prompt_text = "\n".join(
-        block["text"]
-        for block in content
-        if block.get("type") == "text"
-    )
+    prompt_text = "\n".join(block["text"] for block in content if block.get("type") == "text")
     assert "Status: completed|partial|blocked" in prompt_text
 
 
@@ -2951,58 +3285,70 @@ async def test_agent_stagnation_requires_same_action_type(tmp_path: Path) -> Non
             )
 
     agent = GuiAgent(
-        _ScriptedLLM([
-            LLMResponse(
-                content="wait",
-                tool_calls=[ToolCall(
-                    id="call-1",
-                    name="computer_use",
-                    arguments={"action_type": "wait", "duration_ms": 1},
-                )],
-            ),
-            LLMResponse(
-                content="tap",
-                tool_calls=[ToolCall(
-                    id="call-2",
-                    name="computer_use",
-                    arguments={
-                        "action_type": "tap",
-                        "x": 10,
-                        "y": 10,
-                        "relative": True,
-                    },
-                )],
-            ),
-            LLMResponse(
-                content="wait",
-                tool_calls=[ToolCall(
-                    id="call-3",
-                    name="computer_use",
-                    arguments={"action_type": "wait", "duration_ms": 1},
-                )],
-            ),
-            LLMResponse(
-                content="tap",
-                tool_calls=[ToolCall(
-                    id="call-4",
-                    name="computer_use",
-                    arguments={
-                        "action_type": "tap",
-                        "x": 20,
-                        "y": 20,
-                        "relative": True,
-                    },
-                )],
-            ),
-            LLMResponse(
-                content="done",
-                tool_calls=[ToolCall(
-                    id="call-5",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
-            ),
-        ]),
+        _ScriptedLLM(
+            [
+                LLMResponse(
+                    content="wait",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "wait", "duration_ms": 1},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="tap",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="computer_use",
+                            arguments={
+                                "action_type": "tap",
+                                "x": 10,
+                                "y": 10,
+                                "relative": True,
+                            },
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="wait",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-3",
+                            name="computer_use",
+                            arguments={"action_type": "wait", "duration_ms": 1},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="tap",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-4",
+                            name="computer_use",
+                            arguments={
+                                "action_type": "tap",
+                                "x": 20,
+                                "y": 20,
+                                "relative": True,
+                            },
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="done",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-5",
+                            name="computer_use",
+                            arguments={"action_type": "done", "status": "success"},
+                        )
+                    ],
+                ),
+            ]
+        ),
         _StaticScreenshotBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "stagnation action type"),
         artifacts_root=tmp_path / "runs",
@@ -3195,7 +3541,9 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
     attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
     assert attempt_exception["error_type"] == "_StepExecutionError"
     assert "Failed to parse profile response after retries" in attempt_exception["error_message"]
-    assert "malformed click missing coordinate" in attempt_exception["model_response"]["raw_content"]
+    assert (
+        "malformed click missing coordinate" in attempt_exception["model_response"]["raw_content"]
+    )
     assert attempt_exception["model_response"]["tool_calls"] == []
 
 
@@ -3203,26 +3551,32 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
 async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
     tmp_path: Path,
 ) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="wait briefly",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        # Termination summary call (text-only, no tool call) after max_steps hit
-        LLMResponse(content="Waited briefly but ran out of steps. Currently on home screen."),
-        LLMResponse(
-            content="finish task",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="wait briefly",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            # Termination summary call (text-only, no tool call) after max_steps hit
+            LLMResponse(content="Waited briefly but ran out of steps. Currently on home screen."),
+            LLMResponse(
+                content="finish task",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -3238,9 +3592,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
     # calls[0]=attempt1 step, calls[1]=termination summary, calls[2]=attempt2 step
     second_attempt = llm.calls[2]
     retry_text = "\n".join(
-        block["text"]
-        for block in second_attempt[1]["content"]
-        if block.get("type") == "text"
+        block["text"] for block in second_attempt[1]["content"] if block.get("type") == "text"
     )
     assert retry_text == "Open Settings"
 
@@ -3283,41 +3635,47 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
     assert result.success
     second_attempt = llm.calls[4]
     retry_text = "\n".join(
-        block["text"]
-        for block in second_attempt[1]["content"]
-        if block.get("type") == "text"
+        block["text"] for block in second_attempt[1]["content"] if block.get("type") == "text"
     )
     assert retry_text == "retry malformed tool call"
 
 
 @pytest.mark.asyncio
 async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="wait briefly",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="wait again",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "wait", "duration_ms": 1},
-            )],
-        ),
-        LLMResponse(
-            content="finish task",
-            tool_calls=[ToolCall(
-                id="call-3",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="wait briefly",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="wait again",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "wait", "duration_ms": 1},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="finish task",
+                tool_calls=[
+                    ToolCall(
+                        id="call-3",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -3371,35 +3729,41 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
 
 @pytest.mark.asyncio
 async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: Tap login button",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={
-                    "action_type": "tap",
-                    "x": 500,
-                    "y": 250,
-                    "intent": "tap login button",
-                    "summary": "login page is open; login button is visible",
-                },
-            )],
-        ),
-        LLMResponse(
-            content="Action: Finish task",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={
-                    "action_type": "done",
-                    "status": "success",
-                    "intent": "finish login flow",
-                    "summary": "login flow is complete",
-                },
-            )],
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: Tap login button",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "tap",
+                            "x": 500,
+                            "y": 250,
+                            "intent": "tap login button",
+                            "summary": "login page is open; login button is visible",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="Action: Finish task",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "done",
+                            "status": "success",
+                            "intent": "finish login flow",
+                            "summary": "login flow is complete",
+                        },
+                    )
+                ],
+            ),
+        ]
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -3430,8 +3794,12 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
     ]
     assert step_events[0]["action_intent"].startswith("Thought: Action: Tap login button")
     assert step_events[0]["state_summary"].startswith("Thought: Action: Tap login button")
-    assert step_events[1]["model_output"]["action_intent"].startswith("Thought: Action: Finish task")
-    assert step_events[1]["model_output"]["state_summary"].startswith("Thought: Action: Finish task")
+    assert step_events[1]["model_output"]["action_intent"].startswith(
+        "Thought: Action: Finish task"
+    )
+    assert step_events[1]["model_output"]["state_summary"].startswith(
+        "Thought: Action: Finish task"
+    )
 
     mobileworld_trace_path = trace_path.with_name("traj.json")
     mobileworld_trace = json.loads(mobileworld_trace_path.read_text(encoding="utf-8"))
@@ -3443,7 +3811,9 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
     assert traj[0]["intent"].startswith("Thought: Action: Tap login button")
     assert traj[0]["summary"].startswith("Thought: Action: Tap login button")
     assert traj[0]["tool_call"]["name"] == "computer_use"
-    assert traj[0]["tool_call"]["arguments"]["intent"].startswith("Thought: Action: Tap login button")
+    assert traj[0]["tool_call"]["arguments"]["intent"].startswith(
+        "Thought: Action: Tap login button"
+    )
     assert traj[0]["screenshot"].startswith("screenshots/")
     assert traj[0]["marked_screenshot"].startswith("marked_screenshots/")
     assert (trace_path.parent / traj[0]["marked_screenshot"]).exists()
@@ -3454,32 +3824,38 @@ async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> N
     responses = [
         LLMResponse(
             content=f"Action: Step {index}",
-            tool_calls=[ToolCall(
-                id=f"call-{index}",
-                name="computer_use",
-                arguments={
-                    "action_type": "wait",
-                    "duration_ms": 1,
-                    "intent": f"intent {index}",
-                    "summary": f"summary {index}",
-                },
-            )],
+            tool_calls=[
+                ToolCall(
+                    id=f"call-{index}",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "wait",
+                        "duration_ms": 1,
+                        "intent": f"intent {index}",
+                        "summary": f"summary {index}",
+                    },
+                )
+            ],
         )
         for index in range(1, 10)
     ]
-    responses.append(LLMResponse(
-        content="Action: Finish task",
-        tool_calls=[ToolCall(
-            id="call-10",
-            name="computer_use",
-            arguments={
-                "action_type": "done",
-                "status": "success",
-                "intent": "finish task",
-                "summary": "task complete",
-            },
-        )],
-    ))
+    responses.append(
+        LLMResponse(
+            content="Action: Finish task",
+            tool_calls=[
+                ToolCall(
+                    id="call-10",
+                    name="computer_use",
+                    arguments={
+                        "action_type": "done",
+                        "status": "success",
+                        "intent": "finish task",
+                        "summary": "task complete",
+                    },
+                )
+            ],
+        )
+    )
     llm = _RecordingLLM(responses)
     agent = GuiAgent(
         llm,
@@ -3500,9 +3876,7 @@ async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> N
     assert first_user_text.startswith("Open Settings")
     assert "(Previous turn, screen not shown)" in first_user_text
     assistant_texts = [
-        message["content"][0]["text"]
-        for message in tenth_call
-        if message["role"] == "assistant"
+        message["content"][0]["text"] for message in tenth_call if message["role"] == "assistant"
     ]
     assert len(assistant_texts) == 9
     assert assistant_texts[0].startswith("Thought: Action: Step 1")
@@ -3533,24 +3907,30 @@ async def test_agent_waits_for_ui_to_settle_before_observing(
     monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
 
     agent = GuiAgent(
-        _ScriptedLLM([
-            LLMResponse(
-                content="tap the screen",
-                tool_calls=[ToolCall(
-                    id="call-1",
-                    name="computer_use",
-                    arguments={"action_type": "tap", "x": 10, "y": 20},
-                )],
-            ),
-            LLMResponse(
-                content="finish task",
-                tool_calls=[ToolCall(
-                    id="call-2",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
-            ),
-        ]),
+        _ScriptedLLM(
+            [
+                LLMResponse(
+                    content="tap the screen",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "tap", "x": 10, "y": 20},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="finish task",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="computer_use",
+                            arguments={"action_type": "done", "status": "success"},
+                        )
+                    ],
+                ),
+            ]
+        ),
         _SettlingBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "settle"),
         artifacts_root=tmp_path / "runs",

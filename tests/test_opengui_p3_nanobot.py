@@ -58,7 +58,7 @@ def _nanobot_tool_response(
     call_id: str,
 ) -> Any:
     return NanobotLLMResponse(
-        content=content,
+        content=_profile_content(content, arguments),
         tool_calls=[
             ToolCallRequest(
                 id=call_id,
@@ -67,6 +67,22 @@ def _nanobot_tool_response(
             )
         ],
     )
+
+
+def _profile_content(thought: str, arguments: dict[str, Any]) -> str:
+    action_type = arguments.get("action_type")
+    if action_type == "done":
+        goal_status = "complete" if arguments.get("status", "success") == "success" else "failed"
+        action = {"action_type": "status", "goal_status": goal_status}
+    elif action_type == "wait":
+        action = {"action_type": "wait"}
+    elif action_type == "input_text":
+        action = {"action_type": "input_text", "text": arguments.get("text", "")}
+    elif action_type == "request_intervention":
+        action = {"action_type": "request_intervention", "text": arguments.get("text", "")}
+    else:
+        action = arguments
+    return f"Thought: {thought}\nAction: {json.dumps(action, ensure_ascii=False)}"
 
 
 def _nanobot_text_response(content: str) -> Any:
@@ -231,6 +247,8 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
     definitions = registry.get_definitions()
     assert any(defn["function"]["name"] == tool.name for defn in definitions)
     assert tool.description
+    assert "do not invent low-level UI paths" in tool.description
+    assert "avoid speculative step-by-step UI navigation" in tool.parameters["properties"]["task"]["description"]
 
 
 def test_agent_loop_registers_gui_tool_with_gui_runtime_override(tmp_workspace: Path) -> None:
@@ -545,6 +563,92 @@ async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
     assert result["success"] is True
     assert result["summary"] == "done"
     assert result["workflow_mode"] == "single"
+
+
+@pytest.mark.asyncio
+async def test_gui_task_workflow_planner_prompt_keeps_subtasks_high_level() -> None:
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
+    from nanobot.agent.tools.gui import GuiWorkflowRunner
+
+    provider = _MockNanobotProvider([_nanobot_text_response('{"mode":"single","subtasks":[]}')])
+    runner = GuiWorkflowRunner(
+        llm=NanobotLLMAdapter(provider=provider, model=provider.get_default_model()),
+        run_task=AsyncMock(),
+        load_latest_step_event=lambda _path: {},
+    )
+
+    plan = await runner._plan_workflow("Open WeChat and send hello")
+
+    assert plan.mode == "single"
+    prompt = provider.calls[0]["messages"][0]["content"]
+    assert "high-level app-scoped goal" in prompt
+    assert "not a UI action script" in prompt
+    assert "leave UI action planning to GuiAgent" in prompt
+
+
+@pytest.mark.asyncio
+async def test_gui_task_workflow_planner_price_comparison_requires_outputs() -> None:
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
+    from nanobot.agent.tools.gui import GuiWorkflowRunner
+
+    task = "帮我在京东、淘宝、拼多多的旗舰店/自营店，对比一加15 16g+512G的价格"
+    response = json.dumps(
+        {
+            "mode": "multi_app",
+            "subtasks": [
+                {
+                    "app_hint": "京东",
+                    "task": "在京东查询一加15 16G+512G，仅记录旗舰店或自营店的当前价格。",
+                    "inputs": [],
+                    "outputs": ["jd_price"],
+                },
+                {
+                    "app_hint": "淘宝",
+                    "task": "在淘宝查询一加15 16G+512G，仅记录旗舰店或自营店的当前价格。",
+                    "inputs": [],
+                    "outputs": ["taobao_price"],
+                },
+                {
+                    "app_hint": "拼多多",
+                    "task": "在拼多多查询一加15 16G+512G，仅记录旗舰店或自营店的当前价格。",
+                    "inputs": [],
+                    "outputs": ["pinduoduo_price"],
+                },
+            ],
+        },
+        ensure_ascii=False,
+    )
+    provider = _MockNanobotProvider([_nanobot_text_response(response)])
+    runner = GuiWorkflowRunner(
+        llm=NanobotLLMAdapter(provider=provider, model=provider.get_default_model()),
+        run_task=AsyncMock(),
+        load_latest_step_event=lambda _path: {},
+    )
+
+    plan = await runner._plan_workflow(task)
+    normalized = runner._normalize_plan_app_hints(plan, platform="android")
+
+    assert plan.mode == "multi_app"
+    assert len(plan.subtasks) == 3
+    assert [subtask.app_hint for subtask in plan.subtasks] == ["京东", "淘宝", "拼多多"]
+    assert [subtask.inputs for subtask in plan.subtasks] == [(), (), ()]
+    assert [subtask.outputs for subtask in plan.subtasks] == [
+        ("jd_price",),
+        ("taobao_price",),
+        ("pinduoduo_price",),
+    ]
+    assert [subtask.app_hint for subtask in normalized.subtasks] == [
+        "com.jingdong.app.mall",
+        "com.taobao.taobao",
+        "com.xunmeng.pinduoduo",
+    ]
+    prompt = provider.calls[0]["messages"][0]["content"]
+    assert "final answer" in prompt
+    assert "comparison or research tasks across apps" in prompt
+    for subtask in plan.subtasks:
+        assert "click" not in subtask.task.lower()
+        assert "tap" not in subtask.task.lower()
+        assert "swipe" not in subtask.task.lower()
 
 
 @pytest.mark.asyncio
