@@ -47,7 +47,15 @@ class _RecordingLLM:
         self._responses = list(responses)
         self.calls: list[list[dict]] = []
 
-    async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+    async def chat(
+        self,
+        messages,
+        tools=None,
+        tool_choice=None,
+        model=None,
+        max_tokens=None,
+    ) -> LLMResponse:
+        del tools, tool_choice, model, max_tokens
         self.calls.append(copy.deepcopy(messages))
         if not self._responses:
             raise AssertionError("No scripted responses left")
@@ -69,7 +77,7 @@ class _StaticSkillReuser:
 
 def _done_response(call_id: str = "tc_done") -> LLMResponse:
     return LLMResponse(
-        content="Action: Task complete",
+        content='Thought: task complete\nAction: {"action_type":"status","goal_status":"complete"}',
         tool_calls=[ToolCall(
             id=call_id, name="computer_use",
             arguments={"action_type": "done", "status": "success"},
@@ -79,7 +87,7 @@ def _done_response(call_id: str = "tc_done") -> LLMResponse:
 
 def _wait_response(call_id: str = "tc_wait") -> LLMResponse:
     return LLMResponse(
-        content="Action: waiting",
+        content='Thought: waiting\nAction: {"action_type":"wait"}',
         tool_calls=[ToolCall(
             id=call_id, name="computer_use",
             arguments={"action_type": "wait", "duration_ms": 1},
@@ -127,10 +135,10 @@ async def test_memory_injected_into_system_prompt(tmp_path: Path) -> None:
     result = await agent.run("Open Settings", max_retries=1)
     assert result.success
 
-    # System prompt (first message of first LLM call) should contain memory content
-    system_msg = llm.calls[0][0]["content"]
-    assert "Relevant Knowledge" in system_msg
-    assert "Always confirm before deleting" in system_msg
+    # MobileWorld profiles carry memory context in the user instruction payload.
+    first_prompt = json.dumps(llm.calls[0], ensure_ascii=False)
+    assert "Relevant Knowledge" in first_prompt
+    assert "Always confirm before deleting" in first_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -304,9 +312,9 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
     assert result.success
 
     # Memory appeared in system prompt
-    system_msg = agent_llm.calls[0][0]["content"]
-    assert "Settings is the gear icon" in system_msg
-    assert "Confirm before destructive actions" in system_msg
+    first_prompt = json.dumps(agent_llm.calls[0], ensure_ascii=False)
+    assert "Settings is the gear icon" in first_prompt
+    assert "Confirm before destructive actions" in first_prompt
 
     # Trajectory file has correct events
     events = [json.loads(line) for line in recorder.path.read_text().splitlines()]

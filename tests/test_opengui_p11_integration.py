@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -20,6 +21,7 @@ import pytest
 from pydantic import ValidationError
 
 from nanobot.config.schema import GuiConfig
+from opengui.backends.dry_run import _TINY_PNG
 
 # ---------------------------------------------------------------------------
 # GuiConfig schema tests
@@ -115,11 +117,47 @@ class _ScriptedNanobotProvider:
         messages: list[dict[str, Any]],
         tools: Any = None,
         tool_choice: Any = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> Any:
-        del messages, tools, tool_choice
+        del tools, tool_choice, model, max_tokens
+        if _is_workflow_planner_call(messages):
+            from opengui.interfaces import LLMResponse
+
+            return LLMResponse(content='{"mode":"single","subtasks":[]}')
         if not self._responses:
             raise AssertionError("No scripted nanobot responses left.")
-        return self._responses.pop(0)
+        return _profile_response(self._responses.pop(0))
+
+
+def _is_workflow_planner_call(messages: list[dict[str, Any]]) -> bool:
+    if not messages:
+        return False
+    first_content = messages[0].get("content", "")
+    return isinstance(first_content, str) and "narrow GUI task router" in first_content
+
+
+def _profile_response(response: Any) -> Any:
+    tool_calls = getattr(response, "tool_calls", None)
+    if not tool_calls:
+        return response
+    action = dict(tool_calls[0].arguments)
+    action_type = action.get("action_type")
+    if action_type == "done":
+        goal_status = "complete" if action.get("status", "success") == "success" else "failed"
+        profile_action = {"action_type": "status", "goal_status": goal_status}
+    elif action_type == "wait":
+        profile_action = {"action_type": "wait"}
+    elif action_type == "request_intervention":
+        profile_action = {"action_type": "request_intervention", "text": action.get("text", "")}
+    elif action_type == "input_text":
+        profile_action = {"action_type": "input_text", "text": action.get("text", "")}
+    else:
+        profile_action = action
+    return replace(
+        response,
+        content=f"Thought: {response.content}\nAction: {json.dumps(profile_action, ensure_ascii=False)}",
+    )
 
 
 class _InterventionBackend:
@@ -149,7 +187,7 @@ class _InterventionBackend:
             raise AssertionError("No scripted observations left.")
         payload = self._observations.pop(0)
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        screenshot_path.write_bytes(b"png")
+        screenshot_path.write_bytes(_TINY_PNG)
         return self._Observation(
             screenshot_path=str(screenshot_path),
             screen_width=1280,

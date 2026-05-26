@@ -91,6 +91,7 @@ def build_system_prompt(
         "- Treat user constraints as tiered constraints: key constraints (date/time/location/price cap/model) must be exact.",
         "- For size/quantity constraints, prefer exact match; small near-matches may be used only with explicit disclosure in the final response.",
         "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
+        '- If the task enters a sensitive, blocked, or unsafe state requiring user input, return {"action_type":"request_intervention","text":"..."} with a concise reason.',
         "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
         coordinate_rules,
     ])

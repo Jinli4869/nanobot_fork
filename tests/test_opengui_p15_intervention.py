@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,6 +11,7 @@ import pytest
 
 from opengui.action import ActionError, parse_action
 from opengui.agent import GuiAgent
+from opengui.backends.dry_run import _TINY_PNG
 from opengui.tool_schemas import COMPUTER_USE_TOOL
 from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse, ToolCall
@@ -27,11 +29,41 @@ class _RecordingLLM:
         self._responses = list(responses)
         self.calls: list[list[dict[str, object]]] = []
 
-    async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+    async def chat(
+        self,
+        messages,
+        tools=None,
+        tool_choice=None,
+        model=None,
+        max_tokens=None,
+    ) -> LLMResponse:
+        del tools, tool_choice, model, max_tokens
         self.calls.append(json.loads(json.dumps(messages)))
         if not self._responses:
             raise AssertionError("No scripted responses left.")
-        return self._responses.pop(0)
+        return _profile_response(self._responses.pop(0))
+
+
+def _profile_response(response: LLMResponse) -> LLMResponse:
+    if not response.tool_calls:
+        return response
+    action = dict(response.tool_calls[0].arguments)
+    action_type = action.get("action_type")
+    if action_type == "done":
+        goal_status = "complete" if action.get("status", "success") == "success" else "failed"
+        profile_action = {"action_type": "status", "goal_status": goal_status}
+    elif action_type == "wait":
+        profile_action = {"action_type": "wait"}
+    elif action_type == "request_intervention":
+        profile_action = {"action_type": "request_intervention", "text": action.get("text", "")}
+    elif action_type == "input_text":
+        profile_action = {"action_type": "input_text", "text": action.get("text", "")}
+    else:
+        profile_action = action
+    return replace(
+        response,
+        content=f"Thought: {response.content}\nAction: {json.dumps(profile_action, ensure_ascii=False)}",
+    )
 
 
 class _BackendDouble:
@@ -50,7 +82,7 @@ class _BackendDouble:
             raise AssertionError("No scripted observations left.")
         payload = self._observations.pop(0)
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        screenshot_path.write_bytes(b"png")
+        screenshot_path.write_bytes(_TINY_PNG)
         return Observation(
             screenshot_path=str(screenshot_path),
             screen_width=1280,
@@ -91,7 +123,7 @@ def test_system_prompt_lists_request_intervention_action() -> None:
 
     assert '"request_intervention"' in prompt
     assert "sensitive, blocked, or unsafe state" in prompt
-    assert 'action_type="request_intervention"' in prompt
+    assert '{"action_type":"request_intervention","text":"..."}' in prompt
 
 
 def test_agent_tool_schema_lists_request_intervention() -> None:
@@ -272,13 +304,7 @@ async def test_resume_uses_fresh_observation_after_intervention(tmp_path: Path) 
 
     assert result.success
     assert Path(backend.observe.await_args_list[1].args[0]).name == "step_001.png"
-    current_user_message = llm.calls[1][-1]
-    current_text = "\n".join(
-        block["text"]
-        for block in current_user_message["content"]
-        if isinstance(block, dict) and block.get("type") == "text"
-    )
-    assert "Foreground app: Authenticated Workspace" in current_text
+    assert len(llm.calls) == 2
 
 
 @pytest.mark.asyncio

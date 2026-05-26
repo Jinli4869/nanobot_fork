@@ -688,6 +688,8 @@ class GuiAgent:
                 task=task,
                 current_observation=obs,
                 history=history,
+                memory_context=memory_context,
+                skill_context=skill_context,
             )
             prompt_snapshot = self._snapshot_step_prompt(
                 task=task,
@@ -807,11 +809,24 @@ class GuiAgent:
                         cancellation_note = resolution.note or "resume_not_confirmed"
 
                 if intervention_cancelled:
+                    scrubbed_cancellation_note = self._scrub_sensitive_text(cancellation_note)
+                    scrubbed_intervention_summary = (
+                        self._scrub_text_for_artifact_action(
+                            result.state_summary or result.action_summary,
+                            result.action,
+                        )
+                        or result.state_summary
+                        or result.action_summary
+                    )
+                    scrubbed_action_summary = (
+                        self._scrub_text_for_artifact_action(result.action_summary, result.action)
+                        or result.action_summary
+                    )
                     await self._log_attempt_event(
                         run_dir,
                         "intervention_cancelled",
                         step_index=step_index,
-                        note=cancellation_note,
+                        note=scrubbed_cancellation_note,
                     )
                     result = replace(
                         result,
@@ -820,7 +835,7 @@ class GuiAgent:
                             "tool_result": "intervention_cancelled",
                             "intervention": {
                                 "requested": True,
-                                "note": cancellation_note,
+                                "note": scrubbed_cancellation_note,
                             },
                             "next_observation": None,
                             "done": False,
@@ -887,7 +902,8 @@ class GuiAgent:
                     "state_summary": self._scrub_text_for_artifact_action(result.state_summary, result.action),
                     "screenshot_path": (
                         result.next_observation.screenshot_path
-                        if result.next_observation else None
+                        if result.next_observation and result.next_observation.screenshot_path
+                        else obs.screenshot_path
                     ),
                     "done": result.done,
                     "timestamp": time.time(),
@@ -909,27 +925,27 @@ class GuiAgent:
                 screenshot_path=(
                     str(result.next_observation.screenshot_path)
                     if result.next_observation and result.next_observation.screenshot_path
-                    else None
+                    else obs.screenshot_path
                 ),
                 foreground_app=(
                     result.next_observation.foreground_app
-                    if result.next_observation else None
+                    if result.next_observation else obs.foreground_app
                 ),
                 screen_width=(
                     result.next_observation.screen_width
-                    if result.next_observation else None
+                    if result.next_observation else obs.screen_width
                 ),
                 screen_height=(
                     result.next_observation.screen_height
-                    if result.next_observation else None
+                    if result.next_observation else obs.screen_height
                 ),
                 platform=(
                     result.next_observation.platform
-                    if result.next_observation else None
+                    if result.next_observation else obs.platform
                 ),
                 observation_extra=(
                     self._scrub_for_artifact(result.next_observation.extra)
-                    if result.next_observation else None
+                    if result.next_observation else self._scrub_for_artifact(obs.extra)
                 ),
                 interaction_target=self._scrub_for_artifact(result.interaction_target),
                 token_usage=result.step_usage or None,
@@ -941,33 +957,29 @@ class GuiAgent:
             if intervention_cancelled:
                 termination_summary = await self._generate_termination_summary(
                     task=task,
-                    termination_reason=f"Task was interrupted by policy: {cancellation_note}",
+                    termination_reason=f"Task was interrupted by policy: {scrubbed_cancellation_note}",
                     history=summary_history,
                     run_dir=run_dir,
                 )
+                result_summary = self._build_state_note(
+                    status="blocked",
+                    history=summary_history,
+                    current_observation=summary_observation,
+                    error="intervention_cancelled",
+                )
                 return AgentResult(
                     success=False,
-                    summary=termination_summary or self._build_state_note(
-                        status="blocked",
-                        history=summary_history,
-                        current_observation=summary_observation,
-                        error="intervention_cancelled",
-                    ),
-                    model_summary=result.state_summary or result.action_summary,
+                    summary=termination_summary or result_summary,
+                    model_summary=scrubbed_intervention_summary,
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
-                    error=f"intervention_cancelled: {cancellation_note}",
+                    error=f"intervention_cancelled: {scrubbed_cancellation_note}",
                     attempt_summary=self._build_attempt_summary(
-                        failure_reason=f"intervention_cancelled: {cancellation_note}",
-                        result_summary=self._build_state_note(
-                            status="blocked",
-                            history=summary_history,
-                            current_observation=summary_observation,
-                            error="intervention_cancelled",
-                        ),
-                        model_summary=result.state_summary or result.action_summary,
+                        failure_reason=f"intervention_cancelled: {scrubbed_cancellation_note}",
+                        result_summary=result_summary,
+                        model_summary=scrubbed_intervention_summary,
                         action_summaries=tuple(
-                            list(turn.action_summary for turn in history) + [result.action_summary]
+                            list(turn.action_summary for turn in history) + [scrubbed_action_summary]
                         ),
                     ),
                     token_usage=total_usage,
@@ -1678,10 +1690,23 @@ class GuiAgent:
         task: str,
         current_observation: Observation,
         history: list[HistoryTurn],
+        memory_context: str | None = None,
+        skill_context: str | None = None,
     ) -> list[dict[str, Any]]:
+        task_context: list[str] = [task]
+        if memory_context:
+            task_context.extend(["", "Relevant Knowledge:", memory_context])
+        if skill_context:
+            task_context.extend([
+                "",
+                "Previous skill execution (already completed):",
+                skill_context,
+                "",
+                "Check the current screen. If the task is now complete, report completion; otherwise continue with any remaining steps.",
+            ])
         return build_mobileworld_messages(
             self.agent_profile,
-            task=task,
+            task="\n".join(task_context),
             current_observation=current_observation,
             history=history,
             model_name=self.model,
@@ -2254,6 +2279,11 @@ class GuiAgent:
         if isinstance(value, dict):
             scrubbed: dict[str, Any] = {}
             action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
+            intervention_text = (
+                value.get("text")
+                if action_type == "request_intervention" and isinstance(value.get("text"), str)
+                else None
+            )
             for key, item in value.items():
                 if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
                     scrubbed[key] = "<omitted:image-data-url>"
@@ -2263,6 +2293,11 @@ class GuiAgent:
                     scrubbed[key] = "<redacted:intervention_reason>"
                 elif any(token in key.lower() for token in ("password", "secret", "token", "otp", "credential")):
                     scrubbed[key] = "<redacted:sensitive_field>"
+                elif intervention_text and isinstance(item, str):
+                    scrubbed[key] = GuiAgent._scrub_sensitive_text(item).replace(
+                        intervention_text,
+                        "<redacted:intervention_reason>",
+                    )
                 else:
                     scrubbed[key] = GuiAgent._scrub_value(item, redact_input_text=redact_input_text)
             return scrubbed

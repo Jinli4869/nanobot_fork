@@ -13,10 +13,12 @@ import runpy
 import sys
 import textwrap
 import types
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
+from opengui.backends.dry_run import _TINY_PNG
 
 
 def _write_config(path: Path, body: str) -> Path:
@@ -47,11 +49,36 @@ class _ScriptedCliProvider:
         messages: list[dict[str, Any]],
         tools: Any = None,
         tool_choice: Any = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> Any:
-        del messages, tools, tool_choice
+        del messages, tools, tool_choice, model, max_tokens
         if not self._responses:
             raise AssertionError("No scripted CLI responses left.")
-        return self._responses.pop(0)
+        return _profile_response(self._responses.pop(0))
+
+
+def _profile_response(response: Any) -> Any:
+    tool_calls = getattr(response, "tool_calls", None)
+    if not tool_calls:
+        return response
+    action = dict(tool_calls[0].arguments)
+    action_type = action.get("action_type")
+    if action_type == "done":
+        goal_status = "complete" if action.get("status", "success") == "success" else "failed"
+        profile_action = {"action_type": "status", "goal_status": goal_status}
+    elif action_type == "wait":
+        profile_action = {"action_type": "wait"}
+    elif action_type == "request_intervention":
+        profile_action = {"action_type": "request_intervention", "text": action.get("text", "")}
+    elif action_type == "input_text":
+        profile_action = {"action_type": "input_text", "text": action.get("text", "")}
+    else:
+        profile_action = action
+    return replace(
+        response,
+        content=f"Thought: {response.content}\nAction: {json.dumps(profile_action, ensure_ascii=False)}",
+    )
 
 
 class _InterventionCliBackend:
@@ -88,7 +115,7 @@ class _InterventionCliBackend:
             raise AssertionError("No scripted observations left.")
         payload = self._observations.pop(0)
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        screenshot_path.write_bytes(b"png")
+        screenshot_path.write_bytes(_TINY_PNG)
         return self._Observation(
             screenshot_path=str(screenshot_path),
             screen_width=1280,

@@ -34,7 +34,15 @@ class _RecordingLLM:
         self._responses = list(responses)
         self.calls: list[list[dict]] = []
 
-    async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
+    async def chat(
+        self,
+        messages,
+        tools=None,
+        tool_choice=None,
+        model=None,
+        max_tokens=None,
+    ) -> LLMResponse:
+        del tools, tool_choice, model, max_tokens
         self.calls.append(copy.deepcopy(messages))
         if not self._responses:
             raise AssertionError("No scripted responses left")
@@ -43,7 +51,7 @@ class _RecordingLLM:
 
 def _done_response() -> LLMResponse:
     return LLMResponse(
-        content="Action: done",
+        content='Thought: done\nAction: {"action_type":"status","goal_status":"complete"}',
         tool_calls=[ToolCall(
             id="tc_done", name="computer_use",
             arguments={"action_type": "done", "status": "success"},
@@ -91,7 +99,7 @@ async def test_policy_always_included(tmp_path: Path) -> None:
     result = await agent.run("unrelated query", max_retries=1)
     assert result.success
 
-    system_msg = llm.calls[0][0]["content"]
+    system_msg = json.dumps(llm.calls[0], ensure_ascii=False)
     # POLICY always appears
     assert "Never delete user data without confirmation" in system_msg
 
@@ -124,7 +132,7 @@ async def test_memory_context_formatted_in_system_prompt(tmp_path: Path) -> None
     result = await agent.run("go home", max_retries=1)
     assert result.success
 
-    system_msg = llm.calls[0][0]["content"]
+    system_msg = json.dumps(llm.calls[0], ensure_ascii=False)
     # System prompt should contain the "Relevant Knowledge" section
     assert "Relevant Knowledge" in system_msg
     # At least one of our entries should appear

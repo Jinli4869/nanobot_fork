@@ -629,10 +629,7 @@ async def test_foreground_app_macos_returns_app_name() -> None:
     mock_proc = AsyncMock()
     mock_proc.communicate = AsyncMock(return_value=(b"Safari\n", b""))
 
-    with (
-        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
-        patch("asyncio.wait_for", new=AsyncMock(return_value=(b"Safari\n", b""))),
-    ):
+    with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
         name = await backend._query_foreground_app()
 
     assert name == "Safari"
