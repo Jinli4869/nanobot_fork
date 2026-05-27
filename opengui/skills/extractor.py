@@ -25,6 +25,7 @@ from opengui.skills.trajectory_codegen import (
 logger = logging.getLogger(__name__)
 
 _UNKNOWN_APP_IDS = {"", "unknown", "app-package-or-name"}
+_NO_VERIFY_VALID_STATE = "No need to verify"
 
 _EXTRACT_PROMPT = """\
 Extract a reusable GUI skill as Python code from this trajectory.
@@ -34,9 +35,9 @@ Target format:
 
 @skill(app="{app}", platform="{platform}", name="short_name", description="One sentence summary")
 async def skill_name(device, param1, param2):
-    await action("open_app", target="...", fixed=True, fixed_values={{"text": "...[app_name_here]..."}},
+    await action("open_app", target="{app}", fixed=True, fixed_values={{"text": "{app}"}},
                  valid_state="No need to verify")
-    await action("tap", target="target element", fixed=True,
+    await action("tap", target="resource_id_or_content_desc", fixed=True,
                  fixed_values={{"x": 540, "y": 960}},
                  valid_state="target is visible and clickable",
                  state_contract=C(app="...[app_package]...", required=[R(resource_id="target_id", visible=True)]))
@@ -47,7 +48,8 @@ Rules:
 - Extract ONE cohesive skill that covers the core action sequence. Do NOT split into multiple tiny @skill functions.
 - fixed=true + fixed_values: static UI (nav bars, toolbar, system actions, open_app). Copy exact x/y/text from the trajectory step params shown after "|".
 - fixed=false: dynamic content (search results, variable input). Use {{{{param}}}} placeholders, omit fixed_values.
-- Collapse all app-launch steps into ONE open_app as the first step.
+- target: prefer stable operational identifiers from the trajectory, such as app package, resource_id, content_desc, class, or concise UI label. It does not need to be a purely human-language description.
+- Collapse all app-launch steps into ONE open_app as the first step. For open_app, prefer the trajectory app package for both target and fixed_values.text when available, and always use valid_state="No need to verify".
 - valid_state: specific present-tense, e.g. "search field is visible and enabled".
 - state_contract: use C()/R() with resource_id/content_desc/class from the step's "control:" field. Use class_ when writing a class selector in R(). Omit state_contract if step has no control info or selector is dynamic.
 - Drop duplicate/redundant clicks, exploratory taps, and pointless scrolls.
@@ -83,6 +85,13 @@ class SkillExtractor:
         result = codegen_trajectory(trajectory_path)
         if result is None or not result.steps:
             _write_log(trajectory_path, "no_candidate", {"reason": "empty_codegen"})
+            return []
+        single_app = _single_foreground_app_package(trajectory_path, result.platform)
+        if single_app:
+            _write_log(trajectory_path, "no_candidate", {
+                "reason": "single_foreground_app_package",
+                "app": single_app,
+            })
             return []
         skills = await self._extract_all(result, is_success)
         if not skills:
@@ -134,11 +143,12 @@ class SkillExtractor:
             return []
         skills: list[Skill] = []
         for skill in compiled.skills:
+            trace_app = normalize_app_identifier(skill.platform, result.app)
             normalized = replace(
                 skill,
                 app=normalize_app_identifier(skill.platform, skill.app),
                 description=_generalize_skill_description(skill.description),
-                steps=tuple(replace(step, expected_state=None) for step in skill.steps),
+                steps=_normalize_extracted_steps(skill.steps, trace_app=trace_app),
             )
             resolved = _resolve_skill_app(normalized, result)
             if resolved is None:
@@ -195,6 +205,10 @@ def _generalize_skill_description(description: str) -> str:
 
 
 def _resolve_skill_app(skill: Skill, result: CodegenResult) -> Skill | None:
+    trace_app = normalize_app_identifier(skill.platform, result.app)
+    if not _is_unknown_app(trace_app):
+        return replace(skill, app=trace_app)
+
     if not _is_unknown_app(skill.app):
         return skill
 
@@ -203,10 +217,30 @@ def _resolve_skill_app(skill: Skill, result: CodegenResult) -> Skill | None:
     if not _is_unknown_app(normalized_open_app):
         return replace(skill, app=normalized_open_app)
 
-    fallback_app = normalize_app_identifier(skill.platform, result.app)
-    if not _is_unknown_app(fallback_app):
-        return replace(skill, app=fallback_app)
     return None
+
+
+def _normalize_extracted_steps(steps: tuple[Any, ...], *, trace_app: str = "") -> tuple[Any, ...]:
+    normalized = []
+    for index, step in enumerate(steps):
+        updated = replace(step, expected_state=None)
+        if index == 0 and updated.action_type == "open_app":
+            updated = replace(updated, valid_state=_NO_VERIFY_VALID_STATE)
+            if not _is_unknown_app(trace_app):
+                fixed_values = dict(updated.fixed_values)
+                fixed_values["text"] = trace_app
+                parameters = dict(updated.parameters)
+                if "text" in parameters:
+                    parameters["text"] = trace_app
+                updated = replace(
+                    updated,
+                    target=trace_app,
+                    parameters=parameters,
+                    fixed=True,
+                    fixed_values=fixed_values,
+                )
+        normalized.append(updated)
+    return tuple(normalized)
 
 
 def _first_open_app_text(skill: Skill) -> str:
@@ -224,6 +258,39 @@ def _first_open_app_text(skill: Skill) -> str:
 
 def _is_unknown_app(app: str) -> bool:
     return (app or "").strip().lower() in _UNKNOWN_APP_IDS
+
+
+def _single_foreground_app_package(trace_path: Path, platform: str) -> str:
+    step_count = 0
+    apps: list[str] = []
+    try:
+        lines = trace_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") not in ("step", "skill_step"):
+            continue
+        step_count += 1
+        observation = event.get("observation") or {}
+        app = str(observation.get("foreground_app") or observation.get("app") or "").strip()
+        if not app:
+            return ""
+        normalized = normalize_app_identifier(platform, app)
+        if _is_unknown_app(normalized):
+            return ""
+        apps.append(normalized)
+    if step_count == 0 or len(apps) != step_count:
+        return ""
+    unique_apps = set(apps)
+    if len(unique_apps) != 1:
+        return ""
+    return apps[0]
 
 
 def _write_log(trace_path: Path, status: str, detail: Any) -> None:

@@ -268,7 +268,33 @@ def _job_record(job: TraceJob, *, status: str, reason: str | None = None) -> dic
     }
     if reason:
         record["reason"] = reason
+    usage_path = job.trace_path.parent / "extraction_usage.json"
+    usage = _read_extraction_usage(usage_path)
+    if usage is not None:
+        record["extraction_usage_path"] = str(usage_path)
+        record["extraction_usage"] = usage
     return record
+
+
+def _read_extraction_usage(path: Path) -> dict[str, int] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    usage: dict[str, int] = {}
+    for key, value in payload.items():
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, int):
+            usage[str(key)] = value
+            continue
+        if isinstance(value, float) and value.is_integer():
+            usage[str(key)] = int(value)
+    return usage
 
 
 def _write_summary(path: Path | None, records: list[dict[str, Any]]) -> None:
@@ -277,11 +303,25 @@ def _write_summary(path: Path | None, records: list[dict[str, Any]]) -> None:
     path = path.expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {}
+    usage_totals: dict[str, int] = {}
     for record in records:
         status = str(record.get("status") or "unknown")
         counts[status] = counts.get(status, 0) + 1
+        usage = record.get("extraction_usage")
+        if isinstance(usage, dict):
+            for key, value in usage.items():
+                if isinstance(value, int) and not isinstance(value, bool):
+                    usage_totals[str(key)] = usage_totals.get(str(key), 0) + value
     path.write_text(
-        json.dumps({"status_counts": counts, "records": records}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps(
+            {
+                "status_counts": counts,
+                "usage_totals": usage_totals,
+                "records": records,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ) + "\n",
         encoding="utf-8",
     )
     print(f"summary_path: {path}")
