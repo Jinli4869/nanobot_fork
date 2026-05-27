@@ -39,17 +39,27 @@ class DeepLink:
     path_kind: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"uri_template": self.uri_template, "scheme": self.scheme,
-                "host": self.host, "path": self.path,
-                "component": self.component, "description": self.description,
-                "path_kind": self.path_kind}
+        return {
+            "uri_template": self.uri_template,
+            "scheme": self.scheme,
+            "host": self.host,
+            "path": self.path,
+            "component": self.component,
+            "description": self.description,
+            "path_kind": self.path_kind,
+        }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DeepLink":
-        return cls(uri_template=d["uri_template"], scheme=d["scheme"],
-                   host=d.get("host"), path=d.get("path"),
-                   component=d["component"], description=d.get("description", ""),
-                   path_kind=d.get("path_kind"))
+        return cls(
+            uri_template=d["uri_template"],
+            scheme=d["scheme"],
+            host=d.get("host"),
+            path=d.get("path"),
+            component=d["component"],
+            description=d.get("description", ""),
+            path_kind=d.get("path_kind"),
+        )
 
 
 @dataclass(frozen=True)
@@ -60,13 +70,21 @@ class DeepIntent:
     description: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return {"action": self.action, "component": self.component,
-                "mime_type": self.mime_type, "description": self.description}
+        return {
+            "action": self.action,
+            "component": self.component,
+            "mime_type": self.mime_type,
+            "description": self.description,
+        }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DeepIntent":
-        return cls(action=d["action"], component=d["component"],
-                   mime_type=d.get("mime_type"), description=d.get("description", ""))
+        return cls(
+            action=d["action"],
+            component=d["component"],
+            mime_type=d.get("mime_type"),
+            description=d.get("description", ""),
+        )
 
 
 @dataclass(frozen=True)
@@ -78,19 +96,23 @@ class AppShortcutProfile:
     manifest_meta: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"package": self.package,
-                "deep_links": [dl.to_dict() for dl in self.deep_links],
-                "deep_intents": [di.to_dict() for di in self.deep_intents],
-                "activity_aliases": list(self.activity_aliases),
-                "manifest_meta": self.manifest_meta}
+        return {
+            "package": self.package,
+            "deep_links": [dl.to_dict() for dl in self.deep_links],
+            "deep_intents": [di.to_dict() for di in self.deep_intents],
+            "activity_aliases": list(self.activity_aliases),
+            "manifest_meta": self.manifest_meta,
+        }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "AppShortcutProfile":
-        return cls(package=d["package"],
-                   deep_links=tuple(DeepLink.from_dict(x) for x in d.get("deep_links", [])),
-                   deep_intents=tuple(DeepIntent.from_dict(x) for x in d.get("deep_intents", [])),
-                   activity_aliases=tuple((a, t) for a, t in d.get("activity_aliases", [])),
-                   manifest_meta=d.get("manifest_meta"))
+        return cls(
+            package=d["package"],
+            deep_links=tuple(DeepLink.from_dict(x) for x in d.get("deep_links", [])),
+            deep_intents=tuple(DeepIntent.from_dict(x) for x in d.get("deep_intents", [])),
+            activity_aliases=tuple((a, t) for a, t in d.get("activity_aliases", [])),
+            manifest_meta=d.get("manifest_meta"),
+        )
 
 
 @dataclass(frozen=True)
@@ -117,18 +139,13 @@ class ValidatedShortcut:
             kind=str(data.get("kind") or data.get("type") or "").strip(),
             status=str(data.get("status") or "").strip(),
             description=str(
-                data.get("intent_summary")
-                or data.get("description")
-                or data.get("summary")
-                or ""
+                data.get("intent_summary") or data.get("description") or data.get("summary") or ""
             ).strip(),
             name=str(data["name"]).strip() if data.get("name") else None,
             uri_template=str(
-                data.get("uri_template")
-                or data.get("uri")
-                or data.get("text")
-                or ""
-            ).strip() or None,
+                data.get("uri_template") or data.get("uri") or data.get("text") or ""
+            ).strip()
+            or None,
             action=str(data.get("intent_action") or data.get("action") or "").strip() or None,
             component=str(data.get("component") or "").strip() or None,
             mime_type=str(data.get("mime_type") or "").strip() or None,
@@ -154,7 +171,9 @@ async def extract_app_shortcuts(backend: Any, package: str) -> AppShortcutProfil
     aliases: list[tuple[str, str]] = []
     for alias in _find_elements(manifest_root, "activity-alias"):
         alias_component = _normalize_component_name(manifest_package, _android_attr(alias, "name"))
-        target_component = _normalize_component_name(manifest_package, _android_attr(alias, "targetActivity"))
+        target_component = _normalize_component_name(
+            manifest_package, _android_attr(alias, "targetActivity")
+        )
         if alias_component and target_component:
             aliases.append((alias_component, target_component))
 
@@ -170,26 +189,48 @@ async def extract_app_shortcuts(backend: Any, package: str) -> AppShortcutProfil
 def profile_to_skills(profile: AppShortcutProfile) -> list[Any]:
     """Convert each shortcut in *profile* to a 1-step Skill for the skill library."""
     from opengui.skills.data import Skill, SkillStep
+
     skills: list[Any] = []
     for dl in profile.deep_links:
-        step = SkillStep(action_type="open_deeplink", target=dl.uri_template,
-                         parameters={"text": dl.uri_template, "component": dl.component})
+        step = SkillStep(
+            action_type="open_deeplink",
+            target=dl.uri_template,
+            parameters={"text": dl.uri_template, "component": dl.component},
+        )
         raw = f"{profile.package}|{dl.component}|{dl.uri_template}|{dl.path_kind or ''}"
-        skills.append(Skill(name=_shortcut_skill_name(dl),
-                           app=profile.package, platform="android",
-                           description=dl.description, steps=(step,),
-                           tags=("shortcut", "deeplink"),
-                           skill_id=f"shortcut:dl:{profile.package}:{_stable_short_hash(raw)}"))
+        skills.append(
+            Skill(
+                name=_shortcut_skill_name(dl),
+                app=profile.package,
+                platform="android",
+                description=dl.description,
+                steps=(step,),
+                tags=("shortcut", "deeplink"),
+                skill_id=f"shortcut:dl:{profile.package}:{_stable_short_hash(raw)}",
+            )
+        )
     for di in profile.deep_intents:
-        step = SkillStep(action_type="open_intent", target=di.action,
-                         parameters={"intent_action": di.action, "component": di.component,
-                                     "mime_type": di.mime_type or ""})
+        step = SkillStep(
+            action_type="open_intent",
+            target=di.action,
+            parameters={
+                "intent_action": di.action,
+                "component": di.component,
+                "mime_type": di.mime_type or "",
+            },
+        )
         raw = f"{profile.package}|{di.component}|{di.action}|{di.mime_type or ''}"
-        skills.append(Skill(name=_shortcut_skill_name(di),
-                           app=profile.package, platform="android",
-                           description=di.description, steps=(step,),
-                           tags=("shortcut", "intent"),
-                           skill_id=f"shortcut:di:{profile.package}:{_stable_short_hash(raw)}"))
+        skills.append(
+            Skill(
+                name=_shortcut_skill_name(di),
+                app=profile.package,
+                platform="android",
+                description=di.description,
+                steps=(step,),
+                tags=("shortcut", "intent"),
+                skill_id=f"shortcut:di:{profile.package}:{_stable_short_hash(raw)}",
+            )
+        )
     return skills
 
 
@@ -235,7 +276,9 @@ def validated_shortcut_to_skill(
             "uri_template": uri,
             "component": record.component or "",
         }
-        skill_id = record.skill_id or f"shortcut:dl:{package}:{_stable_short_hash(_stable_json(raw))}"
+        skill_id = (
+            record.skill_id or f"shortcut:dl:{package}:{_stable_short_hash(_stable_json(raw))}"
+        )
     elif kind == "intent":
         action = record.action or ""
         if not action:
@@ -267,7 +310,9 @@ def validated_shortcut_to_skill(
             "categories": record.categories,
             "extras": record.extras,
         }
-        skill_id = record.skill_id or f"shortcut:di:{package}:{_stable_short_hash(_stable_json(raw))}"
+        skill_id = (
+            record.skill_id or f"shortcut:di:{package}:{_stable_short_hash(_stable_json(raw))}"
+        )
     else:
         raise ValueError(f"unsupported validated shortcut kind: {record.kind!r}")
 
@@ -319,7 +364,9 @@ async def _pull_apk(backend: Any, package: str) -> str | None:
         return None
 
     safe_package = re.sub(r"[^A-Za-z0-9_.-]+", "_", package)
-    with tempfile.NamedTemporaryFile(suffix=".apk", prefix=f"opengui-{safe_package}-", delete=False) as fd:
+    with tempfile.NamedTemporaryFile(
+        suffix=".apk", prefix=f"opengui-{safe_package}-", delete=False
+    ) as fd:
         local_path = fd.name
     await backend._run("pull", apk_lines[0], str(local_path), timeout=30.0)
     return local_path
@@ -376,7 +423,13 @@ def _extract_all_filters(manifest_root: ET.Element, package: str) -> list[Manife
                     mime_type = _android_attr(child, "mimeType")
                     if mime_type:
                         mime_types.append(mime_type)
-                    for path_attr in ("path", "pathPrefix", "pathPattern", "pathAdvancedPattern", "pathSuffix"):
+                    for path_attr in (
+                        "path",
+                        "pathPrefix",
+                        "pathPattern",
+                        "pathAdvancedPattern",
+                        "pathSuffix",
+                    ):
                         path = _android_attr(child, path_attr)
                         if path:
                             paths.append((path_attr, path))
@@ -483,10 +536,17 @@ def _classify_deep_intents(filters: list[ManifestIntentFilter]) -> list[DeepInte
 
 async def probe_deep_link(backend: Any, dl: DeepLink) -> bool:
     args = [
-        "shell", "cmd", "package", "resolve-activity", "--brief",
-        "-a", "android.intent.action.VIEW",
-        "-c", "android.intent.category.BROWSABLE",
-        "-d", dl.uri_template,
+        "shell",
+        "cmd",
+        "package",
+        "resolve-activity",
+        "--brief",
+        "-a",
+        "android.intent.action.VIEW",
+        "-c",
+        "android.intent.category.BROWSABLE",
+        "-d",
+        dl.uri_template,
     ]
     output = await backend._run(*args, timeout=5.0)
     text = str(output).strip()
@@ -549,7 +609,9 @@ def _dedupe(items: list[str] | tuple[str, ...]) -> list[str]:
     return result
 
 
-def _dedupe_path_specs(items: list[tuple[str, str]] | tuple[tuple[str, str], ...]) -> list[tuple[str, str]]:
+def _dedupe_path_specs(
+    items: list[tuple[str, str]] | tuple[tuple[str, str], ...],
+) -> list[tuple[str, str]]:
     seen: set[tuple[str, str]] = set()
     result: list[tuple[str, str]] = []
     for kind, value in items:
