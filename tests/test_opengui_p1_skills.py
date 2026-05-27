@@ -1032,6 +1032,26 @@ async def test_skill_executor_runs_validated_steps() -> None:
 
 
 @pytest.mark.asyncio
+async def test_skill_executor_rejects_required_step_missing_valid_state() -> None:
+    backend = _RecordingBackend()
+    validator = _FakeValidator([True])
+    skill = _make_skill(
+        "s1",
+        "Tap Settings",
+        "Tap Settings",
+        steps=(SkillStep(action_type="tap", target="Settings"),),
+    )
+    executor = SkillExecutor(backend=backend, state_validator=validator)
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.FAILED
+    assert backend.actions == []
+    assert validator.calls == []
+    assert result.step_results[0].error == "valid_state not reached: state_contract"
+
+
+@pytest.mark.asyncio
 async def test_skill_executor_falls_back_to_valid_state_when_contract_unknown() -> None:
     validator = _FakeValidator([True])
     skill = _make_skill(
@@ -1219,10 +1239,80 @@ async def search_bilibili(device, query):
     assert "concise natural-language grounding hint" in prompt
     assert "Do not use raw class/resource_id as target" in prompt
     assert "prefer the trajectory app package" in prompt
+    assert "Every required interactive step must have a natural-language target and valid_state" in prompt
+    assert "input field is focused" in prompt
     assert "do not invent selectors" in prompt
     assert "postprocess will align contracts from codegen" in prompt
     assert "guarded optional=True steps" in prompt
     assert "at most one non-fixed corrective step" in prompt
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_fills_missing_valid_state_for_interactive_steps() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="search_example", description="Search in Example")
+async def search_example(device, query):
+    await action("tap", target="Search", fixed=True, fixed_values={"x": 100, "y": 200})
+    await action("input_text", target=query)
+"""
+    llm = _ScriptedLLM([response])
+    extractor = SkillExtractor(llm)
+
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "tap", "x": 100, "y": 200}, "observation": {"platform": "android", "foreground_app": "com.example"}},
+        {"action": {"action_type": "input_text", "text": "query"}, "observation": {"platform": "android", "foreground_app": "com.example"}},
+    ])
+
+    assert skill is not None
+    assert len(llm.messages) == 1
+    assert skill.steps[0].valid_state == "Search is visible and enabled"
+    assert skill.steps[1].valid_state == "input field is focused"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_retries_when_required_target_is_missing() -> None:
+    bad_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device):
+    await action("tap", fixed=True, fixed_values={"x": 150, "y": 230})
+"""
+    fixed_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device):
+    await action("tap", target="Details", fixed=True, fixed_values={"x": 150, "y": 230}, valid_state="Details is visible and enabled")
+"""
+    llm = _ScriptedLLM([bad_response, fixed_response])
+    extractor = SkillExtractor(llm)
+
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
+    ])
+
+    assert skill is not None
+    assert len(llm.messages) == 2
+    assert "missing target" in llm.messages[1][0]["content"][0]["text"]
+    assert skill.steps[0].target == "Details"
+    assert skill.steps[0].valid_state == "Details is visible and enabled"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_drops_skill_when_retry_still_has_missing_target() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device):
+    await action("tap", fixed=True, fixed_values={"x": 150, "y": 230})
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response, response]))
+
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
+    ])
+
+    assert skill is None
 
 
 @pytest.mark.asyncio
