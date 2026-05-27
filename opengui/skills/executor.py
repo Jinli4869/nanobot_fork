@@ -48,6 +48,9 @@ _OPEN_APP_SETTLE_SECONDS: float = 5.00
 _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
 _OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
 _NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
+_VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset({
+    "open_app", "wait", "done", "request_intervention", "screenshot", "hotkey",
+})
 _UI_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
 
@@ -313,8 +316,8 @@ _scale_image_half = scale_image_half
 
 def _should_skip_validation(valid_state: str | None) -> bool:
     """Return True when valid_state indicates no verification is needed."""
-    if not valid_state:
-        return True
+    if valid_state is None or not valid_state.strip():
+        return False
     lowered = valid_state.strip().lower()
     skip_hints = ("no need to verify", "return true", "skip", "none", "n/a")
     return any(hint in lowered for hint in skip_hints)
@@ -758,17 +761,22 @@ class SkillExecutor:
             # 3. Recovery subgoal when valid_state fails
             # ------------------------------------------------------------------
             recovery_result: SubgoalResult | None = None
+            has_valid_state = bool(step.valid_state and step.valid_state.strip())
+            requires_state = (
+                step.state_contract is not None
+                or (
+                    step.action_type not in _VALID_STATE_OPTIONAL_ACTIONS
+                    and not _should_skip_validation(step.valid_state)
+                )
+            )
             should_enforce_state = (
                 visual_guarded_step
-                or not post_action_contract
-                and (
-                    step.state_contract is not None
-                    or not _should_skip_validation(step.valid_state)
-                )
+                or (not post_action_contract and requires_state)
             )
             if not valid and should_enforce_state and visual_guard_block_reason is None:
                 can_recover_with_subgoal = (
-                    not _should_skip_validation(step.valid_state)
+                    has_valid_state
+                    and not _should_skip_validation(step.valid_state)
                     and self.subgoal_runner is not None
                     and screenshot is not None
                 )
@@ -1154,9 +1162,9 @@ class SkillExecutor:
         """Validate per-step valid_state. Returns ``(valid, token_usage, duration_s)``.
 
         ``duration_s`` is ``None`` when validation is intentionally skipped
-        (no ``valid_state`` description, no validator configured, or state
-        confirmed by a prior done-judgment). A positive float indicates an
-        actual LLM validation call was made.
+        (no validator configured or state confirmed by a prior done-judgment)
+        or rejected before an LLM call. A positive float indicates an actual
+        LLM validation call was made.
 
         Note: ``step.fixed`` controls *action grounding* (use pre-recorded
         coordinates instead of LLM grounding), not state validation. A fixed
@@ -1174,6 +1182,11 @@ class SkillExecutor:
                 step.action_type,
             )
             return bool(contract_detail.passed), {}, None
+
+        if step.valid_state is None or not step.valid_state.strip():
+            logger.debug("Step %s is missing valid_state", step.action_type)
+            self._last_contract_eval_detail = None
+            return False, {}, None
 
         if _should_skip_validation(step.valid_state):
             if step.state_contract is not None:

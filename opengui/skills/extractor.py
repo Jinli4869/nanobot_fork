@@ -49,9 +49,9 @@ Rules:
 - Extract ONE cohesive skill that covers the core action sequence. Do NOT split into multiple tiny @skill functions.
 - fixed=true + fixed_values: static UI (nav bars, toolbar, system actions, open_app). Copy exact x/y/text from the trajectory step params shown after "|".
 - fixed=false: dynamic content (search results, variable input). Use {{{{param}}}} placeholders, omit fixed_values.
-- target: concise natural-language grounding hint, e.g. "search button", "search input field", "matching video result", "skip ad button". Do not use raw class/resource_id as target unless it is also visible user-facing text.
+- target: Every required interactive step must have a natural-language target and valid_state. Use a concise natural-language grounding hint, e.g. "search button", "search input field", "matching video result", "skip ad button". Do not use raw class/resource_id as target unless it is also visible user-facing text.
 - Collapse all app-launch steps into ONE open_app as the first step. For open_app, prefer the trajectory app package for both target and fixed_values.text when available, and always use valid_state="No need to verify".
-- valid_state: specific present-tense, e.g. "search field is visible and enabled".
+- valid_state: Every required interactive step must have a specific present-tense valid_state, e.g. "search field is visible and enabled". For input_text, use "input field is focused" if no better state is available. If a required step has no verifiable state, remove or regenerate that step instead of leaving valid_state empty.
 - state_contract: do not invent selectors. Copy only the exact contract provided by trajectory/codegen for the matched step; omit if no contract is provided. The extractor postprocess will align contracts from codegen.
 - Drop duplicate/redundant clicks, exploratory taps, and pointless scrolls.
 - Transient popups (ads, permissions, consent): keep as optional=True step. Executor skips them when absent.
@@ -71,6 +71,18 @@ _FAILURE_NOTE = (
     "that corrective step. Use optional=True only for transient blockers/popups, and never add "
     "pay/delete/send/submit/publish/irreversible confirmation actions."
 )
+
+_RETRY_QUALITY_NOTE = """\
+The previous extracted skill has quality issues:
+{issues}
+
+Regenerate the entire skill. Every required interactive step must have a natural-language target and valid_state. Do not invent state_contract selectors.
+"""
+
+_VALID_STATE_REQUIRED_ACTIONS = frozenset({
+    "tap", "long_press", "double_tap", "input_text", "scroll", "swipe", "drag",
+})
+_TARGET_REQUIRED_ACTIONS = frozenset({"tap", "long_press", "double_tap", "input_text"})
 
 
 class SkillExtractor:
@@ -133,17 +145,25 @@ class SkillExtractor:
         )
         response = await self._llm.chat(_build_messages(prompt, result.screenshots_b64))
         self._accumulate_usage(response.usage)
-        skills = self._compile_all(response.content, result)
-        return [
-            apply_contract_constraints_from_codegen(
-                apply_state_contracts_from_codegen(
-                    apply_focused_contracts_from_codegen(skill, result),
-                    result,
-                ),
-                result,
-            )
-            for skill in skills
-        ]
+        skills = _postprocess_skills(self._compile_all(response.content, result), result)
+        issues = _skill_quality_issues(skills)
+        if issues:
+            retry_prompt = f"{prompt}\n\n{_RETRY_QUALITY_NOTE.format(issues=_format_quality_issues(issues))}"
+            response = await self._llm.chat(_build_messages(retry_prompt, result.screenshots_b64))
+            self._accumulate_usage(response.usage)
+            skills = _postprocess_skills(self._compile_all(response.content, result), result)
+            issues = _skill_quality_issues(skills)
+            if issues:
+                logger.warning(
+                    "Reject extracted skills after retry due to quality issues: %s",
+                    "; ".join(issues),
+                )
+                return [
+                    skill
+                    for skill in skills
+                    if not _skill_quality_issues([skill])
+                ]
+        return skills
 
     def _compile_all(self, text: str, result: CodegenResult) -> list[Skill]:
         source = _clean_code_block(text)
@@ -212,6 +232,67 @@ def _generalize_skill_description(description: str) -> str:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s+([,.;:])", r"\1", text)
     return text.strip()
+
+
+def _postprocess_skills(skills: list[Skill], result: CodegenResult) -> list[Skill]:
+    return [
+        _ensure_valid_states(
+            apply_contract_constraints_from_codegen(
+                apply_state_contracts_from_codegen(
+                    apply_focused_contracts_from_codegen(skill, result),
+                    result,
+                ),
+                result,
+            )
+        )
+        for skill in skills
+    ]
+
+
+def _ensure_valid_states(skill: Skill) -> Skill:
+    steps = []
+    changed = False
+    for step in skill.steps:
+        if step.valid_state and step.valid_state.strip():
+            steps.append(step)
+            continue
+        valid_state = _default_valid_state(step)
+        if valid_state is None:
+            steps.append(step)
+            continue
+        changed = True
+        steps.append(replace(step, valid_state=valid_state))
+    return replace(skill, steps=tuple(steps)) if changed else skill
+
+
+def _default_valid_state(step: Any) -> str | None:
+    action_type = step.action_type
+    target = (step.target or "").strip()
+    if action_type == "open_app":
+        return _NO_VERIFY_VALID_STATE
+    if action_type == "input_text":
+        return "input field is focused"
+    if action_type in {"tap", "long_press", "double_tap"}:
+        return f"{target} is visible and enabled" if target else None
+    if action_type in {"scroll", "swipe", "drag"}:
+        return f"{target} is ready for scrolling" if target else "screen is ready for scrolling"
+    return None
+
+
+def _skill_quality_issues(skills: list[Skill]) -> list[str]:
+    issues: list[str] = []
+    for skill in skills:
+        for index, step in enumerate(skill.steps):
+            action_type = step.action_type
+            if action_type in _TARGET_REQUIRED_ACTIONS and not (step.target or "").strip():
+                issues.append(f"{skill.name} step {index} {action_type} is missing target")
+            if action_type in _VALID_STATE_REQUIRED_ACTIONS and not (step.valid_state or "").strip():
+                issues.append(f"{skill.name} step {index} {action_type} is missing valid_state")
+    return issues
+
+
+def _format_quality_issues(issues: list[str]) -> str:
+    return "\n".join(f"- {issue}" for issue in issues)
 
 
 def _resolve_skill_app(skill: Skill, result: CodegenResult) -> Skill | None:
