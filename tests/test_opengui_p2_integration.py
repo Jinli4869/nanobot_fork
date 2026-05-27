@@ -67,8 +67,8 @@ class _StaticSkillReuser:
         self.skill = skill
         self.score = score
 
-    async def find(self, task, library, platform=None, *, trajectory_recorder=None):
-        del task, library, platform, trajectory_recorder
+    async def find(self, task, library, platform=None, *, app=None, trajectory_recorder=None):
+        del task, library, platform, app, trajectory_recorder
         return self.skill, self.score
 
     def drain_usage(self):

@@ -47,7 +47,7 @@ from opengui.interfaces import (
 )
 from opengui.observation import Observation
 from opengui.skills.deeplink import AppShortcutProfile
-from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.normalization import find_android_app_in_text, normalize_app_identifier
 from opengui.skills.state_contract import evaluate_state_contract, infer_interaction_target
 from opengui.tool_schemas import (
     COMPUTER_USE_TOOL,
@@ -417,6 +417,7 @@ class GuiAgent:
         memory_context = await self._retrieve_memory(task)
 
         skill_context: str | None = None
+        skill_app_filter = self._skill_app_filter(task, app_hint)
 
         # 3. Search the flat skill library once; LLM-gated when SkillReuser is available.
         reuser_usage: dict[str, int] = {}
@@ -425,11 +426,12 @@ class GuiAgent:
                 task,
                 self._skill_library,
                 self.backend.platform,
+                app=skill_app_filter,
                 trajectory_recorder=self._trajectory_recorder,
             )
             reuser_usage = self._skill_reuser.drain_usage()
         else:
-            skill_match = await self._search_skill(task)
+            skill_match = await self._search_skill(task, app=skill_app_filter)
 
         matched_skill: Any | None = None
         final_score: float | None = None
@@ -2636,7 +2638,17 @@ class GuiAgent:
             context=context,
         )
 
-    async def _search_skill(self, task: str) -> Any | None:
+    def _skill_app_filter(self, task: str, app_hint: str | None) -> str | None:
+        platform = self.backend.platform
+        if app_hint:
+            normalized = normalize_app_identifier(platform, app_hint)
+            if normalized and normalized != "unknown":
+                return normalized
+        if platform.strip().lower() == "android":
+            return find_android_app_in_text(task)
+        return None
+
+    async def _search_skill(self, task: str, *, app: str | None = None) -> Any | None:
         """Search the skill library and return the top match when above threshold."""
         if self._skill_library is None:
             self._trajectory_recorder.record_event(
@@ -2646,12 +2658,13 @@ class GuiAgent:
                 matched=False,
                 reason="no_library",
                 threshold=self._skill_threshold,
+                app_filter=app,
             )
             return None
         from opengui.skills.data import compute_confidence
 
         search_results = await self._skill_library.search(
-            task, platform=self.backend.platform, top_k=1,
+            task, platform=self.backend.platform, app=app, top_k=1,
         )
         if not search_results:
             self._trajectory_recorder.record_event(
@@ -2661,6 +2674,7 @@ class GuiAgent:
                 matched=False,
                 reason="no_results",
                 threshold=self._skill_threshold,
+                app_filter=app,
             )
             return None
         skill, relevance = search_results[0]
@@ -2678,6 +2692,7 @@ class GuiAgent:
                 confidence=round(confidence, 4),
                 relevance=round(relevance, 4),
                 threshold=self._skill_threshold,
+                app_filter=app,
             )
             return (skill, final_score)
         self._trajectory_recorder.record_event(
@@ -2691,6 +2706,7 @@ class GuiAgent:
             confidence=round(confidence, 4),
             relevance=round(relevance, 4),
             threshold=self._skill_threshold,
+            app_filter=app,
         )
         return None
 

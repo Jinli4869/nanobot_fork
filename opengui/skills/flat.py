@@ -53,7 +53,7 @@ from opengui.skills._merger import (
     weighted_tuple_jaccard as _weighted_tuple_jaccard,
 )
 from opengui.skills.data import Skill, SkillStep, compute_confidence
-from opengui.skills.normalization import normalize_app_identifier, normalize_skill_app
+from opengui.skills.normalization import annotate_android_apps, normalize_app_identifier, normalize_skill_app
 from opengui.skills.state_contract import normalize_state_contract
 
 logger = logging.getLogger(__name__)
@@ -1195,6 +1195,15 @@ def _literal_or_placeholder(
         if node.id in bindings and node.id not in seen:
             return _literal_or_placeholder(bindings[node.id], bindings, seen=seen | {node.id})
         return f"{{{{{node.id}}}}}"
+    if (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Add)
+    ):
+        left = _literal_or_placeholder(node.left, bindings, seen=seen)
+        right = _literal_or_placeholder(node.right, bindings, seen=seen)
+        if isinstance(left, str) and isinstance(right, str):
+            return f"{left}{right}"
+        raise UnsupportedSkillSourceError(f"unsupported expression: {ast.unparse(node)}")
     return _literal_value(node)
 
 
@@ -1303,6 +1312,7 @@ def _placeholder_names_in_value(value: Any) -> set[str]:
 
 
 def _skill_search_text(skill_obj: Skill) -> str:
+    app_alias_text = " ".join(annotate_android_apps([skill_obj.app])) if skill_obj.platform == "android" else ""
     step_text = " ".join(
         " ".join([
             step.action_type,
@@ -1315,15 +1325,29 @@ def _skill_search_text(skill_obj: Skill) -> str:
         ])
         for step in skill_obj.steps
     )
-    return " ".join([
+    base_text = " ".join([
         skill_obj.name,
         skill_obj.description,
         skill_obj.app,
+        app_alias_text,
         skill_obj.platform,
         " ".join(skill_obj.tags),
         " ".join(skill_obj.preconditions),
         step_text,
     ])
+    return " ".join([base_text, _retrieval_alias_text(base_text)])
+
+
+def _retrieval_alias_text(text: str) -> str:
+    lowered = text.lower()
+    aliases: list[str] = []
+    if any(token in lowered for token in ("search", "query", "input_text")):
+        aliases.extend(["搜索", "查询"])
+    if any(token in lowered for token in ("play", "playback", "watch", "video")):
+        aliases.extend(["播放", "视频"])
+    if any(token in lowered for token in ("open_app", "open ")):
+        aliases.extend(["打开", "启动"])
+    return " ".join(dict.fromkeys(aliases))
 
 
 def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:

@@ -82,14 +82,16 @@ class _ObservationProvider:
 class _FakeSkillLibrary:
     def __init__(self, results: list[tuple[Skill, float]]) -> None:
         self._results = results
+        self.calls: list[dict[str, Any]] = []
 
     async def search(
         self,
         task: str,
         platform: str | None = None,
+        app: str | None = None,
         top_k: int = 5,
     ) -> list[tuple[Skill, float]]:
-        del task, platform, top_k
+        self.calls.append({"task": task, "platform": platform, "app": app, "top_k": top_k})
         return self._results
 
 
@@ -337,6 +339,57 @@ async def test_flat_skill_library_add_or_merge_uses_description_when_names_diffe
     assert decision in {"MERGE", "KEEP_NEW"}
     assert skill_id is not None
     assert FlatSkillLibrary(store_dir=tmp_path / "skills").count() == 1
+
+
+@pytest.mark.asyncio
+async def test_flat_skill_library_search_includes_android_app_display_alias(tmp_path: Path) -> None:
+    library = FlatSkillLibrary(store_dir=tmp_path / "skills")
+    library.add(_make_skill(
+        "bili-search",
+        "search_and_play_bilibili_video",
+        "Search for a video and play the first result",
+        app="tv.danmaku.bili",
+        platform="android",
+        steps=(
+            SkillStep(action_type="open_app", target="tv.danmaku.bili"),
+            SkillStep(action_type="input_text", target="{{query}}"),
+        ),
+    ))
+
+    results = await library.search("在哔哩哔哩搜索播放华强买瓜", platform="android", top_k=1)
+
+    assert results
+    assert results[0][0].skill_id == "bili-search"
+
+
+@pytest.mark.asyncio
+async def test_flat_skill_library_search_expands_common_bilingual_action_aliases(tmp_path: Path) -> None:
+    library = FlatSkillLibrary(store_dir=tmp_path / "skills")
+    library.add(_make_skill(
+        "bili-open",
+        "open_bilibili_app",
+        "Open Bilibili",
+        app="tv.danmaku.bili",
+        platform="android",
+        steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili"),),
+    ))
+    library.add(_make_skill(
+        "bili-search-play",
+        "search_and_play_bilibili_video",
+        "Search for a video and play the first result",
+        app="tv.danmaku.bili",
+        platform="android",
+        steps=(
+            SkillStep(action_type="open_app", target="tv.danmaku.bili"),
+            SkillStep(action_type="input_text", target="{{query}}"),
+            SkillStep(action_type="tap", target="first_video_result"),
+        ),
+    ))
+
+    results = await library.search("在哔哩哔哩搜索播放华强买瓜", platform="android", top_k=1)
+
+    assert results
+    assert results[0][0].skill_id == "bili-search-play"
 
 
 @pytest.mark.asyncio
@@ -1134,6 +1187,64 @@ async def open_settings(device):
 
 
 @pytest.mark.asyncio
+async def test_skill_extractor_prompt_requests_natural_language_description() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="tv.danmaku.bili", platform="android", name="search_bilibili", description="In Bilibili, search for a video and start playback through the search results.")
+async def search_bilibili(device, query):
+    await action("open_app", target="Bilibili", fixed=True, fixed_values={"text": "tv.danmaku.bili"}, valid_state="No need to verify")
+    await action("input_text", target=query, valid_state="search field is focused")
+"""
+    llm = _ScriptedLLM([response])
+    extractor = SkillExtractor(llm)
+
+    await extractor.extract_from_steps([
+        {
+            "action": {"action_type": "open_app", "text": "tv.danmaku.bili"},
+            "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
+        },
+        {
+            "action": {"action_type": "input_text", "text": "敢杀我的马"},
+            "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
+        },
+    ])
+
+    prompt = llm.messages[0][0]["content"][0]["text"]
+    assert "MUST be generic and reusable" in prompt
+    assert "app name, capability, and broad feature-level route" in prompt
+    assert "Use parameter roles" in prompt
+    assert "NEVER include literal values/entities" in prompt
+    assert "specific, official, first result, or top result" in prompt
+    assert "Avoid tap-by-tap UI actions" in prompt
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_generalizes_narrow_description_terms() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.google.android.youtube", platform="android", name="search_youtube", description="Opens YouTube, searches for a specific video query, selects the top result, and skips ads.")
+async def search_youtube(device, query):
+    await action("open_app", target="YouTube", fixed=True, fixed_values={"text": "YouTube"}, valid_state="No need to verify")
+    await action("input_text", target=query, valid_state="search field is focused")
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+
+    skill = await extractor.extract_from_steps([
+        {
+            "action": {"action_type": "open_app", "text": "YouTube"},
+            "observation": {"platform": "android", "foreground_app": "com.google.android.youtube"},
+        },
+        {
+            "action": {"action_type": "input_text", "text": "Never Gonna Give You Up"},
+            "observation": {"platform": "android", "foreground_app": "com.google.android.youtube"},
+        },
+    ])
+
+    assert skill is not None
+    assert skill.description == "Opens YouTube, searches for a video by query, selects the matching result, and skips ads."
+
+
+@pytest.mark.asyncio
 async def test_skill_extractor_splits_segments_by_foreground_app() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
@@ -1596,3 +1707,50 @@ async def test_skill_reuser_selects_llm_chosen_prefix() -> None:
     assert score == 0.9
     assert selected_skill.skill_id == "s1"
     assert len(selected_skill.steps) == 1
+
+
+@pytest.mark.asyncio
+async def test_skill_reuser_does_not_auto_accept_high_retrieval_score() -> None:
+    skill = _make_skill(
+        "bili",
+        "search_and_play_bilibili_video",
+        "In Bilibili, search for a video and start playback through search results.",
+        app="tv.danmaku.bili",
+        steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili"),),
+    )
+    llm = _ScriptedLLM(['{"selected_skill_id": null, "end_step": null, "reason": "wrong app"}'])
+    reuser = SkillReuser(llm, threshold=0.1)
+
+    selected = await reuser.find(
+        "In YouTube, search for Never Gonna Give You Up and play it.",
+        _FakeSkillLibrary([(skill, 9.0)]),
+        platform="android",
+    )
+
+    assert selected is None
+    assert llm.messages
+
+
+@pytest.mark.asyncio
+async def test_skill_reuser_passes_app_filter_to_library_search() -> None:
+    skill = _make_skill(
+        "youtube",
+        "open_youtube",
+        "Open YouTube",
+        app="com.google.android.youtube",
+    )
+    library = _FakeSkillLibrary([(skill, 0.9)])
+    llm = _ScriptedLLM([
+        '{"selected_skill_id": "youtube", "end_step": 1, "reason": "same app"}'
+    ])
+    reuser = SkillReuser(llm, threshold=0.1, auto_accept_threshold=2.0)
+
+    selected = await reuser.find(
+        "In YouTube, open subscriptions.",
+        library,
+        platform="android",
+        app="com.google.android.youtube",
+    )
+
+    assert selected is not None
+    assert library.calls[0]["app"] == "com.google.android.youtube"
