@@ -134,6 +134,7 @@ def resolve_trace_path(value: Path) -> Path:
 def read_trace_metadata(trace_path: Path) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     last_result: dict[str, Any] | None = None
+    last_attempt_result: dict[str, Any] | None = None
     with trace_path.open("r", encoding="utf-8") as handle:
         for line in handle:
             line = line.strip()
@@ -145,7 +146,7 @@ def read_trace_metadata(trace_path: Path) -> dict[str, Any]:
                 continue
             if not isinstance(event, dict):
                 continue
-            event_type = event.get("type")
+            event_type = event.get("type") or event.get("event")
             if event_type == "metadata":
                 metadata.update({
                     "task": event.get("task") or metadata.get("task"),
@@ -153,10 +154,21 @@ def read_trace_metadata(trace_path: Path) -> dict[str, Any]:
                 })
             elif event_type == "attempt_start" and not metadata.get("task"):
                 metadata["task"] = event.get("task")
+            elif event_type == "step" and not metadata.get("platform"):
+                observation = event.get("observation")
+                if not isinstance(observation, dict):
+                    prompt = event.get("prompt")
+                    observation = prompt.get("current_observation") if isinstance(prompt, dict) else None
+                if isinstance(observation, dict) and observation.get("platform"):
+                    metadata["platform"] = observation.get("platform")
+            elif event_type == "attempt_result":
+                last_attempt_result = event
             elif event_type == "result":
                 last_result = event
 
-    if last_result is not None:
+    if last_attempt_result is not None and isinstance(last_attempt_result.get("success"), bool):
+        metadata["success"] = bool(last_attempt_result.get("success"))
+    elif last_result is not None:
         metadata["success"] = bool(last_result.get("success"))
     return metadata
 
