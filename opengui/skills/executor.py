@@ -48,15 +48,23 @@ _OPEN_APP_SETTLE_SECONDS: float = 5.00
 _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
 _OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
 _NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
-_VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset({
-    "open_app", "wait", "done", "request_intervention", "screenshot", "hotkey",
-})
+_VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset(
+    {
+        "open_app",
+        "wait",
+        "done",
+        "request_intervention",
+        "screenshot",
+        "hotkey",
+    }
+)
 _UI_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
 
 # ---------------------------------------------------------------------------
 # Execution state
 # ---------------------------------------------------------------------------
+
 
 class ExecutionState(str, Enum):
     PENDING = "pending"
@@ -68,6 +76,7 @@ class ExecutionState(str, Enum):
 # ---------------------------------------------------------------------------
 # Subgoal result
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class SubgoalResult:
@@ -87,6 +96,7 @@ class SubgoalResult:
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class StepResult:
@@ -130,6 +140,7 @@ class SkillExecutionResult:
 # ---------------------------------------------------------------------------
 # Protocols
 # ---------------------------------------------------------------------------
+
 
 @typing.runtime_checkable
 class StateValidator(typing.Protocol):
@@ -284,6 +295,7 @@ class LLMStateValidator:
     @staticmethod
     def _parse_response(text: str) -> bool:
         import json as _json
+
         text = text.strip()
         match = re.search(r"\{.*\}", text, flags=re.DOTALL)
         if match:
@@ -393,9 +405,7 @@ def _parse_ui_bounds(value: Any) -> tuple[int, int, int, int] | None:
 
 def _ui_node_label(node: dict[str, Any]) -> str:
     return " ".join(
-        str(value)
-        for value in (node.get("text"), node.get("content_desc"))
-        if value
+        str(value) for value in (node.get("text"), node.get("content_desc")) if value
     ).strip()
 
 
@@ -422,6 +432,7 @@ def _ui_bounds_to_tap_action(
 # Parameter grounding helpers
 # ---------------------------------------------------------------------------
 
+
 def _ground_text(text: str, params: dict[str, str]) -> str:
     """Replace ``{{param}}`` placeholders with actual values."""
     for key, value in params.items():
@@ -441,8 +452,7 @@ def _ground_value(value: Any, params: dict[str, str]) -> Any:
         return tuple(_ground_value(item, params) for item in value)
     if isinstance(value, dict):
         return {
-            _ground_value(key, params): _ground_value(item, params)
-            for key, item in value.items()
+            _ground_value(key, params): _ground_value(item, params) for key, item in value.items()
         }
     return value
 
@@ -486,7 +496,11 @@ def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
         kwargs["mime_type"] = str(values["mime_type"])
     if "categories" in values:
         raw_categories = values["categories"]
-        kwargs["categories"] = tuple(str(item) for item in raw_categories) if isinstance(raw_categories, (list, tuple)) else (str(raw_categories),)
+        kwargs["categories"] = (
+            tuple(str(item) for item in raw_categories)
+            if isinstance(raw_categories, (list, tuple))
+            else (str(raw_categories),)
+        )
     if "extras" in values:
         raw_extras = values["extras"]
         if isinstance(raw_extras, dict):
@@ -557,7 +571,9 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
         kwargs["text"] = str(payload["text"])
     if "key" in payload:
         raw_key = payload["key"]
-        kwargs["key"] = [str(item) for item in raw_key] if isinstance(raw_key, list) else [str(raw_key)]
+        kwargs["key"] = (
+            [str(item) for item in raw_key] if isinstance(raw_key, list) else [str(raw_key)]
+        )
     if "pixels" in payload:
         kwargs["pixels"] = int(payload["pixels"])
     if "duration_ms" in payload:
@@ -572,7 +588,11 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
         kwargs["mime_type"] = str(payload["mime_type"])
     if "categories" in payload:
         raw_categories = payload["categories"]
-        kwargs["categories"] = tuple(str(item) for item in raw_categories) if isinstance(raw_categories, (list, tuple)) else (str(raw_categories),)
+        kwargs["categories"] = (
+            tuple(str(item) for item in raw_categories)
+            if isinstance(raw_categories, (list, tuple))
+            else (str(raw_categories),)
+        )
     if "extras" in payload:
         raw_extras = payload["extras"]
         if isinstance(raw_extras, dict):
@@ -607,6 +627,7 @@ def _try_build_complete_template_action(
 # Execution summary formatter
 # ---------------------------------------------------------------------------
 
+
 def _build_execution_summary(skill: Skill, step_results: list[StepResult]) -> str:
     """Build a human-readable narrative of the skill execution for the agent loop."""
     succeeded = sum(1 for r in step_results if r.state == ExecutionState.SUCCEEDED)
@@ -633,6 +654,7 @@ def _build_execution_summary(skill: Skill, step_results: list[StepResult]) -> st
 # ---------------------------------------------------------------------------
 # SkillExecutor
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SkillExecutor:
@@ -680,7 +702,7 @@ class SkillExecutor:
         skill: Skill,
         params: dict[str, str] | None = None,
         *,
-        timeout: float = 5.0,
+        timeout: float = 30.0,
     ) -> SkillExecutionResult:
         """Run all steps of *skill* sequentially with state verification."""
         params = params or {}
@@ -730,7 +752,15 @@ class SkillExecutor:
             visual_guarded_step = (
                 visual_guarded_skill
                 and not post_action_contract
-                and step.action_type not in {"open_app", "open_deeplink", "open_intent", "wait", "done", "request_intervention"}
+                and step.action_type
+                not in {
+                    "open_app",
+                    "open_deeplink",
+                    "open_intent",
+                    "wait",
+                    "done",
+                    "request_intervention",
+                }
             )
             if visual_guarded_step and not step.valid_state:
                 visual_guard_block_reason = "missing visual valid_state"
@@ -746,7 +776,8 @@ class SkillExecutor:
             elif step.valid_state and step.valid_state in confirmed_valid_states:
                 logger.debug(
                     "Step %d: valid_state %r confirmed by prior done judgment, skipping check",
-                    i, step.valid_state,
+                    i,
+                    step.valid_state,
                 )
                 valid, validate_usage, validate_dur = True, {}, None
             else:
@@ -762,16 +793,12 @@ class SkillExecutor:
             # ------------------------------------------------------------------
             recovery_result: SubgoalResult | None = None
             has_valid_state = bool(step.valid_state and step.valid_state.strip())
-            requires_state = (
-                step.state_contract is not None
-                or (
-                    step.action_type not in _VALID_STATE_OPTIONAL_ACTIONS
-                    and not _should_skip_validation(step.valid_state)
-                )
+            requires_state = step.state_contract is not None or (
+                step.action_type not in _VALID_STATE_OPTIONAL_ACTIONS
+                and not _should_skip_validation(step.valid_state)
             )
-            should_enforce_state = (
-                visual_guarded_step
-                or (not post_action_contract and requires_state)
+            should_enforce_state = visual_guarded_step or (
+                not post_action_contract and requires_state
             )
             if not valid and should_enforce_state and visual_guard_block_reason is None:
                 can_recover_with_subgoal = (
@@ -783,7 +810,8 @@ class SkillExecutor:
                 if can_recover_with_subgoal:
                     logger.info(
                         "Step %d: valid_state failed, attempting recovery for: %r",
-                        i, step.valid_state,
+                        i,
+                        step.valid_state,
                     )
                     recovery_result = await self.subgoal_runner.run_subgoal(
                         goal=step.valid_state or "",
@@ -806,18 +834,24 @@ class SkillExecutor:
                                 confirmed_valid_states.add(step.valid_state)
                                 logger.debug(
                                     "Step %d: added %r to confirmed_valid_states",
-                                    i, step.valid_state,
+                                    i,
+                                    step.valid_state,
                                 )
                         else:
                             # Standard recovery: refresh screenshot and re-validate.
-                            fresh_observation, fresh_screenshot = await self._get_observation_and_screenshot()
+                            (
+                                fresh_observation,
+                                fresh_screenshot,
+                            ) = await self._get_observation_and_screenshot()
                             observation = fresh_observation or observation
                             screenshot = (
-                                fresh_screenshot
-                                or recovery_result.final_screenshot
-                                or screenshot
+                                fresh_screenshot or recovery_result.final_screenshot or screenshot
                             )
-                            revalidate_result, revalidate_usage, revalidate_dur = await self._validate_state(
+                            (
+                                revalidate_result,
+                                revalidate_usage,
+                                revalidate_dur,
+                            ) = await self._validate_state(
                                 step,
                                 screenshot,
                                 observation=observation,
@@ -834,19 +868,20 @@ class SkillExecutor:
                         logger.warning(
                             "Step %d: recovery exhausted (%d sub-steps), "
                             "valid_state still not reached",
-                            i, recovery_result.steps_taken,
+                            i,
+                            recovery_result.steps_taken,
                         )
                 else:
-                    logger.info(
-                        "Step %d: valid_state failed, no subgoal_runner available", i
-                    )
+                    logger.info("Step %d: valid_state failed, no subgoal_runner available", i)
 
             # ------------------------------------------------------------------
             # 4. If still invalid, record failure and decide whether to continue
             # ------------------------------------------------------------------
             if not valid and should_enforce_state:
                 step_dur = time.monotonic() - step_start
-                state_description = step.valid_state or visual_guard_block_reason or "state_contract"
+                state_description = (
+                    step.valid_state or visual_guard_block_reason or "state_contract"
+                )
                 step_result = StepResult(
                     step_index=i,
                     action=Action(action_type=step.action_type),
@@ -912,7 +947,10 @@ class SkillExecutor:
                         else 1
                     )
                     for attempt_index in range(attempts):
-                        post_observation, post_screenshot = await self._get_observation_and_screenshot()
+                        (
+                            post_observation,
+                            post_screenshot,
+                        ) = await self._get_observation_and_screenshot()
                         post_valid, post_usage, post_dur = await self._validate_state(
                             step,
                             post_screenshot,
@@ -925,7 +963,11 @@ class SkillExecutor:
                             break
                         if attempt_index < attempts - 1:
                             await asyncio.sleep(_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS)
-                    if post_valid and execution_error is not None and self.trajectory_recorder is not None:
+                    if (
+                        post_valid
+                        and execution_error is not None
+                        and self.trajectory_recorder is not None
+                    ):
                         self.trajectory_recorder.record_event(
                             "skill_action_error_post_state_ok",
                             skill_id=skill.skill_id,
@@ -1073,7 +1115,8 @@ class SkillExecutor:
             except Exception as exc:
                 logger.warning(
                     "ActionGrounder failed for step %r, falling back to template: %s",
-                    step.action_type, exc,
+                    step.action_type,
+                    exc,
                 )
 
         return self._normalize_app_action(_build_template_action(step, params)), "template", {}, 0.0
@@ -1142,13 +1185,21 @@ class SkillExecutor:
             screenshot_path=step_result.screenshot_path,
             contract_eval_detail=step_result.contract_eval_detail,
             recovery_attempted=step_result.recovery_attempted,
-            recovery_success=bool(step_result.recovery_result and step_result.recovery_result.success),
+            recovery_success=bool(
+                step_result.recovery_result and step_result.recovery_result.success
+            ),
             error=step_result.error,
             token_usage=step_result.token_usage or None,
             duration_s=round(step_result.duration_s, 3) if step_result.duration_s else None,
-            validate_duration_s=round(step_result.validate_duration_s, 3) if step_result.validate_duration_s is not None else None,
-            grounding_duration_s=round(step_result.grounding_duration_s, 3) if step_result.grounding_duration_s is not None else None,
-            chat_latency_s=round(timings["chat_latency_s"], 3) if "chat_latency_s" in timings else None,
+            validate_duration_s=round(step_result.validate_duration_s, 3)
+            if step_result.validate_duration_s is not None
+            else None,
+            grounding_duration_s=round(step_result.grounding_duration_s, 3)
+            if step_result.grounding_duration_s is not None
+            else None,
+            chat_latency_s=round(timings["chat_latency_s"], 3)
+            if "chat_latency_s" in timings
+            else None,
             ttft_s=round(timings["ttft_s"], 3) if "ttft_s" in timings else None,
         )
 
@@ -1217,7 +1268,9 @@ class SkillExecutor:
             usage = self.state_validator.drain_usage()
         return result, usage, duration
 
-    async def _get_observation_and_screenshot(self) -> tuple[Observation | None, Path | bytes | None]:
+    async def _get_observation_and_screenshot(
+        self,
+    ) -> tuple[Observation | None, Path | bytes | None]:
         """Capture current observation when the provider supports it."""
         if self.screenshot_provider is not None:
             get_observation = getattr(self.screenshot_provider, "get_observation", None)
@@ -1276,18 +1329,10 @@ def _contract_eval_detail_to_dict(detail: Any) -> dict[str, Any]:
             3,
         ),
         "reason": getattr(detail, "reason", None),
-        "matched_required": _scrub_trace_value(
-            list(getattr(detail, "matched_required", []) or [])
-        ),
-        "failed_required": _scrub_trace_value(
-            list(getattr(detail, "failed_required", []) or [])
-        ),
-        "unknown_required": _scrub_trace_value(
-            list(getattr(detail, "unknown_required", []) or [])
-        ),
-        "failed_forbidden": _scrub_trace_value(
-            list(getattr(detail, "failed_forbidden", []) or [])
-        ),
+        "matched_required": _scrub_trace_value(list(getattr(detail, "matched_required", []) or [])),
+        "failed_required": _scrub_trace_value(list(getattr(detail, "failed_required", []) or [])),
+        "unknown_required": _scrub_trace_value(list(getattr(detail, "unknown_required", []) or [])),
+        "failed_forbidden": _scrub_trace_value(list(getattr(detail, "failed_forbidden", []) or [])),
         "unknown_forbidden": _scrub_trace_value(
             list(getattr(detail, "unknown_forbidden", []) or [])
         ),
@@ -1297,7 +1342,9 @@ def _contract_eval_detail_to_dict(detail: Any) -> dict[str, Any]:
 def _scrub_trace_value(value: Any) -> Any:
     if isinstance(value, dict):
         scrubbed: dict[str, Any] = {}
-        action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
+        action_type = (
+            value.get("action_type") if isinstance(value.get("action_type"), str) else None
+        )
         for key, item in value.items():
             if key == "url" and isinstance(item, str) and item.startswith("data:image/"):
                 scrubbed[key] = "<omitted:image-data-url>"
