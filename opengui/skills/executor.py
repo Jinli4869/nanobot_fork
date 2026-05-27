@@ -429,6 +429,21 @@ def _ground_text(text: str, params: dict[str, str]) -> str:
     return text
 
 
+def _ground_value(value: Any, params: dict[str, str]) -> Any:
+    if isinstance(value, str):
+        return _ground_text(value, params)
+    if isinstance(value, list):
+        return [_ground_value(item, params) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_ground_value(item, params) for item in value)
+    if isinstance(value, dict):
+        return {
+            _ground_value(key, params): _ground_value(item, params)
+            for key, item in value.items()
+        }
+    return value
+
+
 def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
     """Construct an Action from ``step.fixed_values``.
 
@@ -439,7 +454,7 @@ def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
     """
     values: dict[str, Any] = {}
     for k, v in step.fixed_values.items():
-        values[k] = _ground_text(str(v), params) if isinstance(v, str) else v
+        values[k] = _ground_value(v, params)
 
     kwargs: dict[str, Any] = {"action_type": step.action_type}
     if "x" in values:
@@ -495,7 +510,7 @@ def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str
     target = _ground_text(step.target, params)
     grounded: dict[str, Any] = {}
     for k, v in step.parameters.items():
-        grounded[k] = _ground_text(str(v), params) if isinstance(v, str) else v
+        grounded[k] = _ground_value(v, params)
 
     payload: dict[str, Any] = {"action_type": step.action_type}
     for key in (

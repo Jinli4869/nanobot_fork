@@ -113,6 +113,7 @@ class SkillReuser:
         library: Any,
         platform: str | None = None,
         *,
+        app: str | None = None,
         trajectory_recorder: TrajectoryRecorder | None = None,
     ) -> tuple[Any, float] | None:
         """Return an LLM-selected ``(skill_prefix, score)`` or ``None``.
@@ -121,36 +122,22 @@ class SkillReuser:
         then asks the LLM to pick one candidate and optional prefix length.
         """
         results: list[tuple[Any, float]] = await library.search(
-            task, platform=platform, top_k=self._top_k
+            task, platform=platform, app=app, top_k=self._top_k
         )
         candidates = [(skill, score) for skill, score in results if score >= self._threshold]
 
         if not candidates:
             _record(trajectory_recorder, "skill_search",
                     source="reuser", matched=False, reason="no_candidates",
-                    threshold=self._threshold)
+                    threshold=self._threshold, app_filter=app)
             return None
-
-        auto_selected = _auto_accept_candidate(
-            task,
-            candidates,
-            threshold=self._auto_accept_threshold,
-        )
-        if auto_selected is not None:
-            skill, score = auto_selected
-            _record(trajectory_recorder, "skill_search",
-                    source="reuser", matched=True,
-                    skill_id=skill.skill_id,
-                    skill_name=skill.name,
-                    score=round(score, 4),
-                    reason="auto_accept")
-            return skill, score
 
         selection = await self._select(task, candidates)
         selection_timing = dict(self._last_selection_timing)
         if selection is None:
             _record(trajectory_recorder, "skill_search",
                     source="reuser", matched=False, reason="all_rejected",
+                    app_filter=app,
                     selection_duration_s=selection_timing.get("selection_duration_s"),
                     llm_latency_s=selection_timing.get("llm_latency_s"),
                     candidates_checked=len(candidates))
@@ -163,6 +150,7 @@ class SkillReuser:
             _record(trajectory_recorder, "skill_search",
                     source="reuser", matched=False, reason="invalid_selection",
                     selected_skill_id=selected_skill_id,
+                    app_filter=app,
                     candidates_checked=len(candidates))
             return None
 
@@ -195,6 +183,7 @@ class SkillReuser:
                 score=round(score, 4),
                 end_step=end_step,
                 total_steps=step_count,
+                app_filter=app,
                 selection_duration_s=selection_timing.get("selection_duration_s"),
                 llm_latency_s=selection_timing.get("llm_latency_s"))
         return selected_skill, score
@@ -321,20 +310,6 @@ def _format_candidates(
             _format_steps(skill),
         ])
     return "\n".join(lines)
-
-
-def _auto_accept_candidate(
-    task: str,
-    candidates: list[tuple[Any, float]],
-    *,
-    threshold: float,
-) -> tuple[Any, float] | None:
-    del task
-    for skill, score in candidates:
-        if score < threshold:
-            continue
-        return skill, score
-    return None
 
 
 def _format_steps(skill: Any) -> str:

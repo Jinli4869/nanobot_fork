@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,7 @@ Rules:
 - Drop duplicate/redundant clicks, exploratory taps, and pointless scrolls.
 - Transient popups (ads, permissions, consent): keep as optional=True step. Executor skips them when absent.
 - Omit app-native confirmation buttons (Done/Save/Submit/App Initial) — the agent handles those after the skill.
-- description: ALWAYS describes what the skill DOES, chain every step's desc with " → ", compact.
+- description: MUST be generic and reusable. Mention app name, capability, and broad feature-level route only. Use parameter roles like query, media item, contact, or item. NEVER include literal values/entities, exact titles/names, or narrow qualifiers such as specific, official, first result, or top result. Avoid tap-by-tap UI actions.
 {failure_note}
 ## Trajectory
 {code_text}
@@ -136,6 +137,7 @@ class SkillExtractor:
             normalized = replace(
                 skill,
                 app=normalize_app_identifier(skill.platform, skill.app),
+                description=_generalize_skill_description(skill.description),
                 steps=tuple(replace(step, expected_state=None) for step in skill.steps),
             )
             resolved = _resolve_skill_app(normalized, result)
@@ -174,6 +176,22 @@ def _clean_code_block(text: str) -> str:
     if not t.startswith("from opengui"):
         t = f"{CODE_HEADER}\n\n{t}"
     return t.rstrip() + "\n"
+
+
+def _generalize_skill_description(description: str) -> str:
+    text = description.strip()
+    replacements = (
+        (r"\bspecific\s+", ""),
+        (r"\bofficial\s+", ""),
+        (r"\b(first|top)\s+search\s+result\b", "matching search result"),
+        (r"\b(first|top)\s+result\b", "matching result"),
+        (r"\ba\s+(music\s+)?video\s+query\b", "a video by query"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    return text.strip()
 
 
 def _resolve_skill_app(skill: Skill, result: CodegenResult) -> Skill | None:

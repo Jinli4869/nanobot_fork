@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import tempfile
 import xml.etree.ElementTree as ET
@@ -92,6 +93,53 @@ class AppShortcutProfile:
                    manifest_meta=d.get("manifest_meta"))
 
 
+@dataclass(frozen=True)
+class ValidatedShortcut:
+    package: str
+    kind: str
+    status: str
+    description: str
+    name: str | None = None
+    uri_template: str | None = None
+    action: str | None = None
+    component: str | None = None
+    mime_type: str | None = None
+    categories: tuple[str, ...] = ()
+    extras: tuple[tuple[str, Any], ...] = ()
+    parameters: tuple[str, ...] = ()
+    valid_state: str | None = None
+    skill_id: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ValidatedShortcut":
+        return cls(
+            package=_clean_app(data.get("package")),
+            kind=str(data.get("kind") or data.get("type") or "").strip(),
+            status=str(data.get("status") or "").strip(),
+            description=str(
+                data.get("intent_summary")
+                or data.get("description")
+                or data.get("summary")
+                or ""
+            ).strip(),
+            name=str(data["name"]).strip() if data.get("name") else None,
+            uri_template=str(
+                data.get("uri_template")
+                or data.get("uri")
+                or data.get("text")
+                or ""
+            ).strip() or None,
+            action=str(data.get("intent_action") or data.get("action") or "").strip() or None,
+            component=str(data.get("component") or "").strip() or None,
+            mime_type=str(data.get("mime_type") or "").strip() or None,
+            categories=_normalize_str_tuple(data.get("categories", ())),
+            extras=_normalize_extras(data.get("extras", ())),
+            parameters=_normalize_str_tuple(data.get("parameters", ())),
+            valid_state=str(data.get("valid_state") or "").strip() or None,
+            skill_id=str(data.get("skill_id") or "").strip() or None,
+        )
+
+
 async def extract_app_shortcuts(backend: Any, package: str) -> AppShortcutProfile:
     app = _clean_app(package)
     apk_path = await _pull_apk(backend, app)
@@ -143,6 +191,113 @@ def profile_to_skills(profile: AppShortcutProfile) -> list[Any]:
                            tags=("shortcut", "intent"),
                            skill_id=f"shortcut:di:{profile.package}:{_stable_short_hash(raw)}"))
     return skills
+
+
+def validated_shortcut_to_skill(
+    shortcut: ValidatedShortcut | dict[str, Any],
+    *,
+    require_page_validated: bool = True,
+) -> Any | None:
+    """Convert a validated deeplink/intent record into a one-step flat Skill."""
+    from opengui.skills.data import Skill, SkillStep
+
+    record = ValidatedShortcut.from_dict(shortcut) if isinstance(shortcut, dict) else shortcut
+    if require_page_validated and record.status != "page_validated":
+        return None
+    if not require_page_validated and record.status not in {"page_validated", "launchable"}:
+        return None
+
+    package = _clean_app(record.package)
+    if not package:
+        raise ValueError("validated shortcut requires package")
+
+    kind = record.kind.strip().lower()
+    description = _clean_shortcut_description(record.description, package)
+    name = record.name or _validated_skill_name(package, kind, description)
+    tags = ("shortcut", "deeplink" if kind == "deeplink" else "intent", "validated")
+
+    if kind == "deeplink":
+        uri = record.uri_template or ""
+        if not uri:
+            raise ValueError("validated deeplink shortcut requires uri_template")
+        parameters: dict[str, Any] = {"text": uri, "package": package}
+        if record.component:
+            parameters["component"] = record.component
+        step = SkillStep(
+            action_type="open_deeplink",
+            target=uri,
+            parameters=parameters,
+            valid_state=record.valid_state,
+        )
+        raw = {
+            "package": package,
+            "kind": kind,
+            "uri_template": uri,
+            "component": record.component or "",
+        }
+        skill_id = record.skill_id or f"shortcut:dl:{package}:{_stable_short_hash(_stable_json(raw))}"
+    elif kind == "intent":
+        action = record.action or ""
+        if not action:
+            raise ValueError("validated intent shortcut requires action")
+        parameters = {"intent_action": action, "package": package}
+        if record.uri_template:
+            parameters["text"] = record.uri_template
+        if record.component:
+            parameters["component"] = record.component
+        if record.mime_type:
+            parameters["mime_type"] = record.mime_type
+        if record.categories:
+            parameters["categories"] = record.categories
+        if record.extras:
+            parameters["extras"] = record.extras
+        step = SkillStep(
+            action_type="open_intent",
+            target=action,
+            parameters=parameters,
+            valid_state=record.valid_state,
+        )
+        raw = {
+            "package": package,
+            "kind": kind,
+            "action": action,
+            "uri_template": record.uri_template or "",
+            "component": record.component or "",
+            "mime_type": record.mime_type or "",
+            "categories": record.categories,
+            "extras": record.extras,
+        }
+        skill_id = record.skill_id or f"shortcut:di:{package}:{_stable_short_hash(_stable_json(raw))}"
+    else:
+        raise ValueError(f"unsupported validated shortcut kind: {record.kind!r}")
+
+    return Skill(
+        skill_id=skill_id,
+        name=name,
+        description=description,
+        app=package,
+        platform="android",
+        steps=(step,),
+        parameters=_shortcut_parameters(record, step),
+        tags=tags,
+        success_count=1,
+        success_streak=1,
+    )
+
+
+async def add_validated_shortcut_skill(
+    library: Any,
+    shortcut: ValidatedShortcut | dict[str, Any],
+    *,
+    require_page_validated: bool = True,
+) -> tuple[str, str | None]:
+    skill_obj = validated_shortcut_to_skill(
+        shortcut,
+        require_page_validated=require_page_validated,
+    )
+    if skill_obj is None:
+        return "SKIP_UNVALIDATED", None
+    return await library.add_or_merge(skill_obj)
 
 
 def _shortcut_skill_name(shortcut: DeepLink | DeepIntent) -> str:
@@ -405,6 +560,79 @@ def _dedupe_path_specs(items: list[tuple[str, str]] | tuple[tuple[str, str], ...
             seen.add(key)
             result.append(key)
     return result
+
+
+def _normalize_extras(raw: Any) -> tuple[tuple[str, Any], ...]:
+    if isinstance(raw, dict):
+        iterable = raw.items()
+    else:
+        iterable = raw or ()
+    extras: list[tuple[str, Any]] = []
+    for item in iterable:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        key, value = item
+        key_text = str(key).strip()
+        if key_text:
+            extras.append((key_text, value))
+    return tuple(extras)
+
+
+def _normalize_str_tuple(raw: Any) -> tuple[str, ...]:
+    if isinstance(raw, str):
+        raw = (raw,)
+    return tuple(str(item).strip() for item in (raw or ()) if str(item).strip())
+
+
+def _clean_shortcut_description(description: str, package: str) -> str:
+    text = re.sub(r"\s+", " ", _clean_string(description)).strip()
+    lowered = text.lower()
+    if (
+        not text
+        or "://" in text
+        or "component=" in lowered
+        or "android.intent." in lowered
+        or "am start" in lowered
+        or "adb " in lowered
+    ):
+        return f"{package} shortcut"
+    return text[:120]
+
+
+def _validated_skill_name(package: str, kind: str, description: str) -> str:
+    package_tail = package.rsplit(".", 1)[-1]
+    slug = _slug(f"{package_tail}_{description}", max_len=60)
+    if slug == "shortcut":
+        slug = _slug(f"{package_tail}_{kind}", max_len=60)
+    return slug
+
+
+def _shortcut_parameters(record: ValidatedShortcut, step: Any) -> tuple[str, ...]:
+    names = set(record.parameters)
+    names.update(_placeholder_names(step.target))
+    names.update(_placeholder_names(step.parameters))
+    return tuple(sorted(name for name in names if name))
+
+
+def _placeholder_names(value: Any) -> set[str]:
+    if isinstance(value, str):
+        return {match.group(1) for match in re.finditer(r"\{\{(\w+)\}\}", value)}
+    if isinstance(value, dict):
+        names: set[str] = set()
+        for key, item in value.items():
+            names.update(_placeholder_names(key))
+            names.update(_placeholder_names(item))
+        return names
+    if isinstance(value, (list, tuple, set)):
+        names: set[str] = set()
+        for item in value:
+            names.update(_placeholder_names(item))
+        return names
+    return set()
+
+
+def _stable_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _stable_short_hash(text: str, n: int = 10) -> str:

@@ -29,7 +29,9 @@ from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
 from opengui.skills.data import SkillStep
 from opengui.skills import deeplink as deeplink_module
+from opengui.skills import executor as skill_executor_module
 from opengui.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
+from opengui.skills.flat import FlatSkillLibrary, compile_flat_skills, export_skills_to_source
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 
@@ -632,6 +634,95 @@ def test_shortcut_skill_ids_and_agent_tool_names_do_not_collide() -> None:
     assert {entry[3] for entry in intent_entries} == {"text/plain", "image/png"}
 
 
+def test_validated_deeplink_promotes_to_concise_flat_skill() -> None:
+    skill = deeplink_module.validated_shortcut_to_skill({
+        "package": "com.taobao.taobao",
+        "kind": "deeplink",
+        "status": "page_validated",
+        "description": "淘宝搜索商品",
+        "name": "taobao_search",
+        "uri_template": "taobao://search?q={{query}}",
+        "component": "com.taobao.taobao/.RouterActivity",
+        "valid_state": "淘宝搜索结果页已打开",
+    })
+
+    assert skill is not None
+    assert skill.app == "com.taobao.taobao"
+    assert skill.description == "淘宝搜索商品"
+    assert skill.tags == ("shortcut", "deeplink", "validated")
+    assert skill.parameters == ("query",)
+    assert skill.success_count == 1
+    assert skill.steps[0].action_type == "open_deeplink"
+    assert skill.steps[0].parameters["text"] == "taobao://search?q={{query}}"
+    assert skill.steps[0].parameters["package"] == "com.taobao.taobao"
+
+    source = export_skills_to_source([skill])
+    assert "description='淘宝搜索商品'" in source
+    assert "am start" not in source
+    compiled = compile_flat_skills(source)
+    assert compiled.errors == ()
+    assert compiled.skills[0].parameters == ("query",)
+
+
+@pytest.mark.asyncio
+async def test_validated_intent_promotes_through_flat_library_add_or_merge(tmp_path: Path) -> None:
+    library = FlatSkillLibrary(store_dir=tmp_path)
+    record = {
+        "package": "com.example.app",
+        "kind": "intent",
+        "status": "page_validated",
+        "description": "在应用内搜索内容",
+        "name": "example_search",
+        "intent_action": "android.intent.action.SEARCH",
+        "extras": [["query", "{{query}}"]],
+        "valid_state": "搜索结果页已打开",
+    }
+
+    decision, skill_id = await deeplink_module.add_validated_shortcut_skill(library, record)
+    decision_again, skill_id_again = await deeplink_module.add_validated_shortcut_skill(library, record)
+
+    assert decision == "ADD"
+    assert decision_again == "KEEP_NEW"
+    assert skill_id == skill_id_again
+    skills = library.list_all()
+    assert len(skills) == 1
+    skill = skills[0]
+    assert skill.description == "在应用内搜索内容"
+    assert skill.steps[0].action_type == "open_intent"
+    assert skill.steps[0].parameters["intent_action"] == "android.intent.action.SEARCH"
+    assert skill.steps[0].parameters["extras"] == (("query", "{{query}}"),)
+    assert skill.parameters == ("query",)
+
+
+def test_validated_shortcut_skips_unvalidated_record() -> None:
+    skill = deeplink_module.validated_shortcut_to_skill({
+        "package": "com.example.app",
+        "kind": "deeplink",
+        "status": "launchable",
+        "description": "打开示例页面",
+        "uri_template": "example://home",
+    })
+
+    assert skill is None
+
+
+def test_intent_extra_placeholders_are_grounded_recursively() -> None:
+    step = SkillStep(
+        action_type="open_intent",
+        target="android.intent.action.SEARCH",
+        parameters={
+            "intent_action": "android.intent.action.SEARCH",
+            "extras": (("query", "{{query}}"),),
+        },
+    )
+
+    action = skill_executor_module._build_template_action(step, {"query": "手机 壳"})
+
+    assert action.action_type == "open_intent"
+    assert action.intent_action == "android.intent.action.SEARCH"
+    assert action.extras == (("query", "手机 壳"),)
+
+
 def test_parse_swipe_maps_start_and_end_coordinate_aliases() -> None:
     action = parse_action(
         {
@@ -833,7 +924,11 @@ def test_annotate_android_apps_filters_unmapped_packages() -> None:
 
 
 def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
-    from opengui.skills.normalization import normalize_app_identifier, resolve_android_package
+    from opengui.skills.normalization import (
+        find_android_app_in_text,
+        normalize_app_identifier,
+        resolve_android_package,
+    )
 
     cases = {
         "喜马拉雅": "com.ximalaya.ting.android",
@@ -854,6 +949,34 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
     for alias, package in cases.items():
         assert resolve_android_package(alias) == package
         assert normalize_app_identifier("android", alias) == package
+
+    text_cases = {
+        "In YouTube, search for Never Gonna Give You Up.": "com.google.android.youtube",
+        "帮我在油管搜索 Rick Astley": "com.google.android.youtube",
+        "在 B 站搜索播放华强买瓜": "tv.danmaku.bili",
+        "打开小破站看看推荐视频": "tv.danmaku.bili",
+        "帮我用喜马拉雅FM播放三国演义": "com.ximalaya.ting.android",
+    }
+    for text, package in text_cases.items():
+        assert find_android_app_in_text(text) == package
+
+
+def test_gui_agent_skill_app_filter_prefers_hint_then_task_text(tmp_path: Path) -> None:
+    class AndroidDryRunBackend(DryRunBackend):
+        @property
+        def platform(self) -> str:
+            return "android"
+
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        AndroidDryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path),
+        artifacts_root=tmp_path / "runs",
+    )
+
+    assert agent._skill_app_filter("In YouTube, search for a video.", None) == "com.google.android.youtube"
+    assert agent._skill_app_filter("Search for a video.", "B站") == "tv.danmaku.bili"
+    assert agent._skill_app_filter("Search for a video.", None) is None
 
 
 def test_build_system_prompt_android_apps_shows_display_names_only() -> None:

@@ -227,11 +227,20 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "douyin": "com.ss.android.ugc.aweme",
     "tiktok": "com.ss.android.ugc.aweme",
     "bilibili": "tv.danmaku.bili",
+    "bilibili app": "tv.danmaku.bili",
     "bili": "tv.danmaku.bili",
     "b站": "tv.danmaku.bili",
+    "b 站": "tv.danmaku.bili",
+    "哔哩哔哩动画": "tv.danmaku.bili",
     "哔站": "tv.danmaku.bili",
+    "小破站": "tv.danmaku.bili",
+    "youtube app": "com.google.android.youtube",
+    "yt": "com.google.android.youtube",
+    "油管": "com.google.android.youtube",
     "ximalaya": "com.ximalaya.ting.android",
     "himalaya": "com.ximalaya.ting.android",
+    "xmly": "com.ximalaya.ting.android",
+    "喜马拉雅fm": "com.ximalaya.ting.android",
     "qqmusic": "com.tencent.qqmusic",
     "kugou": "com.kugou.android",
     "iqiyi": "com.qiyi.video",
@@ -317,6 +326,7 @@ def _build_android_aliases() -> dict[str, str]:
 
 
 _ANDROID_APP_ALIASES = _build_android_aliases()
+_ANDROID_TEXT_ALIAS_DENYLIST = {"search", "搜索", "video", "视频"}
 
 
 def _lookup_android_alias(lowered: str) -> str | None:
@@ -378,6 +388,36 @@ def resolve_android_package(app_text: str) -> str:
     if package:
         return package
     return cleaned
+
+
+def find_android_app_in_text(text: str) -> str | None:
+    """Return the best Android app package mentioned inside free-form text."""
+    lowered = " ".join((text or "").strip().lower().split())
+    if not lowered:
+        return None
+    compact = re.sub(r"\s+", "", lowered)
+    matches: list[tuple[int, str, str]] = []
+    for alias, package in _ANDROID_APP_ALIASES.items():
+        alias_lower = alias.strip().lower()
+        if alias_lower in _ANDROID_TEXT_ALIAS_DENYLIST:
+            continue
+        if len(alias_lower) < 2:
+            continue
+        if _android_alias_occurs(lowered, compact, alias_lower):
+            matches.append((len(alias_lower), alias_lower, package))
+    if not matches:
+        return None
+    matches.sort(reverse=True)
+    return matches[0][2]
+
+
+def _android_alias_occurs(text: str, compact_text: str, alias: str) -> bool:
+    if "." in alias:
+        return alias in text
+    compact_alias = re.sub(r"\s+", "", alias)
+    if re.search(r"[\u4e00-\u9fff]", compact_alias):
+        return compact_alias in compact_text
+    return re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", text) is not None
 
 
 # ---------------------------------------------------------------------------
