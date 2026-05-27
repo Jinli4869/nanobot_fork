@@ -59,6 +59,8 @@ from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from opengui.trajectory.summarizer import build_state_note, is_state_note
 
 logger = logging.getLogger(__name__)
+_SKILL_PARAM_EXTRACTION_TIMEOUT_SECONDS = 60.0
+
 _DONE_FAILURE_HINTS: tuple[str, ...] = (
     "fail",
     "failed",
@@ -2861,7 +2863,7 @@ class GuiAgent:
         try:
             response = await asyncio.wait_for(
                 self.llm.chat([{"role": "user", "content": prompt}]),
-                timeout=8.0,
+                timeout=_SKILL_PARAM_EXTRACTION_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             logger.warning("Skill param extraction LLM call failed: %s", exc)
