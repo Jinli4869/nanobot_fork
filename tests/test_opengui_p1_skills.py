@@ -15,7 +15,7 @@ from opengui.backends.dry_run import DryRunBackend
 from opengui.interfaces import LLMResponse
 from opengui.observation import Observation
 from opengui.skills import Skill, SkillStep
-from opengui.skills.executor import ExecutionState, SkillExecutor
+from opengui.skills.executor import ExecutionState, SkillExecutor, SubgoalResult
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.flat import FlatSkillLibrary, compile_flat_skills
 from opengui.skills.reuser import SkillReuser
@@ -77,6 +77,28 @@ class _ObservationProvider:
         if not self._observations:
             return None
         return self._observations.pop(0)
+
+
+class _FakeSubgoalRunner:
+    def __init__(self, result: SubgoalResult) -> None:
+        self.result = result
+        self.calls: list[dict[str, Any]] = []
+
+    async def run_subgoal(
+        self,
+        goal: str,
+        screenshot: Path | bytes,
+        *,
+        max_steps: int = 3,
+        current_observation: Observation | None = None,
+    ) -> SubgoalResult:
+        self.calls.append({
+            "goal": goal,
+            "screenshot": screenshot,
+            "max_steps": max_steps,
+            "current_observation": current_observation,
+        })
+        return self.result
 
 
 class _FakeSkillLibrary:
@@ -1085,6 +1107,62 @@ async def test_skill_executor_falls_back_to_valid_state_when_contract_unknown() 
 
     assert result.state == ExecutionState.SUCCEEDED
     assert validator.calls == ["Settings button is visible"]
+
+
+@pytest.mark.asyncio
+async def test_skill_executor_passes_observation_to_subgoal_and_skips_revalidation(
+    tmp_path: Path,
+) -> None:
+    screenshot = tmp_path / "screen.png"
+    screenshot.write_bytes(b"png")
+    observation = Observation(
+        screenshot_path=str(screenshot),
+        screen_width=496,
+        screen_height=1080,
+        foreground_app="com.example",
+        platform="android",
+    )
+    validator = _FakeValidator([False])
+    subgoal = _FakeSubgoalRunner(
+        SubgoalResult(
+            success=True,
+            steps_taken=1,
+            action_summaries=["goal reached"],
+            final_screenshot=screenshot,
+            final_observation=observation,
+            done_judgment=True,
+        )
+    )
+    backend = _RecordingBackend()
+    skill = _make_skill(
+        "s1",
+        "Tap Settings",
+        "Tap Settings",
+        steps=(
+            SkillStep(
+                action_type="tap",
+                target="Settings",
+                valid_state="Settings button is visible",
+                fixed=True,
+                fixed_values={"x": 10, "y": 20},
+            ),
+        ),
+    )
+    executor = SkillExecutor(
+        backend=backend,
+        state_validator=validator,
+        subgoal_runner=subgoal,
+        screenshot_provider=_ObservationProvider([observation]),
+    )
+
+    result = await executor.execute(skill)
+
+    assert result.state == ExecutionState.SUCCEEDED
+    assert validator.calls == ["Settings button is visible"]
+    assert len(subgoal.calls) == 1
+    assert subgoal.calls[0]["current_observation"] is observation
+    assert backend.actions[0].action_type == "tap"
+    assert result.step_results[0].recovery_result is subgoal.result
 
 
 @pytest.mark.asyncio
