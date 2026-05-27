@@ -509,6 +509,25 @@ def apply_focused_contracts_from_codegen(skill: Skill, result: CodegenResult) ->
     return apply_focused_input_contracts(skill, contracts) if contracts else skill
 
 
+def apply_state_contracts_from_codegen(skill: Skill, result: CodegenResult) -> Skill:
+    """Make codegen-derived contracts authoritative for extracted skill steps."""
+    aligned = _align_skill_steps_to_codegen(skill, result)
+    if not aligned:
+        return skill
+    changed = False
+    steps: list[SkillStep] = []
+    for step, code_step in aligned:
+        contract = None
+        if code_step is not None and not code_step.suppress_extracted_contract:
+            contract = _load_contract(code_step.contract_json) if code_step.contract_json else None
+        if step.state_contract != contract:
+            changed = True
+            steps.append(replace(step, state_contract=contract))
+        else:
+            steps.append(step)
+    return replace(skill, steps=tuple(steps)) if changed else skill
+
+
 def apply_contract_constraints_from_codegen(skill: Skill, result: CodegenResult) -> Skill:
     aligned = _align_skill_steps_to_codegen(skill, result)
     if not aligned:
