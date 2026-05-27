@@ -59,6 +59,14 @@ _VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset(
         "hotkey",
     }
 )
+_TEMPLATE_COORDINATE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
+    "tap": ("x", "y"),
+    "double_tap": ("x", "y"),
+    "long_press": ("x", "y"),
+    "scroll": ("x", "y"),
+    "swipe": ("x", "y", "x2", "y2"),
+    "drag": ("x", "y", "x2", "y2"),
+}
 _UI_BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 
 
@@ -618,6 +626,9 @@ def _try_build_complete_template_action(
     try:
         action = parse_action(_build_template_payload(step, params))
     except (ActionError, TypeError, ValueError):
+        return None
+    required_coords = _TEMPLATE_COORDINATE_REQUIREMENTS.get(action.action_type)
+    if required_coords and any(getattr(action, name, None) is None for name in required_coords):
         return None
     for value in (action.text, *(action.key or ())):
         if isinstance(value, str) and re.search(r"\{\{\w+\}\}", value):
