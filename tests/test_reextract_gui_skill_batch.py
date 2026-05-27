@@ -77,3 +77,32 @@ def test_discover_jobs_supports_task_root_directly(tmp_path: Path) -> None:
     assert len(jobs) == 1
     assert jobs[0].task_dir == task_root
     assert jobs[0].platform == "android"
+
+
+def test_summary_includes_extraction_usage(tmp_path: Path) -> None:
+    batch = _load_batch_module()
+    task_root = tmp_path / "TaskA"
+    run_dir = task_root / "nanobot_gui_task_runs" / "0"
+    trace = run_dir / "trace.jsonl"
+    _write_jsonl(trace, [
+        {"event": "attempt_start", "task": "Open Settings"},
+        {"event": "attempt_result", "success": True},
+    ])
+    (run_dir / "extraction_usage.json").write_text(
+        json.dumps({"prompt": 10, "completion": 3, "cached": 2}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    jobs, _skipped = batch.discover_jobs(task_root, platform_override="android")
+    record = batch._job_record(jobs[0], status="processed_code")
+    summary_path = tmp_path / "summary.json"
+
+    batch._write_summary(summary_path, [record])
+
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["usage_totals"] == {"prompt": 10, "completion": 3, "cached": 2}
+    assert summary["records"][0]["extraction_usage"] == {
+        "prompt": 10,
+        "completion": 3,
+        "cached": 2,
+    }
+    assert summary["records"][0]["extraction_usage_path"] == str(run_dir / "extraction_usage.json")

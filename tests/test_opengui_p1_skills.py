@@ -1187,7 +1187,7 @@ async def open_settings(device):
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_prompt_requests_natural_language_description() -> None:
+async def test_skill_extractor_prompt_requests_stable_targets_and_generic_description() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
 @skill(app="tv.danmaku.bili", platform="android", name="search_bilibili", description="In Bilibili, search for a video and start playback through the search results.")
@@ -1216,6 +1216,9 @@ async def search_bilibili(device, query):
     assert "NEVER include literal values/entities" in prompt
     assert "specific, official, first result, or top result" in prompt
     assert "Avoid tap-by-tap UI actions" in prompt
+    assert "prefer stable operational identifiers" in prompt
+    assert "It does not need to be a purely human-language description" in prompt
+    assert "prefer the trajectory app package" in prompt
 
 
 @pytest.mark.asyncio
@@ -1280,7 +1283,7 @@ async def open_calendar(device):
     ], is_success=True)
 
     assert len(skills) == 1
-    assert skills[0].app == "com.android.calendar"
+    assert skills[0].app == "org.fossify.calendar"
 
 
 @pytest.mark.asyncio
@@ -1301,7 +1304,73 @@ async def open_calendar(device):
     ], is_success=True)
 
     assert len(skills) == 1
-    assert skills[0].app == "com.google.android.calendar"
+    assert skills[0].app == "org.fossify.calendar"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_trace_app_overrides_llm_app_and_open_app_valid_state() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.android.settings", platform="android", name="open_calendar", description="Open Calendar")
+async def open_calendar(device):
+    await action("open_app", target="Settings", fixed=True, fixed_values={"text": "com.android.settings"}, valid_state="Settings screen is visible")
+    await action("tap", target="Add event", fixed=True, fixed_values={"x": 100, "y": 200}, valid_state="Add event button is visible")
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+
+    skills = await extractor.extract_from_steps_multi([
+        {
+            "action": {"action_type": "open_app", "text": "org.fossify.calendar"},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+        {
+            "action": {"action_type": "tap", "x": 100, "y": 200},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+    ], is_success=True)
+
+    assert len(skills) == 1
+    assert skills[0].app == "org.fossify.calendar"
+    assert skills[0].steps[0].action_type == "open_app"
+    assert skills[0].steps[0].target == "org.fossify.calendar"
+    assert skills[0].steps[0].fixed is True
+    assert skills[0].steps[0].fixed_values["text"] == "org.fossify.calendar"
+    assert skills[0].steps[0].valid_state == "No need to verify"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_skips_trace_when_all_steps_share_foreground_app(
+    tmp_path: Path,
+) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Search Zhihu", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 100, "y": 200},
+            "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "input_text", "text": "query"},
+            "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+        },
+    ])
+    llm = _ScriptedLLM([])
+    extractor = SkillExtractor(llm)
+
+    skills = await extractor.extract_from_file_multi(trace_path)
+
+    assert skills == []
+    assert llm.messages == []
+    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert extraction_result["status"] == "no_candidate"
+    assert extraction_result["detail"] == {
+        "reason": "single_foreground_app_package",
+        "app": "com.zhihu.android",
+    }
 
 
 @pytest.mark.asyncio
@@ -1502,7 +1571,6 @@ def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path
             "action": {"action_type": "tap", "x": 206, "y": 81},
             "observation": {
                 "platform": "android",
-                "foreground_app": "tv.danmaku.bili",
                 "screen_width": 496,
                 "screen_height": 1080,
                 "extra": {
@@ -1607,7 +1675,6 @@ async def search_bilibili(device, query):
             "action": {"action_type": "input_text", "text": "Never Gonna Give You Up MV"},
             "observation": {
                 "platform": "android",
-                "foreground_app": "tv.danmaku.bili",
                 "extra": {"ui_tree": []},
             },
         },
@@ -1659,7 +1726,6 @@ async def zhihu_search_text(device, query):
                 "action": {"action_type": "input_text", "text": "强化学习"},
                 "observation": {
                     "platform": "android",
-                    "foreground_app": "com.zhihu.android",
                     "extra": {"ui_tree": []},
                 },
             }),

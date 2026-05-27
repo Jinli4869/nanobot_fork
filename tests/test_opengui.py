@@ -944,6 +944,19 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
         "Google Maps app": "com.google.android.apps.maps",
         "Chrome browser": "com.android.chrome",
         "钉钉": "com.alibaba.android.rimet",
+        "Messages": "com.google.android.apps.messaging",
+        "SMS app": "com.google.android.apps.messaging",
+        "com.android.mms": "com.google.android.apps.messaging",
+        "Calendar": "org.fossify.calendar",
+        "com.google.android.calendar": "org.fossify.calendar",
+        "Documents": "com.google.android.documentsui",
+        "com.android.documentsui": "com.google.android.documentsui",
+        "Mattermost": "com.mattermost.rnbeta",
+        "com.mattermost.rn": "com.mattermost.rnbeta",
+        "Mastodon": "org.joinmastodon.android.mastodon",
+        "Taobao": "com.testmall.app",
+        "com.taobao.taobao": "com.testmall.app",
+        "Gallery": "gallery.photomanager.picturegalleryapp.imagegallery",
     }
 
     for alias, package in cases.items():
@@ -956,6 +969,9 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
         "在 B 站搜索播放华强买瓜": "tv.danmaku.bili",
         "打开小破站看看推荐视频": "tv.danmaku.bili",
         "帮我用喜马拉雅FM播放三国演义": "com.ximalaya.ting.android",
+        "In the messaging app, reply OK to the invitation.": "com.google.android.apps.messaging",
+        "In the calendar app, schedule a lunch event.": "org.fossify.calendar",
+        "Open Mattermost and check the support channel.": "com.mattermost.rnbeta",
     }
     for text, package in text_cases.items():
         assert find_android_app_in_text(text) == package
