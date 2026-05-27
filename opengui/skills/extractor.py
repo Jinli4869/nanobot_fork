@@ -18,6 +18,7 @@ from opengui.skills.trajectory_codegen import (
     CodegenResult,
     apply_contract_constraints_from_codegen,
     apply_focused_contracts_from_codegen,
+    apply_state_contracts_from_codegen,
     codegen_to_extraction_text,
     codegen_trajectory,
 )
@@ -37,7 +38,7 @@ Target format:
 async def skill_name(device, param1, param2):
     await action("open_app", target="{app}", fixed=True, fixed_values={{"text": "{app}"}},
                  valid_state="No need to verify")
-    await action("tap", target="resource_id_or_content_desc", fixed=True,
+    await action("tap", target="search button", fixed=True,
                  fixed_values={{"x": 540, "y": 960}},
                  valid_state="target is visible and clickable",
                  state_contract=C(app="...[app_package]...", required=[R(resource_id="target_id", visible=True)]))
@@ -48,13 +49,13 @@ Rules:
 - Extract ONE cohesive skill that covers the core action sequence. Do NOT split into multiple tiny @skill functions.
 - fixed=true + fixed_values: static UI (nav bars, toolbar, system actions, open_app). Copy exact x/y/text from the trajectory step params shown after "|".
 - fixed=false: dynamic content (search results, variable input). Use {{{{param}}}} placeholders, omit fixed_values.
-- target: prefer stable operational identifiers from the trajectory, such as app package, resource_id, content_desc, class, or concise UI label. It does not need to be a purely human-language description.
+- target: concise natural-language grounding hint, e.g. "search button", "search input field", "matching video result", "skip ad button". Do not use raw class/resource_id as target unless it is also visible user-facing text.
 - Collapse all app-launch steps into ONE open_app as the first step. For open_app, prefer the trajectory app package for both target and fixed_values.text when available, and always use valid_state="No need to verify".
 - valid_state: specific present-tense, e.g. "search field is visible and enabled".
-- state_contract: use C()/R() with resource_id/content_desc/class from the step's "control:" field. Use class_ when writing a class selector in R(). Omit state_contract if step has no control info or selector is dynamic.
+- state_contract: do not invent selectors. Copy only the exact contract provided by trajectory/codegen for the matched step; omit if no contract is provided. The extractor postprocess will align contracts from codegen.
 - Drop duplicate/redundant clicks, exploratory taps, and pointless scrolls.
 - Transient popups (ads, permissions, consent): keep as optional=True step. Executor skips them when absent.
-- Omit app-native confirmation buttons (Done/Save/Submit/App Initial) — the agent handles those after the skill.
+- Keep transient blockers and benign app confirmations such as skip/close/save/done as guarded optional=True steps when they appear. Omit destructive or externally visible confirmations such as pay, delete, send, submit order, publish, or irreversible consent unless the original user task explicitly requires them.
 - description: MUST be generic and reusable. Mention app name, capability, and broad feature-level route only. Use parameter roles like query, media item, contact, or item. NEVER include literal values/entities, exact titles/names, or narrow qualifiers such as specific, official, first result, or top result. Avoid tap-by-tap UI actions.
 {failure_note}
 ## Trajectory
@@ -63,7 +64,13 @@ Rules:
 Output ONLY the Python code. No markdown fences, no JSON object, no explanation.
 """
 
-_FAILURE_NOTE = "FAILURE trajectory: only include steps that succeeded before the failure point."
+_FAILURE_NOTE = (
+    "FAILURE trajectory: keep the reusable succeeded prefix. If the failure screen clearly "
+    "shows one safe corrective next action, append at most one non-fixed corrective step with "
+    "natural-language target and valid_state. Do not invent coordinates or state_contract for "
+    "that corrective step. Use optional=True only for transient blockers/popups, and never add "
+    "pay/delete/send/submit/publish/irreversible confirmation actions."
+)
 
 
 class SkillExtractor:
@@ -129,7 +136,10 @@ class SkillExtractor:
         skills = self._compile_all(response.content, result)
         return [
             apply_contract_constraints_from_codegen(
-                apply_focused_contracts_from_codegen(skill, result),
+                apply_state_contracts_from_codegen(
+                    apply_focused_contracts_from_codegen(skill, result),
+                    result,
+                ),
                 result,
             )
             for skill in skills

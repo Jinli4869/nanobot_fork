@@ -1207,7 +1207,7 @@ async def search_bilibili(device, query):
             "action": {"action_type": "input_text", "text": "敢杀我的马"},
             "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
         },
-    ])
+    ], is_success=False)
 
     prompt = llm.messages[0][0]["content"][0]["text"]
     assert "MUST be generic and reusable" in prompt
@@ -1216,9 +1216,13 @@ async def search_bilibili(device, query):
     assert "NEVER include literal values/entities" in prompt
     assert "specific, official, first result, or top result" in prompt
     assert "Avoid tap-by-tap UI actions" in prompt
-    assert "prefer stable operational identifiers" in prompt
-    assert "It does not need to be a purely human-language description" in prompt
+    assert "concise natural-language grounding hint" in prompt
+    assert "Do not use raw class/resource_id as target" in prompt
     assert "prefer the trajectory app package" in prompt
+    assert "do not invent selectors" in prompt
+    assert "postprocess will align contracts from codegen" in prompt
+    assert "guarded optional=True steps" in prompt
+    assert "at most one non-fixed corrective step" in prompt
 
 
 @pytest.mark.asyncio
@@ -1391,7 +1395,7 @@ async def open_unknown(device):
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_prefers_interaction_target_contract() -> None:
+async def test_skill_extractor_removes_llm_contract_without_codegen_contract() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
@@ -1408,12 +1412,11 @@ async def open_details(device):
     )
 
     assert skill is not None
-    required = skill.steps[0].state_contract["signature"]["required"]
-    assert required[0]["selector"] == {"resource_id": "com.example:id/details_btn"}
+    assert skill.steps[0].state_contract is None
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_infers_interaction_target_from_trace_step() -> None:
+async def test_skill_extractor_drops_llm_contract_when_step_trace_has_no_codegen_selector() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
 @skill(app="com.zhihu.android", platform="android", name="search_box", description="Tap Zhihu search box")
@@ -1430,13 +1433,11 @@ async def search_box(device):
     )
 
     assert skill is not None
-    assert skill.steps[0].state_contract is not None
-    required = skill.steps[0].state_contract["signature"]["required"]
-    assert required[0]["selector"] == {"resource_id": "com.zhihu.android:id/query_container"}
+    assert skill.steps[0].state_contract is None
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_uses_previous_observation_for_pre_action_target() -> None:
+async def test_skill_extractor_drops_later_llm_contract_without_codegen_selector() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
 @skill(app="com.zhihu.android", platform="android", name="search_box_recover", description="Tap search box")
@@ -1454,13 +1455,11 @@ async def search_box_recover(device):
     ], is_success=True)
 
     assert skill is not None
-    assert skill.steps[1].state_contract is not None
-    required = skill.steps[1].state_contract["signature"]["required"]
-    assert required[0]["selector"] == {"resource_id": "com.zhihu.android:id/query_container"}
+    assert skill.steps[1].state_contract is None
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_input_text_uses_previous_observation_for_state_contract() -> None:
+async def test_skill_extractor_drops_input_llm_contract_without_codegen_selector() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
 @skill(app="com.zhihu.android", platform="android", name="zhihu_search_text", description="Enter search text")
@@ -1478,9 +1477,7 @@ async def zhihu_search_text(device):
 
     assert skill is not None
     assert skill.steps[0].action_type == "input_text"
-    assert skill.steps[0].state_contract is not None
-    required = skill.steps[0].state_contract["signature"]["required"]
-    assert required[0]["selector"] == {"resource_id": "com.zhihu.android:id/input_text"}
+    assert skill.steps[0].state_contract is None
 
 
 def test_infer_focused_input_contract_prefers_resource_id_and_class() -> None:
@@ -1606,7 +1603,7 @@ def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_skill_extractor_keeps_pre_action_tap_contract_before_focused_input(
+async def test_skill_extractor_overrides_llm_contract_with_codegen_contract(
     tmp_path: Path,
 ) -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
@@ -1615,7 +1612,7 @@ async def test_skill_extractor_keeps_pre_action_tap_contract_before_focused_inpu
 async def search_bilibili(device, query):
     await action("open_app", target="Bilibili", valid_state="No need to verify")
     await action("tap", target="search bar", valid_state="search bar is visible",
-                 state_contract=C(app="tv.danmaku.bili", required=[R(resource_id="tv.danmaku.bili:id/expand_search", visible=True, clickable=True)]))
+                 state_contract=C(app="tv.danmaku.bili", required=[R(resource_id="tv.danmaku.bili:id/hallucinated", visible=True, clickable=True)]))
     await action("input_text", target=query, valid_state="search input is focused")
 """
     trace_path = tmp_path / "trace.jsonl"
