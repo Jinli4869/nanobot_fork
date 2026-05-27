@@ -1110,7 +1110,7 @@ async def test_adb_backend_observe_prefers_screenshot_size(monkeypatch: pytest.M
     assert backend._screen_width == 2376
     assert backend._screen_height == 1080
     screen_size_mock.assert_not_awaited()
-    foreground_mock.assert_awaited_once_with(5.0)
+    foreground_mock.assert_awaited_once_with(30.0)
 
 
 @pytest.mark.asyncio
@@ -1131,8 +1131,8 @@ async def test_adb_backend_observe_falls_back_when_screenshot_size_unavailable(
 
     assert obs.screen_width == 1080
     assert obs.screen_height == 2376
-    screen_size_mock.assert_awaited_once_with(5.0)
-    foreground_mock.assert_awaited_once_with(5.0)
+    screen_size_mock.assert_awaited_once_with(30.0)
+    foreground_mock.assert_awaited_once_with(30.0)
 
 
 @pytest.mark.asyncio
@@ -1776,18 +1776,19 @@ async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path
     _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM(
         [
-            LLMResponse(
-                content=(
-                    "Thought: Move toward the target\n"
-                    'Action: "Tap settings"\n'
-                    '<tool_call>{"name":"mobile_use","arguments":{"action":"click","coordinate":[400,300]}}</tool_call>'
-                ),
-                tool_calls=None,
-            )
+            _qwen_response(
+                {"action": "click", "coordinate": [400, 300]},
+                action_text="Tap settings",
+            ),
+            _qwen_response(
+                {"action": "terminate", "status": "success"},
+                thought="The target state is reached.",
+                action_text="Finish successfully",
+            ),
         ]
     )
     backend = _SkillTestBackend()
-    validator = _RecordingValidator([True])
+    validator = _RecordingValidator([])
     runner = _AgentSubgoalRunner(
         llm=llm,
         backend=backend,
@@ -1797,14 +1798,15 @@ async def test_agent_subgoal_runner_uses_profile_seam_for_qwen3vl(tmp_path: Path
         agent_profile="qwen3vl",
     )
 
-    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=2)
 
     assert result.success is True
+    assert result.done_judgment is True
     assert backend.executed_actions
     action = backend.executed_actions[0]
     assert action.action_type == "tap"
     assert action.relative is False
-    assert validator.calls[0]["valid_state"] == "Settings screen visible"
+    assert validator.calls == []
 
 
 @pytest.mark.asyncio
@@ -1813,24 +1815,15 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
     _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM(
         [
-            LLMResponse(
-                content=(
-                    "Thought: Move toward the target\n"
-                    'Action: "Tap settings"\n'
-                    '<tool_call>{"name":"computer_use","arguments":{"action_type":"tap","x":400,"y":300,"relative":true}}</tool_call>'
-                ),
-                tool_calls=[
-                    ToolCall(
-                        id="subgoal-tool-0",
-                        name="computer_use",
-                        arguments={"action_type": "tap", "x": 400, "y": 300, "relative": True},
-                    )
-                ],
-            )
+            _mobileworld_response({"action_type": "click", "coordinate": [0.4, 0.3]}),
+            _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="The target state is visible.",
+            ),
         ]
     )
     backend = _SkillTestBackend()
-    validator = _RecordingValidator([True])
+    validator = _RecordingValidator([])
     recorder = _make_recorder(tmp_path, "subgoal trace")
     recorder.start()
     runner = _AgentSubgoalRunner(
@@ -1842,7 +1835,7 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
         trajectory_recorder=recorder,
     )
 
-    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=2)
     trace_path = recorder.finish(success=True)
     events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
 
@@ -1851,17 +1844,25 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
     assert "subgoal_start" in names
     assert "subgoal_step" in names
     assert "subgoal_result" in names
-    subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
-    assert subgoal_step["model_output"]
-    assert subgoal_step["goal_reached"] is True
-    assert subgoal_step["action"]["action_type"] == "tap"
+    subgoal_steps = [event for event in events if event["type"] == "subgoal_step"]
+    assert len(subgoal_steps) == 2
+    assert subgoal_steps[0]["model_output"]
+    assert subgoal_steps[0]["goal_reached"] is False
+    assert subgoal_steps[0]["action"]["action_type"] == "tap"
+    assert subgoal_steps[1]["goal_reached"] is True
+    assert subgoal_steps[1]["action"]["action_type"] == "done"
+    assert validator.calls == []
 
 
 @pytest.mark.asyncio
 async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal-failure.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([LLMResponse(content="No valid tool call", tool_calls=None)])
+    llm = _RecordingLLM([
+        LLMResponse(content="No valid tool call", tool_calls=None),
+        LLMResponse(content="Still invalid", tool_calls=None),
+        LLMResponse(content="Invalid again", tool_calls=None),
+    ])
     recorder = _make_recorder(tmp_path, "subgoal trace failure")
     recorder.start()
     runner = _AgentSubgoalRunner(
@@ -1878,10 +1879,38 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
     events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
 
     assert result.success is False
+    assert result.steps_taken == 0
     subgoal_step = next(event for event in events if event["type"] == "subgoal_step")
-    assert subgoal_step["error"].startswith("profile parse error:")
+    assert subgoal_step["error"].startswith("profile/action parse error after retries:")
     subgoal_result = next(event for event in events if event["type"] == "subgoal_result")
     assert subgoal_result["success"] is False
+    assert subgoal_result["steps_taken"] == 0
+
+
+@pytest.mark.asyncio
+async def test_agent_subgoal_runner_retries_parse_without_consuming_step(tmp_path: Path) -> None:
+    screenshot = tmp_path / "subgoal-retry.png"
+    _write_test_png(screenshot, size=(1000, 1000))
+    llm = _RecordingLLM([
+        LLMResponse(content="No valid action", tool_calls=None),
+        _mobileworld_response(
+            {"action_type": "status", "goal_status": "complete"},
+            thought="The target state is already visible.",
+        ),
+    ])
+    runner = _AgentSubgoalRunner(
+        llm=llm,
+        backend=_SkillTestBackend(),
+        state_validator=_RecordingValidator([]),
+        model="test-model",
+        artifacts_root=tmp_path / "artifacts-retry",
+    )
+
+    result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
+
+    assert result.success is True
+    assert result.steps_taken == 1
+    assert len(llm.calls) == 2
 
 
 def test_recorder_metrics_include_skill_and_agent_totals(tmp_path: Path) -> None:
@@ -1955,20 +1984,15 @@ async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_pat
     _write_test_png(screenshot, size=(1000, 1000))
     llm = _RecordingLLM(
         [
-            LLMResponse(
-                content="tap the target",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-0",
-                        name="computer_use",
-                        arguments={"action_type": "tap", "x": 900, "y": 941},
-                    )
-                ],
-            )
+            _mobileworld_response({"action_type": "click", "coordinate": [0.9, 0.941]}),
+            _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="The target state is reached.",
+            ),
         ]
     )
     backend = _SkillTestBackend()
-    validator = _RecordingValidator([True])
+    validator = _RecordingValidator([])
     runner = _AgentSubgoalRunner(
         llm=llm,
         backend=backend,
@@ -1977,7 +2001,7 @@ async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_pat
         artifacts_root=tmp_path / "artifacts",
     )
 
-    result = await runner.run_subgoal("Tap the target button", screenshot, max_steps=1)
+    result = await runner.run_subgoal("Tap the target button", screenshot, max_steps=2)
 
     assert result.success is True
     assert backend.executed_actions
@@ -2006,16 +2030,11 @@ async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> No
 
     llm = _RecordingLLM(
         [
-            LLMResponse(
-                content="tap",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-0",
-                        name="computer_use",
-                        arguments={"action_type": "tap", "x": 10, "y": 20},
-                    )
-                ],
-            )
+            _mobileworld_response({"action_type": "click", "coordinate": [0.01, 0.02]}),
+            _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="Timeout propagation checked.",
+            ),
         ]
     )
     runner = _AgentSubgoalRunner(
@@ -2027,7 +2046,7 @@ async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> No
         step_timeout=42.0,
     )
 
-    await runner.run_subgoal("Confirm timeout propagation", screenshot, max_steps=1)
+    await runner.run_subgoal("Confirm timeout propagation", screenshot, max_steps=2)
 
     assert execute_timeouts == [42.0]
     assert observe_timeouts == [42.0]
@@ -2084,43 +2103,27 @@ async def test_subgoal_runner_settle_behavior(
         sleep_calls.append(delay)
         await original_sleep(0)
 
-    monkeypatch.setattr("opengui.agent.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("opengui.skills.subgoal_runner.asyncio.sleep", fake_sleep)
 
-    # First LLM call returns tap; second returns wait
     llm = _RecordingLLM(
         [
-            LLMResponse(
-                content="tap",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-0",
-                        name="computer_use",
-                        arguments={"action_type": "tap", "x": 10, "y": 20},
-                    )
-                ],
-            ),
-            LLMResponse(
-                content="wait",
-                tool_calls=[
-                    ToolCall(
-                        id="tc-1",
-                        name="computer_use",
-                        arguments={"action_type": "wait", "duration_ms": 500},
-                    )
-                ],
+            _mobileworld_response({"action_type": "click", "coordinate": [0.01, 0.02]}),
+            _mobileworld_response({"action_type": "wait"}),
+            _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="Settle behavior checked.",
             ),
         ]
     )
     runner = _AgentSubgoalRunner(
         llm=llm,
         backend=_SkillTestBackend(),
-        # validator returns False on tap step, True on wait step
-        state_validator=_RecordingValidator([False, True]),
+        state_validator=_RecordingValidator([]),
         model="test-model",
         artifacts_root=tmp_path / "artifacts",
     )
 
-    result = await runner.run_subgoal("Settle behavior check", screenshot, max_steps=2)
+    result = await runner.run_subgoal("Settle behavior check", screenshot, max_steps=3)
 
     assert result.success is True
     # tap must produce exactly one settle sleep of 0.5s

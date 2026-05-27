@@ -10,7 +10,8 @@ Execution pipeline per step:
 2b. If valid_state passes and step is not fixed → ground parameters via ``ActionGrounder``
     (vision-LLM call) or fall back to template substitution if no grounder is available.
 3. If valid_state fails → run a mini recovery loop (``SubgoalRunner``) with valid_state
-   as the goal; retry up to ``max_recovery_steps``; re-validate afterwards.
+   as the goal; a subgoal ``done(status="success")`` hands control back to the
+   original skill step without a second validator call.
 4. After all steps complete (or recovery exhausted), ``execution_summary`` carries a
    narrative for the outer agent loop to use as context when it takes over.
 """
@@ -86,6 +87,7 @@ class SubgoalResult:
     steps_taken: int
     action_summaries: list[str]
     final_screenshot: Path | bytes | None = None
+    final_observation: Observation | None = None
     error: str | None = None
     token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
     #: True when the subgoal succeeded because the model issued a ``done``
@@ -179,9 +181,8 @@ class SubgoalRunner(typing.Protocol):
     """Runs a mini vision-action loop to recover to a desired screen state.
 
     Called when ``valid_state`` does not match. The implementation executes
-    up to ``max_steps`` vision-action cycles, each time checking whether the
-    goal state has been reached. The accumulated action summaries are returned
-    so the caller can include them in the outer history.
+    up to ``max_steps`` vision-action cycles. It only recovers to a valid-state
+    goal and reports success when the profile emits ``done(status="success")``.
     """
 
     async def run_subgoal(
@@ -190,6 +191,7 @@ class SubgoalRunner(typing.Protocol):
         screenshot: Path | bytes,
         *,
         max_steps: int = 3,
+        current_observation: Observation | None = None,
     ) -> SubgoalResult:
         """Navigate towards *goal* starting from *screenshot*."""
         ...
@@ -817,53 +819,24 @@ class SkillExecutor:
                         goal=step.valid_state or "",
                         screenshot=screenshot,
                         max_steps=self.max_recovery_steps,
+                        current_observation=observation,
                     )
                     _merge_usage(total_token_usage, recovery_result.token_usage)
                     if recovery_result.success:
-                        if recovery_result.done_judgment:
-                            # Model explicitly declared goal reached — treat as
-                            # highest-confidence signal; skip re-validation and
-                            # record this state as confirmed for future steps.
-                            valid = True
-                            logger.info(
-                                "Step %d: recovery succeeded via done judgment, "
-                                "skipping re-validation",
+                        valid = True
+                        observation = recovery_result.final_observation or observation
+                        screenshot = recovery_result.final_screenshot or screenshot
+                        logger.info(
+                            "Step %d: recovery succeeded, skipping re-validation",
+                            i,
+                        )
+                        if step.valid_state:
+                            confirmed_valid_states.add(step.valid_state)
+                            logger.debug(
+                                "Step %d: added %r to confirmed_valid_states",
                                 i,
+                                step.valid_state,
                             )
-                            if step.valid_state:
-                                confirmed_valid_states.add(step.valid_state)
-                                logger.debug(
-                                    "Step %d: added %r to confirmed_valid_states",
-                                    i,
-                                    step.valid_state,
-                                )
-                        else:
-                            # Standard recovery: refresh screenshot and re-validate.
-                            (
-                                fresh_observation,
-                                fresh_screenshot,
-                            ) = await self._get_observation_and_screenshot()
-                            observation = fresh_observation or observation
-                            screenshot = (
-                                fresh_screenshot or recovery_result.final_screenshot or screenshot
-                            )
-                            (
-                                revalidate_result,
-                                revalidate_usage,
-                                revalidate_dur,
-                            ) = await self._validate_state(
-                                step,
-                                screenshot,
-                                observation=observation,
-                            )
-                            valid = revalidate_result
-                            _merge_usage(total_token_usage, revalidate_usage)
-                            _merge_usage(validate_usage, revalidate_usage)
-                            validate_dur = _merge_optional_duration(validate_dur, revalidate_dur)
-                            if not valid:
-                                logger.warning(
-                                    "Step %d: re-validation after recovery still failed", i
-                                )
                     else:
                         logger.warning(
                             "Step %d: recovery exhausted (%d sub-steps), "
