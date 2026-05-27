@@ -174,7 +174,9 @@ class ScrcpyFrameSourceProtocol(Protocol):
 
     def stop(self) -> None: ...
 
-    def save_latest(self, path: Path, *, timeout_s: float, max_age_s: float) -> ScrcpyFrameSnapshot: ...
+    def save_latest(
+        self, path: Path, *, timeout_s: float, max_age_s: float
+    ) -> ScrcpyFrameSnapshot: ...
 
 
 def _pil_image_from_frame(frame: Any) -> Any:
@@ -184,7 +186,7 @@ def _pil_image_from_frame(frame: Any) -> Any:
         from PIL import Image
     except ImportError as exc:  # pragma: no cover - exercised through preflight text
         raise RuntimeError(
-            "ADB scrcpy capture requires Pillow. Install with `uv pip install -e \".[demo-live]\"`."
+            'ADB scrcpy capture requires Pillow. Install with `uv pip install -e ".[demo-live]"`.'
         ) from exc
 
     if isinstance(frame, Image.Image):
@@ -258,7 +260,7 @@ class ScrcpyFrameSource:
         except ImportError as exc:
             raise RuntimeError(
                 "ADB scrcpy capture requires py-scrcpy-sdk==0.1.2. "
-                "Install with `uv pip install -e \".[demo-live]\"`."
+                'Install with `uv pip install -e ".[demo-live]"`.'
             ) from exc
 
         config_kwargs: dict[str, Any] = {
@@ -300,7 +302,8 @@ class ScrcpyFrameSource:
         except (TypeError, ValueError):
             return config_cls(**values)
         accepted = {
-            name for name, param in signature.parameters.items()
+            name
+            for name, param in signature.parameters.items()
             if param.kind in {param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY}
         }
         filtered = {key: value for key, value in values.items() if key in accepted}
@@ -442,18 +445,21 @@ def _is_expected_root_probe_failure(exc: Exception) -> bool:
         if any(marker in detail for marker in _ADB_TRANSPORT_ERROR_SUBSTRINGS):
             return False
         # Expected "no root" signatures — device has no su, or su rejects us
-        if any(marker in detail for marker in (
-            "permission denied",
-            "operation not permitted",
-            "not permitted",
-            "inaccessible or not found",
-            "su: inaccessible",
-            "su: not found",
-            "not found",
-            "invalid uid/gid",
-            "invalid option",
-            "usage: su",
-        )):
+        if any(
+            marker in detail
+            for marker in (
+                "permission denied",
+                "operation not permitted",
+                "not permitted",
+                "inaccessible or not found",
+                "su: inaccessible",
+                "su: not found",
+                "not found",
+                "invalid uid/gid",
+                "invalid option",
+                "usage: su",
+            )
+        ):
             return True
         # Unknown adb error — propagate for visibility
         return False
@@ -571,17 +577,21 @@ class AdbBackend:
         self._collect_ui_tree_nodes = collect_ui_tree_nodes
         self._scrcpy_started = False
         self._frame_source = (
-            frame_source
-            if frame_source is not None
-            else ScrcpyFrameSource(
-                serial=serial,
-                adb_path=adb_path,
-                max_fps=scrcpy_max_fps,
-                jpeg_quality=scrcpy_jpeg_quality,
-                frame_timeout_ms=scrcpy_frame_timeout_ms,
-                on_jpeg_frame=on_jpeg_frame,
+            (
+                frame_source
+                if frame_source is not None
+                else ScrcpyFrameSource(
+                    serial=serial,
+                    adb_path=adb_path,
+                    max_fps=scrcpy_max_fps,
+                    jpeg_quality=scrcpy_jpeg_quality,
+                    frame_timeout_ms=scrcpy_frame_timeout_ms,
+                    on_jpeg_frame=on_jpeg_frame,
+                )
             )
-        ) if use_scrcpy else None
+            if use_scrcpy
+            else None
+        )
 
     @property
     def platform(self) -> str:
@@ -607,7 +617,8 @@ class AdbBackend:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
+                proc.communicate(),
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             try:
@@ -711,8 +722,7 @@ class AdbBackend:
         launcher_component = self._app_context_launcher_component()
         if not launcher_component:
             raise AdbError(
-                "app-context launcher is not configured; set "
-                f"{_APP_CONTEXT_LAUNCHER_COMPONENT_ENV}"
+                f"app-context launcher is not configured; set {_APP_CONTEXT_LAUNCHER_COMPONENT_ENV}"
             )
 
         intent_action = (
@@ -773,8 +783,7 @@ class AdbBackend:
 
         output = stdout_bytes.decode(errors="replace")
         device_lines = [
-            line for line in output.splitlines()
-            if "\t" in line and not line.startswith("List of")
+            line for line in output.splitlines() if "\t" in line and not line.startswith("List of")
         ]
 
         if self._serial:
@@ -845,7 +854,7 @@ class AdbBackend:
         for line in output.splitlines():
             line = line.strip()
             if line.startswith("package:"):
-                packages.append(line[len("package:"):])
+                packages.append(line[len("package:") :])
         # Merge common system packages (deduplicated, order preserved)
         seen = set(packages)
         for pkg in common_system_packages:
@@ -858,7 +867,7 @@ class AdbBackend:
     # Observe
     # ------------------------------------------------------------------
 
-    async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+    async def observe(self, screenshot_path: Path, timeout: float = 30.0) -> Observation:
         if self._use_scrcpy:
             return await self._observe_via_scrcpy(screenshot_path, timeout=timeout)
         return await self._observe_via_screencap(screenshot_path, timeout=timeout)
@@ -938,7 +947,9 @@ class AdbBackend:
         self._scrcpy_started = False
         await self._ensure_scrcpy_started()
 
-    async def _observe_via_screencap(self, screenshot_path: Path, timeout: float = 5.0) -> Observation:
+    async def _observe_via_screencap(
+        self, screenshot_path: Path, timeout: float = 5.0
+    ) -> Observation:
         screenshot_path.parent.mkdir(parents=True, exist_ok=True)
 
         await self._run("shell", "screencap", "-p", _DEVICE_SCREENSHOT_PATH, timeout=timeout)
@@ -1045,7 +1056,10 @@ class AdbBackend:
     async def _query_foreground_app(self, timeout: float) -> str:
         try:
             output = await self._run(
-                "shell", "dumpsys", "activity", "activities",
+                "shell",
+                "dumpsys",
+                "activity",
+                "activities",
                 timeout=max(timeout, 10.0),
             )
             package = self._extract_foreground_app(output)
@@ -1054,7 +1068,10 @@ class AdbBackend:
         except (AdbError, TimeoutError):
             pass
 
-        for window_args in (("shell", "dumpsys", "window", "windows"), ("shell", "dumpsys", "window")):
+        for window_args in (
+            ("shell", "dumpsys", "window", "windows"),
+            ("shell", "dumpsys", "window"),
+        ):
             try:
                 output = await self._run(*window_args, timeout=max(timeout, 10.0))
                 package = self._extract_foreground_app(output)
@@ -1080,7 +1097,11 @@ class AdbBackend:
     async def _get_default_input_method(self, timeout: float) -> str | None:
         try:
             output = await self._run(
-                "shell", "settings", "get", "secure", "default_input_method",
+                "shell",
+                "settings",
+                "get",
+                "secure",
+                "default_input_method",
                 timeout=timeout,
             )
         except (AdbError, TimeoutError):
@@ -1116,7 +1137,7 @@ class AdbBackend:
         script = (
             "#!/system/bin/sh\n"
             'text="$(cat "$1")"\n'
-            f'app_process -Djava.class.path={_YADB_PATH} '
+            f"app_process -Djava.class.path={_YADB_PATH} "
             f'/data/local/tmp {_YADB_MAIN_CLASS} -keyboard "$text"\n'
         )
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
@@ -1170,12 +1191,24 @@ class AdbBackend:
             return False
         for args in (
             (
-                "shell", "am", "broadcast",
-                "-a", "ADB_INPUT_B64", "--es", "msg", _to_b64_text(text),
+                "shell",
+                "am",
+                "broadcast",
+                "-a",
+                "ADB_INPUT_B64",
+                "--es",
+                "msg",
+                _to_b64_text(text),
             ),
             (
-                "shell", "am", "broadcast",
-                "-a", "ADB_INPUT_TEXT", "--es", "msg", text,
+                "shell",
+                "am",
+                "broadcast",
+                "-a",
+                "ADB_INPUT_TEXT",
+                "--es",
+                "msg",
+                text,
             ),
         ):
             try:
@@ -1231,7 +1264,10 @@ class AdbBackend:
             return
         if _is_ascii_safe(text):
             await self._run(
-                "shell", "input", "text", _escape_shell_text(text),
+                "shell",
+                "input",
+                "text",
+                _escape_shell_text(text),
                 timeout=timeout,
             )
             return
@@ -1252,7 +1288,11 @@ class AdbBackend:
         if t == "tap":
             x, y = self._resolve_point(action)
             await self._run(
-                "shell", "input", "tap", str(x), str(y),
+                "shell",
+                "input",
+                "tap",
+                str(x),
+                str(y),
                 timeout=timeout,
             )
 
@@ -1287,12 +1327,18 @@ class AdbBackend:
                         await self._input_single_text(segment, timeout)
                     if index < len(lines) - 1:
                         await self._run(
-                            "shell", "input", "keyevent", "KEYCODE_ENTER",
+                            "shell",
+                            "input",
+                            "keyevent",
+                            "KEYCODE_ENTER",
                             timeout=timeout,
                         )
                 if action.auto_enter:
                     await self._run(
-                        "shell", "input", "keyevent", "KEYCODE_ENTER",
+                        "shell",
+                        "input",
+                        "keyevent",
+                        "KEYCODE_ENTER",
                         timeout=timeout,
                     )
 
@@ -1309,9 +1355,7 @@ class AdbBackend:
                 canonical = canonical_key_name(k)
                 keycode = _KEYCODE_MAP.get(canonical)
                 if keycode is None:
-                    raise ValueError(
-                        f"Unknown key {k!r}. Supported: {sorted(_KEYCODE_MAP.keys())}"
-                    )
+                    raise ValueError(f"Unknown key {k!r}. Supported: {sorted(_KEYCODE_MAP.keys())}")
                 keycodes.append(keycode)
 
             if len(keycodes) >= 2:
@@ -1348,8 +1392,13 @@ class AdbBackend:
             pkg = action.text or ""
             if pkg:
                 await self._run(
-                    "shell", "monkey", "-p", pkg,
-                    "-c", "android.intent.category.LAUNCHER", "1",
+                    "shell",
+                    "monkey",
+                    "-p",
+                    pkg,
+                    "-c",
+                    "android.intent.category.LAUNCHER",
+                    "1",
                     timeout=timeout,
                 )
 
@@ -1378,13 +1427,19 @@ class AdbBackend:
         if "\x00" in uri:
             raise ValueError("open_deeplink URI must not contain NUL bytes")
         remote_args = [
-            "am", "start", "-W",
-            "-a", "android.intent.action.VIEW",
-            "-d", uri,
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            uri,
         ]
         if action.component:
             if not _ANDROID_COMPONENT_RE.match(action.component):
-                raise ValueError(f"Invalid Android component for open_deeplink: {action.component!r}")
+                raise ValueError(
+                    f"Invalid Android component for open_deeplink: {action.component!r}"
+                )
             remote_args.extend(["-n", action.component])
         if action.package:
             if not _ANDROID_PACKAGE_RE.match(action.package):
@@ -1439,7 +1494,9 @@ class AdbBackend:
             if isinstance(value, bool):
                 remote_args.extend(["--ez", key, "true" if value else "false"])
             elif isinstance(value, int) and not isinstance(value, bool):
-                remote_args.extend(["--ei" if -2147483648 <= value <= 2147483647 else "--el", key, str(value)])
+                remote_args.extend(
+                    ["--ei" if -2147483648 <= value <= 2147483647 else "--el", key, str(value)]
+                )
             elif isinstance(value, float):
                 remote_args.extend(["--ef", key, str(value)])
             else:
@@ -1579,8 +1636,14 @@ class AdbBackend:
             x2, y2 = x + pixels, y
 
         await self._run(
-            "shell", "input", "swipe",
-            str(x), str(y), str(x2), str(y2), dur,
+            "shell",
+            "input",
+            "swipe",
+            str(x),
+            str(y),
+            str(x2),
+            str(y2),
+            dur,
             timeout=timeout,
         )
 
@@ -1643,8 +1706,19 @@ def _parse_ui_tree_xml(
         if enabled and label:
             enabled_text.append(label)
 
-        if ui_tree is not None and len(ui_tree) < max_nodes and (
-            text or desc or resource_id or class_name or clickable or focused or enabled or scrollable
+        if (
+            ui_tree is not None
+            and len(ui_tree) < max_nodes
+            and (
+                text
+                or desc
+                or resource_id
+                or class_name
+                or clickable
+                or focused
+                or enabled
+                or scrollable
+            )
         ):
             compact_node: dict[str, Any] = {}
             if text:
