@@ -1453,14 +1453,12 @@ class GuiAgent:
             # Observe next state
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
             next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
-            next_observation, observe_error = await self._observe_after_action(
+            next_observation, _observe_error = await self._observe_after_action(
                 next_screenshot,
                 previous_observation=current_observation,
                 action=action,
                 timeout=self.step_timeout,
             )
-            if observe_error:
-                result_text += f" (observation failed: {observe_error})"
 
             return StepResult(
                 action=action,
