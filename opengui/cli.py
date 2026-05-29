@@ -537,7 +537,7 @@ async def build_optional_components(
             model=model_name,
             artifacts_root=artifacts_root,
             agent_profile=config.agent_profile,
-            step_timeout=30.0,
+            step_timeout=60.0,
             image_scale_ratio=config.image_scale_ratio,
         ),
         screenshot_provider=_AgentScreenshotProvider(
