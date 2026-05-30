@@ -2,6 +2,7 @@
 # Keep upstream provenance comments below when present.
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -54,17 +55,16 @@ def parse_action(plan_output: str) -> tuple[str, str]:
         Tuple of (thought, action)
     """
     try:
-        parts = plan_output.rsplit("Action:", 1)
-
-        if len(parts) != 2:
-            raise ValueError("Expected exactly one 'Action:' in the output")
-        thought_part = parts[0].strip()
+        match = re.search(r"(?m)^[ \t]*Action:", plan_output)
+        if match is None:
+            raise ValueError("Expected at least one 'Action:' in the output")
+        thought_part = plan_output[: match.start()].strip()
         if thought_part.startswith("Thought:"):
             thought = thought_part[8:].strip()  # Remove 'Thought:' prefix
         else:
             thought = thought_part
 
-        action = parts[1].strip()
+        action = plan_output[match.end():].strip()
 
         return thought, action
 

@@ -926,6 +926,7 @@ def test_annotate_android_apps_filters_unmapped_packages() -> None:
 def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
     from opengui.skills.normalization import (
         find_android_app_in_text,
+        find_android_apps_in_text,
         normalize_app_identifier,
         resolve_android_package,
     )
@@ -975,6 +976,12 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
     }
     for text, package in text_cases.items():
         assert find_android_app_in_text(text) == package
+
+    assert set(find_android_apps_in_text("帮我在京东、淘宝、拼多多对比价格")) == {
+        "com.xunmeng.pinduoduo",
+        "com.taobao.taobao",
+        "com.jingdong.app.mall",
+    }
 
 
 def test_gui_agent_skill_app_filter_prefers_hint_then_task_text(tmp_path: Path) -> None:
@@ -2260,17 +2267,11 @@ async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> 
     llm = _RecordingLLM(
         [
             LLMResponse(
-                content="Action: done",
-                tool_calls=[
-                    ToolCall(
-                        id="provider-tool-call-0",
-                        name="computer_use",
-                        arguments={
-                            "action_type": "done",
-                            "text": "Task completed successfully and search results are visible.",
-                        },
-                    )
-                ],
+                content=(
+                    "Thought: Task completed successfully and search results are visible.\n"
+                    'Action: {"action_type": "answer", "text": "Task completed successfully and search results are visible."}'
+                ),
+                tool_calls=None,
             ),
         ]
     )
@@ -2294,17 +2295,11 @@ async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_pat
     llm = _RecordingLLM(
         [
             LLMResponse(
-                content="Action: done",
-                tool_calls=[
-                    ToolCall(
-                        id="provider-tool-call-0",
-                        name="computer_use",
-                        arguments={
-                            "action_type": "done",
-                            "text": "Task failed because login is required.",
-                        },
-                    )
-                ],
+                content=(
+                    "Thought: Task failed because login is required.\n"
+                    'Action: {"action_type": "answer", "text": "Task failed because login is required."}'
+                ),
+                tool_calls=None,
             ),
         ]
     )
@@ -2328,25 +2323,15 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
     llm = _RecordingLLM(
         [
             LLMResponse(
-                content="Action: wait briefly",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="computer_use",
-                        arguments={"action_type": "wait", "duration_ms": 1},
-                    )
-                ],
+                content='Thought: Action: wait briefly\nAction: {"action_type": "wait"}',
+                tool_calls=None,
                 usage={"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12},
             ),
             LLMResponse(
-                content="Action: done",
-                tool_calls=[
-                    ToolCall(
-                        id="call-2",
-                        name="computer_use",
-                        arguments={"action_type": "done", "status": "success"},
-                    )
-                ],
+                content=(
+                    'Thought: Action: done\nAction: {"action_type": "status", "goal_status": "complete"}'
+                ),
+                tool_calls=None,
                 usage={"prompt_tokens": 8, "completion_tokens": 1, "total_tokens": 9},
             ),
         ]
@@ -3874,35 +3859,16 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
     llm = _RecordingLLM(
         [
             LLMResponse(
-                content="Action: Tap login button",
-                tool_calls=[
-                    ToolCall(
-                        id="call-1",
-                        name="computer_use",
-                        arguments={
-                            "action_type": "tap",
-                            "x": 500,
-                            "y": 250,
-                            "intent": "tap login button",
-                            "summary": "login page is open; login button is visible",
-                        },
-                    )
-                ],
+                content=(
+                    'Thought: Action: Tap login button\nAction: {"action_type": "click", "coordinate": [500, 250]}'
+                ),
+                tool_calls=None,
             ),
             LLMResponse(
-                content="Action: Finish task",
-                tool_calls=[
-                    ToolCall(
-                        id="call-2",
-                        name="computer_use",
-                        arguments={
-                            "action_type": "done",
-                            "status": "success",
-                            "intent": "finish login flow",
-                            "summary": "login flow is complete",
-                        },
-                    )
-                ],
+                content=(
+                    'Thought: Action: Finish task\nAction: {"action_type": "status", "goal_status": "complete"}'
+                ),
+                tool_calls=None,
             ),
         ]
     )
@@ -3965,37 +3931,17 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
 async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> None:
     responses = [
         LLMResponse(
-            content=f"Action: Step {index}",
-            tool_calls=[
-                ToolCall(
-                    id=f"call-{index}",
-                    name="computer_use",
-                    arguments={
-                        "action_type": "wait",
-                        "duration_ms": 1,
-                        "intent": f"intent {index}",
-                        "summary": f"summary {index}",
-                    },
-                )
-            ],
+            content=f'Thought: Action: Step {index}\nAction: {{"action_type": "wait"}}',
+            tool_calls=None,
         )
         for index in range(1, 10)
     ]
     responses.append(
         LLMResponse(
-            content="Action: Finish task",
-            tool_calls=[
-                ToolCall(
-                    id="call-10",
-                    name="computer_use",
-                    arguments={
-                        "action_type": "done",
-                        "status": "success",
-                        "intent": "finish task",
-                        "summary": "task complete",
-                    },
-                )
-            ],
+            content=(
+                'Thought: Action: Finish task\nAction: {"action_type": "status", "goal_status": "complete"}'
+            ),
+            tool_calls=None,
         )
     )
     llm = _RecordingLLM(responses)

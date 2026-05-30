@@ -92,6 +92,28 @@ def test_general_e2e_parse_uses_real_screen_dimensions() -> None:
     assert "relative" not in normalized.tool_calls[0].arguments
 
 
+def test_general_e2e_parse_uses_first_action_when_model_outputs_multiple_actions() -> None:
+    response = LLMResponse(
+        content=(
+            'Thought: tap the search box\nAction: {"action_type":"click","coordinate":[500,250]}\n'
+            'Thought: maybe done now\nAction: {"action_type":"status","goal_status":"complete"}'
+        ),
+        tool_calls=None,
+    )
+
+    normalized = normalize_profile_response_for_screen(
+        "general_e2e",
+        response,
+        screen_width=1080,
+        screen_height=1920,
+    )
+
+    assert normalized.tool_calls is not None
+    assert normalized.tool_calls[0].arguments["action_type"] == "tap"
+    assert normalized.tool_calls[0].arguments["x"] == 540
+    assert normalized.tool_calls[0].arguments["y"] == 480
+
+
 def test_general_e2e_parse_accepts_bare_json_list_action_target() -> None:
     response = LLMResponse(
         content='```json\n[{"action":"tap","target":[146,905]}]\n```',

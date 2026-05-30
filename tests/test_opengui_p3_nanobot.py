@@ -558,7 +558,9 @@ async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
 
     result = json.loads(await tool.execute(task="Open Settings"))
 
-    plan_workflow.assert_awaited_once_with("Open Settings")
+    plan_workflow.assert_awaited_once()
+    assert plan_workflow.await_args.args == ("Open Settings",)
+    assert plan_workflow.await_args.kwargs["router_context"] is None
     run_task.assert_awaited_once_with(tool._backend, "Open Settings")
     assert result["success"] is True
     assert result["summary"] == "done"
@@ -584,6 +586,80 @@ async def test_gui_task_workflow_planner_prompt_keeps_subtasks_high_level() -> N
     assert "high-level app-scoped goal" in prompt
     assert "not a UI action script" in prompt
     assert "leave UI action planning to GuiAgent" in prompt
+
+
+def test_gui_router_memory_retriever_reads_workspace_evidence(tmp_workspace: Path) -> None:
+    from nanobot.agent.tools.gui import GuiRouterMemoryRetriever
+
+    memory_dir = tmp_workspace / "memory"
+    memory_dir.mkdir(parents=True)
+    (memory_dir / "MEMORY.md").write_text(
+        "- GUI automation: Meituan triggers 身份核实/验证码 pages that block GUI automation.\n",
+        encoding="utf-8",
+    )
+    (memory_dir / "history.jsonl").write_text(
+        json.dumps(
+            {
+                "cursor": 187,
+                "timestamp": "2026-04-21 14:25",
+                "content": "Discussed claw-gui skill task decomposition strategy - compound tasks decomposed, single GUI tasks not split.",
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_workspace / "android_deeplinks.md").write_text(
+        "| 哔哩哔哩 | tv.danmaku.bili | bilibili:// | `bilibili://search?keyword=关键词` | 搜索视频 |\n",
+        encoding="utf-8",
+    )
+
+    context = GuiRouterMemoryRetriever(tmp_workspace).retrieve(
+        "在 B 站搜索播放华强买瓜",
+        platform="android",
+    )
+
+    assert context.app_candidates == ("tv.danmaku.bili",)
+    assert any("bilibili://search" in item.text for item in context.evidence)
+    assert all(item.source for item in context.evidence)
+
+    generic_context = GuiRouterMemoryRetriever(tmp_workspace).retrieve(
+        "搜索并播放一个视频",
+        platform="android",
+    )
+    assert generic_context.app_candidates == ()
+    assert generic_context.evidence == ()
+
+
+@pytest.mark.asyncio
+async def test_gui_task_workflow_planner_receives_router_context() -> None:
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
+    from nanobot.agent.tools.gui import GuiRouterContext, GuiRouterMemoryEvidence, GuiWorkflowRunner
+
+    provider = _MockNanobotProvider([_nanobot_text_response('{"mode":"single","subtasks":[]}')])
+    runner = GuiWorkflowRunner(
+        llm=NanobotLLMAdapter(provider=provider, model=provider.get_default_model()),
+        run_task=AsyncMock(),
+        load_latest_step_event=lambda _path: {},
+    )
+    context = GuiRouterContext(
+        app_candidates=("tv.danmaku.bili",),
+        evidence=(
+            GuiRouterMemoryEvidence(
+                source="memory/history.jsonl:187",
+                text="compound tasks decomposed, single GUI tasks not split.",
+            ),
+        ),
+    )
+
+    await runner._plan_workflow("在 B 站搜索播放华强买瓜", router_context=context)
+
+    system_prompt = provider.calls[0]["messages"][0]["content"]
+    user_prompt = provider.calls[0]["messages"][1]["content"]
+    assert "Memory evidence is advisory" in system_prompt
+    assert "Deterministic app candidates" in user_prompt
+    assert "tv.danmaku.bili" in user_prompt
+    assert "compound tasks decomposed" in user_prompt
 
 
 @pytest.mark.asyncio

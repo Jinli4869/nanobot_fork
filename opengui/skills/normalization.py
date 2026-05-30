@@ -239,6 +239,11 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "file manager": "com.google.android.documentsui",
     "documents": "com.google.android.documentsui",
     "documentsui": "com.google.android.documentsui",
+    "downloads": "com.google.android.documentsui",
+    "downloads folder": "com.google.android.documentsui",
+    "download folder": "com.google.android.documentsui",
+    "download directory": "com.google.android.documentsui",
+    "files-documents": "com.google.android.documentsui",
     "com.android.documentsui": "com.google.android.documentsui",
     "contacts": "com.google.android.contacts",
     "contacts app": "com.google.android.contacts",
@@ -271,6 +276,9 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "photo gallery": "gallery.photomanager.picturegalleryapp.imagegallery",
     "pictures": "gallery.photomanager.picturegalleryapp.imagegallery",
     "com.android.gallery3d": "gallery.photomanager.picturegalleryapp.imagegallery",
+    "docreader": "at.tomtasche.reader",
+    "doc reader": "at.tomtasche.reader",
+    "document reader": "at.tomtasche.reader",
     "open document reader": "at.tomtasche.reader",
     "opendocument reader": "at.tomtasche.reader",
     "pdf reader": "at.tomtasche.reader",
@@ -335,6 +343,9 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
     "fanqie": "com.dragon.read",
     "qidian": "com.qidian.QDReader",
     "baidu": "com.baidu.searchbox",
+    "maps": "com.google.android.apps.maps",
+    "maps app": "com.google.android.apps.maps",
+    "map": "com.google.android.apps.maps",
     "amap": "com.autonavi.minimap",
     "gaode": "com.autonavi.minimap",
     "google map": "com.google.android.apps.maps",
@@ -455,11 +466,11 @@ def resolve_android_package(app_text: str) -> str:
     return cleaned
 
 
-def find_android_app_in_text(text: str) -> str | None:
-    """Return the best Android app package mentioned inside free-form text."""
+def find_android_apps_in_text(text: str, *, max_apps: int = 5) -> list[str]:
+    """Return Android app packages mentioned inside free-form text."""
     lowered = " ".join((text or "").strip().lower().split())
     if not lowered:
-        return None
+        return []
     compact = re.sub(r"\s+", "", lowered)
     matches: list[tuple[int, str, str]] = []
     for alias, package in _ANDROID_APP_ALIASES.items():
@@ -471,9 +482,21 @@ def find_android_app_in_text(text: str) -> str | None:
         if _android_alias_occurs(lowered, compact, alias_lower):
             matches.append((len(alias_lower), alias_lower, package))
     if not matches:
-        return None
+        return []
     matches.sort(reverse=True)
-    return matches[0][2]
+    packages: list[str] = []
+    for _, _, package in matches:
+        if package not in packages:
+            packages.append(package)
+        if len(packages) >= max_apps:
+            break
+    return packages
+
+
+def find_android_app_in_text(text: str) -> str | None:
+    """Return the best Android app package mentioned inside free-form text."""
+    packages = find_android_apps_in_text(text, max_apps=1)
+    return packages[0] if packages else None
 
 
 def _android_alias_occurs(text: str, compact_text: str, alias: str) -> bool:
