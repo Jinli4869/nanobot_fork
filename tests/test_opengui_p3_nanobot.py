@@ -241,6 +241,7 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
         "adb",
         "ios",
         "hdc",
+        "mobileworld",
         "local",
         "dry-run",
     ]

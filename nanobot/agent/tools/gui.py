@@ -508,8 +508,19 @@ class GuiWorkflowRunner:
         subtask_records: list[dict[str, Any]] = []
         payloads: list[dict[str, Any]] = []
         total_steps = 0
+        remaining_steps = self._positive_int_or_none(kwargs.get("max_steps"))
 
         for index, subtask in enumerate(plan.subtasks, start=1):
+            if remaining_steps is not None and remaining_steps <= 0:
+                return self._workflow_failure_payload(
+                    summary="GUI workflow stopped because the max_steps budget is exhausted.",
+                    error="max_steps_exhausted",
+                    subtask_records=subtask_records,
+                    blackboard=blackboard,
+                    missing_outputs=[],
+                    payloads=payloads,
+                    steps_taken=total_steps,
+                )
             missing_inputs = [key for key in subtask.inputs if key not in blackboard]
             if missing_inputs:
                 return self._workflow_failure_payload(
@@ -527,6 +538,8 @@ class GuiWorkflowRunner:
 
             task_prompt = self._append_known_values(subtask.task, blackboard, subtask.inputs)
             run_kwargs = dict(kwargs)
+            if remaining_steps is not None:
+                run_kwargs["max_steps"] = remaining_steps
             if subtask.app_hint is not None:
                 run_kwargs["app_hint"] = subtask.app_hint
 
@@ -544,7 +557,10 @@ class GuiWorkflowRunner:
                 )
 
             payloads.append(payload)
-            total_steps += self._int_or_zero(payload.get("steps_taken"))
+            steps_taken = self._int_or_zero(payload.get("steps_taken"))
+            total_steps += steps_taken
+            if remaining_steps is not None:
+                remaining_steps = max(remaining_steps - steps_taken, 0)
             subtask_records.append(self._subtask_record(subtask, payload))
 
             if not bool(payload.get("success")):
@@ -782,7 +798,20 @@ class GuiWorkflowRunner:
 
     @staticmethod
     def _int_or_zero(value: Any) -> int:
-        return value if isinstance(value, int) else 0
+        if isinstance(value, int):
+            return max(value, 0)
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _positive_int_or_none(value: Any) -> int | None:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
 
     @staticmethod
     def _string_or_default(value: Any, default: str) -> str:
@@ -895,7 +924,7 @@ class GuiSubagentTool(Tool):
                 },
                 "backend": {
                     "type": "string",
-                    "enum": ["adb", "ios", "hdc", "local", "dry-run"],
+                    "enum": ["adb", "ios", "hdc", "mobileworld", "local", "dry-run"],
                     "description": "Optional backend override. Defaults to the configured GUI backend.",
                 },
                 "require_background_isolation": {
@@ -1033,7 +1062,20 @@ class GuiSubagentTool(Tool):
         app_hint: str | None = None,
         **kwargs: Any,
     ) -> str:
-        del kwargs
+        raw_max_retries = kwargs.pop("max_retries", 1)
+        try:
+            max_retries = max(1, int(raw_max_retries))
+        except (TypeError, ValueError):
+            max_retries = 1
+        raw_max_steps = kwargs.pop("max_steps", None)
+        try:
+            max_steps = (
+                max(1, int(raw_max_steps))
+                if raw_max_steps is not None
+                else self._gui_config.max_steps
+            )
+        except (TypeError, ValueError):
+            max_steps = self._gui_config.max_steps
         policy_context, memory_store = self._load_policy_context_and_memory_store()
         skill_library = None
         if self._gui_config.enable_skill_execution:
@@ -1114,13 +1156,15 @@ class GuiSubagentTool(Tool):
         sc_dir = Path(self._workspace) / "shortcut_cache"
         sc_dir.mkdir(parents=True, exist_ok=True)
 
+        shortcut_backend = active_backend if hasattr(active_backend, "_run") else None
+
         agent = GuiAgent(
             llm=self._llm_adapter,
             backend=active_backend,
             trajectory_recorder=recorder,
             model=self._model,
             artifacts_root=run_dir,
-            max_steps=self._gui_config.max_steps,
+            max_steps=max_steps,
             policy_context=policy_context,
             skill_library=skill_library,
             skill_threshold=self._gui_config.skill_threshold,
@@ -1131,14 +1175,14 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
-            shortcut_backend=active_backend,
+            shortcut_backend=shortcut_backend,
             shortcut_cache_dir=str(sc_dir),
         )
 
         if app_hint is not None:
-            result = await agent.run(task=task, app_hint=app_hint)
+            result = await agent.run(task=task, app_hint=app_hint, max_retries=max_retries)
         else:
-            result = await agent.run(task=task)
+            result = await agent.run(task=task, max_retries=max_retries)
         summary = result.summary
         error = result.error
         if error and error.startswith("intervention_cancelled:"):
@@ -1546,6 +1590,19 @@ class GuiSubagentTool(Tool):
             from opengui.backends.hdc import HdcBackend
 
             return HdcBackend(serial=self._gui_config.hdc.serial)
+
+        if backend_name == "mobileworld":
+            from opengui.backends.mobileworld import MobileWorldBackend
+
+            mobileworld_cfg = self._gui_config.mobileworld
+            return MobileWorldBackend(
+                base_url=mobileworld_cfg.base_url,
+                device=mobileworld_cfg.device,
+                xml_mode=mobileworld_cfg.xml_mode,
+                collect_ui_tree=mobileworld_cfg.collect_ui_tree,
+                collect_ui_tree_nodes=mobileworld_cfg.collect_ui_tree_nodes,
+                screenshot_transport=mobileworld_cfg.screenshot_transport,
+            )
 
         if backend_name == "dry-run":
             from opengui.backends.dry_run import DryRunBackend
