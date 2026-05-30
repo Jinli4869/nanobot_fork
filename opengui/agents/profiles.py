@@ -61,6 +61,7 @@ from opengui.observation import Observation
 
 SUPPORTED_AGENT_PROFILES: tuple[str, ...] = (
     "general_e2e",
+    "mobileworld_general_e2e",
     "planner_executor",
     "qwen3vl",
     "mai_ui",
@@ -75,6 +76,9 @@ _PROFILE_ALIASES: dict[str | None, str] = {
     "": "general_e2e",
     "default": "general_e2e",
     "general": "general_e2e",
+    "mobileworld-general-e2e": "mobileworld_general_e2e",
+    "mw_general_e2e": "mobileworld_general_e2e",
+    "mw-general-e2e": "mobileworld_general_e2e",
     "gui-owl-1.5": "gui_owl_1_5",
     "gui_owl": "gui_owl_1_5",
     "venus": "ui_venus",
@@ -120,6 +124,10 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
     return _MOBILEWORLD_TOOL
 
 
+def _is_general_e2e_profile(profile_name: str | None) -> bool:
+    return canonicalize_agent_profile(profile_name) in {"general_e2e", "mobileworld_general_e2e"}
+
+
 def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str, ...]]:
     profile = canonicalize_agent_profile(profile_name)
     return {
@@ -139,7 +147,7 @@ def build_mobileworld_messages(
     history_image_window: int,
 ) -> list[dict[str, Any]]:
     profile = canonicalize_agent_profile(profile_name)
-    if profile == "general_e2e":
+    if _is_general_e2e_profile(profile):
         return _build_general_e2e_messages(
             task=task,
             current_observation=current_observation,
@@ -278,7 +286,7 @@ def parse_mobileworld_action(
     model_name: str = "",
 ) -> dict[str, Any]:
     profile = canonicalize_agent_profile(profile_name)
-    if profile == "general_e2e":
+    if _is_general_e2e_profile(profile):
         action_str = _general_e2e_action_text(content)
         action = general_e2e_agent.parse_response_to_action(
             action_str,

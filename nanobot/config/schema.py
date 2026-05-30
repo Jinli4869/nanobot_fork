@@ -252,6 +252,17 @@ class HdcConfig(Base):
     serial: str | None = None
 
 
+class MobileWorldGuiBackendConfig(Base):
+    """MobileWorld HTTP backend configuration for OpenGUI automation."""
+
+    base_url: str | None = None
+    device: str | None = None
+    xml_mode: Literal["uia", "ac"] = "uia"
+    collect_ui_tree: bool = True
+    collect_ui_tree_nodes: bool = True
+    screenshot_transport: Literal["download", "b64"] = "download"
+
+
 class IosConfig(Base):
     """WDA backend configuration for iOS device automation."""
     wda_url: str = "http://localhost:8100"
@@ -269,7 +280,7 @@ class GuiEvaluationConfig(Base):
 
 class GuiConfig(Base):
     """GUI subagent configuration."""
-    backend: Literal["adb", "ios", "hdc", "local", "dry-run"] = "adb"
+    backend: Literal["adb", "ios", "hdc", "mobileworld", "local", "dry-run"] = "adb"
     model: str | None = None
     provider: str | None = None
     validator_model: str | None = None
@@ -280,6 +291,7 @@ class GuiConfig(Base):
     scrcpy: ScrcpyConfig = Field(default_factory=ScrcpyConfig)
     ios: IosConfig = Field(default_factory=IosConfig)
     hdc: HdcConfig = Field(default_factory=HdcConfig)
+    mobileworld: MobileWorldGuiBackendConfig = Field(default_factory=MobileWorldGuiBackendConfig)
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
     stagnation_limit: int = 0
