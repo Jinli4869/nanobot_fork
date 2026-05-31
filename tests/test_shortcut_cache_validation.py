@@ -628,6 +628,63 @@ def test_intent_variants_include_query_extras() -> None:
     assert any(variant.component is None for variant in variants)
 
 
+def test_build_launch_args_quotes_shell_values_with_spaces() -> None:
+    variant = validator.Variant(
+        label="package_extra_query",
+        kind="intent",
+        package="com.google.android.youtube",
+        action="android.intent.action.SEARCH",
+        extras=(("query", "Never Gonna Give You Up"),),
+    )
+
+    args = validator.build_launch_args(variant)
+
+    assert args[args.index("--es") + 2] == "'Never Gonna Give You Up'"
+    assert args[-2:] == ["-p", "com.google.android.youtube"]
+
+
+def test_upload_intent_variants_include_probe_media_payload() -> None:
+    candidate = validator.Candidate(
+        index=0,
+        kind="intent",
+        package="com.google.android.youtube",
+        description="YouTube upload",
+        action="android.intent.action.SEND",
+        component="com.google.android.youtube/.UploadActivity",
+        mime_type="image/*",
+    )
+
+    variants = validator.variants_for_intent(candidate, query="", max_try=8)
+    stream_variant = next(variant for variant in variants if variant.label == "component_probe_media_stream")
+    args = validator.build_launch_args(stream_variant)
+
+    assert stream_variant.mime_type == "image/*"
+    assert ("android.intent.extra.STREAM", validator.PROBE_UPLOAD_URI) in stream_variant.extras
+    assert "--grant-read-uri-permission" in args
+    assert "--eu" in args
+    assert args[args.index("--eu") + 2] == validator.PROBE_UPLOAD_URI
+
+
+def test_chrome_candidate_records_add_synthetic_browser_and_search_urls() -> None:
+    profile = AppShortcutProfile(package="com.android.chrome")
+
+    records = validator.candidate_records(profile, include_risky=False)
+    uris = {record.uri_template for record in records}
+    plans = validator.build_probe_plans(profile, SimpleNamespace(
+        task="",
+        query="",
+        include_risky=False,
+        max_candidates=8,
+        max_try=5,
+        max_probe_plans=4,
+    ))
+
+    assert "https://example.com" in uris
+    assert "https://www.google.com/search" in uris
+    assert any(plan.capability == "search" for plan in plans)
+    assert any(plan.capability == "browser_web" for plan in plans)
+
+
 def test_parse_json_object_accepts_fenced_json() -> None:
     parsed = validator.parse_json_object(
         """```json
@@ -706,6 +763,38 @@ def test_result_to_validation_record_templates_query_payload() -> None:
 
     assert record["parameters"] == ["query"]
     assert record["extras"] == [["query", "{{query}}"]]
+
+
+def test_result_to_validation_record_templates_probe_media_payload() -> None:
+    candidate = validator.Candidate(
+        index=1,
+        kind="intent",
+        package="com.google.android.youtube",
+        description="upload",
+        action="android.intent.action.SEND",
+        component="com.google.android.youtube/.UploadActivity",
+    )
+    result = validator.ProbeResult(
+        candidate=candidate,
+        status="page_validated",
+        description="YouTube 上传入口",
+        parameters=[],
+        best_variant={
+            "label": "component_probe_media_stream",
+            "kind": "intent",
+            "package": "com.google.android.youtube",
+            "action": "android.intent.action.SEND",
+            "component": "com.google.android.youtube/.UploadActivity",
+            "mime_type": "image/*",
+            "extras": [["android.intent.extra.STREAM", validator.PROBE_UPLOAD_URI]],
+            "flags": ["--grant-read-uri-permission"],
+        },
+    )
+
+    record = validator.result_to_validation_record(result)
+
+    assert record["parameters"] == ["media_uri"]
+    assert record["extras"] == [["android.intent.extra.STREAM", "{{media_uri}}"]]
 
 
 def test_result_to_validation_record_drops_unused_query_parameter() -> None:
@@ -821,6 +910,38 @@ def test_launch_variant_skips_evidence_capture_when_disabled(monkeypatch, tmp_pa
     assert len(calls) == 2
 
 
+def test_launch_variant_prepares_probe_media_payload(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    class FakeAdb:
+        def run(self, *args, timeout=10.0):
+            calls.append(tuple(args))
+            return 0, "Status: ok", False
+
+    monkeypatch.setattr(validator, "foreground_activity", lambda adb: "com.google.android.youtube/.UploadActivity")
+
+    result = validator.launch_variant(
+        FakeAdb(),
+        validator.Variant(
+            label="component_probe_media_stream",
+            kind="intent",
+            package="com.google.android.youtube",
+            action="android.intent.action.SEND",
+            component="com.google.android.youtube/.UploadActivity",
+            mime_type="image/*",
+            extras=(("android.intent.extra.STREAM", validator.PROBE_UPLOAD_URI),),
+            flags=("--grant-read-uri-permission",),
+        ),
+        artifacts_dir=tmp_path,
+        index=1,
+        capture_evidence=False,
+        settle_seconds=0,
+    )
+
+    assert result["target_package"] is True
+    assert any(call[:1] == ("push",) and call[-1] == validator.PROBE_UPLOAD_REMOTE_PATH for call in calls)
+
+
 def test_validate_candidate_breaks_after_launchable_without_verifier(monkeypatch, tmp_path: Path) -> None:
     candidate = validator.Candidate(
         index=0,
@@ -851,6 +972,54 @@ def test_validate_candidate_breaks_after_launchable_without_verifier(monkeypatch
 
     assert result.status == "launchable"
     assert launched == ["raw_package"]
+
+
+def test_validate_candidate_normalizes_usable_launchable_to_page_validated(monkeypatch, tmp_path: Path) -> None:
+    candidate = validator.Candidate(
+        index=0,
+        kind="deeplink",
+        package="tv.danmaku.bili",
+        description="podcast",
+        uri_template="bilibili://podcast",
+    )
+    args = SimpleNamespace(
+        query="",
+        max_try=2,
+        execute=True,
+        llm_base_url="http://example.test/v1",
+        llm_model="qwen-vl",
+        llm_api_key="ok",
+        llm_api_key_env="DASHSCOPE_API_KEY",
+        llm_temperature=0.0,
+        task="验证 B站 内容页",
+    )
+
+    monkeypatch.setattr(validator, "resolve_variant", lambda adb, variant: {"ok": True})
+    monkeypatch.setattr(
+        validator,
+        "launch_variant",
+        lambda adb, variant, *, artifacts_dir, index, capture_evidence=False, settle_seconds=2.0: {
+            "target_package": True,
+            "foreground": "tv.danmaku.bili/.PodcastActivity",
+        },
+    )
+    monkeypatch.setattr(
+        validator,
+        "verify_with_llm",
+        lambda **kwargs: {
+            "usable": True,
+            "status": "launchable",
+            "description": "B站听视频页面",
+            "parameters": [],
+            "payload_preserved": True,
+            "reason": "opened",
+        },
+    )
+
+    result = validator.validate_candidate(object(), candidate, args=args, artifacts_dir=tmp_path)
+
+    assert result.status == "page_validated"
+    assert result.variants[0]["normalized_status"] == "page_validated"
 
 
 def test_validate_candidate_stops_on_verifier_error(monkeypatch, tmp_path: Path) -> None:
@@ -905,6 +1074,62 @@ def test_plan_satisfied_stops_per_capability_on_page_validated_or_launchable_wit
     assert validator.plan_satisfied(page_validated, verifier_args) is True
     assert validator.plan_satisfied(launchable, no_verifier_args) is True
     assert validator.plan_satisfied(launchable, verifier_args) is False
+
+
+def test_candidates_for_plan_skips_globally_validated_candidates() -> None:
+    plan = validator.ProbePlan(
+        capability="social",
+        task="验证社交页",
+        query="",
+        candidate_limit=8,
+        variant_limit=4,
+    )
+    publish = validator.Candidate(
+        index=0,
+        kind="deeplink",
+        package="tv.danmaku.bili",
+        description="publish",
+        uri_template="bilibili://following2/publishInfo",
+    )
+    im = validator.Candidate(
+        index=1,
+        kind="deeplink",
+        package="tv.danmaku.bili",
+        description="im",
+        uri_template="bilibili://im",
+    )
+
+    candidates = validator.candidates_for_plan(
+        [publish, im],
+        plan,
+        skip_candidate_keys={validator.candidate_key(publish)},
+    )
+
+    assert publish not in candidates
+    assert im in candidates
+
+
+def test_dedupe_validation_records_keeps_first_matching_shortcut() -> None:
+    records = [
+        {
+            "package": "com.google.android.youtube",
+            "kind": "intent",
+            "status": "page_validated",
+            "description": "usage",
+            "intent_action": "com.google.android.apps.wellbeing.VIEW_APP_USAGE",
+            "component": "com.google.android.youtube/.WatchWhileActivity",
+        },
+        {
+            "package": "com.google.android.youtube",
+            "kind": "intent",
+            "status": "page_validated",
+            "description": "usage duplicate",
+            "intent_action": "com.google.android.apps.wellbeing.VIEW_APP_USAGE",
+            "component": "com.google.android.youtube/.WatchWhileActivity",
+        },
+    ]
+
+    assert validator.dedupe_validation_records(records) == [records[0]]
 
 
 def test_validate_verifier_config_fails_when_env_name_does_not_resolve(monkeypatch) -> None:

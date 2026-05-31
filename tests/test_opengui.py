@@ -443,6 +443,36 @@ async def test_adb_ui_tree_capture_logs_warning_after_retry_failure(
 
 
 @pytest.mark.asyncio
+async def test_adb_open_intent_uses_uri_extra_for_stream_payload() -> None:
+    backend = AdbBackend()
+    calls: list[list[str]] = []
+
+    async def fake_run_am_start(remote_args: list[str], *, timeout: float, label: str) -> str:
+        del timeout, label
+        calls.append(remote_args)
+        return "ok"
+
+    backend._run_am_start_with_fallbacks = fake_run_am_start  # type: ignore[method-assign]
+
+    result = await backend._open_intent(
+        Action(
+            action_type="open_intent",
+            intent_action="android.intent.action.SEND",
+            package="com.google.android.youtube",
+            mime_type="image/*",
+            extras=(("android.intent.extra.STREAM", "file:///sdcard/Download/probe.png"),),
+        ),
+        timeout=1.0,
+    )
+
+    assert result == "ok"
+    remote_args = calls[0]
+    assert "--grant-read-uri-permission" in remote_args
+    assert "--eu" in remote_args
+    assert remote_args[remote_args.index("--eu") + 2] == "file:///sdcard/Download/probe.png"
+
+
+@pytest.mark.asyncio
 async def test_agent_lazy_loads_shortcuts_for_foreground_app_and_updates_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

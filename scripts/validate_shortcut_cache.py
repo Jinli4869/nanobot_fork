@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import re
+import shlex
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -40,6 +41,15 @@ DEFAULT_INTENT_EXTRA_KEYS = (
     "android.intent.extra.TEXT",
     "user_query",
 )
+ANDROID_EXTRA_STREAM = "android.intent.extra.STREAM"
+BROWSER_PACKAGES = frozenset({"com.android.chrome"})
+PROBE_UPLOAD_REMOTE_PATH = "/sdcard/Download/nanobot_probe_upload.png"
+PROBE_UPLOAD_URI = f"file://{PROBE_UPLOAD_REMOTE_PATH}"
+PROBE_UPLOAD_LOCAL_NAME = "nanobot_probe_upload.png"
+PROBE_UPLOAD_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
+GRANT_READ_URI_PERMISSION_FLAG = "--grant-read-uri-permission"
 RISKY_TOKENS = (
     "pay",
     "bilipay",
@@ -382,6 +392,7 @@ class Variant:
     mime_type: str | None = None
     categories: tuple[str, ...] = ()
     extras: tuple[tuple[str, Any], ...] = ()
+    flags: tuple[str, ...] = ()
 
 
 @dataclass
@@ -467,7 +478,34 @@ def candidate_records(profile: AppShortcutProfile, *, include_risky: bool) -> li
         )
         if include_risky or not is_risky_candidate(candidate):
             records.append(candidate)
-    return sorted(records, key=candidate_priority, reverse=True)
+    records.extend(synthetic_candidate_records(profile, records))
+    unique_records: dict[tuple[Any, ...], Candidate] = {}
+    for candidate in records:
+        unique_records.setdefault(candidate_key(candidate), candidate)
+    return sorted(unique_records.values(), key=candidate_priority, reverse=True)
+
+
+def synthetic_candidate_records(profile: AppShortcutProfile, existing: list[Candidate]) -> list[Candidate]:
+    if profile.package not in BROWSER_PACKAGES:
+        return []
+    existing_keys = {candidate_key(candidate) for candidate in existing}
+    candidates = [
+        Candidate(
+            index=-1000,
+            kind="deeplink",
+            package=profile.package,
+            description="Synthetic browser probe URL for ACTION_VIEW",
+            uri_template="https://example.com",
+        ),
+        Candidate(
+            index=-999,
+            kind="deeplink",
+            package=profile.package,
+            description="Synthetic browser search URL for ACTION_VIEW",
+            uri_template="https://www.google.com/search",
+        ),
+    ]
+    return [candidate for candidate in candidates if candidate_key(candidate) not in existing_keys]
 
 
 def build_probe_plans(profile: AppShortcutProfile, args: argparse.Namespace) -> list[ProbePlan]:
@@ -709,8 +747,18 @@ def candidate_matches_plan(candidate: Candidate, plan: ProbePlan) -> bool:
     return plan.capability in infer_candidate_capabilities(candidate)
 
 
-def candidates_for_plan(candidates: list[Candidate], plan: ProbePlan) -> list[Candidate]:
-    matched = [candidate for candidate in candidates if candidate_matches_plan(candidate, plan)]
+def candidates_for_plan(
+    candidates: list[Candidate],
+    plan: ProbePlan,
+    *,
+    skip_candidate_keys: set[tuple[Any, ...]] | None = None,
+) -> list[Candidate]:
+    skip_candidate_keys = skip_candidate_keys or set()
+    matched = [
+        candidate
+        for candidate in candidates
+        if candidate_key(candidate) not in skip_candidate_keys and candidate_matches_plan(candidate, plan)
+    ]
     return sorted(
         matched,
         key=lambda candidate: candidate_priority_for_plan(candidate, plan),
@@ -751,6 +799,17 @@ def candidate_search_text(candidate: Candidate) -> str:
             candidate.mime_type,
         )
     ).lower()
+
+
+def candidate_key(candidate: Candidate) -> tuple[Any, ...]:
+    return (
+        candidate.kind,
+        candidate.package,
+        candidate.uri_template or "",
+        candidate.action or "",
+        candidate.component or "",
+        candidate.mime_type or "",
+    )
 
 
 def is_generic_intent(candidate: Candidate) -> bool:
@@ -894,7 +953,14 @@ def variants_for_intent(candidate: Candidate, *, query: str, max_try: int) -> li
     action = candidate.action or ""
     variants: list[Variant] = []
 
-    def add(label: str, *, component: str | None, extras: tuple[tuple[str, Any], ...] = ()) -> None:
+    def add(
+        label: str,
+        *,
+        component: str | None,
+        extras: tuple[tuple[str, Any], ...] = (),
+        mime_type: str | None = None,
+        flags: tuple[str, ...] = (),
+    ) -> None:
         if not action:
             return
         variant = Variant(
@@ -903,14 +969,33 @@ def variants_for_intent(candidate: Candidate, *, query: str, max_try: int) -> li
             package=candidate.package,
             action=action,
             component=component,
-            mime_type=candidate.mime_type,
+            mime_type=mime_type if mime_type is not None else candidate.mime_type,
             extras=extras,
+            flags=flags,
         )
         if variant not in variants:
             variants.append(variant)
 
     add("component_no_extra", component=candidate.component)
     add("package_no_extra", component=None)
+    if needs_probe_media_payload(candidate):
+        stream_extra = ((ANDROID_EXTRA_STREAM, PROBE_UPLOAD_URI),)
+        stream_mime_type = candidate.mime_type or "image/*"
+        stream_flags = (GRANT_READ_URI_PERMISSION_FLAG,)
+        add(
+            "component_probe_media_stream",
+            component=candidate.component,
+            extras=stream_extra,
+            mime_type=stream_mime_type,
+            flags=stream_flags,
+        )
+        add(
+            "package_probe_media_stream",
+            component=None,
+            extras=stream_extra,
+            mime_type=stream_mime_type,
+            flags=stream_flags,
+        )
     if query and looks_query_like(candidate):
         for key in DEFAULT_INTENT_EXTRA_KEYS:
             add(f"component_extra_{key}", component=candidate.component, extras=((key, query),))
@@ -921,6 +1006,12 @@ def variants_for_intent(candidate: Candidate, *, query: str, max_try: int) -> li
 def looks_query_like(candidate: Candidate) -> bool:
     text = candidate_search_text(candidate)
     return any(token in text for token in ("search", "query", "keyword", "media_search", "media_play_from_search", "搜索"))
+
+
+def needs_probe_media_payload(candidate: Candidate) -> bool:
+    action = (candidate.action or "").lower()
+    text = candidate_search_text(candidate)
+    return action in PUBLISH_UPLOAD_ACTIONS or any(token in text for token in ("upload", "internal_upload"))
 
 
 def uri_with_query(uri: str, key: str, value: str) -> str:
@@ -962,7 +1053,7 @@ def resolve_variant(adb: Adb, variant: Variant) -> dict[str, Any]:
             "-c",
             BROWSABLE_CATEGORY,
             "-d",
-            variant.uri or "",
+            adb_shell_quote(variant.uri or ""),
         ]
     else:
         args = [
@@ -1011,6 +1102,7 @@ def launch_variant(
 ) -> dict[str, Any]:
     adb.run("shell", "am", "force-stop", variant.package, timeout=5.0)
     time.sleep(0.4)
+    prepare_variant_payload(adb, variant, artifacts_dir)
     args = build_launch_args(variant)
     rc, output, timed_out = adb.run(*args, timeout=15.0)
     time.sleep(settle_seconds)
@@ -1041,28 +1133,64 @@ def build_launch_args(variant: Variant) -> list[str]:
             "am",
             "start",
             "-W",
+            *variant.flags,
             "-a",
             VIEW_ACTION,
             "-c",
             BROWSABLE_CATEGORY,
             "-d",
-            variant.uri or "",
+            adb_shell_quote(variant.uri or ""),
         ]
     else:
-        args = ["shell", "am", "start", "-W", "-a", variant.action or ""]
+        args = ["shell", "am", "start", "-W", *variant.flags, "-a", variant.action or ""]
         if variant.uri:
-            args.extend(["-d", variant.uri])
+            args.extend(["-d", adb_shell_quote(variant.uri)])
         if variant.mime_type:
             args.extend(["-t", variant.mime_type])
         for category in variant.categories:
             args.extend(["-c", category])
         for key, value in variant.extras:
-            args.extend(["--es", key, "" if value is None else str(value)])
+            args.extend(android_extra_args(key, value))
     if variant.component:
         args.extend(["-n", variant.component])
     else:
         args.extend(["-p", variant.package])
     return args
+
+
+def android_extra_args(key: str, value: Any) -> list[str]:
+    text = "" if value is None else str(value)
+    if key == ANDROID_EXTRA_STREAM and looks_uri_value(text):
+        return ["--eu", key, adb_shell_quote(text)]
+    return ["--es", key, adb_shell_quote(text)]
+
+
+def adb_shell_quote(value: str) -> str:
+    return shlex.quote(value)
+
+
+def looks_uri_value(value: str) -> bool:
+    return value.startswith(("content://", "file://", "http://", "https://"))
+
+
+def prepare_variant_payload(adb: Adb, variant: Variant, artifacts_dir: Path) -> None:
+    if not variant_uses_probe_upload_media(variant):
+        return
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    local_path = artifacts_dir / PROBE_UPLOAD_LOCAL_NAME
+    if not local_path.exists():
+        local_path.write_bytes(base64.b64decode(PROBE_UPLOAD_PNG_BASE64))
+    adb.run("shell", "mkdir", "-p", str(Path(PROBE_UPLOAD_REMOTE_PATH).parent), timeout=5.0)
+    adb.run("push", str(local_path), PROBE_UPLOAD_REMOTE_PATH, timeout=10.0)
+
+
+def variant_uses_probe_upload_media(variant: Variant | dict[str, Any]) -> bool:
+    extras: Any
+    if isinstance(variant, Variant):
+        extras = variant.extras
+    else:
+        extras = variant.get("extras") or []
+    return any(len(item) == 2 and item[0] == ANDROID_EXTRA_STREAM and item[1] == PROBE_UPLOAD_URI for item in extras)
 
 
 def foreground_activity(adb: Adb) -> str:
@@ -1151,6 +1279,8 @@ def verify_with_llm(
                 "next_variant_hint (string or null). "
                 "Set usable=true only if the screenshot/UI indicates the intended app page opened "
                 "and the payload, such as query text, was preserved when relevant. "
+                "When usable=true for the intended page, set status='page_validated'; "
+                "use status='launchable' only for target-package launches whose page purpose is unclear. "
                 "Do not treat a query visible only in search history or suggestions as payload_preserved; "
                 "payload_preserved means the current input/result page reflects that payload. "
                 "Use a concise natural-language description such as 'B站搜索视频'. "
@@ -1291,7 +1421,9 @@ def validate_candidate(
                     and not variant_contains_query(variant, args.query)
                 ):
                     continue
-                result.status = str(verdict.get("status") or "page_validated")
+                normalized_status = normalize_verifier_status(verdict)
+                variant_record["normalized_status"] = normalized_status
+                result.status = normalized_status
                 result.best_variant = variant_to_dict(variant)
                 result.reason = str(verdict.get("reason") or "")
                 break
@@ -1301,6 +1433,13 @@ def validate_candidate(
                 result.best_variant = variant_record["variant"]
                 break
     return result
+
+
+def normalize_verifier_status(verdict: dict[str, Any]) -> str:
+    status = str(verdict.get("status") or "").strip() or "page_validated"
+    if verdict.get("usable") is True and status in {"launchable", "page_validated"}:
+        return "page_validated"
+    return status
 
 
 def reorder_variants(variants: list[Variant], hint: str) -> list[Variant]:
@@ -1322,11 +1461,13 @@ def result_to_validation_record(result: ProbeResult, *, query: str = "") -> dict
     variant = result.best_variant
     if not variant:
         return None
-    variant = template_query_payload(variant, query=query)
+    variant = template_probe_media_payload(template_query_payload(variant, query=query))
     placeholders = placeholder_names(variant)
     parameters = normalize_parameters(result.parameters, query=query)
     if query and "query" in placeholders and "query" not in parameters:
         parameters.append("query")
+    if "media_uri" in placeholders and "media_uri" not in parameters:
+        parameters.append("media_uri")
     parameters = [name for name in parameters if name in placeholders]
     record = {
         "package": result.candidate.package,
@@ -1384,6 +1525,18 @@ def template_query_payload(value: Any, *, query: str) -> Any:
     return value
 
 
+def template_probe_media_payload(value: Any) -> Any:
+    if isinstance(value, str):
+        return value.replace(PROBE_UPLOAD_URI, "{{media_uri}}")
+    if isinstance(value, list):
+        return [template_probe_media_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(template_probe_media_payload(item) for item in value)
+    if isinstance(value, dict):
+        return {key: template_probe_media_payload(item) for key, item in value.items()}
+    return value
+
+
 def placeholder_names(value: Any) -> set[str]:
     if isinstance(value, str):
         return set(re.findall(r"\{\{(\w+)\}\}", value))
@@ -1404,6 +1557,31 @@ def variant_contains_query(variant: Variant, query: str) -> bool:
     if not query:
         return False
     return "{{query}}" in json.dumps(template_query_payload(variant_to_dict(variant), query=query), ensure_ascii=False)
+
+
+def dedupe_validation_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[Any, ...]] = set()
+    deduped: list[dict[str, Any]] = []
+    for record in records:
+        key = validation_record_key(record)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(record)
+    return deduped
+
+
+def validation_record_key(record: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        record.get("package") or "",
+        record.get("kind") or "",
+        record.get("uri_template") or "",
+        record.get("intent_action") or "",
+        record.get("component") or "",
+        record.get("mime_type") or "",
+        json.dumps(record.get("categories") or [], ensure_ascii=False, sort_keys=True),
+        json.dumps(record.get("extras") or [], ensure_ascii=False, sort_keys=True),
+    )
 
 
 async def promote_results(args: argparse.Namespace, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1447,6 +1625,7 @@ def variant_to_dict(variant: Variant) -> dict[str, Any]:
         "mime_type": variant.mime_type,
         "categories": list(variant.categories),
         "extras": [list(item) for item in variant.extras],
+        "flags": list(variant.flags),
     }
 
 
@@ -1521,10 +1700,11 @@ def main() -> None:
     probe_plans = build_probe_plans(profile, args)
     candidates = candidate_records(profile, include_risky=args.include_risky)
     results: list[ProbeResult] = []
+    validated_candidate_keys: set[tuple[Any, ...]] = set()
     stopped_early: str | None = None
     for plan in probe_plans:
         plan_args = args_for_probe_plan(args, plan)
-        plan_candidates = candidates_for_plan(candidates, plan)
+        plan_candidates = candidates_for_plan(candidates, plan, skip_candidate_keys=validated_candidate_keys)
         for candidate in plan_candidates:
             result = validate_candidate(adb, candidate, args=plan_args, artifacts_dir=artifacts_dir)
             result.probe_plan = probe_plan_to_dict(plan)
@@ -1533,16 +1713,18 @@ def main() -> None:
                 stopped_early = f"verifier_error: {result.reason}"
                 break
             if plan_satisfied(result, plan_args):
+                if result.status == "page_validated":
+                    validated_candidate_keys.add(candidate_key(candidate))
                 break
         if stopped_early:
             break
 
-    validation_records = [
+    validation_records = dedupe_validation_records([
         record
         for result in results
         if (record := result_to_validation_record(result, query=result_probe_query(result, args))) is not None
         and (record["status"] == "page_validated" or (args.allow_launchable_promote and record["status"] == "launchable"))
-    ]
+    ])
     promotions = asyncio.run(promote_results(args, validation_records))
     write_sidecar(
         path=sidecar_path,
