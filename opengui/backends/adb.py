@@ -86,6 +86,7 @@ _ANDROID_COMPONENT_RE = re.compile(
 )
 _ANDROID_INTENT_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.]*$")
 _ANDROID_EXTRA_KEY_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_ANDROID_EXTRA_STREAM = "android.intent.extra.STREAM"
 _APP_CONTEXT_LAUNCHER_COMPONENT_ENV = "OPENGUI_APP_CONTEXT_LAUNCHER_COMPONENT"
 _AM_START_FAILURE_MARKERS = (
     "error:",
@@ -98,6 +99,13 @@ _AM_START_FAILURE_MARKERS = (
 def _am_start_output_failed(output: str) -> bool:
     lowered = (output or "").lower()
     return any(marker in lowered for marker in _AM_START_FAILURE_MARKERS)
+
+
+def _is_android_uri_extra(key: str, value: object) -> bool:
+    if key != _ANDROID_EXTRA_STREAM:
+        return False
+    text = "" if value is None else str(value)
+    return text.startswith(("content://", "file://", "http://", "https://"))
 
 
 def _without_am_start_wait(remote_args: list[str]) -> list[str]:
@@ -1488,6 +1496,8 @@ class AdbBackend:
             if not _ANDROID_PACKAGE_RE.match(action.package):
                 raise ValueError(f"Invalid Android package for open_intent: {action.package!r}")
             remote_args.extend(["-p", action.package])
+        if any(_is_android_uri_extra(key, value) for key, value in action.extras):
+            remote_args.append("--grant-read-uri-permission")
         for key, value in action.extras:
             if not _ANDROID_EXTRA_KEY_RE.match(key):
                 raise ValueError(f"Invalid Android extra key for open_intent: {key!r}")
@@ -1503,7 +1513,10 @@ class AdbBackend:
                 text_value = "" if value is None else str(value)
                 if "\x00" in text_value:
                     raise ValueError(f"open_intent extra {key!r} must not contain NUL bytes")
-                remote_args.extend(["--es", key, text_value])
+                if _is_android_uri_extra(key, value):
+                    remote_args.extend(["--eu", key, text_value])
+                else:
+                    remote_args.extend(["--es", key, text_value])
         try:
             return await self._run_am_start_with_fallbacks(
                 remote_args,
