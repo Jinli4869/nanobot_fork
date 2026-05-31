@@ -57,6 +57,306 @@ RISKY_TOKENS = (
     "order",
     "purchase",
 )
+DEFAULT_MAX_PROBE_PLANS = 12
+GENERIC_INTENT_ACTIONS = (
+    "android.intent.action.search",
+    "android.media.action.media_play_from_search",
+    "android.intent.action.send",
+    "android.intent.action.send_multiple",
+    "android.intent.action.view",
+    "android.intent.action.pick",
+    "android.intent.action.get_content",
+)
+FILE_DOCUMENT_ACTIONS = (
+    "android.intent.action.open_document",
+    "android.intent.action.create_document",
+    "android.intent.action.get_content",
+    "android.intent.action.pick",
+)
+PUBLISH_UPLOAD_ACTIONS = (
+    "android.intent.action.send",
+    "android.intent.action.send_multiple",
+)
+FILE_DOCUMENT_MIME_PREFIXES = (
+    "application/",
+    "audio/",
+    "image/",
+    "text/",
+    "video/",
+)
+PROBE_NOISE_SUBSTRINGS = (
+    "autotest",
+    "debug",
+    "dummy.action",
+    "getui",
+    "remote_action",
+)
+PROBE_NOISE_PREFIX_TERMS = (
+    "autotest",
+    "debug",
+    "getui",
+)
+PROBE_NOISE_EXACT_TERMS = (
+    "push",
+    "transit",
+)
+CAPABILITY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "search",
+        (
+            "search",
+            "query",
+            "keyword",
+            "find",
+            "results",
+            "搜索",
+            "media_search",
+            "media_play_from_search",
+        ),
+    ),
+    ("live", ("live", "liveroom", "livearea", "直播")),
+    (
+        "social",
+        (
+            "message",
+            "messages",
+            "im",
+            "chat",
+            "following",
+            "following2",
+            "follow",
+            "fans",
+            "interaction",
+            "关注",
+            "动态",
+            "消息",
+        ),
+    ),
+    (
+        "commerce",
+        (
+            "market",
+            "shop",
+            "store",
+            "details",
+            "billing",
+            "vip",
+            "charge",
+            "purchase",
+            "pay",
+            "order",
+            "会员",
+            "支付",
+        ),
+    ),
+    ("game", ("game", "游戏")),
+    (
+        "content",
+        (
+            "video",
+            "watch",
+            "play",
+            "article",
+            "music",
+            "podcast",
+            "story",
+            "note",
+            "feed",
+            "pgc",
+            "bangumi",
+            "topic",
+            "shorts",
+            "内容",
+        ),
+    ),
+    (
+        "profile",
+        (
+            "profile",
+            "space",
+            "author",
+            "user",
+            "account",
+            "people",
+            "person",
+            "contact",
+            "个人",
+            "空间",
+        ),
+    ),
+    (
+        "collection",
+        (
+            "favorite",
+            "favorites",
+            "bookmark",
+            "history",
+            "collection",
+            "playlist",
+            "download",
+            "收藏",
+            "历史",
+        ),
+    ),
+    (
+        "settings_system",
+        (
+            "settings",
+            "setting",
+            "wifi",
+            "bluetooth",
+            "network",
+            "display",
+            "brightness",
+            "privacy",
+            "system",
+            "android.settings",
+        ),
+    ),
+    ("clock_alarm_timer", ("clock", "alarm", "timer", "deskclock")),
+    ("calendar_event", ("calendar", "schedule", "agenda")),
+    ("contacts_people", ("contacts", "contact", "people", "dial", "call", "tel:")),
+    (
+        "file_document",
+        (
+            "file",
+            "files",
+            "document",
+            "documents",
+            "open_document",
+            "create_document",
+            "get_content",
+            "openable",
+            "mime",
+            "picker",
+        ),
+    ),
+    (
+        "browser_web",
+        (
+            "http",
+            "https",
+            "url",
+            "browser",
+            "chrome",
+            "googlechrome",
+            "customtab",
+            "customtabs",
+            "trusted_web_activity",
+            "webapp",
+            "webapps",
+            "webapk",
+            "translate",
+        ),
+    ),
+    (
+        "web_container",
+        (
+            "webview",
+            "web_view",
+            "web_container",
+            "webcontainer",
+            "extweb",
+            "hybrid",
+            "h5",
+            "jsbridge",
+            "miniapp",
+            "miniprogram",
+            "miniversion",
+            "reactnative",
+            "react_native",
+            "rn",
+            "rnpage",
+            "rn_page",
+        ),
+    ),
+    (
+        "publish_upload",
+        (
+            "upload",
+            "publish",
+            "post",
+            "compose",
+            "create_video",
+            "creator",
+            "draft",
+            "notes_draft",
+            "notes_draft_box",
+        ),
+    ),
+    (
+        "camera_scan_effect",
+        (
+            "camera",
+            "scan",
+            "scanner",
+            "qrcode",
+            "qrscan",
+            "barcode",
+            "effect",
+            "filter",
+            "face",
+            "face_photo",
+            "skin_detection",
+            "ar_skin_detection",
+            "ar",
+        ),
+    ),
+    (
+        "poi_location",
+        (
+            "poi",
+            "location",
+            "locations",
+            "nearby",
+            "localfeed",
+            "map",
+            "maps",
+            "geo:",
+            "place",
+            "places",
+            "city",
+        ),
+    ),
+    (
+        "widget_quick_action",
+        (
+            "widget",
+            "appwidget",
+            "remoteviews",
+            "shortcut",
+            "quick_action",
+            "quicksettings",
+            "quick_settings",
+            "qs_tile",
+        ),
+    ),
+    ("app_entry", ("home", "main", "launch", "launcher", "open")),
+)
+CAPABILITY_LABELS = {
+    "search": "搜索结果页并保留查询词",
+    "live": "直播页面",
+    "social": "关注/消息/动态页面",
+    "commerce": "商店/会员/交易相关页面",
+    "game": "游戏中心页面",
+    "content": "视频/文章/音乐等内容页面",
+    "profile": "个人资料/用户空间页面",
+    "collection": "收藏/历史/合集页面",
+    "settings_system": "系统设置页面",
+    "clock_alarm_timer": "闹钟/计时器页面",
+    "calendar_event": "日历/日程页面",
+    "contacts_people": "联系人/拨号页面",
+    "file_document": "文件/文档/媒体页面",
+    "browser_web": "浏览器/Web 页面",
+    "web_container": "内置 Web 容器页面",
+    "publish_upload": "发布/上传入口页面",
+    "camera_scan_effect": "相机/扫码/特效页面",
+    "poi_location": "地点/附近/位置页面",
+    "widget_quick_action": "桌面组件/快捷操作入口",
+    "app_entry": "应用首页/入口页面",
+    "open_page": "通用页面",
+    "other": "其他可打开页面",
+}
 
 
 @dataclass(frozen=True)
@@ -112,6 +412,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task", default="", help="Optional target task, e.g. '在B站搜索敢杀我的马'.")
     parser.add_argument("--query", default="", help="Optional payload text used to test search/text variants.")
     parser.add_argument("--max-candidates", type=int, default=20)
+    parser.add_argument("--max-probe-plans", type=int, default=DEFAULT_MAX_PROBE_PLANS)
     parser.add_argument("--max-try", type=int, default=5)
     parser.add_argument("--execute", action="store_true", help="Actually launch resolved variants.")
     parser.add_argument("--include-risky", action="store_true", help="Do not skip pay/share/push/auth candidates.")
@@ -184,16 +485,11 @@ def build_probe_plans(profile: AppShortcutProfile, args: argparse.Namespace) -> 
             )
         ]
 
-    capabilities: list[str] = []
-    if any(looks_query_like(candidate) for candidate in candidates):
-        capabilities.append("search")
-    if any(looks_open_page_candidate(candidate) for candidate in candidates):
-        capabilities.append("open_page")
-    if not capabilities:
-        capabilities.append("open_page")
+    capabilities = infer_probe_capabilities(candidates)
+    max_probe_plans = max(1, int(getattr(args, "max_probe_plans", DEFAULT_MAX_PROBE_PLANS)))
 
     plans: list[ProbePlan] = []
-    for capability in capabilities[:3]:
+    for capability in capabilities[:max_probe_plans]:
         query = default_probe_query(profile.package, capability)
         plans.append(
             ProbePlan(
@@ -210,7 +506,167 @@ def build_probe_plans(profile: AppShortcutProfile, args: argparse.Namespace) -> 
 def infer_primary_capability(candidates: list[Candidate]) -> str:
     if any(looks_query_like(candidate) for candidate in candidates):
         return "search"
-    return "open_page"
+    capabilities = infer_probe_capabilities(candidates)
+    return capabilities[0] if capabilities else "open_page"
+
+
+def infer_probe_capabilities(candidates: list[Candidate]) -> list[str]:
+    ranked: dict[str, tuple[int, int]] = {}
+    for candidate in candidates:
+        if is_probe_noise_candidate(candidate):
+            continue
+        for capability in infer_candidate_capabilities(candidate):
+            count, score = ranked.get(capability, (0, -10_000))
+            ranked[capability] = (
+                count + 1,
+                max(score, capability_priority(candidate, capability)),
+            )
+    if not ranked:
+        return ["open_page"]
+    return [
+        capability
+        for capability, _ in sorted(
+            ranked.items(),
+            key=lambda item: (
+                capability_specificity(item[0]),
+                item[1][0],
+                item[1][1],
+                -capability_order(item[0]),
+            ),
+            reverse=True,
+        )
+    ]
+
+
+def infer_candidate_capabilities(candidate: Candidate) -> tuple[str, ...]:
+    text = candidate_search_text(candidate)
+    capabilities: list[str] = []
+    for capability, tokens in CAPABILITY_RULES:
+        if matches_any_capability_token(text, tokens):
+            capabilities.append(capability)
+    if looks_file_document_candidate(candidate):
+        capabilities.append("file_document")
+    if looks_publish_upload_candidate(candidate):
+        capabilities.append("publish_upload")
+    if looks_query_like(candidate):
+        capabilities = [capability for capability in capabilities if capability == "search"]
+    if looks_open_page_candidate(candidate):
+        capabilities.append("open_page")
+    if not capabilities:
+        capabilities.append("other")
+    return tuple(dict.fromkeys(capabilities))
+
+
+def capability_priority(candidate: Candidate, capability: str) -> int:
+    score, _ = candidate_priority(candidate)
+    text = candidate_search_text(candidate)
+    route_text = " ".join(
+        str(item or "")
+        for item in (
+            candidate.uri_template,
+            candidate.component,
+            candidate.description,
+        )
+    ).lower()
+    action = (candidate.action or "").lower()
+    tokens = capability_tokens(capability)
+    if candidate.kind == "deeplink":
+        score += 25
+    if candidate.kind == "intent":
+        score -= 5
+    if matches_any_capability_token(route_text, tokens):
+        score += 35
+    if matches_any_capability_token(action, tokens):
+        score += 15
+    if is_generic_intent(candidate) and not matches_any_capability_token(route_text, tokens):
+        score -= 40
+    if capability in ("other", "open_page"):
+        score -= 30
+    if capability == "search" and looks_query_like(candidate):
+        score += 20
+    if looks_query_like(candidate) and capability != "search":
+        score -= 80
+    if is_probe_noise_candidate(candidate):
+        score -= 200
+    return score
+
+
+def capability_tokens(capability: str) -> tuple[str, ...]:
+    for name, tokens in CAPABILITY_RULES:
+        if name == capability:
+            return tokens
+    if capability == "open_page":
+        return ("view", "open", "detail", "watch", "play", "video", "home", "首页", "详情")
+    return ()
+
+
+def matches_any_capability_token(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(matches_capability_token(text, token) for token in tokens)
+
+
+def matches_capability_token(text: str, token: str) -> bool:
+    lowered = text.lower()
+    token = token.lower()
+    if not token:
+        return False
+    if not token.isascii() or any(char in token for char in ".:_"):
+        return token in lowered
+    terms = re.split(r"[^a-z0-9\u4e00-\u9fff]+", lowered)
+    return any(term == token or (len(token) >= 5 and term.startswith(token)) for term in terms)
+
+
+def capability_order(capability: str) -> int:
+    preferred = [
+        "search",
+        "app_entry",
+        "settings_system",
+        "clock_alarm_timer",
+        "calendar_event",
+        "contacts_people",
+        "live",
+        "social",
+        "content",
+        "profile",
+        "collection",
+        "file_document",
+        "browser_web",
+        "web_container",
+        "publish_upload",
+        "camera_scan_effect",
+        "poi_location",
+        "widget_quick_action",
+        "commerce",
+        "game",
+        "open_page",
+        "other",
+    ]
+    try:
+        return preferred.index(capability)
+    except ValueError:
+        return len(preferred)
+
+
+def capability_specificity(capability: str) -> int:
+    if capability == "search":
+        return 4
+    if capability in {
+        "browser_web",
+        "web_container",
+        "publish_upload",
+        "camera_scan_effect",
+        "poi_location",
+        "widget_quick_action",
+        "settings_system",
+        "clock_alarm_timer",
+        "calendar_event",
+        "contacts_people",
+    }:
+        return 3
+    if capability == "other":
+        return 0
+    if capability == "open_page":
+        return 1
+    return 2
 
 
 def default_probe_query(package: str, capability: str) -> str:
@@ -227,7 +683,8 @@ def default_probe_task(package: str, capability: str, query: str) -> str:
     app = display_app_name(package)
     if capability == "search":
         return f"验证 {app} 搜索 deeplink/intent 是否能打开搜索结果页并保留查询词，query={query}"
-    return f"验证 {app} deeplink/intent 是否能打开对应页面"
+    label = CAPABILITY_LABELS.get(capability, CAPABILITY_LABELS["open_page"])
+    return f"验证 {app} deeplink/intent 是否能打开{label}"
 
 
 def display_app_name(package: str) -> str:
@@ -239,11 +696,39 @@ def display_app_name(package: str) -> str:
 
 
 def candidate_matches_plan(candidate: Candidate, plan: ProbePlan) -> bool:
+    if plan.capability == "manual":
+        return True
+    if is_probe_noise_candidate(candidate):
+        return False
     if plan.capability == "search":
         return looks_query_like(candidate)
+    if looks_query_like(candidate):
+        return False
     if plan.capability == "open_page":
         return looks_open_page_candidate(candidate)
-    return True
+    return plan.capability in infer_candidate_capabilities(candidate)
+
+
+def candidates_for_plan(candidates: list[Candidate], plan: ProbePlan) -> list[Candidate]:
+    matched = [candidate for candidate in candidates if candidate_matches_plan(candidate, plan)]
+    return sorted(
+        matched,
+        key=lambda candidate: candidate_priority_for_plan(candidate, plan),
+        reverse=True,
+    )[: plan.candidate_limit]
+
+
+def candidate_priority_for_plan(candidate: Candidate, plan: ProbePlan) -> tuple[int, int]:
+    if plan.capability == "manual":
+        score, tie = candidate_priority(candidate)
+    else:
+        score = capability_priority(candidate, plan.capability)
+        _, tie = candidate_priority(candidate)
+    if candidate.kind == "deeplink":
+        score += 10
+    elif is_generic_intent(candidate):
+        score -= 10
+    return score, tie
 
 
 def looks_open_page_candidate(candidate: Candidate) -> bool:
@@ -263,8 +748,65 @@ def candidate_search_text(candidate: Candidate) -> str:
             candidate.action,
             candidate.component,
             candidate.description,
+            candidate.mime_type,
         )
     ).lower()
+
+
+def is_generic_intent(candidate: Candidate) -> bool:
+    action = (candidate.action or "").lower()
+    return candidate.kind == "intent" and action in GENERIC_INTENT_ACTIONS
+
+
+def looks_file_document_candidate(candidate: Candidate) -> bool:
+    action = (candidate.action or "").lower()
+    mime_type = (candidate.mime_type or "").lower()
+    if mime_type and (
+        mime_type == "*/*"
+        or any(mime_type.startswith(prefix) for prefix in FILE_DOCUMENT_MIME_PREFIXES)
+        or "document" in mime_type
+    ):
+        return True
+    if action not in FILE_DOCUMENT_ACTIONS:
+        return False
+    text = candidate_search_text(candidate)
+    return matches_any_capability_token(
+        text,
+        (
+            "file",
+            "files",
+            "document",
+            "documents",
+            "open_document",
+            "get_content",
+            "openable",
+            "mime",
+            "picker",
+        ),
+    )
+
+
+def looks_publish_upload_candidate(candidate: Candidate) -> bool:
+    action = (candidate.action or "").lower()
+    if action not in PUBLISH_UPLOAD_ACTIONS:
+        return False
+    if candidate.mime_type:
+        return True
+    text = candidate_search_text(candidate)
+    return any(token in text for token in ("upload", "publish", "post", "compose", "draft"))
+
+
+def is_probe_noise_candidate(candidate: Candidate) -> bool:
+    text = candidate_search_text(candidate)
+    if any(token in text for token in PROBE_NOISE_SUBSTRINGS):
+        return True
+    terms = re.split(r"[^a-z0-9\u4e00-\u9fff]+", text)
+    for term in terms:
+        if term in PROBE_NOISE_EXACT_TERMS:
+            return True
+        if any(term.startswith(prefix) for prefix in PROBE_NOISE_PREFIX_TERMS):
+            return True
+    return False
 
 
 def probe_plan_to_dict(plan: ProbePlan) -> dict[str, Any]:
@@ -278,15 +820,7 @@ def probe_plan_to_dict(plan: ProbePlan) -> dict[str, Any]:
 
 
 def is_risky_candidate(candidate: Candidate) -> bool:
-    text = " ".join(
-        str(item or "")
-        for item in (
-            candidate.uri_template,
-            candidate.action,
-            candidate.component,
-            candidate.description,
-        )
-    ).lower()
+    text = candidate_search_text(candidate)
     return any(token in text for token in RISKY_TOKENS)
 
 
@@ -295,6 +829,8 @@ def candidate_priority(candidate: Candidate) -> tuple[int, int]:
     action = (candidate.action or "").lower()
     component = (candidate.component or "").lower()
     score = 0
+    if is_probe_noise_candidate(candidate):
+        score -= 200
     if candidate.kind == "deeplink" and has_route_word(uri_and_description, ("search", "query", "keyword", "搜索")):
         score += 120
     elif action == "android.intent.action.search":
@@ -671,6 +1207,16 @@ def verifier_api_key(args: argparse.Namespace) -> str:
     return args.llm_api_key or os.environ.get(args.llm_api_key_env, "")
 
 
+def validate_verifier_config(args: argparse.Namespace) -> None:
+    if not verifier_enabled(args) or verifier_api_key(args):
+        return
+    raise SystemExit(
+        "LLM verifier is enabled but no API key was resolved. "
+        "Use --llm-api-key-env with the environment variable name, e.g. "
+        "--llm-api-key-env DASHSCOPE_API_KEY, or pass --llm-api-key directly."
+    )
+
+
 def args_for_probe_plan(args: argparse.Namespace, plan: ProbePlan) -> argparse.Namespace:
     plan_args = argparse.Namespace(**vars(args))
     plan_args.task = plan.task
@@ -733,6 +1279,10 @@ def validate_candidate(
             if isinstance(verdict.get("parameters"), list):
                 result.parameters = normalize_parameters(verdict["parameters"], query=args.query)
             hint = str(verdict.get("next_variant_hint") or "")
+            if verdict.get("status") == "verifier_error":
+                result.status = "verifier_error"
+                result.reason = str(verdict.get("reason") or "verifier_error")
+                break
             if verdict.get("usable") is True:
                 if (
                     args.query
@@ -760,6 +1310,12 @@ def reorder_variants(variants: list[Variant], hint: str) -> list[Variant]:
     preferred = [variant for variant in variants if lowered in variant.label.lower()]
     rest = [variant for variant in variants if variant not in preferred]
     return [*preferred, *rest]
+
+
+def plan_satisfied(result: ProbeResult, args: argparse.Namespace) -> bool:
+    if result.status == "page_validated":
+        return True
+    return bool(args.execute and not verifier_enabled(args) and result.status == "launchable")
 
 
 def result_to_validation_record(result: ProbeResult, *, query: str = "") -> dict[str, Any] | None:
@@ -911,6 +1467,7 @@ def write_sidecar(
     results: list[ProbeResult],
     promotions: list[dict[str, Any]],
     probe_plans: list[ProbePlan],
+    stopped_early: str | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -922,6 +1479,7 @@ def write_sidecar(
         "probe_plans": [probe_plan_to_dict(plan) for plan in probe_plans],
         "execute": args.execute,
         "verifier_model": args.llm_model or None,
+        "stopped_early": stopped_early,
         "created_at": time.time(),
         "results": [
             {
@@ -950,6 +1508,7 @@ def result_probe_query(result: ProbeResult, args: argparse.Namespace) -> str:
 
 def main() -> None:
     args = parse_args()
+    validate_verifier_config(args)
     args.cache = args.cache.expanduser()
     profile = load_profile(args.cache)
     root = validation_root_for(args.cache, args.validation_root)
@@ -962,17 +1521,21 @@ def main() -> None:
     probe_plans = build_probe_plans(profile, args)
     candidates = candidate_records(profile, include_risky=args.include_risky)
     results: list[ProbeResult] = []
+    stopped_early: str | None = None
     for plan in probe_plans:
         plan_args = args_for_probe_plan(args, plan)
-        plan_candidates = [
-            candidate
-            for candidate in candidates
-            if candidate_matches_plan(candidate, plan)
-        ][: plan.candidate_limit]
+        plan_candidates = candidates_for_plan(candidates, plan)
         for candidate in plan_candidates:
             result = validate_candidate(adb, candidate, args=plan_args, artifacts_dir=artifacts_dir)
             result.probe_plan = probe_plan_to_dict(plan)
             results.append(result)
+            if result.status == "verifier_error":
+                stopped_early = f"verifier_error: {result.reason}"
+                break
+            if plan_satisfied(result, plan_args):
+                break
+        if stopped_early:
+            break
 
     validation_records = [
         record
@@ -988,6 +1551,7 @@ def main() -> None:
         results=results,
         promotions=promotions,
         probe_plans=probe_plans,
+        stopped_early=stopped_early,
     )
 
     print(f"cache: {args.cache}")
@@ -996,6 +1560,8 @@ def main() -> None:
     print("probe_plans:", json.dumps([probe_plan_to_dict(plan) for plan in probe_plans], ensure_ascii=False))
     print(f"sidecar: {sidecar_path}")
     print("status_counts:", status_counts(results))
+    if stopped_early:
+        print(f"stopped_early: {stopped_early}")
     if promotions:
         print("promotions:", json.dumps(promotions, ensure_ascii=False, indent=2))
 
