@@ -131,6 +131,125 @@ def test_build_probe_plans_uses_bilibili_default_query() -> None:
     assert plans[0].query == "敢杀我的马"
 
 
+def test_build_probe_plans_covers_bilibili_route_domains() -> None:
+    profile = AppShortcutProfile(
+        package="tv.danmaku.bili",
+        deep_links=(
+            DeepLink(
+                uri_template="bilibili://search",
+                scheme="bilibili",
+                host="search",
+                path=None,
+                component="tv.danmaku.bili/.Router",
+                description="search route",
+            ),
+            DeepLink(
+                uri_template="bilibili://live",
+                scheme="bilibili",
+                host="live",
+                path=None,
+                component="tv.danmaku.bili/.Router",
+                description="live route",
+            ),
+            DeepLink(
+                uri_template="bilibili://following",
+                scheme="bilibili",
+                host="following",
+                path=None,
+                component="tv.danmaku.bili/.Router",
+                description="following route",
+            ),
+            DeepLink(
+                uri_template="bilibili://history",
+                scheme="bilibili",
+                host="history",
+                path=None,
+                component="tv.danmaku.bili/.Router",
+                description="history route",
+            ),
+            DeepLink(
+                uri_template="bilibili://space",
+                scheme="bilibili",
+                host="space",
+                path=None,
+                component="tv.danmaku.bili/.Router",
+                description="space route",
+            ),
+        ),
+    )
+    args = SimpleNamespace(task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=8)
+
+    plans = validator.build_probe_plans(profile, args)
+    capabilities = {plan.capability for plan in plans}
+
+    assert {"search", "live", "social", "collection", "profile"} <= capabilities
+
+
+def test_build_probe_plans_covers_intent_heavy_settings_cache() -> None:
+    profile = AppShortcutProfile(
+        package="com.android.settings",
+        deep_intents=(
+            DeepIntent(
+                action="android.settings.WIFI_SETTINGS",
+                component="com.android.settings/.Settings$WifiSettingsActivity",
+                description="Wi-Fi settings",
+            ),
+            DeepIntent(
+                action="android.settings.BLUETOOTH_SETTINGS",
+                component="com.android.settings/.Settings$BluetoothDashboardActivity",
+                description="Bluetooth settings",
+            ),
+        ),
+    )
+    args = SimpleNamespace(task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=8)
+
+    plans = validator.build_probe_plans(profile, args)
+
+    assert plans[0].capability == "settings_system"
+    assert "系统设置页面" in plans[0].task
+
+
+def test_build_probe_plans_keeps_specific_capabilities_with_small_counts() -> None:
+    profile = AppShortcutProfile(
+        package="com.xingin.xhs",
+        deep_links=tuple(
+            DeepLink(
+                uri_template=f"xhsdiscover://note/{index}",
+                scheme="xhsdiscover",
+                host="note",
+                path=f"/{index}",
+                component="com.xingin.xhs/.Router",
+                description="note content",
+            )
+            for index in range(6)
+        )
+        + (
+            DeepLink(
+                uri_template="xhsdiscover://poi/location",
+                scheme="xhsdiscover",
+                host="poi",
+                path="/location",
+                component="com.xingin.xhs/.Router",
+                description="poi route",
+            ),
+        ),
+        deep_intents=(
+            DeepIntent(
+                action="android.appwidget.action.APPWIDGET_CONFIGURE",
+                component="com.xingin.xhs/.WidgetConfigureActivity",
+                description="widget quick action",
+            ),
+        ),
+    )
+    args = SimpleNamespace(task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=3)
+
+    plans = validator.build_probe_plans(profile, args)
+    capabilities = [plan.capability for plan in plans]
+
+    assert "poi_location" in capabilities
+    assert "widget_quick_action" in capabilities
+
+
 def test_build_probe_plans_manual_override_keeps_user_payload() -> None:
     profile = AppShortcutProfile(
         package="com.google.android.youtube",
@@ -219,6 +338,244 @@ def test_open_page_probe_plan_does_not_duplicate_search_candidates() -> None:
 
     assert validator.candidate_matches_plan(search_play, plan) is False
     assert validator.candidate_matches_plan(watch, plan) is True
+
+
+def test_candidates_for_plan_prefers_deeplink_before_generic_search_intents() -> None:
+    plan = validator.ProbePlan(
+        capability="search",
+        task="验证 B站 搜索",
+        query="敢杀我的马",
+        candidate_limit=3,
+        variant_limit=4,
+    )
+    generic_intent = validator.Candidate(
+        index=1,
+        kind="intent",
+        package="tv.danmaku.bili",
+        description="generic search",
+        action="android.intent.action.SEARCH",
+        component="tv.danmaku.bili/.FavoriteBoxActivity",
+    )
+    deeplink = validator.Candidate(
+        index=2,
+        kind="deeplink",
+        package="tv.danmaku.bili",
+        description="search route",
+        uri_template="bilibili://search",
+        component="tv.danmaku.bili/.Router",
+    )
+
+    candidates = validator.candidates_for_plan([generic_intent, deeplink], plan)
+
+    assert candidates[0] == deeplink
+    assert candidates[1] == generic_intent
+
+
+def test_infer_candidate_capabilities_covers_web_publish_camera_poi_widget() -> None:
+    candidates = [
+        validator.Candidate(
+            index=0,
+            kind="deeplink",
+            package="com.android.chrome",
+            description="Chrome URL route",
+            uri_template="googlechrome://navigate?url=https://example.com",
+        ),
+        validator.Candidate(
+            index=1,
+            kind="deeplink",
+            package="com.xingin.xhs",
+            description="embedded webview",
+            uri_template="xhsdiscover://extweb",
+        ),
+        validator.Candidate(
+            index=2,
+            kind="intent",
+            package="com.google.android.youtube",
+            description="share media for upload",
+            action="android.intent.action.SEND",
+            component="com.google.android.youtube/.UploadActivity",
+            mime_type="video/mp4",
+        ),
+        validator.Candidate(
+            index=6,
+            kind="intent",
+            package="com.google.android.youtube",
+            description="multiple uploads entry",
+            action="android.intent.action.SEND_MULTIPLE",
+            component="com.google.android.youtube/.Shell_MultipleUploadsActivity",
+        ),
+        validator.Candidate(
+            index=3,
+            kind="deeplink",
+            package="com.xingin.xhs",
+            description="QR scanner",
+            uri_template="xhsdiscover://qrscan",
+        ),
+        validator.Candidate(
+            index=4,
+            kind="deeplink",
+            package="com.xingin.xhs",
+            description="nearby POI",
+            uri_template="xhsdiscover://poi/location",
+        ),
+        validator.Candidate(
+            index=5,
+            kind="intent",
+            package="md.obsidian",
+            description="app widget quick action",
+            action="android.appwidget.action.APPWIDGET_CONFIGURE",
+            component="md.obsidian/.WidgetConfigureActivity",
+        ),
+    ]
+
+    capabilities = set().union(*(set(validator.infer_candidate_capabilities(candidate)) for candidate in candidates))
+
+    assert {
+        "browser_web",
+        "web_container",
+        "publish_upload",
+        "camera_scan_effect",
+        "poi_location",
+        "widget_quick_action",
+    } <= capabilities
+    assert "publish_upload" in validator.infer_candidate_capabilities(candidates[3])
+
+
+def test_file_document_is_not_inferred_from_image_search_but_uses_mime() -> None:
+    file_plan = validator.ProbePlan(
+        capability="file_document",
+        task="验证文件入口",
+        query="",
+        candidate_limit=8,
+        variant_limit=4,
+    )
+    image_search = validator.Candidate(
+        index=0,
+        kind="deeplink",
+        package="com.xingin.xhs",
+        description="image search",
+        uri_template="xhsdiscover://image_search",
+    )
+    image_share = validator.Candidate(
+        index=1,
+        kind="intent",
+        package="com.simplemobiletools.gallery.pro",
+        description="open image",
+        action="android.intent.action.SEND",
+        mime_type="image/jpeg",
+    )
+
+    assert "file_document" not in validator.infer_candidate_capabilities(image_search)
+    assert validator.candidate_matches_plan(image_search, file_plan) is False
+    assert "file_document" in validator.infer_candidate_capabilities(image_share)
+    assert validator.candidate_matches_plan(image_share, file_plan) is True
+
+
+def test_settings_system_does_not_claim_app_notification_routes() -> None:
+    app_notification = validator.Candidate(
+        index=0,
+        kind="deeplink",
+        package="com.xingin.xhs",
+        description="interaction notification",
+        uri_template="xhsdiscover://message/notifications",
+    )
+    system_notification = validator.Candidate(
+        index=1,
+        kind="intent",
+        package="com.android.settings",
+        description="Android notification settings",
+        action="android.settings.NOTIFICATION_SETTINGS",
+        component="com.android.settings/.Settings$NotificationSettingsActivity",
+    )
+
+    assert "settings_system" not in validator.infer_candidate_capabilities(app_notification)
+    assert "social" in validator.infer_candidate_capabilities(app_notification)
+    assert "settings_system" in validator.infer_candidate_capabilities(system_notification)
+
+
+def test_non_search_plans_exclude_search_like_candidates() -> None:
+    plan = validator.ProbePlan(
+        capability="content",
+        task="验证内容页",
+        query="",
+        candidate_limit=8,
+        variant_limit=4,
+    )
+    play_from_search = validator.Candidate(
+        index=0,
+        kind="intent",
+        package="com.google.android.youtube",
+        description="play from search",
+        action="android.media.action.MEDIA_PLAY_FROM_SEARCH",
+        component="com.google.android.youtube/.MediaSearchActivity",
+    )
+    watch = validator.Candidate(
+        index=1,
+        kind="deeplink",
+        package="com.google.android.youtube",
+        description="watch video",
+        uri_template="vnd.youtube://watch",
+    )
+
+    assert validator.candidate_matches_plan(play_from_search, plan) is False
+    assert validator.candidates_for_plan([play_from_search, watch], plan) == [watch]
+
+
+def test_auto_probe_plans_skip_debug_remote_and_transit_noise() -> None:
+    plan = validator.ProbePlan(
+        capability="browser_web",
+        task="验证 Web 页面",
+        query="",
+        candidate_limit=8,
+        variant_limit=4,
+    )
+    noise_candidates = [
+        validator.Candidate(
+            index=0,
+            kind="intent",
+            package="com.android.chrome",
+            description="dummy action",
+            action="com.example.dummy.action.TEST",
+        ),
+        validator.Candidate(
+            index=1,
+            kind="intent",
+            package="com.android.chrome",
+            description="remote action receiver",
+            action="com.google.android.apps.chrome.REMOTE_ACTION",
+        ),
+        validator.Candidate(
+            index=2,
+            kind="deeplink",
+            package="com.android.chrome",
+            description="debug web route",
+            uri_template="googlechrome://debug",
+        ),
+        validator.Candidate(
+            index=3,
+            kind="deeplink",
+            package="com.xingin.xhs",
+            description="getui push transit",
+            uri_template="xhsdiscover://getui/push/transit",
+        ),
+        validator.Candidate(
+            index=5,
+            kind="deeplink",
+            package="com.xingin.xhs",
+            description="rn autotest route",
+            uri_template="xhsdiscover://rnautotest",
+        ),
+    ]
+    valid = validator.Candidate(
+        index=4,
+        kind="deeplink",
+        package="com.android.chrome",
+        description="Chrome URL route",
+        uri_template="googlechrome://navigate?url=https://example.com",
+    )
+
+    assert all(validator.candidate_matches_plan(candidate, plan) is False for candidate in noise_candidates)
+    assert validator.candidates_for_plan([*noise_candidates, valid], plan) == [valid]
 
 
 def test_deeplink_variants_include_encoded_chinese_query() -> None:
@@ -427,6 +784,7 @@ def test_write_sidecar_records_probe_plan(tmp_path: Path) -> None:
 
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["probe_plans"] == [validator.probe_plan_to_dict(plan)]
+    assert data["stopped_early"] is None
     assert data["results"][0]["probe_plan"] == validator.probe_plan_to_dict(plan)
     assert data["results"][0]["validation_record"]["uri_template"] == "bilibili://search?keyword={{query}}"
 
@@ -493,6 +851,77 @@ def test_validate_candidate_breaks_after_launchable_without_verifier(monkeypatch
 
     assert result.status == "launchable"
     assert launched == ["raw_package"]
+
+
+def test_validate_candidate_stops_on_verifier_error(monkeypatch, tmp_path: Path) -> None:
+    candidate = validator.Candidate(
+        index=0,
+        kind="deeplink",
+        package="tv.danmaku.bili",
+        description="search",
+        uri_template="bilibili://search",
+    )
+    args = SimpleNamespace(
+        query="敢杀我的马",
+        max_try=5,
+        execute=True,
+        llm_base_url="http://example.test/v1",
+        llm_model="qwen-vl",
+        llm_api_key="bad",
+        llm_api_key_env="DASHSCOPE_API_KEY",
+        llm_temperature=0.0,
+        task="验证 B站 搜索",
+    )
+    launched: list[str] = []
+
+    monkeypatch.setattr(validator, "resolve_variant", lambda adb, variant: {"ok": True})
+
+    def fake_launch(adb, variant, *, artifacts_dir, index, capture_evidence=False, settle_seconds=2.0):
+        launched.append(variant.label)
+        return {"target_package": True, "foreground": "tv.danmaku.bili/.SearchActivity"}
+
+    monkeypatch.setattr(validator, "launch_variant", fake_launch)
+    monkeypatch.setattr(
+        validator,
+        "verify_with_llm",
+        lambda **kwargs: {"usable": False, "status": "verifier_error", "reason": "401 invalid key"},
+    )
+
+    result = validator.validate_candidate(object(), candidate, args=args, artifacts_dir=tmp_path)
+
+    assert result.status == "verifier_error"
+    assert result.reason == "401 invalid key"
+    assert launched == ["raw_package"]
+
+
+def test_plan_satisfied_stops_per_capability_on_page_validated_or_launchable_without_verifier() -> None:
+    candidate = validator.Candidate(index=0, kind="deeplink", package="pkg", description="desc")
+    page_validated = validator.ProbeResult(candidate=candidate, status="page_validated")
+    launchable = validator.ProbeResult(candidate=candidate, status="launchable")
+
+    no_verifier_args = SimpleNamespace(execute=True, llm_base_url="", llm_model="")
+    verifier_args = SimpleNamespace(execute=True, llm_base_url="http://example.test/v1", llm_model="qwen-vl")
+
+    assert validator.plan_satisfied(page_validated, verifier_args) is True
+    assert validator.plan_satisfied(launchable, no_verifier_args) is True
+    assert validator.plan_satisfied(launchable, verifier_args) is False
+
+
+def test_validate_verifier_config_fails_when_env_name_does_not_resolve(monkeypatch) -> None:
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    args = SimpleNamespace(
+        llm_base_url="http://example.test/v1",
+        llm_model="qwen-vl",
+        llm_api_key="",
+        llm_api_key_env="DASHSCOPE_API_KEY",
+    )
+
+    try:
+        validator.validate_verifier_config(args)
+    except SystemExit as exc:
+        assert "--llm-api-key-env DASHSCOPE_API_KEY" in str(exc)
+    else:
+        raise AssertionError("validate_verifier_config should fail without an API key")
 
 
 def test_verify_with_llm_returns_verifier_error_on_api_exception(monkeypatch) -> None:
