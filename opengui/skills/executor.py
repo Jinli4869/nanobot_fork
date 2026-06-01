@@ -35,7 +35,7 @@ from opengui.action import Action, ActionError, parse_action
 from opengui.interfaces import DeviceBackend
 from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
-from opengui.skills.normalization import normalize_app_identifier
+from opengui.skills.normalization import normalize_adb_app_identifier, normalize_app_identifier
 from opengui.skills.state_contract import evaluate_state_contract_detail
 
 if typing.TYPE_CHECKING:
@@ -1113,7 +1113,11 @@ class SkillExecutor:
         if platform not in ("android", "ios"):
             return action
 
-        resolved = normalize_app_identifier(platform, action.text)
+        resolved = (
+            normalize_adb_app_identifier(action.text)
+            if platform == "android" and hasattr(self.backend, "_run")
+            else normalize_app_identifier(platform, action.text)
+        )
         if resolved == action.text:
             return action
         logger.debug(

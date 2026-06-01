@@ -360,6 +360,17 @@ _ANDROID_APP_ALIASES_BASE: dict[str, str] = {
 }
 
 
+_ANDROID_ADB_APP_ALIASES_BASE: dict[str, str] = {
+    # Real-device package names. Keep these separate from MobileWorld aliases:
+    # benchmark packages may be synthetic, while ADB commands such as
+    # ``pm path`` and ``monkey -p`` must use packages installed on the device.
+    "mastodon": "org.joinmastodon.android",
+    "mastodon app": "org.joinmastodon.android",
+    "org.joinmastodon.android": "org.joinmastodon.android",
+    "org.joinmastodon.android.mastodon": "org.joinmastodon.android",
+}
+
+
 _ANDROID_ALIAS_SUFFIXES = (
     " app",
     " application",
@@ -383,8 +394,8 @@ _ANDROID_ALIAS_PREFIXES = (
 )
 
 
-def _build_android_aliases() -> dict[str, str]:
-    """Build reverse lookup: display name parts -> package name."""
+def _android_display_aliases() -> dict[str, str]:
+    """Build reverse lookup from display name parts to package names."""
     aliases: dict[str, str] = {}
     for package, display in _ANDROID_PACKAGE_DISPLAY_NAMES.items():
         # Add each "/" separated part as an alias
@@ -396,32 +407,53 @@ def _build_android_aliases() -> dict[str, str]:
         full = display.strip().lower()
         if full not in aliases:
             aliases[full] = package
-    # Manual aliases take priority
+    return aliases
+
+
+def _build_android_aliases() -> dict[str, str]:
+    aliases = _android_display_aliases()
+    # Manual/synthetic aliases take priority for skill storage and MobileWorld.
     aliases.update(_ANDROID_APP_ALIASES_BASE)
     return aliases
 
 
+def _build_android_adb_aliases() -> dict[str, str]:
+    aliases = _android_display_aliases()
+    # Real-device aliases take priority for ADB runtime/package inspection.
+    aliases.update(_ANDROID_ADB_APP_ALIASES_BASE)
+    return aliases
+
+
 _ANDROID_APP_ALIASES = _build_android_aliases()
+_ANDROID_ADB_APP_ALIASES = _build_android_adb_aliases()
 _ANDROID_TEXT_ALIAS_DENYLIST = {"search", "搜索", "video", "视频"}
 
 
-def _lookup_android_alias(lowered: str) -> str | None:
+def _lookup_android_alias_from(lowered: str, aliases: dict[str, str]) -> str | None:
     candidates = [lowered]
     for prefix in _ANDROID_ALIAS_PREFIXES:
         if lowered.startswith(prefix) and len(lowered) > len(prefix):
             candidates.append(lowered[len(prefix):].strip())
     for candidate in candidates:
-        package = _ANDROID_APP_ALIASES.get(candidate)
+        package = aliases.get(candidate)
         if package:
             return package
         for suffix in _ANDROID_ALIAS_SUFFIXES:
             if candidate.endswith(suffix) and len(candidate) > len(suffix):
                 stem = candidate[: -len(suffix)].strip()
                 if stem:
-                    package = _ANDROID_APP_ALIASES.get(stem)
+                    package = aliases.get(stem)
                     if package:
                         return package
     return None
+
+
+def _lookup_android_alias(lowered: str) -> str | None:
+    return _lookup_android_alias_from(lowered, _ANDROID_APP_ALIASES)
+
+
+def _lookup_android_adb_alias(lowered: str) -> str | None:
+    return _lookup_android_alias_from(lowered, _ANDROID_ADB_APP_ALIASES)
 
 
 # ---------------------------------------------------------------------------
@@ -704,6 +736,28 @@ def normalize_app_identifier(platform: str, app: str) -> str:
         # Already a bundle ID (contains dots in reverse-domain format)
         if "." in cleaned:
             return cleaned
+
+    slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
+    return slug or "unknown"
+
+
+def normalize_adb_app_identifier(app: str) -> str:
+    """Normalize an Android app identifier for real ADB device commands.
+
+    This intentionally does not use MobileWorld/synthetic aliases. If the input
+    is already a package name and has no real-device alias override, it is
+    preserved so foreground packages from ``dumpsys`` remain executable.
+    """
+    cleaned = " ".join((app or "").strip().strip("\"'").split())
+    if not cleaned:
+        return "unknown"
+
+    lowered = cleaned.lower()
+    package = _lookup_android_adb_alias(lowered)
+    if package:
+        return package
+    if "." in cleaned:
+        return lowered
 
     slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
     return slug or "unknown"
