@@ -116,7 +116,7 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     raw_type = payload.get("action_type") or payload.get("action") or ""
     if not raw_type:
         raise ActionError("Payload is missing the required 'action_type' field.")
-    action_type = _ACTION_ALIASES.get(str(raw_type).strip().lower(), str(raw_type).strip().lower())
+    action_type = normalize_action_type(str(raw_type))
     if action_type not in VALID_ACTION_TYPES:
         raise ActionError(
             f"Unknown action type {raw_type!r}. "
@@ -162,6 +162,12 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
         categories=categories, extras=extras,
         relative=relative, status=status, auto_enter=auto_enter,
     )
+
+
+def normalize_action_type(action_type: str) -> str:
+    """Return the canonical action type, applying supported aliases."""
+    raw = str(action_type or "").strip().lower()
+    return _ACTION_ALIASES.get(raw, raw)
 
 
 def describe_action(action: Action) -> str:

@@ -100,6 +100,10 @@ def test_summary_includes_extraction_usage(tmp_path: Path) -> None:
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["usage_totals"] == {"prompt": 10, "completion": 3, "cached": 2}
+    assert summary["processed_code_total"] == 1
+    assert summary["no_candidate_total"] == 0
+    assert summary["skipped_total"] == 0
+    assert summary["error_total"] == 0
     assert summary["records"][0]["extraction_usage"] == {
         "prompt": 10,
         "completion": 3,

@@ -475,51 +475,10 @@ def _build_fixed_action(step: SkillStep, params: dict[str, str]) -> Action:
     to string values so that ``{{param}}`` placeholders in text fields resolve
     correctly.
     """
-    values: dict[str, Any] = {}
-    for k, v in step.fixed_values.items():
-        values[k] = _ground_value(v, params)
-
-    kwargs: dict[str, Any] = {"action_type": step.action_type}
-    if "x" in values:
-        kwargs["x"] = float(values["x"])
-    if "y" in values:
-        kwargs["y"] = float(values["y"])
-    if "x2" in values:
-        kwargs["x2"] = float(values["x2"])
-    if "y2" in values:
-        kwargs["y2"] = float(values["y2"])
-    if "text" in values:
-        kwargs["text"] = values["text"]
-    if "key" in values:
-        kwargs["key"] = values["key"]
-    if "pixels" in values:
-        kwargs["pixels"] = int(values["pixels"])
-    if "duration_ms" in values:
-        kwargs["duration_ms"] = int(values["duration_ms"])
-    if "component" in values:
-        kwargs["component"] = str(values["component"])
-    if "package" in values:
-        kwargs["package"] = str(values["package"])
-    if "intent_action" in values:
-        kwargs["intent_action"] = str(values["intent_action"])
-    if "mime_type" in values:
-        kwargs["mime_type"] = str(values["mime_type"])
-    if "categories" in values:
-        raw_categories = values["categories"]
-        kwargs["categories"] = (
-            tuple(str(item) for item in raw_categories)
-            if isinstance(raw_categories, (list, tuple))
-            else (str(raw_categories),)
-        )
-    if "extras" in values:
-        raw_extras = values["extras"]
-        if isinstance(raw_extras, dict):
-            kwargs["extras"] = tuple(raw_extras.items())
-        elif isinstance(raw_extras, (list, tuple)):
-            kwargs["extras"] = tuple(tuple(item) for item in raw_extras)
-    if "relative" in values:
-        kwargs["relative"] = bool(values["relative"])
-    return Action(**kwargs)
+    payload: dict[str, Any] = {"action_type": step.action_type}
+    for key, value in step.fixed_values.items():
+        payload[key] = _ground_value(value, params)
+    return parse_action(payload)
 
 
 def _build_template_action(step: SkillStep, params: dict[str, str]) -> Action:
@@ -548,6 +507,7 @@ def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str
         "text",
         "key",
         "pixels",
+        "direction",
         "duration_ms",
         "component",
         "package",
@@ -579,6 +539,8 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
             kwargs[key] = float(payload[key])
     if "text" in payload:
         kwargs["text"] = str(payload["text"])
+    elif "direction" in payload:
+        kwargs["text"] = str(payload["direction"]).strip().lower()
     if "key" in payload:
         raw_key = payload["key"]
         kwargs["key"] = (
