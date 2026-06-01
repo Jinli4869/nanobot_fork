@@ -20,14 +20,18 @@ import opengui.backends.ios_wda as ios_wda_module
 from opengui.action import Action, ActionError, parse_action, resolve_coordinate
 from opengui.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
 from opengui.tool_schemas import build_shortcut_tool_defs
-from opengui.agent_profiles import normalize_profile_response, profile_tool_definition
+from opengui.agent_profiles import (
+    canonicalize_agent_profile,
+    normalize_profile_response,
+    profile_tool_definition,
+)
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
 from opengui.backends.hdc import HdcBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
-from opengui.skills.data import SkillStep
+from opengui.skills.data import Skill, SkillStep
 from opengui.skills import deeplink as deeplink_module
 from opengui.skills import executor as skill_executor_module
 from opengui.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
@@ -209,6 +213,135 @@ class _SkillTestBackend:
 
     async def list_apps(self) -> list[str]:
         return []
+
+
+class _FakePromptSkillExecutor:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Skill, dict[str, str]]] = []
+
+    async def execute(self, skill: Skill, params: dict[str, str], *, timeout: float = 30.0):
+        del timeout
+        self.calls.append((skill, params))
+        return skill_executor_module.SkillExecutionResult(
+            skill=skill,
+            step_results=[],
+            state=skill_executor_module.ExecutionState.SUCCEEDED,
+            execution_summary=f"Skill {skill.name} executed",
+            token_usage={"prompt_tokens": 2},
+        )
+
+
+@pytest.mark.asyncio
+async def test_prompt_skill_selection_injects_and_dispatches_use_skill(tmp_path: Path) -> None:
+    library = FlatSkillLibrary(store_dir=tmp_path / "skills")
+    shortcut_skill = Skill(
+        skill_id="shortcut:dl:dry:search",
+        name="dry_search",
+        description="Search videos by query",
+        app="dry.app",
+        platform="dry-run",
+        tags=("shortcut", "deeplink", "validated"),
+        parameters=("query",),
+        steps=(
+            SkillStep(
+                action_type="open_deeplink",
+                target="dry://search?q={{query}}",
+                parameters={"text": "dry://search?q={{query}}", "package": "dry.app"},
+            ),
+        ),
+    )
+    composite_skill = Skill(
+        skill_id="manual:click-and-type",
+        name="click_and_type",
+        description="Tap an input and type text",
+        app="dry.app",
+        platform="dry-run",
+        tags=("compact_action", "action_alias:click_and_type"),
+        steps=(),
+    )
+    library.add(shortcut_skill)
+    library.add(composite_skill)
+    executor = _FakePromptSkillExecutor()
+    llm = _RecordingLLM([
+        _mobileworld_response(
+            {
+                "action_type": "use_skill",
+                "skill_id": "shortcut:dl:dry:search",
+                "skill_name": "dry_search",
+                "arguments": {"query": "cats"},
+            }
+        ),
+        _mobileworld_response({"action_type": "status", "goal_status": "complete"}),
+    ])
+    agent = GuiAgent(
+        llm,
+        _SkillTestBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "prompt skill"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        skill_library=library,
+        skill_executor=executor,
+        enable_prompt_skill_selection=True,
+        prompt_skill_top_k=3,
+        prompt_shortcut_only=True,
+    )
+
+    result = await agent.run("Search videos by query cats", max_retries=1)
+
+    assert result.success
+    assert len(executor.calls) == 1
+    executed_skill, executed_params = executor.calls[0]
+    assert executed_skill.skill_id == "shortcut:dl:dry:search"
+    assert executed_params == {"query": "cats"}
+    first_prompt = llm.calls[0][0]["content"]
+    assert "`use_skill`" in first_prompt
+    assert "skill_id=shortcut:dl:dry:search" in first_prompt
+    assert "`click_and_type`" in first_prompt
+
+
+@pytest.mark.asyncio
+async def test_prompt_composite_action_executes_without_skill_executor(tmp_path: Path) -> None:
+    library = FlatSkillLibrary(store_dir=tmp_path / "skills")
+    library.add(
+        Skill(
+            skill_id="manual:click-and-type",
+            name="click_and_type",
+            description="Tap an input and type text",
+            app="dry.app",
+            platform="dry-run",
+            tags=("compact_action", "action_alias:click_and_type"),
+            steps=(),
+        )
+    )
+    backend = _SkillTestBackend()
+    llm = _RecordingLLM([
+        _mobileworld_response(
+            {
+                "action_type": "click_and_type",
+                "coordinate": [500, 400],
+                "text": "hello",
+            }
+        ),
+        _mobileworld_response({"action_type": "status", "goal_status": "complete"}),
+    ])
+    agent = GuiAgent(
+        llm,
+        backend,
+        trajectory_recorder=_make_recorder(tmp_path, "prompt composite"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        skill_library=library,
+        enable_prompt_skill_selection=True,
+        prompt_skill_top_k=0,
+    )
+
+    result = await agent.run("Tap the field and type hello", max_retries=1)
+
+    assert result.success
+    assert [action.action_type for action in backend.executed_actions] == ["tap", "input_text"]
+    assert backend.executed_actions[0].x == 500
+    assert backend.executed_actions[0].y == 400
+    assert backend.executed_actions[1].text == "hello"
 
 
 def test_parse_scroll_allows_center_default() -> None:
@@ -974,6 +1107,10 @@ def test_build_system_prompt_supports_general_e2e_profile() -> None:
     assert "MobileWorld agent profile: general_e2e" in prompt
     assert "Use the exact MobileWorld response format" in prompt
     assert "Do not use provider-native tool calling" in prompt
+
+
+def test_general_e2e_compact_skill_profile_is_alias() -> None:
+    assert canonicalize_agent_profile("general_e2e_compact_skill") == "general_e2e"
 
 
 def test_annotate_android_apps_filters_unmapped_packages() -> None:

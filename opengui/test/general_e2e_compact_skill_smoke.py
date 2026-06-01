@@ -33,7 +33,6 @@ import json
 import os
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +48,15 @@ from opengui.agents.implementations.general_e2e_agent import (  # noqa: E402
 )
 from opengui.agents.profiles import parse_mobileworld_action  # noqa: E402
 from opengui.agents.utils.prompts import GENERAL_E2E_PROMPT_TEMPLATE  # noqa: E402
+from opengui.skills.compact_prompt import (  # noqa: E402
+    COMPACT_SKILL_INSTRUCTIONS,
+    USE_SKILL_ACTION_ROW,
+    USE_SKILL_DECISION_RULE,
+    SkillInfo,
+    build_catalog,
+    is_shortcut_skill,
+    skill_info_from_flat_skill,
+)
 
 DEFAULT_SKILLS_PY = Path("/home/jinli/Project/MobileWorld_fork/gui_skills/skills.py")
 DEFAULT_MODEL = "qwen3.5-flash"
@@ -57,62 +65,6 @@ DEFAULT_SCREEN_SIZE = (1080, 2400)
 
 SKILL_TASK = "On Mastodon, replace my profile header with the tiger photo from my photo gallery."
 GUI_TASK = "Tap the Continue button on the current screen."
-
-COMPACT_SKILL_INSTRUCTIONS = """\
-# Optional Compact GUI Skills
-You may choose one compact GUI skill as a single action when it is clearly useful
-for the user's task. This is optional. If no listed skill clearly matches, keep
-using the normal GUI actions above.
-
-Skill action format:
-`{{"action_type":"use_skill","skill_id":"listed_skill_id","skill_name":"listed_skill_name","arguments":{{"param":"value"}},"reason":"short reason"}}`
-
-Rules:
-- First compare the user task with the compact skill list. If a listed skill
-  clearly matches the requested app/workflow, prefer `use_skill` over manual
-  navigation.
-- Use `use_skill` only when the skill id/name, description, app, transport, and
-  parameters clearly match the user's task and would be a valid next prefix.
-- When a `skill_id` is listed, copy it exactly into the `use_skill` action.
-- A compact skill may include navigation/opening the target app internally; the
-  current screen does not need to already show the target app.
-- Fill `arguments` only when the task provides obvious values; otherwise use an
-  empty object.
-- If a skill is not clearly applicable, output a normal GUI action such as
-  `click`, `input_text`, `scroll`, `answer`, or `status`.
-
-Compact skills:
-{catalog}
-""".strip()
-
-USE_SKILL_ACTION_ROW = (
-    "| `use_skill`     | Run a stored compact GUI skill prefix when it clearly matches the task | "
-    '`{"action_type":"use_skill","skill_id":"listed_skill_id","skill_name":"listed_skill_name","arguments":{}}` |'
-)
-
-USE_SKILL_DECISION_RULE = (
-    "0. Before choosing a manual GUI action, compare the user task with the compact "
-    "skill list. If one compact skill clearly matches the requested app/workflow, "
-    "choose `use_skill` as the next action. A compact skill may open/navigate to "
-    "the target app internally, so do not first open the app manually when the "
-    "skill itself matches the whole requested workflow."
-)
-
-
-@dataclass(frozen=True)
-class SkillInfo:
-    function_name: str
-    description: str
-    skill_id: str | None = None
-    app: str = ""
-    platform: str = ""
-    tags: tuple[str, ...] = ()
-    parameters: tuple[str, ...] = ()
-    score: float | None = None
-    first_action_type: str = ""
-    first_action_target: str = ""
-    first_action_parameters: dict[str, Any] | None = None
-    first_valid_state: str | None = None
 
 
 def extract_skills(skills_py: Path) -> list[SkillInfo]:
@@ -153,87 +105,6 @@ def _literal_str(node: ast.expr) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def build_catalog(skills: list[SkillInfo], *, limit: int | None) -> str:
-    selected = skills[:limit] if limit else skills
-    return "\n".join(_format_catalog_line(skill) for skill in selected)
-
-
-def _format_catalog_line(skill: SkillInfo) -> str:
-    parts = [
-        f"skill_id={skill.skill_id or skill.function_name}",
-        f"skill_name={skill.function_name}",
-        f"description={skill.description}",
-    ]
-    if skill.app:
-        parts.append(f"app={skill.app}")
-    if skill.tags:
-        parts.append(f"tags={','.join(skill.tags)}")
-    if skill.parameters:
-        parts.append(f"parameters={','.join(skill.parameters)}")
-    if skill.first_action_type:
-        parts.append(f"first_action={skill.first_action_type}")
-    if skill.first_action_target:
-        parts.append(f"target={skill.first_action_target}")
-    if skill.first_action_parameters:
-        params = json.dumps(
-            _compact_mapping(skill.first_action_parameters),
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        parts.append(f"action_parameters={params}")
-    if skill.first_valid_state:
-        parts.append(f"valid_state={skill.first_valid_state}")
-    if skill.score is not None:
-        parts.append(f"retrieval_score={skill.score:.4f}")
-    return "- " + "; ".join(parts)
-
-
-def _compact_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
-    return {str(key): _compact_value(value) for key, value in mapping.items()}
-
-
-def _compact_value(value: Any) -> Any:
-    if isinstance(value, tuple):
-        return [_compact_value(item) for item in value]
-    if isinstance(value, list):
-        return [_compact_value(item) for item in value]
-    if isinstance(value, dict):
-        return _compact_mapping(value)
-    return value
-
-
-def skill_info_from_flat_skill(skill: Any, *, score: float | None = None) -> SkillInfo:
-    first_step = skill.steps[0] if getattr(skill, "steps", ()) else None
-    first_action_parameters: dict[str, Any] | None = None
-    if first_step is not None:
-        first_action_parameters = dict(getattr(first_step, "parameters", {}) or {})
-    return SkillInfo(
-        function_name=str(getattr(skill, "name", "") or getattr(skill, "skill_id", "")),
-        description=str(getattr(skill, "description", "") or ""),
-        skill_id=str(getattr(skill, "skill_id", "") or ""),
-        app=str(getattr(skill, "app", "") or ""),
-        platform=str(getattr(skill, "platform", "") or ""),
-        tags=tuple(str(tag) for tag in (getattr(skill, "tags", ()) or ())),
-        parameters=tuple(str(param) for param in (getattr(skill, "parameters", ()) or ())),
-        score=score,
-        first_action_type=str(getattr(first_step, "action_type", "") or "") if first_step else "",
-        first_action_target=str(getattr(first_step, "target", "") or "") if first_step else "",
-        first_action_parameters=first_action_parameters,
-        first_valid_state=str(getattr(first_step, "valid_state", "") or "") if first_step else None,
-    )
-
-
-def is_shortcut_skill(skill: Any) -> bool:
-    tags = {str(tag).lower() for tag in (getattr(skill, "tags", ()) or ())}
-    if "shortcut" in tags or "deeplink" in tags or "intent" in tags:
-        return True
-    skill_id = str(getattr(skill, "skill_id", "") or "")
-    if skill_id.startswith("shortcut:"):
-        return True
-    first_step = skill.steps[0] if getattr(skill, "steps", ()) else None
-    return bool(first_step and getattr(first_step, "action_type", "") in {"open_deeplink", "open_intent"})
-
-
 async def retrieve_skill_infos(
     *,
     store_root: Path,
@@ -259,25 +130,15 @@ async def retrieve_skill_infos(
 
 
 def build_system_prompt(*, catalog: str | None, scale_factor: int = 1000) -> str:
-    base = GENERAL_E2E_PROMPT_TEMPLATE.render(tools="", scale_factor=scale_factor)
     if not catalog:
-        return base
-    base = _inject_use_skill_action(base)
-    return f"{base}\n\n{COMPACT_SKILL_INSTRUCTIONS.format(catalog=catalog)}"
-
-
-def _inject_use_skill_action(prompt: str) -> str:
-    """Add compact-skill selection to the general_e2e contract without changing parser code."""
-    marker = "| `keyboard_enter`   | Press enter key"
-    if "`use_skill`" not in prompt and marker in prompt:
-        prompt = prompt.replace(marker, f"{USE_SKILL_ACTION_ROW}\n{marker}")
-    decision_marker = "# Decision Process\n1. Analyze goal, history, and current screen"
-    if USE_SKILL_DECISION_RULE not in prompt and decision_marker in prompt:
-        prompt = prompt.replace(
-            decision_marker,
-            f"# Decision Process\n{USE_SKILL_DECISION_RULE}\n1. Analyze goal, history, and current screen",
-        )
-    return prompt
+        return GENERAL_E2E_PROMPT_TEMPLATE.render(tools="", scale_factor=scale_factor)
+    return GENERAL_E2E_PROMPT_TEMPLATE.render(
+        tools="",
+        scale_factor=scale_factor,
+        extra_action_rows=USE_SKILL_ACTION_ROW,
+        decision_rules=USE_SKILL_DECISION_RULE,
+        compact_skill_instructions=COMPACT_SKILL_INSTRUCTIONS.format(catalog=catalog),
+    )
 
 
 def build_messages(task: str, *, system_prompt: str, screenshot_path: Path) -> list[dict[str, Any]]:

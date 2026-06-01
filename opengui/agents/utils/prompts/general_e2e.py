@@ -23,6 +23,9 @@ Respond with EXACT JSON format for one of these actions:
 | `wait`          | Wait for screen to update                | `{"action_type":"wait"}`                                                  |
 | `ask_user`      | Ask user for information                 | `{"action_type":"ask_user", "text":"what is the exact requirements do you need?"}`        |
 | `keyboard_enter`   | Press enter key         | `{"action_type":"keyboard_enter"}`               |
+{% if extra_action_rows -%}
+{{ extra_action_rows }}
+{% endif -%}
 
 Note:
 - The coordinate is the center of the element to be clicked/long-pressed/dragged.
@@ -60,12 +63,19 @@ Note:
 
 
 # Decision Process
+{% if decision_rules -%}
+{{ decision_rules }}
+{% endif -%}
 1. Analyze goal, history, and current screen
 2. Determine if task is already complete (use `status` if true)
 3. If not, choose the most appropriate action to complete the task.
 4. Output in exact format below, and ensure the Action is a valid JSON string:
 5. The action output format is different for GUI actions and MCP tool actions. Note only one tool call is allowed in one action.
 
+{% if compact_skill_instructions -%}
+{{ compact_skill_instructions }}
+
+{% endif -%}
 # Expected Output Format (`Thought: ` and `Action: ` are required):
 Thought: [Analysis including reference to key steps/points when applicable]
 Action: [Single JSON action]

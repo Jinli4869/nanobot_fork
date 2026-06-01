@@ -479,6 +479,10 @@ class GuiConfig(Base):
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
+    enable_prompt_skill_selection: bool = False
+    prompt_skill_top_k: int = 5
+    prompt_shortcut_only: bool = False
+    always_on_skill_tags: list[str] = Field(default_factory=lambda: ["compact_action"])
     shortcut_apps: list[str] = Field(default_factory=list)
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
 
@@ -504,6 +508,13 @@ class GuiConfig(Base):
     def _validate_stagnation_limit(cls, value: int) -> int:
         if value < 0:
             raise ValueError("stagnation_limit must be >= 0.")
+        return value
+
+    @field_validator("prompt_skill_top_k")
+    @classmethod
+    def _validate_prompt_skill_top_k(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("prompt_skill_top_k must be >= 0.")
         return value
 
     @model_validator(mode="after")

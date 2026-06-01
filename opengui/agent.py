@@ -46,6 +46,16 @@ from opengui.interfaces import (
     ToolCall,
 )
 from opengui.observation import Observation
+from opengui.skills.compact_prompt import (
+    ALWAYS_ON_SKILL_TAG,
+    COMPOSITE_ACTION_DEFINITIONS,
+    CompactPromptParts,
+    build_compact_prompt_parts,
+    composite_action_infos_from_skills,
+    is_always_on_skill,
+    is_shortcut_skill,
+    skill_info_from_flat_skill,
+)
 from opengui.skills.deeplink import AppShortcutProfile
 from opengui.skills.normalization import (
     find_android_app_in_text,
@@ -325,6 +335,10 @@ class GuiAgent:
         agent_profile: str | None = None,
         image_scale_ratio: float = 0.5,
         stagnation_limit: int = 0,
+        enable_prompt_skill_selection: bool = False,
+        prompt_skill_top_k: int = 5,
+        prompt_shortcut_only: bool = False,
+        always_on_skill_tags: list[str] | tuple[str, ...] | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -358,6 +372,20 @@ class GuiAgent:
         self._memory_store = memory_store
         self._active_retry_summaries: tuple[str, ...] = ()
         self._image_scale_ratio = image_scale_ratio
+        self._enable_prompt_skill_selection = bool(enable_prompt_skill_selection)
+        try:
+            parsed_prompt_skill_top_k = int(prompt_skill_top_k)
+        except (TypeError, ValueError):
+            parsed_prompt_skill_top_k = 5
+        self._prompt_skill_top_k = max(0, parsed_prompt_skill_top_k)
+        self._prompt_shortcut_only = bool(prompt_shortcut_only)
+        self._always_on_skill_tags = tuple(
+            str(tag)
+            for tag in (always_on_skill_tags if always_on_skill_tags is not None else (ALWAYS_ON_SKILL_TAG,))
+            if str(tag)
+        )
+        self._prompt_skills_by_id: dict[str, Any] = {}
+        self._prompt_composite_aliases: set[str] = set()
         try:
             parsed_stagnation_limit = int(stagnation_limit)
         except (TypeError, ValueError):
@@ -446,10 +474,26 @@ class GuiAgent:
 
         skill_context: str | None = None
         skill_app_filter = self._skill_app_filter(task, app_hint)
+        prompt_skill_parts: CompactPromptParts | None = None
+        if self._enable_prompt_skill_selection:
+            prompt_skill_parts = await self._build_prompt_skill_parts(
+                task,
+                app=skill_app_filter,
+            )
 
         # 3. Search the flat skill library once; LLM-gated when SkillReuser is available.
         reuser_usage: dict[str, int] = {}
-        if self._skill_reuser is not None and self._skill_library is not None:
+        if self._enable_prompt_skill_selection:
+            skill_match = None
+            self._trajectory_recorder.record_event(
+                "skill_search",
+                task=task,
+                source="prompt_skill_selection",
+                matched=False,
+                reason="deferred_to_model_prompt",
+                app_filter=skill_app_filter,
+            )
+        elif self._skill_reuser is not None and self._skill_library is not None:
             skill_match = await self._skill_reuser.find(
                 task,
                 self._skill_library,
@@ -544,6 +588,7 @@ class GuiAgent:
                         task, app_hint=app_hint, run_dir=run_dir,
                         memory_context=memory_context,
                         skill_context=skill_context,
+                        prompt_skill_parts=prompt_skill_parts,
                     )
                     for k, v in result.token_usage.items():
                         total_usage[k] = total_usage.get(k, 0) + v
@@ -678,6 +723,7 @@ class GuiAgent:
         run_dir: Path,
         memory_context: str | None = None,
         skill_context: str | None = None,
+        prompt_skill_parts: CompactPromptParts | None = None,
     ) -> AgentResult:
         """Execute one full attempt of the task."""
         # 1. Preflight
@@ -720,6 +766,7 @@ class GuiAgent:
                 history=history,
                 memory_context=memory_context,
                 skill_context=skill_context,
+                prompt_skill_parts=prompt_skill_parts,
             )
             prompt_snapshot = self._snapshot_step_prompt(
                 task=task,
@@ -1348,6 +1395,40 @@ class GuiAgent:
                 tool_call = replace(tool_call, arguments=arguments)
             action_intent, state_summary = self._tool_call_semantics(tool_call)
 
+            special_action_type = str(
+                (tool_call.arguments or {}).get("action_type")
+                or (tool_call.arguments or {}).get("action")
+                or ""
+            ).strip().lower()
+            if special_action_type == "use_skill" or special_action_type in self._prompt_composite_aliases:
+                try:
+                    return await self._dispatch_prompt_special_action(
+                        tool_call=tool_call,
+                        response=response,
+                        assistant_message=assistant_msg,
+                        prompt_snapshot=prompt_snapshot,
+                        assistant_snapshot=assistant_snapshot,
+                        current_observation=current_observation,
+                        step_index=step_index,
+                        step_usage=step_usage,
+                        step_start=_step_start,
+                        step_chat_latency_s=step_chat_latency_s,
+                        step_ttft_s=step_ttft_s,
+                        action_intent=action_intent,
+                        state_summary=state_summary,
+                    )
+                except ActionError as exc:
+                    if retries_left > 0:
+                        messages.append({
+                            "role": "user",
+                            "content": f"Format error: {exc}. Please return a listed skill/composite action or a normal GUI action.",
+                        })
+                        continue
+                    raise _StepExecutionError(
+                        f"Failed to dispatch prompt special action after retries: {exc}",
+                        model_snapshot=assistant_snapshot,
+                    ) from exc
+
             # Parse action
             try:
                 action = parse_action(tool_call.arguments)
@@ -1510,6 +1591,443 @@ class GuiAgent:
             )
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
+
+    async def _dispatch_prompt_special_action(
+        self,
+        *,
+        tool_call: ToolCall,
+        response: LLMResponse,
+        assistant_message: dict[str, Any],
+        prompt_snapshot: dict[str, Any] | None,
+        assistant_snapshot: dict[str, Any],
+        current_observation: Observation,
+        step_index: int,
+        step_usage: dict[str, int],
+        step_start: float,
+        step_chat_latency_s: float,
+        step_ttft_s: float | None,
+        action_intent: str | None,
+        state_summary: str | None,
+    ) -> StepResult:
+        del assistant_message, assistant_snapshot
+        arguments = tool_call.arguments or {}
+        action_type = str(arguments.get("action_type") or arguments.get("action") or "").strip().lower()
+        if action_type == "use_skill":
+            return await self._execute_prompt_skill_action(
+                tool_call=tool_call,
+                response=response,
+                prompt_snapshot=prompt_snapshot,
+                current_observation=current_observation,
+                step_index=step_index,
+                step_usage=step_usage,
+                step_start=step_start,
+                step_chat_latency_s=step_chat_latency_s,
+                step_ttft_s=step_ttft_s,
+                action_intent=action_intent,
+                state_summary=state_summary,
+            )
+        if action_type in self._prompt_composite_aliases:
+            return await self._execute_prompt_composite_action(
+                tool_call=tool_call,
+                response=response,
+                prompt_snapshot=prompt_snapshot,
+                current_observation=current_observation,
+                step_index=step_index,
+                step_usage=step_usage,
+                step_start=step_start,
+                step_chat_latency_s=step_chat_latency_s,
+                step_ttft_s=step_ttft_s,
+                action_intent=action_intent,
+                state_summary=state_summary,
+            )
+        raise ActionError(f"Unknown prompt special action {action_type!r}.")
+
+    async def _execute_prompt_skill_action(
+        self,
+        *,
+        tool_call: ToolCall,
+        response: LLMResponse,
+        prompt_snapshot: dict[str, Any] | None,
+        current_observation: Observation,
+        step_index: int,
+        step_usage: dict[str, int],
+        step_start: float,
+        step_chat_latency_s: float,
+        step_ttft_s: float | None,
+        action_intent: str | None,
+        state_summary: str | None,
+    ) -> StepResult:
+        arguments = tool_call.arguments or {}
+        skill_id = str(arguments.get("skill_id") or "").strip()
+        if not skill_id:
+            raise ActionError("use_skill requires a listed 'skill_id'.")
+        skill = self._prompt_skills_by_id.get(skill_id)
+        if skill is None:
+            raise ActionError(f"use_skill skill_id {skill_id!r} is not in the prompt skill list.")
+        if self._skill_executor is None:
+            raise ActionError("use_skill requires a configured SkillExecutor.")
+
+        raw_params = arguments.get("arguments") or arguments.get("params") or {}
+        if not isinstance(raw_params, dict):
+            raise ActionError("use_skill 'arguments' must be an object.")
+        params = {str(key): self._stringify_skill_argument(value) for key, value in raw_params.items()}
+        action = Action(action_type="use_skill", text=skill_id)
+        skill_name = str(getattr(skill, "name", "") or skill_id)
+        summary = f"use_skill {skill_name}"
+        assistant_message = self._build_assistant_message(
+            response,
+            content_override=self._normalize_action_text(
+                response.content,
+                action,
+                tool_summary=action_intent or state_summary or summary,
+            ),
+            include_tool_calls=profile_uses_native_tools(self.agent_profile),
+        )
+
+        self._trajectory_recorder.record_event(
+            "prompt_skill_selected",
+            skill_id=skill_id,
+            skill_name=skill_name,
+            arguments=params,
+        )
+        self._trajectory_recorder.set_phase(
+            ExecutionPhase.SKILL,
+            reason=f"Prompt-selected skill: {skill_name}",
+        )
+        try:
+            try:
+                skill_result = await self._skill_executor.execute(
+                    skill,
+                    params=params,
+                    timeout=self.step_timeout,
+                )
+            except Exception as exc:
+                return await self._prompt_skill_exception_result(
+                    exc,
+                    skill_id=skill_id,
+                    skill_name=skill_name,
+                    action=action,
+                    tool_call=tool_call,
+                    response=response,
+                    assistant_message=assistant_message,
+                    prompt_snapshot=prompt_snapshot,
+                    current_observation=current_observation,
+                    step_index=step_index,
+                    step_usage=step_usage,
+                    step_start=step_start,
+                    step_chat_latency_s=step_chat_latency_s,
+                    step_ttft_s=step_ttft_s,
+                    action_intent=action_intent,
+                )
+        finally:
+            self._trajectory_recorder.set_phase(
+                ExecutionPhase.AGENT,
+                reason="Prompt-selected skill finished",
+            )
+
+        merged_usage = dict(step_usage)
+        raw_skill_usage = getattr(skill_result, "token_usage", None)
+        if isinstance(raw_skill_usage, dict):
+            for key, value in raw_skill_usage.items():
+                if isinstance(value, int):
+                    merged_usage[key] = merged_usage.get(key, 0) + value
+
+        next_observation = self._observation_from_skill_result(skill_result)
+        if next_observation is None:
+            run_dir = Path(current_observation.screenshot_path or ".").parent.parent
+            next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+            next_observation = await self.backend.observe(next_screenshot, timeout=self.step_timeout)
+
+        succeeded = getattr(getattr(skill_result, "state", None), "value", "") == "succeeded"
+        result_text = getattr(skill_result, "execution_summary", "") or ""
+        if not succeeded and getattr(skill_result, "error", None):
+            result_text = f"{result_text}\nError: {skill_result.error}".strip()
+        action_summary = f"{summary}: {'succeeded' if succeeded else 'failed'}"
+        model_snapshot = self._snapshot_model_response(
+            response=response,
+            action=action,
+            assistant_message=assistant_message,
+            action_text=action_summary,
+            action_intent=action_intent or action_summary,
+            state_summary=result_text,
+        )
+        return StepResult(
+            action=action,
+            tool_call_id=tool_call.id,
+            tool_result=result_text,
+            assistant_message=assistant_message,
+            action_summary=action_summary,
+            action_intent=action_intent or action_summary,
+            state_summary=result_text,
+            next_observation=next_observation,
+            prompt_snapshot=prompt_snapshot,
+            model_snapshot=model_snapshot,
+            execution_snapshot={
+                "tool_result": self._scrub_text_for_action(result_text, action),
+                "skill": {
+                    "skill_id": skill_id,
+                    "skill_name": skill_name,
+                    "state": getattr(getattr(skill_result, "state", None), "value", None),
+                    "error": getattr(skill_result, "error", None),
+                },
+                "next_observation": self._serialize_observation(next_observation),
+                "done": False,
+            },
+            step_usage=merged_usage,
+            duration_s=time.monotonic() - step_start,
+            chat_latency_s=step_chat_latency_s or None,
+            ttft_s=step_ttft_s,
+        )
+
+    async def _prompt_skill_exception_result(
+        self,
+        exc: Exception,
+        *,
+        skill_id: str,
+        skill_name: str,
+        action: Action,
+        tool_call: ToolCall,
+        response: LLMResponse,
+        assistant_message: dict[str, Any],
+        prompt_snapshot: dict[str, Any] | None,
+        current_observation: Observation,
+        step_index: int,
+        step_usage: dict[str, int],
+        step_start: float,
+        step_chat_latency_s: float,
+        step_ttft_s: float | None,
+        action_intent: str | None,
+    ) -> StepResult:
+        run_dir = Path(current_observation.screenshot_path or ".").parent.parent
+        next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+        next_observation = await self.backend.observe(next_screenshot, timeout=self.step_timeout)
+        result_text = f"Prompt-selected skill failed with {type(exc).__name__}: {exc}"
+        action_summary = f"use_skill {skill_name}: failed"
+        model_snapshot = self._snapshot_model_response(
+            response=response,
+            action=action,
+            assistant_message=assistant_message,
+            action_text=action_summary,
+            action_intent=action_intent or action_summary,
+            state_summary=result_text,
+        )
+        return StepResult(
+            action=action,
+            tool_call_id=tool_call.id,
+            tool_result=result_text,
+            assistant_message=assistant_message,
+            action_summary=action_summary,
+            action_intent=action_intent or action_summary,
+            state_summary=result_text,
+            next_observation=next_observation,
+            prompt_snapshot=prompt_snapshot,
+            model_snapshot=model_snapshot,
+            execution_snapshot={
+                "tool_result": self._scrub_text_for_action(result_text, action),
+                "skill": {
+                    "skill_id": skill_id,
+                    "skill_name": skill_name,
+                    "state": "failed",
+                    "error": str(exc),
+                },
+                "next_observation": self._serialize_observation(next_observation),
+                "done": False,
+            },
+            step_usage=step_usage,
+            duration_s=time.monotonic() - step_start,
+            chat_latency_s=step_chat_latency_s or None,
+            ttft_s=step_ttft_s,
+        )
+
+    async def _execute_prompt_composite_action(
+        self,
+        *,
+        tool_call: ToolCall,
+        response: LLMResponse,
+        prompt_snapshot: dict[str, Any] | None,
+        current_observation: Observation,
+        step_index: int,
+        step_usage: dict[str, int],
+        step_start: float,
+        step_chat_latency_s: float,
+        step_ttft_s: float | None,
+        action_intent: str | None,
+        state_summary: str | None,
+    ) -> StepResult:
+        arguments = tool_call.arguments or {}
+        alias = str(arguments.get("action_type") or arguments.get("action") or "").strip().lower()
+        if alias not in self._prompt_composite_aliases:
+            raise ActionError(f"Composite action {alias!r} is not listed in the prompt.")
+        if alias not in COMPOSITE_ACTION_DEFINITIONS:
+            raise ActionError(f"Composite action {alias!r} has no executor.")
+
+        action = Action(action_type=alias, text=self._composite_action_text(arguments))
+        assistant_message = self._build_assistant_message(
+            response,
+            content_override=self._normalize_action_text(
+                response.content,
+                action,
+                tool_summary=action_intent or state_summary or describe_action(action),
+            ),
+            include_tool_calls=profile_uses_native_tools(self.agent_profile),
+        )
+        executed_actions = self._build_composite_actions(alias, arguments, current_observation)
+        result_lines: list[str] = []
+        for index, inner_action in enumerate(executed_actions):
+            if index > 0:
+                await asyncio.sleep(self._POST_ACTION_SETTLE_SECONDS)
+            try:
+                result_lines.append(await self.backend.execute(inner_action, timeout=self.step_timeout))
+            except Exception as exc:
+                result_lines.append(f"Action failed: {exc}")
+                break
+
+        await asyncio.sleep(self._POST_ACTION_SETTLE_SECONDS)
+        run_dir = Path(current_observation.screenshot_path or ".").parent.parent
+        next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+        next_observation, _observe_error = await self._observe_after_action(
+            next_screenshot,
+            previous_observation=current_observation,
+            action=action,
+            timeout=self.step_timeout,
+        )
+        result_text = "\n".join(result_lines)
+        action_summary = f"{alias}: {self._composite_action_summary(alias, arguments)}"
+        model_snapshot = self._snapshot_model_response(
+            response=response,
+            action=action,
+            assistant_message=assistant_message,
+            action_text=action_summary,
+            action_intent=action_intent or action_summary,
+            state_summary=state_summary,
+        )
+        return StepResult(
+            action=action,
+            tool_call_id=tool_call.id,
+            tool_result=result_text,
+            assistant_message=assistant_message,
+            action_summary=action_summary,
+            action_intent=action_intent or action_summary,
+            state_summary=state_summary,
+            next_observation=next_observation,
+            interaction_target={"composite_action": alias},
+            prompt_snapshot=prompt_snapshot,
+            model_snapshot=model_snapshot,
+            execution_snapshot={
+                "tool_result": self._scrub_text_for_action(result_text, action),
+                "inner_actions": [
+                    self._serialize_action(inner_action) for inner_action in executed_actions
+                ],
+                "next_observation": self._serialize_observation(next_observation),
+                "done": False,
+            },
+            step_usage=step_usage,
+            duration_s=time.monotonic() - step_start,
+            chat_latency_s=step_chat_latency_s or None,
+            ttft_s=step_ttft_s,
+        )
+
+    def _build_composite_actions(
+        self,
+        alias: str,
+        arguments: dict[str, Any],
+        observation: Observation,
+    ) -> list[Action]:
+        if alias == "click_and_type":
+            x, y = self._point_from_payload(arguments, observation)
+            text = str(arguments.get("text") or "")
+            if not text:
+                raise ActionError("click_and_type requires 'text'.")
+            return [
+                Action(action_type="tap", x=x, y=y),
+                Action(
+                    action_type="input_text",
+                    text=text,
+                    auto_enter=bool(arguments.get("auto_enter", True)),
+                ),
+            ]
+        if alias == "click_multi":
+            points = arguments.get("coordinates") or arguments.get("points") or []
+            if not isinstance(points, list) or not points:
+                single = arguments.get("coordinate")
+                points = [single] if single is not None else []
+            actions = [
+                Action(action_type="tap", x=x, y=y)
+                for x, y in (self._point_to_screen(point, observation) for point in points)
+            ]
+            if not actions:
+                raise ActionError("click_multi requires non-empty 'coordinates'.")
+            return actions
+        raise ActionError(f"Unsupported composite action {alias!r}.")
+
+    def _point_from_payload(
+        self,
+        payload: dict[str, Any],
+        observation: Observation,
+    ) -> tuple[int, int]:
+        if "coordinate" in payload:
+            return self._point_to_screen(payload["coordinate"], observation)
+        if "x" in payload and "y" in payload:
+            return self._point_to_screen([payload["x"], payload["y"]], observation)
+        raise ActionError("Composite action requires 'coordinate' or 'x'/'y'.")
+
+    @staticmethod
+    def _point_to_screen(point: Any, observation: Observation) -> tuple[int, int]:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            raise ActionError(f"Invalid coordinate {point!r}.")
+        try:
+            raw_x = float(point[0])
+            raw_y = float(point[1])
+        except (TypeError, ValueError) as exc:
+            raise ActionError(f"Invalid coordinate {point!r}.") from exc
+        width = int(observation.screen_width or 1000)
+        height = int(observation.screen_height or 1000)
+        if 0 <= raw_x <= 1000 and 0 <= raw_y <= 1000:
+            return int(raw_x * width / 1000), int(raw_y * height / 1000)
+        return int(raw_x), int(raw_y)
+
+    @staticmethod
+    def _composite_action_text(arguments: dict[str, Any]) -> str:
+        text = arguments.get("text")
+        if isinstance(text, str) and text:
+            return text
+        return str(arguments.get("coordinates") or arguments.get("coordinate") or "")
+
+    @staticmethod
+    def _composite_action_summary(alias: str, arguments: dict[str, Any]) -> str:
+        if alias == "click_and_type":
+            return "tap target and type text"
+        if alias == "click_multi":
+            points = arguments.get("coordinates") or arguments.get("points") or []
+            return f"tap {len(points) if isinstance(points, list) else 1} target(s)"
+        return alias
+
+    @staticmethod
+    def _stringify_skill_argument(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (int, float, bool)) or value is None:
+            return "" if value is None else str(value)
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _observation_from_skill_result(skill_result: Any) -> Observation | None:
+        for step_result in reversed(getattr(skill_result, "step_results", ()) or ()):
+            raw = getattr(step_result, "observation", None)
+            if not isinstance(raw, dict):
+                continue
+            screenshot_path = raw.get("screenshot_path")
+            if not screenshot_path:
+                continue
+            return Observation(
+                screenshot_path=str(screenshot_path),
+                screen_width=int(raw.get("screen_width") or 1000),
+                screen_height=int(raw.get("screen_height") or 1000),
+                foreground_app=raw.get("foreground_app"),
+                platform=raw.get("platform") or "unknown",
+                extra=raw.get("extra") if isinstance(raw.get("extra"), dict) else {},
+            )
+        return None
 
     def _coordinate_mode(self) -> str:
         return coordinate_mode_for_profile(self.agent_profile, self.model)
@@ -1725,6 +2243,7 @@ class GuiAgent:
         history: list[HistoryTurn],
         memory_context: str | None = None,
         skill_context: str | None = None,
+        prompt_skill_parts: CompactPromptParts | None = None,
     ) -> list[dict[str, Any]]:
         task_context: list[str] = [task]
         if memory_context:
@@ -1744,6 +2263,7 @@ class GuiAgent:
             history=history,
             model_name=self.model,
             history_image_window=self.history_image_window,
+            compact_prompt_parts=prompt_skill_parts,
         )
 
     def _build_instruction_prompt(
@@ -2678,6 +3198,86 @@ class GuiAgent:
         if platform.strip().lower() == "android":
             return find_android_app_in_text(task)
         return None
+
+    async def _build_prompt_skill_parts(
+        self,
+        task: str,
+        *,
+        app: str | None = None,
+    ) -> CompactPromptParts:
+        """Retrieve prompt-visible skills and always-on composite actions."""
+        self._prompt_skills_by_id = {}
+        self._prompt_composite_aliases = set()
+        if self._skill_library is None:
+            self._trajectory_recorder.record_event(
+                "prompt_skill_context",
+                task=task,
+                hit_count=0,
+                composite_aliases=[],
+                reason="no_library",
+                app_filter=app,
+            )
+            return CompactPromptParts()
+
+        all_skills = [
+            skill
+            for skill in self._skill_library.list_all(platform=self.backend.platform)
+            if self._skill_matches_app_filter(skill, app)
+        ]
+        composite_actions = composite_action_infos_from_skills(
+            all_skills,
+            tags=self._always_on_skill_tags,
+        )
+        self._prompt_composite_aliases = {action.alias for action in composite_actions}
+
+        retrieved_infos = []
+        if self._prompt_skill_top_k > 0:
+            search_k = max(
+                self._prompt_skill_top_k,
+                self._prompt_skill_top_k * 5
+                if self._prompt_shortcut_only or self._always_on_skill_tags
+                else self._prompt_skill_top_k,
+            )
+            results = await self._skill_library.search(
+                task,
+                platform=self.backend.platform,
+                app=app,
+                top_k=search_k,
+            )
+            for skill, score in results:
+                if is_always_on_skill(skill, self._always_on_skill_tags):
+                    continue
+                if self._prompt_shortcut_only and not is_shortcut_skill(skill):
+                    continue
+                skill_id = str(getattr(skill, "skill_id", "") or "")
+                if not skill_id:
+                    continue
+                self._prompt_skills_by_id[skill_id] = skill
+                retrieved_infos.append(skill_info_from_flat_skill(skill, score=score))
+                if len(retrieved_infos) >= self._prompt_skill_top_k:
+                    break
+
+        parts = build_compact_prompt_parts(
+            retrieved_skills=retrieved_infos,
+            composite_actions=composite_actions,
+        )
+        self._trajectory_recorder.record_event(
+            "prompt_skill_context",
+            task=task,
+            hit_count=len(retrieved_infos),
+            skill_ids=list(parts.skill_ids),
+            composite_aliases=list(parts.composite_aliases),
+            app_filter=app,
+            shortcut_only=self._prompt_shortcut_only,
+        )
+        return parts
+
+    @staticmethod
+    def _skill_matches_app_filter(skill: Any, app: str | None) -> bool:
+        if not app:
+            return True
+        skill_app = str(getattr(skill, "app", "") or "").strip()
+        return skill_app in {"", "*", "any", "unknown"} or skill_app == app
 
     async def _search_skill(self, task: str, *, app: str | None = None) -> Any | None:
         """Search the skill library and return the top match when above threshold."""
