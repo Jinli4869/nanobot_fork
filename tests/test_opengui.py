@@ -523,6 +523,39 @@ async def test_agent_lazy_loads_shortcuts_for_foreground_app_and_updates_tools(
     )
 
 
+@pytest.mark.asyncio
+async def test_agent_shortcut_discovery_uses_adb_alias_and_fails_soft(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = _SkillTestBackend()
+    backend.platform = "android"
+    cache_dir = tmp_path / "shortcut-cache"
+    calls: list[tuple[object, str]] = []
+
+    async def fake_extract(shortcut_backend: object, package: str) -> AppShortcutProfile:
+        calls.append((shortcut_backend, package))
+        raise AdbError(f"adb failed (exit 1): adb shell pm path {package}", returncode=1)
+
+    monkeypatch.setattr(deeplink_module, "extract_app_shortcuts", fake_extract)
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        backend,
+        trajectory_recorder=_make_recorder(tmp_path, "shortcut fail soft"),
+        shortcut_backend=backend,
+        shortcut_cache_dir=str(cache_dir),
+    )
+
+    await agent._ensure_shortcuts_for_app("org.joinmastodon.android")
+
+    assert calls == [(backend, "org.joinmastodon.android")]
+    assert "org.joinmastodon.android" in agent._shortcuts
+    profile = agent._shortcuts["org.joinmastodon.android"]
+    assert profile.manifest_meta["status"] == "shortcut_discovery_failed"
+    assert not (cache_dir / "org.joinmastodon.android.json").exists()
+    assert "org.joinmastodon.android.mastodon" not in agent._shortcuts
+
+
 def test_static_shortcut_extraction_ignores_path_without_host_and_pattern_paths() -> None:
     manifest = ET.fromstring(
         """
@@ -957,6 +990,7 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
     from opengui.skills.normalization import (
         find_android_app_in_text,
         find_android_apps_in_text,
+        normalize_adb_app_identifier,
         normalize_app_identifier,
         resolve_android_package,
     )
@@ -993,6 +1027,16 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
     for alias, package in cases.items():
         assert resolve_android_package(alias) == package
         assert normalize_app_identifier("android", alias) == package
+
+    adb_cases = {
+        "Mastodon": "org.joinmastodon.android",
+        "Mastodon App": "org.joinmastodon.android",
+        "org.joinmastodon.android": "org.joinmastodon.android",
+        "org.joinmastodon.android.mastodon": "org.joinmastodon.android",
+        "com.taobao.taobao": "com.taobao.taobao",
+    }
+    for alias, package in adb_cases.items():
+        assert normalize_adb_app_identifier(alias) == package
 
     text_cases = {
         "In YouTube, search for Never Gonna Give You Up.": "com.google.android.youtube",

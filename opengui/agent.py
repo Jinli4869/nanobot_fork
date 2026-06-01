@@ -47,7 +47,11 @@ from opengui.interfaces import (
 )
 from opengui.observation import Observation
 from opengui.skills.deeplink import AppShortcutProfile
-from opengui.skills.normalization import find_android_app_in_text, normalize_app_identifier
+from opengui.skills.normalization import (
+    find_android_app_in_text,
+    normalize_adb_app_identifier,
+    normalize_app_identifier,
+)
 from opengui.skills.state_contract import evaluate_state_contract, infer_interaction_target
 from opengui.tool_schemas import (
     COMPUTER_USE_TOOL,
@@ -372,24 +376,46 @@ class GuiAgent:
             return
         if str(getattr(self._shortcut_backend, "platform", self.backend.platform)).lower() != "android":
             return
-        app = normalize_app_identifier("android", app)
+        app = normalize_adb_app_identifier(app)
         if not app or app == "unknown":
             return
         if app in self._shortcuts:
             return
 
         cache_file = self._shortcut_cache_dir / f"{app}.json"
-        if cache_file.exists():
-            profile = AppShortcutProfile.from_dict(json.loads(cache_file.read_text(encoding="utf-8")))
-        else:
-            from opengui.skills.deeplink import extract_app_shortcuts
+        try:
+            if cache_file.exists():
+                profile = AppShortcutProfile.from_dict(json.loads(cache_file.read_text(encoding="utf-8")))
+            else:
+                from opengui.skills.deeplink import extract_app_shortcuts
 
-            profile = await extract_app_shortcuts(self._shortcut_backend, app)
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
-            cache_file.write_text(
-                json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
+                profile = await extract_app_shortcuts(self._shortcut_backend, app)
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(
+                    json.dumps(profile.to_dict(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+        except Exception as exc:
+            logger.warning("Shortcut discovery failed for %s: %s", app, exc)
+            try:
+                self._trajectory_recorder.record_event(
+                    "shortcut_discovery_failed",
+                    app=app,
+                    cache_file=str(cache_file),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+            except Exception as record_exc:
+                logger.debug("Could not record shortcut discovery failure: %s", record_exc)
+            self._shortcuts[app] = AppShortcutProfile(
+                package=app,
+                manifest_meta={
+                    "status": "shortcut_discovery_failed",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
             )
+            return
 
         self._shortcuts[app] = profile
         if profile.deep_links or profile.deep_intents:
@@ -1428,7 +1454,7 @@ class GuiAgent:
                 and action.text
                 and self.backend.platform in ("android", "ios")
             ):
-                resolved = normalize_app_identifier(self.backend.platform, action.text)
+                resolved = self._normalize_backend_app_identifier(action.text)
                 if resolved != action.text:
                     logger.debug(
                         "Resolved %s app name %r -> %r",
@@ -1679,8 +1705,13 @@ class GuiAgent:
     def _normalize_stagnation_app(self, app: str | None) -> str | None:
         if not app:
             return None
-        normalized = normalize_app_identifier(self.backend.platform, app)
+        normalized = self._normalize_backend_app_identifier(app)
         return None if normalized == "unknown" else normalized
+
+    def _normalize_backend_app_identifier(self, app: str) -> str:
+        if self.backend.platform == "android" and hasattr(self.backend, "_run"):
+            return normalize_adb_app_identifier(app)
+        return normalize_app_identifier(self.backend.platform, app)
 
     # ------------------------------------------------------------------
     # Message helpers
