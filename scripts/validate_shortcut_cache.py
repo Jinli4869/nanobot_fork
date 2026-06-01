@@ -400,6 +400,7 @@ class ProbeResult:
     candidate: Candidate
     variants: list[dict[str, Any]] = field(default_factory=list)
     status: str = "static_only"
+    name: str = ""
     description: str = ""
     parameters: list[str] = field(default_factory=list)
     best_variant: dict[str, Any] | None = None
@@ -1274,17 +1275,21 @@ def verify_with_llm(
                 "You validate Android deeplink/intent probe results. "
                 "Return only one JSON object with fields: "
                 "usable (boolean), status ('page_validated' or 'launchable' or 'failed'), "
-                "description (short natural-language capability), parameters (array of strings), "
+                "name (short English function name, e.g. 'bili_search', 'taobao_cart'; required when usable=true), "
+                "description (short natural-language capability, e.g. 'B站搜索视频'), "
+                "parameters (array of strings), "
                 "payload_preserved (boolean), reason (short string), "
                 "next_variant_hint (string or null). "
                 "Set usable=true only if the screenshot/UI indicates the intended app page opened "
                 "and the payload, such as query text, was preserved when relevant. "
                 "When usable=true for the intended page, set status='page_validated'; "
                 "use status='launchable' only for target-package launches whose page purpose is unclear. "
+                "The `name` field must be a concise English identifier (snake_case, max 30 chars) "
+                "derived from the app and page function, e.g. 'bili_scan', 'taobao_search'. "
                 "Do not treat a query visible only in search history or suggestions as payload_preserved; "
                 "payload_preserved means the current input/result page reflects that payload. "
                 "Use a concise natural-language description such as 'B站搜索视频'. "
-                "Do not mention adb, URI, component, or implementation details in description."
+                "Do not mention adb, URI, component, or implementation details in description or name."
             ),
         },
         {
@@ -1404,6 +1409,8 @@ def validate_candidate(
                 launch=launch,
             )
             variant_record["verifier"] = verdict
+            if verdict.get("name"):
+                result.name = str(verdict["name"]).strip()
             if verdict.get("description"):
                 result.description = str(verdict["description"])
             if isinstance(verdict.get("parameters"), list):
@@ -1477,6 +1484,8 @@ def result_to_validation_record(result: ProbeResult, *, query: str = "") -> dict
         "parameters": parameters,
         "valid_state": result.description,
     }
+    if result.name:
+        record["name"] = result.name
     if result.candidate.kind == "deeplink":
         record["uri_template"] = variant.get("uri")
     else:

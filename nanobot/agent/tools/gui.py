@@ -430,7 +430,13 @@ class GuiWorkflowRunner:
                         "needs a value from an earlier app.\n"
                         "7. If router context is provided, treat deterministic app candidates as the only "
                         "trusted app hints from memory. Memory evidence is advisory, may be stale, and must "
-                        "not override the current user task. Do not invent apps, UI paths, or new facts from it.\n\n"
+                        "not override the current user task. Do not invent apps, UI paths, or new facts from it. "
+                        "However, when memory evidence says the target app lacks an in-app control or follows "
+                        "a system-level setting, and the current task asks to change that behavior, treat it as "
+                        "a cross-app workflow: first use Android Settings (app_hint=\"com.android.settings\") "
+                        "to change the relevant system setting, then reopen or verify the target app. This "
+                        "Settings step is allowed even when Settings is not listed as a deterministic app "
+                        "candidate.\n\n"
                         "Examples:\n"
                         "Input: Open Settings and turn on mobile network\n"
                         "Output: {\"mode\":\"single\",\"subtasks\":[]}\n"
@@ -871,9 +877,13 @@ class GuiSubagentTool(Tool):
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
+        skill_runtime_enabled = (
+            gui_config.enable_skill_execution
+            or gui_config.enable_prompt_skill_selection
+        )
         self._skill_library = (
             self._get_skill_library(self._backend.platform, embedding_signature=self._embedding_signature)
-            if gui_config.enable_skill_execution
+            if skill_runtime_enabled
             else None
         )
         self._postprocessor = PostRunProcessor(
@@ -1078,7 +1088,11 @@ class GuiSubagentTool(Tool):
             max_steps = self._gui_config.max_steps
         policy_context, memory_store = self._load_policy_context_and_memory_store()
         skill_library = None
-        if self._gui_config.enable_skill_execution:
+        skill_runtime_enabled = (
+            self._gui_config.enable_skill_execution
+            or self._gui_config.enable_prompt_skill_selection
+        )
+        if skill_runtime_enabled:
             self._refresh_cached_skill_stores()
             skill_library = self._get_skill_library(
                 active_backend.platform,
@@ -1093,7 +1107,7 @@ class GuiSubagentTool(Tool):
         )
 
         skill_executor = None
-        if self._gui_config.enable_skill_execution:
+        if skill_runtime_enabled:
             from opengui.agent import (
                 _AgentActionGrounder,
                 _AgentScreenshotProvider,
@@ -1147,7 +1161,11 @@ class GuiSubagentTool(Tool):
             )
 
         skill_reuser = None
-        if skill_library is not None and self._gui_config.reuser_model:
+        if (
+            skill_library is not None
+            and self._gui_config.reuser_model
+            and not self._gui_config.enable_prompt_skill_selection
+        ):
             from opengui.skills.reuser import SkillReuser
 
             reuser_llm = NanobotLLMAdapter(self._provider, self._gui_config.reuser_model)
@@ -1175,6 +1193,10 @@ class GuiSubagentTool(Tool):
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
+            enable_prompt_skill_selection=self._gui_config.enable_prompt_skill_selection,
+            prompt_skill_top_k=self._gui_config.prompt_skill_top_k,
+            prompt_shortcut_only=self._gui_config.prompt_shortcut_only,
+            always_on_skill_tags=self._gui_config.always_on_skill_tags,
             shortcut_backend=shortcut_backend,
             shortcut_cache_dir=str(sc_dir),
         )

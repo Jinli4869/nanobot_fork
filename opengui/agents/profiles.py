@@ -76,6 +76,7 @@ _PROFILE_ALIASES: dict[str | None, str] = {
     "": "general_e2e",
     "default": "general_e2e",
     "general": "general_e2e",
+    "general_e2e_compact_skill": "general_e2e",
     "mobileworld-general-e2e": "mobileworld_general_e2e",
     "mw_general_e2e": "mobileworld_general_e2e",
     "mw-general-e2e": "mobileworld_general_e2e",
@@ -145,6 +146,7 @@ def build_mobileworld_messages(
     history: list[Any],
     model_name: str,
     history_image_window: int,
+    compact_prompt_parts: Any | None = None,
 ) -> list[dict[str, Any]]:
     profile = canonicalize_agent_profile(profile_name)
     if _is_general_e2e_profile(profile):
@@ -155,6 +157,7 @@ def build_mobileworld_messages(
             model_name=model_name,
             history_image_window=history_image_window,
             prompt_template=GENERAL_E2E_PROMPT_TEMPLATE,
+            compact_prompt_parts=compact_prompt_parts,
         )
     if profile == "planner_executor":
         return _build_planner_executor_messages(
@@ -362,6 +365,7 @@ def _build_general_e2e_messages(
     model_name: str,
     history_image_window: int,
     prompt_template: Any,
+    compact_prompt_parts: Any | None = None,
 ) -> list[dict[str, Any]]:
     observations = [turn.observation for turn in history] + [current_observation]
     tool_results = [turn.tool_result_message.get("content") for turn in history]
@@ -374,7 +378,18 @@ def _build_general_e2e_messages(
     messages = [
         {
             "role": "system",
-            "content": prompt_template.render(tools="", scale_factor=scale_factor),
+            "content": prompt_template.render(
+                tools="",
+                scale_factor=scale_factor,
+                extra_action_rows=getattr(compact_prompt_parts, "action_rows", "") or "",
+                decision_rules=getattr(compact_prompt_parts, "decision_rules", "") or "",
+                compact_skill_instructions=getattr(
+                    compact_prompt_parts,
+                    "compact_skill_instructions",
+                    "",
+                )
+                or "",
+            ),
         },
         _general_user_message(
             observations[0],

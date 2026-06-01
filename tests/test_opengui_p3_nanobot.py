@@ -241,6 +241,7 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
         "adb",
         "ios",
         "hdc",
+        "mobileworld",
         "local",
         "dry-run",
     ]
@@ -657,6 +658,8 @@ async def test_gui_task_workflow_planner_receives_router_context() -> None:
     system_prompt = provider.calls[0]["messages"][0]["content"]
     user_prompt = provider.calls[0]["messages"][1]["content"]
     assert "Memory evidence is advisory" in system_prompt
+    assert "lacks an in-app control or follows a system-level setting" in system_prompt
+    assert 'app_hint="com.android.settings"' in system_prompt
     assert "Deterministic app candidates" in user_prompt
     assert "tv.danmaku.bili" in user_prompt
     assert "compound tasks decomposed" in user_prompt
