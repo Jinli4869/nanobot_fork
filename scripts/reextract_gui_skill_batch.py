@@ -76,6 +76,20 @@ def parse_args() -> argparse.Namespace:
         help="Run only ordinary flat skill extraction, skipping failed-skill evolution.",
     )
     parser.add_argument(
+        "--failure-mode",
+        choices=("skip", "prefix", "evolve"),
+        default="skip",
+        help=(
+            "How to handle failed traces. Defaults to skip. "
+            "prefix extracts the reusable succeeded prefix; evolve runs failed-skill evolution first."
+        ),
+    )
+    parser.add_argument(
+        "--success-only",
+        action="store_true",
+        help="Deprecated alias for --failure-mode=skip.",
+    )
+    parser.add_argument(
         "--keep-logs",
         action="store_true",
         help="Do not delete existing extraction/evolution log files before rerun.",
@@ -180,10 +194,7 @@ async def run(args: argparse.Namespace) -> int:
     if args.limit is not None:
         jobs = jobs[: max(0, args.limit)]
 
-    bundle = single.load_provider_bundle(args)
     print(f"root: {args.root.expanduser()}")
-    print(f"skill_store_root: {bundle.skill_store_root}")
-    print(f"embedding: {'enabled' if bundle.embedding_provider is not None else 'disabled'}")
     print(f"completed_traces: {len(jobs)}")
     print(f"skipped_traces: {len(skipped)}")
 
@@ -197,10 +208,18 @@ async def run(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         for job in jobs:
+            if _should_skip_failed_trace(job, args):
+                print(f"would_skip_failed: {job.trace_path} success={job.success}")
+                records.append(_job_record(job, status="skipped_failed_trace"))
+                continue
             print(f"would_extract: {job.trace_path} success={job.success}")
             records.append(_job_record(job, status="dry_run"))
         _write_summary(args.summary_path, records)
         return 0
+
+    bundle = single.load_provider_bundle(args)
+    print(f"skill_store_root: {bundle.skill_store_root}")
+    print(f"embedding: {'enabled' if bundle.embedding_provider is not None else 'disabled'}")
 
     processor = single.NoSummaryPostRunProcessor(
         llm=bundle.llm,
@@ -214,10 +233,13 @@ async def run(args: argparse.Namespace) -> int:
 
     for index, job in enumerate(jobs, start=1):
         print(f"[{index}/{len(jobs)}] extract: {job.trace_path} success={job.success}")
+        if _should_skip_failed_trace(job, args):
+            records.append(_job_record(job, status="skipped_failed_trace"))
+            continue
         if not args.keep_logs:
             single.remove_previous_logs(job.trace_path)
         try:
-            if args.extract_only:
+            if args.extract_only or (not job.success and args.failure_mode == "prefix"):
                 await processor._extract_skill(
                     job.trace_path,
                     job.success,
@@ -238,11 +260,19 @@ async def run(args: argparse.Namespace) -> int:
             records.append(_job_record(job, status="error", reason=f"{type(exc).__name__}: {exc}"))
 
     _write_summary(args.summary_path, records)
-    extracted = sum(1 for record in records if record.get("status") not in {"skipped", "dry_run", "error"})
+    processed = sum(1 for record in records if record.get("status") == "processed_code")
+    no_candidate = sum(1 for record in records if record.get("status") == "no_candidate")
+    skipped_count = sum(1 for record in records if str(record.get("status") or "").startswith("skipped"))
     errors = sum(1 for record in records if record.get("status") == "error")
-    print(f"extracted_or_processed: {extracted}")
+    print(f"processed_code: {processed}")
+    print(f"no_candidate: {no_candidate}")
+    print(f"skipped: {skipped_count}")
     print(f"errors: {errors}")
     return 1 if errors else 0
+
+
+def _should_skip_failed_trace(job: TraceJob, args: argparse.Namespace) -> bool:
+    return not job.success and (args.success_only or args.failure_mode == "skip")
 
 
 def _read_extraction_status(trace_path: Path) -> str:
@@ -316,6 +346,12 @@ def _write_summary(path: Path | None, records: list[dict[str, Any]]) -> None:
         json.dumps(
             {
                 "status_counts": counts,
+                "processed_code_total": counts.get("processed_code", 0),
+                "no_candidate_total": counts.get("no_candidate", 0),
+                "skipped_total": sum(
+                    count for status, count in counts.items() if status.startswith("skipped")
+                ),
+                "error_total": counts.get("error", 0),
                 "usage_totals": usage_totals,
                 "records": records,
             },

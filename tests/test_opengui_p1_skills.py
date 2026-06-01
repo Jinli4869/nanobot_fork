@@ -1260,7 +1260,7 @@ async def test_skill_extractor_parses_llm_json_response() -> None:
 @skill(app="com.android.settings", platform="android", name="open_settings", description="Open settings")
 async def open_settings(device):
     await action("open_app", target="Settings", fixed=True, fixed_values={"text": "com.android.settings"}, valid_state="No need to verify")
-    await action("tap", target="Search", fixed=True, fixed_values={"text": "Search"}, valid_state="Search button is visible")
+    await action("tap", target="Search", fixed=True, fixed_values={"x": 100, "y": 200}, valid_state="Search button is visible")
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
@@ -1394,6 +1394,34 @@ async def open_details(device):
 
 
 @pytest.mark.asyncio
+async def test_skill_extractor_retries_when_fixed_action_is_invalid() -> None:
+    bad_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_search", description="Open search")
+async def open_search(device):
+    await action("tap", target="Search", fixed=True, fixed_values={"text": "Search"}, valid_state="Search button is visible")
+"""
+    fixed_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_search", description="Open search")
+async def open_search(device):
+    await action("tap", target="Search", fixed=True, fixed_values={"x": 150, "y": 230}, valid_state="Search button is visible")
+"""
+    llm = _ScriptedLLM([bad_response, fixed_response])
+    extractor = SkillExtractor(llm)
+
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
+    ])
+
+    assert skill is not None
+    assert len(llm.messages) == 2
+    retry_prompt = llm.messages[1][0]["content"][0]["text"]
+    assert "fixed tap is invalid" in retry_prompt
+    assert skill.steps[0].fixed_values == {"x": 150, "y": 230}
+
+
+@pytest.mark.asyncio
 async def test_skill_extractor_generalizes_narrow_description_terms() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
@@ -1508,6 +1536,33 @@ async def open_calendar(device):
     assert skills[0].steps[0].fixed is True
     assert skills[0].steps[0].fixed_values["text"] == "org.fossify.calendar"
     assert skills[0].steps[0].valid_state == "No need to verify"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_keeps_llm_app_when_it_is_observed_candidate() -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.google.android.apps.maps", platform="android", name="open_location", description="Open a location in Maps")
+async def open_location(device):
+    await action("open_app", target="Maps", fixed=True, fixed_values={"text": "com.google.android.apps.maps"}, valid_state="No need to verify")
+    await action("tap", target="Directions", fixed=True, fixed_values={"x": 100, "y": 200}, valid_state="Directions button is visible")
+"""
+    extractor = SkillExtractor(_ScriptedLLM([response]))
+
+    skills = await extractor.extract_from_steps_multi([
+        {
+            "action": {"action_type": "tap", "x": 10, "y": 20},
+            "observation": {"platform": "android", "foreground_app": "gmailclone"},
+        },
+        {
+            "action": {"action_type": "tap", "x": 100, "y": 200},
+            "observation": {"platform": "android", "foreground_app": "maps"},
+        },
+    ], is_success=True)
+
+    assert len(skills) == 1
+    assert skills[0].app == "com.google.android.apps.maps"
+    assert skills[0].steps[0].fixed_values["text"] == "com.google.android.apps.maps"
 
 
 @pytest.mark.asyncio
@@ -1724,6 +1779,54 @@ def test_codegen_scales_coordinates_and_prefers_previous_observation_for_tap(tmp
     contract = json.loads(result.steps[1].contract_json)
     required = contract["signature"]["required"]
     assert required[0]["selector"] == {"resource_id": "com.example:id/search_results_list"}
+
+
+def test_codegen_ignores_launcher_when_inferring_trace_app(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Send Mail", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "home"},
+            "observation": {"platform": "android", "foreground_app": "nexuslauncher"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 100, "y": 200},
+            "observation": {"platform": "android", "foreground_app": "gmailclone"},
+        },
+    ])
+
+    result = codegen_trajectory(trace_path)
+
+    assert result is not None
+    assert result.app == "com.gmailclone"
+    assert result.app_candidates == ("com.gmailclone",)
+
+
+def test_codegen_maps_mobileworld_taodian_app_from_visible_text(tmp_path: Path) -> None:
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "CartManagementTask", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 100, "y": 200},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "app",
+                "extra": {"visible_text": ["首页", "购物车", "淘店直播"]},
+            },
+        },
+    ])
+
+    result = codegen_trajectory(trace_path)
+
+    assert result is not None
+    assert result.app == "com.testmall.app"
+    assert result.app_candidates == ("com.testmall.app",)
 
 
 def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path: Path) -> None:

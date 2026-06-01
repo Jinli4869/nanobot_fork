@@ -351,6 +351,7 @@ class PostRunProcessor:
                     "learning_mode": _learning_mode(is_success),
                     "updated_functions": [],
                     "compiled_skill_ids": [],
+                    "extractor_diagnostics": extractor.last_diagnostics,
                 })
                 return None
 
@@ -401,6 +402,7 @@ class PostRunProcessor:
                 "updated_functions": [skill.name for skill in skills],
                 "compiled_skill_ids": compiled_skill_ids,
                 "source_path": str((store_root / "skills.py").expanduser()),
+                "extractor_diagnostics": extractor.last_diagnostics,
                 "skills": skill_infos,
                 "skill": {
                     "skill_id": first_skill.skill_id,

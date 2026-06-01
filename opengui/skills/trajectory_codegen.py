@@ -13,6 +13,7 @@ from typing import Any
 from PIL import Image
 
 from opengui.skills.data import Skill, SkillStep
+from opengui.skills.normalization import find_android_app_in_text, normalize_app_identifier
 from opengui.skills.static_selector_filter import static_selector_from_node
 from opengui.skills.state_contract import infer_focused_input_contract
 
@@ -23,6 +24,25 @@ _COORDLESS_ACTIONS = frozenset({
     "request_intervention", "hotkey", "screenshot",
 })
 _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
+_AMBIGUOUS_APP_IDS = frozenset({"", "unknown", "app", "app-package-or-name"})
+_TRANSIENT_APP_IDS = frozenset({
+    "com.google.android.apps.nexuslauncher",
+    "com.android.intentresolver",
+    "com.android.systemui",
+    "nexuslauncher",
+    "intentresolver",
+    "launcher",
+    "systemui",
+})
+_TAODIAN_VISIBLE_TEXT_MARKERS = frozenset({
+    "淘店",
+    "购物车",
+    "百亿补贴",
+    "每日疯抢",
+    "热销商品",
+    "订单",
+    "红包",
+})
 
 
 @dataclass
@@ -43,6 +63,7 @@ class CodegenResult:
     task: str
     platform: str
     app: str
+    app_candidates: tuple[str, ...]
     steps: list[CodeStep]
     screenshots_b64: list[str]
 
@@ -55,7 +76,9 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
     meta = _find_metadata(events)
     task = str(meta.get("task") or trace_path.stem)
     platform = str(meta.get("platform") or _first_platform(events) or "unknown")
-    app = str(meta.get("foreground_app") or meta.get("app") or _first_foreground_app(events) or "")
+    metadata_app = str(meta.get("foreground_app") or meta.get("app") or "")
+    app_candidates = _trace_app_candidates(events, platform, task)
+    app = _choose_trace_app(metadata_app, platform, app_candidates)
 
     steps: list[CodeStep] = []
     screenshots_b64: list[str] = []
@@ -85,7 +108,7 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
         observation = event.get("observation") or {}
         action_type = str(action.get("action_type") or "")
         if not app:
-            app = str(observation.get("foreground_app") or observation.get("app") or "")
+            app = _observation_app_candidate(observation, platform) or ""
 
         b64 = _screenshot_b64(event, trace_path)
         if b64 and b64 not in seen:
@@ -101,9 +124,14 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
             )
             control_info = _describe_contract_selector(event["state_contract"])
         elif action_type == "input_text" and previous_observation is not None:
+            contract_app = _contract_app_for_observation(
+                previous_observation,
+                platform,
+                fallback=app,
+            )
             contract = infer_focused_input_contract(
                 (previous_observation.get("extra") or {}),
-                app=app,
+                app=contract_app,
             )
             if contract:
                 contract_json = json.dumps(contract, ensure_ascii=False, separators=(",", ":"))
@@ -126,10 +154,15 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
                 )
                 node = _target_node_at(target_nodes, *pt, action_type=action_type)
                 if node is not None:
+                    contract_app = _contract_app_for_observation(
+                        target_observation,
+                        platform,
+                        fallback=app,
+                    )
                     control_info = _describe_control(node)
                     contract_json = _build_contract_json(
                         node,
-                        app,
+                        contract_app,
                         allow_class_fallback=action_type != "tap",
                     )
                 elif suppress_extracted_contract:
@@ -153,7 +186,7 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
         previous_observation = observation if isinstance(observation, dict) else None
 
     return CodegenResult(
-        task=task, platform=platform, app=app,
+        task=task, platform=platform, app=app, app_candidates=app_candidates,
         steps=steps, screenshots_b64=screenshots_b64,
     )
 
@@ -163,9 +196,13 @@ def codegen_to_extraction_text(result: CodegenResult) -> str:
         f"Task: {result.task}",
         f"App: {result.app}",
         f"Platform: {result.platform}",
+    ]
+    if result.app_candidates:
+        lines.append(f"Observed apps: {', '.join(result.app_candidates)}")
+    lines.extend([
         "",
         "Action sequence:",
-    ]
+    ])
     for step in result.steps:
         status = ""
         if step.succeeded is False:
@@ -225,6 +262,109 @@ def _first_foreground_app(events: list[dict[str, Any]]) -> str:
         if app:
             return str(app)
     return ""
+
+
+def _trace_app_candidates(events: list[dict[str, Any]], platform: str, task: str) -> tuple[str, ...]:
+    candidates: list[str] = []
+    task_app = _task_app_candidate(task, platform)
+    if task_app:
+        candidates.append(task_app)
+
+    for event in events:
+        if event.get("type") not in ("step", "skill_step"):
+            continue
+        action = _skill_step_action(event) if event.get("type") == "skill_step" else (event.get("action") or {})
+        action_app = _open_app_action_candidate(action, platform)
+        if action_app:
+            candidates.append(action_app)
+        observation = event.get("observation") or {}
+        observation_app = _observation_app_candidate(observation, platform)
+        if observation_app:
+            candidates.append(observation_app)
+
+    deduped: list[str] = []
+    for candidate in candidates:
+        if candidate not in deduped:
+            deduped.append(candidate)
+    return tuple(deduped)
+
+
+def _choose_trace_app(metadata_app: str, platform: str, app_candidates: tuple[str, ...]) -> str:
+    metadata_candidate = _normalize_trace_app(metadata_app, platform)
+    if _is_meaningful_trace_app(metadata_candidate):
+        return metadata_candidate
+    return app_candidates[0] if app_candidates else ""
+
+
+def _task_app_candidate(task: str, platform: str) -> str:
+    if (platform or "").strip().lower() != "android":
+        return ""
+    task_text = f"{task} {_split_camel_case(task)}"
+    app = find_android_app_in_text(task_text)
+    return app if app and _is_meaningful_trace_app(app) else ""
+
+
+def _open_app_action_candidate(action: dict[str, Any], platform: str) -> str:
+    if not isinstance(action, dict):
+        return ""
+    action_type = str(action.get("action_type") or action.get("action") or "").strip().lower()
+    if action_type != "open_app":
+        return ""
+    raw = action.get("text") or action.get("app_name") or action.get("package")
+    candidate = _normalize_trace_app(str(raw or ""), platform)
+    return candidate if _is_meaningful_trace_app(candidate) else ""
+
+
+def _observation_app_candidate(observation: dict[str, Any] | None, platform: str) -> str:
+    if not isinstance(observation, dict):
+        return ""
+    raw = str(observation.get("foreground_app") or observation.get("app") or "")
+    candidate = _normalize_trace_app(raw, platform, observation=observation)
+    return candidate if _is_meaningful_trace_app(candidate) else ""
+
+
+def _contract_app_for_observation(
+    observation: dict[str, Any] | None,
+    platform: str,
+    *,
+    fallback: str,
+) -> str:
+    candidate = _observation_app_candidate(observation, platform)
+    if candidate:
+        return candidate
+    fallback_candidate = _normalize_trace_app(fallback, platform)
+    return fallback_candidate if fallback_candidate else fallback
+
+
+def _normalize_trace_app(
+    app: str,
+    platform: str,
+    *,
+    observation: dict[str, Any] | None = None,
+) -> str:
+    normalized = normalize_app_identifier(platform, app)
+    if normalized == "app" and observation is not None and _looks_like_taodian(observation):
+        return "com.testmall.app"
+    return normalized
+
+
+def _is_meaningful_trace_app(app: str) -> bool:
+    key = (app or "").strip().lower()
+    return bool(key) and key not in _AMBIGUOUS_APP_IDS and key not in _TRANSIENT_APP_IDS
+
+
+def _looks_like_taodian(observation: dict[str, Any]) -> bool:
+    extra = observation.get("extra") or {}
+    visible_text = extra.get("visible_text")
+    if isinstance(visible_text, (list, tuple, set)):
+        text = " ".join(str(item) for item in visible_text)
+    else:
+        text = str(visible_text or "")
+    return any(marker in text for marker in _TAODIAN_VISIBLE_TEXT_MARKERS)
+
+
+def _split_camel_case(text: str) -> str:
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", text or "")
 
 
 def _step_intent(event: dict[str, Any], action_type: str) -> str:

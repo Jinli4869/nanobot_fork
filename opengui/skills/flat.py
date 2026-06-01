@@ -25,6 +25,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from opengui.action import normalize_action_type
 from opengui.skills import _merger
 from opengui.skills._merger import (
     CLEANUP_EMBEDDING_THRESHOLD,
@@ -1063,7 +1064,7 @@ def _extract_steps(
 
 
 def _skill_step_from_action_call(call: ast.Call, bindings: dict[str, ast.AST]) -> SkillStep:
-    action_type = _literal_value(call.args[0]) if call.args else ""
+    action_type = normalize_action_type(str(_literal_value(call.args[0]) if call.args else ""))
     target = ""
     parameters: dict[str, Any] = {}
     expected_state: str | None = None
@@ -1100,7 +1101,7 @@ def _skill_step_from_action_call(call: ast.Call, bindings: dict[str, ast.AST]) -
             continue
         parameters[kw.arg] = _literal_or_placeholder(kw.value, bindings)
     return SkillStep(
-        action_type=str(action_type),
+        action_type=action_type,
         target=target,
         parameters=parameters,
         expected_state=expected_state,
