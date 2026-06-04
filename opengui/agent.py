@@ -1942,18 +1942,17 @@ class GuiAgent:
         arguments: dict[str, Any],
         observation: Observation,
     ) -> list[Action]:
-        if alias in {"click_and_type", "click_then_type"}:
+        if alias == "click_then_type":
             x, y = self._point_from_payload(arguments, observation)
             text = str(arguments.get("text") or "")
             if not text:
                 raise ActionError(f"{alias} requires 'text'.")
-            auto_enter_default = alias == "click_and_type"
             return [
                 Action(action_type="tap", x=x, y=y),
                 Action(
                     action_type="input_text",
                     text=text,
-                    auto_enter=self._bool_argument(arguments.get("auto_enter"), auto_enter_default),
+                    auto_enter=self._bool_argument(arguments.get("auto_enter"), False),
                 ),
             ]
         if alias == "click_multi":
@@ -2008,7 +2007,7 @@ class GuiAgent:
 
     @staticmethod
     def _composite_action_summary(alias: str, arguments: dict[str, Any]) -> str:
-        if alias in {"click_and_type", "click_then_type"}:
+        if alias == "click_then_type":
             return "tap target and type text"
         if alias == "click_multi":
             points = arguments.get("coordinates") or arguments.get("points") or []
