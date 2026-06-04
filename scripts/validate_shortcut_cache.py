@@ -33,6 +33,7 @@ from opengui.skills.flat import FlatSkillLibrary
 
 VIEW_ACTION = "android.intent.action.VIEW"
 BROWSABLE_CATEGORY = "android.intent.category.BROWSABLE"
+SHORTCUT_SKIP_VALID_STATE = "No need to verify"
 DEFAULT_QUERY_KEYS = ("keyword", "query", "q", "text", "word")
 DEFAULT_INTENT_EXTRA_KEYS = (
     "query",
@@ -1482,7 +1483,7 @@ def result_to_validation_record(result: ProbeResult, *, query: str = "") -> dict
         "status": result.status,
         "description": result.description,
         "parameters": parameters,
-        "valid_state": result.description,
+        "valid_state": SHORTCUT_SKIP_VALID_STATE,
     }
     if result.name:
         record["name"] = result.name
@@ -1501,6 +1502,17 @@ def result_to_validation_record(result: ProbeResult, *, query: str = "") -> dict
     if variant.get("component"):
         record["component"] = variant.get("component")
     return record
+
+
+def shortcut_skip_valid_state_record(record: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(record)
+    if str(updated.get("kind") or "").strip() in {"deeplink", "intent"}:
+        updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+    return updated
+
+
+def force_shortcut_skip_valid_state(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [shortcut_skip_valid_state_record(record) for record in records]
 
 
 def normalize_parameters(values: Any, *, query: str = "") -> list[str]:
@@ -1600,7 +1612,7 @@ async def promote_results(args: argparse.Namespace, records: list[dict[str, Any]
         raise SystemExit("--promote requires --skill-store-root")
     library = FlatSkillLibrary(store_dir=args.skill_store_root.expanduser())
     outcomes: list[dict[str, Any]] = []
-    for record in records:
+    for record in force_shortcut_skip_valid_state(records):
         decision, skill_id = await add_validated_shortcut_skill(
             library,
             record,

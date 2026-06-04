@@ -998,7 +998,13 @@ class GuiAgent:
             # Record trajectory step
             self._trajectory_recorder.record_step(
                 action=self._scrub_for_artifact(self._serialize_action(result.action)),
-                model_output=self._scrub_text_for_artifact_action(result.action_summary, result.action) or "",
+                model_output=(
+                    self._scrub_text_for_artifact_action(
+                        result.action_intent or result.action_summary,
+                        result.action,
+                    )
+                    or ""
+                ),
                 screenshot_path=(
                     str(result.next_observation.screenshot_path)
                     if result.next_observation and result.next_observation.screenshot_path
@@ -1743,12 +1749,13 @@ class GuiAgent:
         if not succeeded and getattr(skill_result, "error", None):
             result_text = f"{result_text}\nError: {skill_result.error}".strip()
         action_summary = f"{summary}: {'succeeded' if succeeded else 'failed'}"
+        rich_action_intent = (response.content or "").strip() or action_intent or action_summary
         model_snapshot = self._snapshot_model_response(
             response=response,
             action=action,
             assistant_message=assistant_message,
             action_text=action_summary,
-            action_intent=action_intent or action_summary,
+            action_intent=rich_action_intent,
             state_summary=result_text,
         )
         return StepResult(
@@ -1757,7 +1764,7 @@ class GuiAgent:
             tool_result=result_text,
             assistant_message=assistant_message,
             action_summary=action_summary,
-            action_intent=action_intent or action_summary,
+            action_intent=rich_action_intent,
             state_summary=result_text,
             next_observation=next_observation,
             prompt_snapshot=prompt_snapshot,
@@ -1803,12 +1810,13 @@ class GuiAgent:
         next_observation = await self.backend.observe(next_screenshot, timeout=self.step_timeout)
         result_text = f"Prompt-selected skill failed with {type(exc).__name__}: {exc}"
         action_summary = f"use_skill {skill_name}: failed"
+        rich_action_intent = (response.content or "").strip() or action_intent or action_summary
         model_snapshot = self._snapshot_model_response(
             response=response,
             action=action,
             assistant_message=assistant_message,
             action_text=action_summary,
-            action_intent=action_intent or action_summary,
+            action_intent=rich_action_intent,
             state_summary=result_text,
         )
         return StepResult(
@@ -1817,7 +1825,7 @@ class GuiAgent:
             tool_result=result_text,
             assistant_message=assistant_message,
             action_summary=action_summary,
-            action_intent=action_intent or action_summary,
+            action_intent=rich_action_intent,
             state_summary=result_text,
             next_observation=next_observation,
             prompt_snapshot=prompt_snapshot,
@@ -1893,12 +1901,13 @@ class GuiAgent:
         )
         result_text = "\n".join(result_lines)
         action_summary = f"{alias}: {self._composite_action_summary(alias, arguments)}"
+        rich_action_intent = (response.content or "").strip() or action_intent or action_summary
         model_snapshot = self._snapshot_model_response(
             response=response,
             action=action,
             assistant_message=assistant_message,
             action_text=action_summary,
-            action_intent=action_intent or action_summary,
+            action_intent=rich_action_intent,
             state_summary=state_summary,
         )
         return StepResult(
@@ -1907,7 +1916,7 @@ class GuiAgent:
             tool_result=result_text,
             assistant_message=assistant_message,
             action_summary=action_summary,
-            action_intent=action_intent or action_summary,
+            action_intent=rich_action_intent,
             state_summary=state_summary,
             next_observation=next_observation,
             interaction_target={"composite_action": alias},
@@ -1933,17 +1942,18 @@ class GuiAgent:
         arguments: dict[str, Any],
         observation: Observation,
     ) -> list[Action]:
-        if alias == "click_and_type":
+        if alias in {"click_and_type", "click_then_type"}:
             x, y = self._point_from_payload(arguments, observation)
             text = str(arguments.get("text") or "")
             if not text:
-                raise ActionError("click_and_type requires 'text'.")
+                raise ActionError(f"{alias} requires 'text'.")
+            auto_enter_default = alias == "click_and_type"
             return [
                 Action(action_type="tap", x=x, y=y),
                 Action(
                     action_type="input_text",
                     text=text,
-                    auto_enter=bool(arguments.get("auto_enter", True)),
+                    auto_enter=self._bool_argument(arguments.get("auto_enter"), auto_enter_default),
                 ),
             ]
         if alias == "click_multi":
@@ -1982,8 +1992,11 @@ class GuiAgent:
             raise ActionError(f"Invalid coordinate {point!r}.") from exc
         width = int(observation.screen_width or 1000)
         height = int(observation.screen_height or 1000)
-        if 0 <= raw_x <= 1000 and 0 <= raw_y <= 1000:
-            return int(raw_x * width / 1000), int(raw_y * height / 1000)
+        if 0 <= raw_x <= 999 and 0 <= raw_y <= 999:
+            return (
+                int(round(raw_x / 999 * (width - 1))),
+                int(round(raw_y / 999 * (height - 1))),
+            )
         return int(raw_x), int(raw_y)
 
     @staticmethod
@@ -1995,12 +2008,26 @@ class GuiAgent:
 
     @staticmethod
     def _composite_action_summary(alias: str, arguments: dict[str, Any]) -> str:
-        if alias == "click_and_type":
+        if alias in {"click_and_type", "click_then_type"}:
             return "tap target and type text"
         if alias == "click_multi":
             points = arguments.get("coordinates") or arguments.get("points") or []
             return f"tap {len(points) if isinstance(points, list) else 1} target(s)"
         return alias
+
+    @staticmethod
+    def _bool_argument(value: Any, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "y", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "n", "off"}:
+                return False
+        return bool(value)
 
     @staticmethod
     def _stringify_skill_argument(value: Any) -> str:

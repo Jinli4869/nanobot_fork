@@ -59,6 +59,8 @@ Rules:
 - Extract ONE cohesive skill that covers the core action sequence. Do NOT split into multiple tiny @skill functions.
 - fixed=true + fixed_values: static UI (nav bars, toolbar, system actions, open_app). Copy exact x/y/text from the trajectory step params shown after "|".
 - Use only these action types: tap, long_press, double_tap, drag, swipe, scroll, input_text, hotkey, screenshot, wait, open_app, open_deeplink, open_intent, close_app, back, home, enter, app_switch, done, request_intervention. Do not invent actions such as read_text, press_key, navigate_back, or navigate_to_folder.
+- The skill function body must contain only await action(...) statements. Do not add if/for/while/try blocks, assignments, calculations, helper calls, return values, or non-action awaits.
+- Do not use f-strings, string concatenation, arithmetic expressions, comparisons, comprehensions, dict/list expressions with computed values, or nested function calls in action arguments. Use literal strings or {{param}} placeholders only.
 - fixed_values may contain only executable action fields such as x, y, x2, y2, text, key, pixels, direction, duration_ms, component, package, intent_action, mime_type, categories, extras, relative, status, auto_enter. Never put selectors such as resource_id, content_desc, class, or class_name in fixed_values.
 - fixed=false: dynamic content (search results, variable input). Use {{{{param}}}} placeholders, omit fixed_values.
 - target: Every required interactive step must have a natural-language target and valid_state. Use a concise natural-language grounding hint, e.g. "search button", "search input field", "matching video result", "skip ad button". Do not use raw class/resource_id as target unless it is also visible user-facing text.
@@ -92,6 +94,18 @@ The previous extracted skill has quality issues:
 Regenerate the entire skill. Every required interactive step must have a natural-language target and valid_state. Use only supported action types, declare every placeholder as a function parameter, keep fixed_values executable, and do not invent state_contract selectors.
 """
 
+_RETRY_COMPILE_NOTE = """\
+The previous output did not compile as a flat GUI skill:
+{issues}
+
+Regenerate the entire skill as valid Python using the flat skill DSL only. Requirements:
+- Output only import/header plus @skill functions.
+- Each skill function body must contain only await action(...) statements.
+- Do not use f-strings, arithmetic, assignments, conditionals, loops, helper functions, or non-action awaits.
+- Use literal strings or {{param}} placeholders in action arguments.
+- Use only supported action types and supported R(...) fields.
+"""
+
 _VALID_STATE_REQUIRED_ACTIONS = frozenset({
     "tap", "long_press", "double_tap", "input_text", "scroll", "swipe", "drag",
 })
@@ -102,6 +116,11 @@ _FIXED_VALUE_KEYS = frozenset({
     "relative", "status", "auto_enter",
 })
 _FIXED_SELECTOR_KEYS = frozenset({"resource_id", "content_desc", "class", "class_name", "xpath"})
+_SEGMENT_NOISE_ACTIONS = frozenset({
+    "wait", "screenshot", "home", "back", "enter", "done", "app_switch",
+    "request_intervention",
+})
+_SEGMENT_SCROLL_ACTIONS = frozenset({"scroll", "swipe", "drag"})
 
 
 class SkillExtractor:
@@ -137,16 +156,54 @@ class SkillExtractor:
                 "app": single_app,
             })
             return []
-        skills = await self._extract_all(result, is_success)
+        raw_segments = _split_codegen_result_by_app(result)
+        segments, skipped_segments = _filter_codegen_segments_for_extraction(raw_segments)
+        if not segments:
+            _write_log(trajectory_path, "no_candidate", {
+                "reason": "no_extractable_app_segment",
+                "skipped_segments": skipped_segments,
+            })
+            return []
+
+        skills: list[Skill] = []
+        segment_diagnostics: list[dict[str, Any]] = []
+        for segment_index, segment in enumerate(segments):
+            before = len(self._last_diagnostics)
+            extracted = await self._extract_all(segment, is_success)
+            if len(self._last_diagnostics) > before:
+                segment_diagnostics.append({
+                    "segment_index": segment_index,
+                    "app": segment.app,
+                    "step_indices": [step.step_index for step in segment.steps],
+                    "diagnostics": self._last_diagnostics[before:],
+                })
+            skills.extend(extracted)
         if not skills:
             _write_log(trajectory_path, "no_candidate", {
                 "reason": "compile_returned_none",
                 "diagnostics": self.last_diagnostics,
+                "skipped_segments": skipped_segments,
+                "segments": [
+                    {
+                        "app": segment.app,
+                        "step_indices": [step.step_index for step in segment.steps],
+                    }
+                    for segment in segments
+                ],
             })
             return []
         _write_log(trajectory_path, "compiled", {
             "skill_ids": [s.skill_id for s in skills],
             "names": [s.name for s in skills],
+            "segments": [
+                {
+                    "app": segment.app,
+                    "step_indices": [step.step_index for step in segment.steps],
+                }
+                for segment in segments
+            ],
+            "segment_diagnostics": segment_diagnostics,
+            "skipped_segments": skipped_segments,
             "diagnostics": self.last_diagnostics,
         })
         return skills
@@ -175,7 +232,26 @@ class SkillExtractor:
         )
         response = await self._llm.chat(_build_messages(prompt, result.screenshots_b64))
         self._accumulate_usage(response.usage)
+        compile_start = len(self._last_diagnostics)
         skills = _postprocess_skills(self._compile_all(response.content, result), result)
+        compile_errors = _compile_errors_since(self._last_diagnostics, compile_start)
+        if compile_errors:
+            self._last_diagnostics.append({
+                "phase": "compile_retry",
+                "errors": list(compile_errors),
+            })
+            retry_prompt = f"{prompt}\n\n{_RETRY_COMPILE_NOTE.format(issues=_format_quality_issues(compile_errors))}"
+            response = await self._llm.chat(_build_messages(retry_prompt, result.screenshots_b64))
+            self._accumulate_usage(response.usage)
+            compile_start = len(self._last_diagnostics)
+            skills = _postprocess_skills(self._compile_all(response.content, result), result)
+            compile_errors = _compile_errors_since(self._last_diagnostics, compile_start)
+            if compile_errors:
+                self._last_diagnostics.append({
+                    "phase": "compile_rejected",
+                    "errors": list(compile_errors),
+                })
+                return []
         issues = _skill_quality_issues(skills)
         if issues:
             self._last_diagnostics.append({"phase": "quality_retry", "issues": list(issues)})
@@ -402,6 +478,16 @@ def _format_quality_issues(issues: list[str]) -> str:
     return "\n".join(f"- {issue}" for issue in issues)
 
 
+def _compile_errors_since(diagnostics: list[dict[str, Any]], start: int) -> list[str]:
+    errors: list[str] = []
+    for item in diagnostics[start:]:
+        if item.get("phase") != "compile":
+            continue
+        for error in item.get("errors") or ():
+            errors.append(str(error))
+    return errors
+
+
 def _resolve_skill_app(skill: Skill, result: CodegenResult) -> Skill | None:
     trace_app = normalize_app_identifier(skill.platform, result.app)
     observed_apps = {
@@ -483,6 +569,135 @@ def _is_reusable_app(app: str) -> bool:
     return not _is_unknown_app(app) and not _is_transient_app(app)
 
 
+def _split_codegen_result_by_app(result: CodegenResult) -> list[CodegenResult]:
+    """Split a trajectory into contiguous reusable foreground-app segments."""
+    segments: list[CodegenResult] = []
+    current_steps: list[CodeStep] = []
+    current_app = ""
+    pending_prefix: list[CodeStep] = []
+
+    def flush_current() -> None:
+        nonlocal current_steps, current_app
+        if not current_steps or not _is_reusable_app(current_app):
+            current_steps = []
+            current_app = ""
+            return
+        step_apps = [
+            _normalized_step_app(step, result)
+            for step in current_steps
+            if _is_reusable_app(_normalized_step_app(step, result))
+        ]
+        app_candidates = _dedupe([current_app, *step_apps])
+        segments.append(replace(
+            result,
+            app=current_app,
+            app_candidates=tuple(app_candidates),
+            steps=list(current_steps),
+            screenshots_b64=_segment_screenshots(current_steps),
+        ))
+        current_steps = []
+        current_app = ""
+
+    for step in result.steps:
+        step_app = _normalized_step_app(step, result)
+        if not _is_reusable_app(step_app):
+            if current_steps:
+                current_steps.append(step)
+            else:
+                pending_prefix.append(step)
+            continue
+
+        if not current_steps:
+            current_app = step_app
+            current_steps = [*pending_prefix, step]
+            pending_prefix = []
+            continue
+
+        if step_app == current_app:
+            current_steps.append(step)
+            continue
+
+        flush_current()
+        current_app = step_app
+        current_steps = [*pending_prefix, step]
+        pending_prefix = []
+
+    flush_current()
+    if segments:
+        return segments
+    if _is_reusable_app(normalize_app_identifier(result.platform, result.app)):
+        return [result]
+    return []
+
+
+def _filter_codegen_segments_for_extraction(
+    segments: list[CodegenResult],
+) -> tuple[list[CodegenResult], list[dict[str, Any]]]:
+    kept: list[CodegenResult] = []
+    skipped: list[dict[str, Any]] = []
+    for segment in segments:
+        reason = _segment_skip_reason(segment)
+        if reason:
+            skipped.append({
+                "app": segment.app,
+                "reason": reason,
+                "step_indices": [step.step_index for step in segment.steps],
+            })
+            continue
+        kept.append(segment)
+    return kept, skipped
+
+
+def _segment_skip_reason(segment: CodegenResult) -> str:
+    core_steps = [
+        step for step in segment.steps
+        if step.action_type not in _SEGMENT_NOISE_ACTIONS
+    ]
+    if not core_steps:
+        return "no_core_steps"
+
+    interaction_steps = [
+        step for step in core_steps
+        if step.action_type not in {"open_app", "open_deeplink", "open_intent", "close_app"}
+    ]
+    if not interaction_steps:
+        return "launch_only_segment"
+
+    if len(core_steps) == 1:
+        return "single_core_step_segment"
+
+    if interaction_steps and all(
+        step.action_type in _SEGMENT_SCROLL_ACTIONS for step in interaction_steps
+    ):
+        return "scroll_only_segment"
+
+    return ""
+
+
+def _normalized_step_app(step: CodeStep, result: CodegenResult) -> str:
+    raw = getattr(step, "app", "") or result.app
+    return normalize_app_identifier(result.platform, raw)
+
+
+def _segment_screenshots(steps: list[CodeStep]) -> list[str]:
+    screenshots: list[str] = []
+    seen: set[str] = set()
+    for step in steps:
+        b64 = step.screenshot_b64
+        if b64 and b64 not in seen:
+            screenshots.append(b64)
+            seen.add(b64)
+    return screenshots
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result
+
+
 def _single_foreground_app_package(trace_path: Path, platform: str) -> str:
     step_count = 0
     apps: list[str] = []
@@ -555,8 +770,10 @@ def _codegen_from_step_dicts(steps: list[dict[str, Any]]) -> CodegenResult | Non
             app_candidates.append(observation_app)
         if not app:
             app = str((s.get("observation") or {}).get("foreground_app") or "")
+        step_app = action_app if _is_reusable_app(action_app) else observation_app
         code_steps.append(CodeStep(
             step_index=i,
+            app=step_app,
             intent=str(s.get("action_intent") or s.get("action_summary") or action_type),
             action_type=action_type,
             action_params={k: action[k] for k in ("x", "y", "x2", "y2", "text", "key", "pixels")

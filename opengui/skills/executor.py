@@ -5,11 +5,11 @@ Step-by-step skill execution with agent-integrated parameter grounding,
 valid-state verification, and subgoal recovery.
 
 Execution pipeline per step:
-1. Verify ``valid_state`` against current screenshot (LLM-based); skip if special.
-2a. If valid_state passes and step is fixed → execute with ``fixed_values`` directly.
-2b. If valid_state passes and step is not fixed → ground parameters via ``ActionGrounder``
+1. Optionally verify ``valid_state`` against current screenshot (LLM-based); skip if disabled or special.
+2a. If state is allowed and step is fixed → execute with ``fixed_values`` directly.
+2b. If state is allowed and step is not fixed → ground parameters via ``ActionGrounder``
     (vision-LLM call) or fall back to template substitution if no grounder is available.
-3. If valid_state fails → run a mini recovery loop (``SubgoalRunner``) with valid_state
+3. If enabled valid_state fails → run a mini recovery loop (``SubgoalRunner``) with valid_state
    as the goal; a subgoal ``done(status="success")`` hands control back to the
    original skill step without a second validator call.
 4. After all steps complete (or recovery exhausted), ``execution_summary`` carries a
@@ -48,7 +48,7 @@ _POST_ACTION_SETTLE_SECONDS: float = 0.50
 _OPEN_APP_SETTLE_SECONDS: float = 5.00
 _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
 _OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
-_NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention"})
+_NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention", "adb_command"})
 _VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset(
     {
         "open_app",
@@ -57,6 +57,7 @@ _VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset(
         "request_intervention",
         "screenshot",
         "hotkey",
+        "adb_command",
     }
 )
 _TEMPLATE_COORDINATE_REQUIREMENTS: dict[str, tuple[str, ...]] = {
@@ -504,6 +505,7 @@ def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str
         "y",
         "x2",
         "y2",
+        "points",
         "text",
         "key",
         "pixels",
@@ -518,6 +520,10 @@ def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str
         "relative",
         "status",
         "auto_enter",
+        "command_id",
+        "command",
+        "params",
+        "arguments",
     ):
         if key in grounded:
             payload[key] = grounded[key]
@@ -526,6 +532,7 @@ def _build_template_payload(step: SkillStep, params: dict[str, str]) -> dict[str
         "open_app",
         "open_deeplink",
         "close_app",
+        "adb_command",
     }:
         payload["text"] = target
     return payload
@@ -537,6 +544,11 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
     for key in ("x", "y", "x2", "y2"):
         if key in payload:
             kwargs[key] = float(payload[key])
+    if "points" in payload:
+        kwargs["points"] = parse_action({
+            "action_type": "click_multi",
+            "points": payload["points"],
+        }).points
     if "text" in payload:
         kwargs["text"] = str(payload["text"])
     elif "direction" in payload:
@@ -571,6 +583,14 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
             kwargs["extras"] = tuple(raw_extras.items())
         elif isinstance(raw_extras, (list, tuple)):
             kwargs["extras"] = tuple(tuple(item) for item in raw_extras)
+    if "command_id" in payload:
+        kwargs["command_id"] = str(payload["command_id"])
+    elif "command" in payload:
+        kwargs["command_id"] = str(payload["command"])
+    if "params" in payload and isinstance(payload["params"], dict):
+        kwargs["params"] = dict(payload["params"])
+    elif "arguments" in payload and isinstance(payload["arguments"], dict):
+        kwargs["params"] = dict(payload["arguments"])
     if "relative" in payload:
         kwargs["relative"] = bool(payload["relative"])
     if "status" in payload:
@@ -642,6 +662,10 @@ class SkillExecutor:
     state_validator:
         Optional LLM-based validator for per-step ``valid_state`` checks.
         Falls back to pass-through (allow) when ``None``.
+    enable_valid_state:
+        Whether to execute per-step ``valid_state`` validation and recovery.
+        Skill definitions keep their ``valid_state`` text either way; disabling
+        this only skips runtime validator calls.
     action_grounder:
         Optional vision-LLM grounder for non-fixed steps. When ``None``,
         falls back to template substitution (legacy behaviour).
@@ -666,6 +690,7 @@ class SkillExecutor:
     trajectory_recorder: TrajectoryRecorder | None = None
     stop_on_failure: bool = True
     max_recovery_steps: int = 3
+    enable_valid_state: bool = True
     _last_contract_eval_detail: dict[str, Any] | None = dataclasses.field(
         default=None,
         init=False,
@@ -698,6 +723,7 @@ class SkillExecutor:
                 skill_id=skill.skill_id,
                 skill_name=skill.name,
                 step_count=len(skill.steps),
+                enable_valid_state=self.enable_valid_state,
             )
 
         for i, step in enumerate(skill.steps):
@@ -732,12 +758,15 @@ class SkillExecutor:
                     "open_app",
                     "open_deeplink",
                     "open_intent",
+                    "adb_command",
                     "wait",
                     "done",
                     "request_intervention",
                 }
             )
-            if visual_guarded_step and not step.valid_state:
+            if not self.enable_valid_state and step.state_contract is None:
+                valid, validate_usage, validate_dur = True, {}, None
+            elif visual_guarded_step and step.state_contract is None and not step.valid_state:
                 visual_guard_block_reason = "missing visual valid_state"
                 valid, validate_usage, validate_dur = False, {}, None
             elif visual_guarded_step and self.state_validator is None:
@@ -777,7 +806,8 @@ class SkillExecutor:
             )
             if not valid and should_enforce_state and visual_guard_block_reason is None:
                 can_recover_with_subgoal = (
-                    has_valid_state
+                    self.enable_valid_state
+                    and has_valid_state
                     and not _should_skip_validation(step.valid_state)
                     and self.subgoal_runner is not None
                     and screenshot is not None
@@ -1130,6 +1160,7 @@ class SkillExecutor:
             backend_result=step_result.backend_result,
             valid_state=step.valid_state,
             state_contract=step.state_contract,
+            enable_valid_state=self.enable_valid_state,
             valid_state_check=step_result.valid_state_check,
             observation=step_result.observation,
             screenshot_path=step_result.screenshot_path,
@@ -1183,6 +1214,11 @@ class SkillExecutor:
                 step.action_type,
             )
             return bool(contract_detail.passed), {}, None
+
+        if not self.enable_valid_state:
+            logger.debug("valid_state disabled; allowing step %s", step.action_type)
+            self._last_contract_eval_detail = None
+            return True, {}, None
 
         if step.valid_state is None or not step.valid_state.strip():
             logger.debug("Step %s is missing valid_state", step.action_type)

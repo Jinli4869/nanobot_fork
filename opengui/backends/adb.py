@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from opengui.action import Action, describe_action, resolve_coordinate
+from opengui.backends.adb_command import AdbCommandRunner
 from opengui.observation import Observation
 
 logger = logging.getLogger(__name__)
@@ -583,6 +584,7 @@ class AdbBackend:
         self._use_scrcpy = use_scrcpy
         self._collect_ui_tree = collect_ui_tree
         self._collect_ui_tree_nodes = collect_ui_tree_nodes
+        self._adb_command_runner = AdbCommandRunner(self._run)
         self._scrcpy_started = False
         self._frame_source = (
             (
@@ -1285,6 +1287,31 @@ class AdbBackend:
             f"push yadb to {_YADB_PATH}."
         )
 
+    async def _execute_input_text(self, text: str, *, auto_enter: bool, timeout: float) -> None:
+        if not text:
+            return
+        normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
+        lines = normalized_text.split("\n")
+        for index, line in enumerate(lines):
+            for segment in _iter_text_input_segments(line):
+                await self._input_single_text(segment, timeout)
+            if index < len(lines) - 1:
+                await self._run(
+                    "shell",
+                    "input",
+                    "keyevent",
+                    "KEYCODE_ENTER",
+                    timeout=timeout,
+                )
+        if auto_enter:
+            await self._run(
+                "shell",
+                "input",
+                "keyevent",
+                "KEYCODE_ENTER",
+                timeout=timeout,
+            )
+
     # ------------------------------------------------------------------
     # Execute
     # ------------------------------------------------------------------
@@ -1303,6 +1330,27 @@ class AdbBackend:
                 str(y),
                 timeout=timeout,
             )
+
+        elif t == "click_multi":
+            for px, py in self._resolve_points(action):
+                await self._run(
+                    "shell",
+                    "input",
+                    "tap",
+                    str(px),
+                    str(py),
+                    timeout=timeout,
+                )
+                await asyncio.sleep(0.12)
+
+        elif t == "click_then_type":
+            points = self._resolve_points(action)
+            if len(points) != 1:
+                raise ValueError("Action 'click_then_type' requires exactly one point.")
+            px, py = points[0]
+            await self._run("shell", "input", "tap", str(px), str(py), timeout=timeout)
+            await asyncio.sleep(0.20)
+            await self._execute_input_text(action.text or "", auto_enter=action.auto_enter, timeout=timeout)
 
         elif t == "long_press":
             px, py = self._resolve_point(action)
@@ -1326,29 +1374,11 @@ class AdbBackend:
             await self._run("shell", "input", "swipe", x1, y1, x2, y2, dur, timeout=timeout)
 
         elif t == "input_text":
-            text = action.text or ""
-            if text:
-                normalized_text = text.replace("\r\n", "\n").replace("\r", "\n")
-                lines = normalized_text.split("\n")
-                for index, line in enumerate(lines):
-                    for segment in _iter_text_input_segments(line):
-                        await self._input_single_text(segment, timeout)
-                    if index < len(lines) - 1:
-                        await self._run(
-                            "shell",
-                            "input",
-                            "keyevent",
-                            "KEYCODE_ENTER",
-                            timeout=timeout,
-                        )
-                if action.auto_enter:
-                    await self._run(
-                        "shell",
-                        "input",
-                        "keyevent",
-                        "KEYCODE_ENTER",
-                        timeout=timeout,
-                    )
+            await self._execute_input_text(
+                action.text or "",
+                auto_enter=action.auto_enter,
+                timeout=timeout,
+            )
 
         elif t == "enter":
             await self._run("shell", "input", "keyevent", "KEYCODE_ENTER", timeout=timeout)
@@ -1416,6 +1446,9 @@ class AdbBackend:
         elif t == "open_intent":
             action_result = await self._open_intent(action, timeout=timeout)
 
+        elif t == "adb_command":
+            action_result = await self._adb_command_runner.execute(action, timeout=timeout)
+
         elif t == "close_app":
             pkg = action.text or ""
             if pkg:
@@ -1425,6 +1458,8 @@ class AdbBackend:
             raise ValueError(f"Unsupported action type: {t!r}")
 
         description = describe_action(action)
+        if action.action_type == "adb_command":
+            return action_result or description
         marker = _am_start_launch_variant_marker(action_result or "")
         return f"{description}\n{marker}" if marker else description
 
@@ -1614,6 +1649,17 @@ class AdbBackend:
         return (
             self._resolve_x(action.x, relative=action.relative),
             self._resolve_y(action.y, relative=action.relative),
+        )
+
+    def _resolve_points(self, action: Action) -> tuple[tuple[int, int], ...]:
+        if not action.points:
+            raise ValueError(f"Action {action.action_type!r} requires points.")
+        return tuple(
+            (
+                self._resolve_x(x, relative=action.relative),
+                self._resolve_y(y, relative=action.relative),
+            )
+            for x, y in action.points
         )
 
     def _resolve_second_point(self, action: Action) -> tuple[int, int]:

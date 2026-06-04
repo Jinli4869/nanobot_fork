@@ -307,6 +307,7 @@ class GuiConfig(Base):
     capture_ttft: bool = False
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
+    enable_skill_valid_state: bool = True
     enable_prompt_skill_selection: bool = False
     prompt_skill_top_k: int = 5
     prompt_shortcut_only: bool = False
