@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import typing
 
 # ---------------------------------------------------------------------------
@@ -22,8 +23,9 @@ import typing
 
 VALID_ACTION_TYPES: frozenset[str] = frozenset({
     "tap", "long_press", "double_tap", "drag", "swipe", "scroll",
+    "click_multi", "click_then_type",
     "input_text", "hotkey", "screenshot", "wait",
-    "open_app", "open_deeplink", "open_intent", "close_app", "back", "home", "enter", "app_switch", "done",
+    "open_app", "open_deeplink", "open_intent", "adb_command", "close_app", "back", "home", "enter", "app_switch", "done",
     "request_intervention",
 })
 
@@ -70,6 +72,7 @@ class Action:
     y: float | None = None
     x2: float | None = None
     y2: float | None = None
+    points: tuple[tuple[float, float], ...] = ()
     text: str | None = None
     key: list[str] | None = None
     pixels: int | None = None
@@ -80,6 +83,8 @@ class Action:
     mime_type: str | None = None
     categories: tuple[str, ...] = ()
     extras: tuple[tuple[str, typing.Any], ...] = ()
+    command_id: str | None = None
+    params: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
     relative: bool = False
     status: str | None = None
     auto_enter: bool = True
@@ -128,6 +133,12 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     y = _optional_float(payload, "y", action_type)
     x2 = _optional_float(payload, "x2", action_type)
     y2 = _optional_float(payload, "y2", action_type)
+    points = _parse_points(
+        payload.get("points", payload.get("coordinates", payload.get("coordinate"))),
+        action_type,
+    )
+    if not points and x is not None and y is not None and action_type in {"click_multi", "click_then_type"}:
+        points = ((x, y),)
 
     # 3. Text — for scroll, direction takes priority
     if action_type == "scroll":
@@ -146,20 +157,26 @@ def parse_action(payload: dict[str, typing.Any]) -> Action:
     mime_type = _optional_str(payload, "mime_type")
     categories = _parse_str_tuple(payload.get("categories"), action_type, "categories")
     extras = _parse_extras(payload.get("extras"), action_type)
+    command_id = _optional_str(payload, "command_id") or _optional_str(payload, "command")
+    raw_params = payload.get("params", payload.get("arguments"))
+    params = _parse_params(raw_params, action_type)
     relative = bool(payload.get("relative", False))
     status = _optional_str(payload, "status")
     auto_enter = bool(payload.get("auto_enter", True))
 
     # 5. Validate
     _validate(action_type=action_type, x=x, y=y, x2=x2, y2=y2,
-              text=text, key=key, pixels=pixels, intent_action=intent_action)
+              points=points, text=text, key=key, pixels=pixels, intent_action=intent_action,
+              command_id=command_id)
 
     return Action(
         action_type=action_type, x=x, y=y, x2=x2, y2=y2,
+        points=points,
         text=text, key=key, pixels=pixels, duration_ms=duration_ms,
         component=component, package=package,
         intent_action=intent_action, mime_type=mime_type,
         categories=categories, extras=extras,
+        command_id=command_id, params=params,
         relative=relative, status=status, auto_enter=auto_enter,
     )
 
@@ -180,6 +197,13 @@ def describe_action(action: Action) -> str:
         return f"{t.replace('_', ' ')} at {coord}{suffix}"
     if t in ("drag", "swipe"):
         return f"{t} from {_fmt_coord(action)} to ({action.x2}, {action.y2})"
+    if t == "click_multi":
+        return f"click {len(action.points)} point(s): {_fmt_points(action)}"
+    if t == "click_then_type":
+        preview = (action.text or "")[:40]
+        if len(action.text or "") > 40:
+            preview += "..."
+        return f'tap {_fmt_points(action)} then type "{preview}"'
     if t == "scroll":
         direction = action.text or "?"
         px = f" by {action.pixels} px" if action.pixels is not None else ""
@@ -203,6 +227,9 @@ def describe_action(action: Action) -> str:
         action_name = action.intent_action or "?"
         target = f" via {action.component}" if action.component else ""
         return f"open intent {action_name!r}{target}"
+    if t == "adb_command":
+        command = action.command_id or action.text or "?"
+        return f"run adb command skill {command!r}"
     if t == "close_app":
         return f"close app {action.text!r}"
     if t == "request_intervention":
@@ -237,6 +264,17 @@ def _fmt_coord(action: Action) -> str:
     if action.relative:
         return f"({action.x}/{_RELATIVE_GRID_MAX}, {action.y}/{_RELATIVE_GRID_MAX})"
     return f"({action.x}, {action.y})"
+
+
+def _fmt_points(action: Action) -> str:
+    if not action.points:
+        return "[]"
+    if action.relative:
+        return "[" + ", ".join(
+            f"({x}/{_RELATIVE_GRID_MAX}, {y}/{_RELATIVE_GRID_MAX})"
+            for x, y in action.points
+        ) + "]"
+    return "[" + ", ".join(f"({x}, {y})" for x, y in action.points) + "]"
 
 
 def _normalize_coordinate_payload(payload: dict[str, typing.Any]) -> dict[str, typing.Any]:
@@ -373,6 +411,69 @@ def _coerce_coordinate_sequence(value: typing.Any) -> tuple[typing.Any, ...] | N
     return None
 
 
+def _parse_points(raw: typing.Any, action_type: str) -> tuple[tuple[float, float], ...]:
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            return ()
+        parsed: typing.Any | None = None
+        if stripped.startswith(("[", "{")):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                parsed = None
+        if parsed is not None:
+            return _parse_points(parsed, action_type)
+        numbers = re.findall(r"-?\d+(?:\.\d+)?", stripped)
+        if len(numbers) < 2 or len(numbers) % 2:
+            raise ActionError(
+                f"Action {action_type!r}: 'points' must contain coordinate pairs."
+            )
+        return tuple(
+            (float(numbers[index]), float(numbers[index + 1]))
+            for index in range(0, len(numbers), 2)
+        )
+    if isinstance(raw, dict):
+        if "x" in raw and "y" in raw:
+            return ((float(raw["x"]), float(raw["y"])),)
+        raise ActionError(f"Action {action_type!r}: point object requires x and y.")
+    if isinstance(raw, (list, tuple)):
+        if not raw:
+            return ()
+        if len(raw) == 2 and not isinstance(raw[0], (list, tuple, dict)):
+            return ((float(raw[0]), float(raw[1])),)
+        points: list[tuple[float, float]] = []
+        flat_scalars: list[typing.Any] = []
+        for item in raw:
+            if isinstance(item, dict):
+                if "x" not in item or "y" not in item:
+                    raise ActionError(f"Action {action_type!r}: point object requires x and y.")
+                points.append((float(item["x"]), float(item["y"])))
+            elif isinstance(item, (list, tuple)):
+                if len(item) != 2:
+                    raise ActionError(
+                        f"Action {action_type!r}: each point must be a two-item pair."
+                    )
+                points.append((float(item[0]), float(item[1])))
+            else:
+                flat_scalars.append(item)
+        if flat_scalars:
+            if points or len(flat_scalars) % 2:
+                raise ActionError(
+                    f"Action {action_type!r}: 'points' must contain only coordinate pairs."
+                )
+            points = [
+                (float(flat_scalars[index]), float(flat_scalars[index + 1]))
+                for index in range(0, len(flat_scalars), 2)
+            ]
+        return tuple(points)
+    raise ActionError(
+        f"Action {action_type!r}: 'points' must be a string, pair, or list of pairs."
+    )
+
+
 def _optional_float(payload: dict, key: str, action_type: str) -> float | None:
     v = payload.get(key)
     if v is None:
@@ -416,6 +517,36 @@ def _parse_str_tuple(raw: typing.Any, action_type: str, key: str) -> tuple[str, 
     raise ActionError(
         f"Action {action_type!r}: {key!r} must be str or list, got {type(raw).__name__!r}."
     )
+
+
+def _parse_json_value(value: typing.Any, action_type: str, field: str) -> typing.Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_parse_json_value(item, action_type, field) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _parse_json_value(item, action_type, field)
+            for key, item in value.items()
+        }
+    raise ActionError(
+        f"Action {action_type!r}: {field!r} contains unsupported value type "
+        f"{type(value).__name__!r}."
+    )
+
+
+def _parse_params(raw: typing.Any, action_type: str) -> dict[str, typing.Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ActionError(f"Action {action_type!r}: 'params' must be an object.")
+    params: dict[str, typing.Any] = {}
+    for key, value in raw.items():
+        key_text = str(key).strip()
+        if not key_text:
+            raise ActionError(f"Action {action_type!r}: 'params' key must be non-empty.")
+        params[key_text] = _parse_json_value(value, action_type, "params")
+    return params
 
 
 def _parse_extras(raw: typing.Any, action_type: str) -> tuple[tuple[str, typing.Any], ...]:
@@ -465,8 +596,10 @@ def _parse_key(raw: typing.Any, action_type: str) -> list[str] | None:
 
 def _validate(
     *, action_type: str, x: float | None, y: float | None,
-    x2: float | None, y2: float | None, text: str | None,
+    x2: float | None, y2: float | None, points: tuple[tuple[float, float], ...],
+    text: str | None,
     key: list[str] | None, pixels: int | None, intent_action: str | None,
+    command_id: str | None,
 ) -> None:
     if action_type in _XY_REQUIRED and (x is None or y is None):
         raise ActionError(f"Action {action_type!r} requires both 'x' and 'y' coordinates.")
@@ -480,6 +613,15 @@ def _validate(
         raise ActionError("Action 'hotkey' requires the 'key' field.")
     if action_type == "input_text" and text is None:
         raise ActionError("Action 'input_text' requires the 'text' field.")
+    if action_type == "click_multi" and not points:
+        raise ActionError("Action 'click_multi' requires at least one point.")
+    if action_type == "click_then_type":
+        if not points:
+            raise ActionError("Action 'click_then_type' requires one point.")
+        if len(points) != 1:
+            raise ActionError("Action 'click_then_type' accepts exactly one point.")
+        if text is None:
+            raise ActionError("Action 'click_then_type' requires the 'text' field.")
     if action_type == "request_intervention" and (text is None or not text.strip()):
         raise ActionError("Action 'request_intervention' requires a non-empty 'text' field.")
     if action_type == "scroll":
@@ -498,3 +640,5 @@ def _validate(
         raise ActionError("Action 'open_deeplink' requires the 'text' field (URI).")
     if action_type == "open_intent" and not intent_action:
         raise ActionError("Action 'open_intent' requires the 'intent_action' field.")
+    if action_type == "adb_command" and not (command_id or text):
+        raise ActionError("Action 'adb_command' requires 'command_id' or 'text'.")

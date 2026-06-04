@@ -1158,6 +1158,7 @@ class GuiSubagentTool(Tool):
                 trajectory_recorder=recorder,
                 stop_on_failure=True,
                 max_recovery_steps=3,
+                enable_valid_state=self._gui_config.enable_skill_valid_state,
             )
 
         skill_reuser = None
@@ -1174,7 +1175,7 @@ class GuiSubagentTool(Tool):
         sc_dir = Path(self._workspace) / "shortcut_cache"
         sc_dir.mkdir(parents=True, exist_ok=True)
 
-        shortcut_backend = active_backend if hasattr(active_backend, "_run") else None
+        shortcut_backend = self._shortcut_discovery_backend(active_backend)
 
         agent = GuiAgent(
             llm=self._llm_adapter,
@@ -1244,6 +1245,16 @@ class GuiSubagentTool(Tool):
             },
             ensure_ascii=False,
         )
+
+    @staticmethod
+    def _shortcut_discovery_backend(active_backend: Any) -> Any | None:
+        """Return a backend suitable for runtime APK shortcut discovery."""
+        if not hasattr(active_backend, "_run"):
+            return None
+        module_name = str(getattr(type(active_backend), "__module__", "") or "")
+        if module_name == "opengui.backends.mobileworld":
+            return None
+        return active_backend
 
     def _build_post_run_state(
         self,

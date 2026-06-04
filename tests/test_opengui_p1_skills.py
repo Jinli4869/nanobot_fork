@@ -1422,6 +1422,35 @@ async def open_search(device):
 
 
 @pytest.mark.asyncio
+async def test_skill_extractor_retries_when_flat_code_does_not_compile() -> None:
+    bad_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device, item_name):
+    await action("tap", target=f"{item_name} details", valid_state="details button is visible")
+"""
+    fixed_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device, item_name):
+    await action("tap", target="{{item_name}} details", valid_state="details button is visible")
+"""
+    llm = _ScriptedLLM([bad_response, fixed_response])
+    extractor = SkillExtractor(llm)
+
+    skill = await extractor.extract_from_steps([
+        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
+    ])
+
+    assert skill is not None
+    assert len(llm.messages) == 2
+    retry_prompt = llm.messages[1][0]["content"][0]["text"]
+    assert "did not compile as a flat GUI skill" in retry_prompt
+    assert "Do not use f-strings" in retry_prompt
+    assert skill.steps[0].target == "{{item_name}} details"
+
+
+@pytest.mark.asyncio
 async def test_skill_extractor_generalizes_narrow_description_terms() -> None:
     response = """from opengui.skills.flat import C, R, action, skill, tag
 
@@ -1466,6 +1495,193 @@ async def open_netease(device):
     assert len(skills) == 1
     assert skills[0].app == "com.netease.cloudmusic"
     assert skills[0].steps[1].action_type == "tap"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_splits_file_trace_into_foreground_app_segments(
+    tmp_path: Path,
+) -> None:
+    chrome_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.android.chrome", platform="android", name="search_web", description="Search in Chrome")
+async def search_web(device):
+    await action("tap", target="search field", valid_state="search field is visible")
+"""
+    calendar_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="org.fossify.calendar", platform="android", name="open_day", description="Open a calendar day")
+async def open_day(device):
+    await action("tap", target="calendar day", valid_state="calendar day is visible")
+"""
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Search then schedule", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 100, "y": 100},
+            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "input_text", "text": "graduation"},
+            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+        },
+        {
+            "type": "step",
+            "step_index": 2,
+            "action": {"action_type": "tap", "x": 200, "y": 200},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+        {
+            "type": "step",
+            "step_index": 3,
+            "action": {"action_type": "tap", "x": 240, "y": 240},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+    ])
+    llm = _ScriptedLLM([chrome_response, calendar_response])
+    extractor = SkillExtractor(llm)
+
+    skills = await extractor.extract_from_file_multi(trace_path)
+
+    assert [skill.app for skill in skills] == ["com.android.chrome", "org.fossify.calendar"]
+    assert len(llm.messages) == 2
+    first_prompt = llm.messages[0][0]["content"][0]["text"]
+    second_prompt = llm.messages[1][0]["content"][0]["text"]
+    assert "App: com.android.chrome" in first_prompt
+    assert "[0] tap" in first_prompt
+    assert "[1] input_text" in first_prompt
+    assert "[2] tap" not in first_prompt
+    assert "App: org.fossify.calendar" in second_prompt
+    assert "[2] tap" in second_prompt
+    assert "[0] tap" not in second_prompt
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_skips_single_step_file_segments_before_llm(
+    tmp_path: Path,
+) -> None:
+    response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="org.fossify.calendar", platform="android", name="open_day", description="Open a calendar day")
+async def open_day(device):
+    await action("tap", target="calendar day", valid_state="calendar day is visible")
+"""
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Search then schedule", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 100, "y": 100},
+            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 200, "y": 200},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+        {
+            "type": "step",
+            "step_index": 2,
+            "action": {"action_type": "tap", "x": 240, "y": 240},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+    ])
+    llm = _ScriptedLLM([response])
+    extractor = SkillExtractor(llm)
+
+    skills = await extractor.extract_from_file_multi(trace_path)
+
+    assert [skill.app for skill in skills] == ["org.fossify.calendar"]
+    assert len(llm.messages) == 1
+    prompt = llm.messages[0][0]["content"][0]["text"]
+    assert "App: org.fossify.calendar" in prompt
+    assert "[0] tap" not in prompt
+    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    assert extraction_result["detail"]["skipped_segments"] == [
+        {
+            "app": "com.android.chrome",
+            "reason": "single_core_step_segment",
+            "step_indices": [0],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_does_not_carry_contracts_across_app_segments(
+    tmp_path: Path,
+) -> None:
+    chrome_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="com.android.chrome", platform="android", name="search_web", description="Search in Chrome")
+async def search_web(device):
+    await action("tap", target="search field", valid_state="search field is visible")
+"""
+    calendar_response = """from opengui.skills.flat import C, R, action, skill, tag
+
+@skill(app="org.fossify.calendar", platform="android", name="open_day", description="Open a calendar day")
+async def open_day(device):
+    await action("tap", target="calendar day", valid_state="calendar day is visible",
+                 state_contract=C(app="com.android.chrome", required=[R(resource_id="com.android.chrome:id/search_box", visible=True)]))
+"""
+    trace_path = tmp_path / "trace.jsonl"
+    _write_jsonl(trace_path, [
+        {"type": "metadata", "task": "Search then schedule", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 0,
+            "action": {"action_type": "tap", "x": 100, "y": 100},
+            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+        },
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap", "x": 140, "y": 140},
+            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+        },
+        {
+            "type": "step",
+            "step_index": 2,
+            "action": {"action_type": "tap", "x": 120, "y": 120},
+            "observation": {
+                "platform": "android",
+                "foreground_app": "org.fossify.calendar",
+                "screen_width": 200,
+                "screen_height": 200,
+                "extra": {
+                    "ui_tree": [
+                        {
+                            "resource_id": "org.fossify.calendar:id/day_button",
+                            "class": "android.widget.TextView",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[80,80][200,200]",
+                        }
+                    ]
+                },
+            },
+        },
+        {
+            "type": "step",
+            "step_index": 3,
+            "action": {"action_type": "tap", "x": 180, "y": 180},
+            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+        },
+    ])
+    extractor = SkillExtractor(_ScriptedLLM([chrome_response, calendar_response]))
+
+    skills = await extractor.extract_from_file_multi(trace_path)
+
+    calendar_skill = [skill for skill in skills if skill.app == "org.fossify.calendar"][0]
+    contract = calendar_skill.steps[0].state_contract
+    assert contract is not None
+    assert contract["anchor"]["app_package"] == "org.fossify.calendar"
+    required = contract["signature"]["required"]
+    assert required[0]["selector"] == {"resource_id": "org.fossify.calendar:id/day_button"}
 
 
 @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -728,7 +729,7 @@ def test_result_to_validation_record_for_intent() -> None:
         "status": "page_validated",
         "description": "B站搜索视频",
         "parameters": ["query"],
-        "valid_state": "B站搜索视频",
+        "valid_state": validator.SHORTCUT_SKIP_VALID_STATE,
         "intent_action": "android.intent.action.SEARCH",
         "extras": [["query", "{{query}}"]],
         "component": "tv.danmaku.bili/.SearchActivity",
@@ -822,6 +823,37 @@ def test_result_to_validation_record_drops_unused_query_parameter() -> None:
 
     assert record["parameters"] == []
     assert record["uri_template"] == "bilibili://search"
+
+
+def test_promote_results_forces_shortcut_valid_state(monkeypatch, tmp_path: Path) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_add_validated_shortcut_skill(library, record, *, require_page_validated=True):
+        calls.append(dict(record))
+        return "added", "shortcut:di:pkg:test"
+
+    monkeypatch.setattr(validator, "add_validated_shortcut_skill", fake_add_validated_shortcut_skill)
+    args = SimpleNamespace(
+        promote=True,
+        skill_store_root=tmp_path,
+        allow_launchable_promote=False,
+    )
+    records = [
+        {
+            "package": "pkg",
+            "kind": "intent",
+            "status": "page_validated",
+            "description": "打开搜索页",
+            "valid_state": "old page state",
+            "intent_action": "android.intent.action.SEARCH",
+        }
+    ]
+
+    promotions = asyncio.run(validator.promote_results(args, records))
+
+    assert records[0]["valid_state"] == "old page state"
+    assert calls[0]["valid_state"] == validator.SHORTCUT_SKIP_VALID_STATE
+    assert promotions[0]["record"]["valid_state"] == validator.SHORTCUT_SKIP_VALID_STATE
 
 
 def test_write_sidecar_records_probe_plan(tmp_path: Path) -> None:

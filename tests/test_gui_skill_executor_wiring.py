@@ -165,6 +165,29 @@ class TestSkillExecutorWiringDisabled:
         asyncio.run(_run())
 
 
+class TestShortcutDiscoveryBackend:
+    """Shortcut discovery should not run through MobileWorldBackend."""
+
+    def test_mobileworld_backend_is_not_used_for_runtime_shortcut_discovery(self) -> None:
+        from nanobot.agent.tools.gui import GuiSubagentTool
+        from opengui.backends.mobileworld import MobileWorldBackend
+
+        backend = MobileWorldBackend(base_url="http://mobileworld.invalid")
+
+        assert GuiSubagentTool._shortcut_discovery_backend(backend) is None
+
+    def test_adb_like_backend_is_still_allowed_for_runtime_shortcut_discovery(self) -> None:
+        from nanobot.agent.tools.gui import GuiSubagentTool
+
+        class AdbLikeBackend:
+            async def _run(self, *args: str, timeout: float = 10.0) -> str:
+                return ""
+
+        backend = AdbLikeBackend()
+
+        assert GuiSubagentTool._shortcut_discovery_backend(backend) is backend
+
+
 class TestSkillExecutorWiringEnabled:
     """When enable_skill_execution=True, GuiAgent must receive a SkillExecutor instance."""
 

@@ -129,7 +129,7 @@ COMPUTER_USE_TOOL: dict[str, Any] = {
                     "enum": [
                         "tap", "double_tap", "long_press", "swipe", "drag",
                         "input_text", "hotkey", "scroll",
-                        "wait", "open_app", "close_app",
+                        "wait", "open_app", "close_app", "adb_command",
                         "back", "home", "done", "request_intervention",
                     ],
                 },
@@ -148,6 +148,8 @@ COMPUTER_USE_TOOL: dict[str, Any] = {
                 "key": {"type": "array", "items": {"type": "string"}, "description": "Keys for hotkey."},
                 "pixels": {"type": "integer", "description": "Scroll distance."},
                 "duration_ms": {"type": "integer", "description": "Duration in ms."},
+                "command_id": {"type": "string", "description": "Whitelisted adb_command skill id."},
+                "params": {"type": "object", "description": "Typed params for adb_command."},
                 "relative": {"type": "boolean", "description": "True if [0,999] relative coords."},
                 "status": {"type": "string", "enum": ["success", "failure"], "description": "For done action."},
                 "intent": {"type": "string", "description": "The purpose of the selected next action."},

@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import os
+import shlex
 import time
 import urllib.error
 import urllib.parse
@@ -22,13 +23,27 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from opengui.action import Action, resolve_coordinate
+from opengui.action import Action, describe_action, resolve_coordinate
 from opengui.backends import read_png_size
 from opengui.backends.adb import (
+    AdbError,
+    _ANDROID_COMPONENT_RE,
+    _ANDROID_EXTRA_KEY_RE,
+    _ANDROID_EXTRA_STREAM,
+    _ANDROID_INTENT_NAME_RE,
+    _ANDROID_PACKAGE_RE,
+    _am_start_data_scheme,
+    _am_start_launch_variant_marker,
+    _am_start_output_failed,
+    _annotate_am_start_launch_variant,
+    _is_android_uri_extra,
     _parse_ui_tree_xml,
+    _without_am_start_option,
+    _without_am_start_wait,
     _write_raw_ui_tree_error,
     _write_raw_ui_tree_xml,
 )
+from opengui.backends.adb_command import AdbCommandRunner
 from opengui.observation import Observation
 
 logger = logging.getLogger(__name__)
@@ -80,6 +95,8 @@ class MobileWorldBackend:
         )
         self.base_url = resolved_base_url.rstrip("/")
         self.device = device or os.getenv("MOBILEWORLD_DEVICE") or os.getenv("ANDROID_SERIAL") or _DEFAULT_DEVICE
+        self._adb = os.getenv("ADB_PATH") or os.getenv("ADB") or "adb"
+        self._adb_command_runner = AdbCommandRunner(self._run)
         self.xml_mode = (xml_mode or "uia").strip().lower()
         if self.xml_mode not in {"uia", "ac"}:
             raise ValueError(f"Unsupported MobileWorld XML mode: {xml_mode!r}")
@@ -171,6 +188,17 @@ class MobileWorldBackend:
         action: Action,
         timeout: float = _DEFAULT_STEP_TIMEOUT_SECONDS,
     ) -> str:
+        if action.action_type == "open_deeplink":
+            action_result = await self._open_deeplink(action, timeout=timeout)
+            return _describe_launch_action(action, action_result)
+
+        if action.action_type == "open_intent":
+            action_result = await self._open_intent(action, timeout=timeout)
+            return _describe_launch_action(action, action_result)
+
+        if action.action_type == "adb_command":
+            return await self._adb_command_runner.execute(action, timeout=timeout)
+
         payload = self._to_mobileworld_action(action)
         response = await self._request_json(
             "POST",
@@ -256,6 +284,177 @@ class MobileWorldBackend:
                 return {"action_type": "navigate_home"}
 
         raise ValueError(f"Unsupported MobileWorld backend action: {action_type}")
+
+    def _build_cmd(self, *args: str) -> list[str]:
+        cmd: list[str] = [self._adb]
+        if self.device:
+            cmd += ["-s", self.device]
+        cmd += list(args)
+        return cmd
+
+    async def _run(self, *args: str, timeout: float = 10.0) -> str:
+        cmd = self._build_cmd(*args)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            raise TimeoutError(f"adb timed out after {timeout}s: {' '.join(cmd)}")
+
+        stdout = stdout_bytes.decode(errors="replace").strip()
+        stderr = stderr_bytes.decode(errors="replace").strip()
+        if proc.returncode != 0:
+            raise AdbError(
+                f"adb failed (exit {proc.returncode}): {' '.join(cmd)}"
+                + (f"\nstderr: {stderr}" if stderr else ""),
+                returncode=proc.returncode,
+                stderr=stderr,
+            )
+        return stdout
+
+    async def _open_deeplink(self, action: Action, *, timeout: float) -> str:
+        uri = action.text or ""
+        if not uri:
+            raise ValueError("open_deeplink requires a URI in action.text")
+        if "\x00" in uri:
+            raise ValueError("open_deeplink URI must not contain NUL bytes")
+
+        remote_args = [
+            "am",
+            "start",
+            "-W",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            uri,
+        ]
+        if action.component:
+            if not _ANDROID_COMPONENT_RE.match(action.component):
+                raise ValueError(
+                    f"Invalid Android component for open_deeplink: {action.component!r}"
+                )
+            remote_args.extend(["-n", action.component])
+        if action.package:
+            if not _ANDROID_PACKAGE_RE.match(action.package):
+                raise ValueError(f"Invalid Android package for open_deeplink: {action.package!r}")
+            remote_args.extend(["-p", action.package])
+
+        return await self._run_am_start_with_fallbacks(
+            remote_args,
+            timeout=timeout,
+            label="open_deeplink",
+        )
+
+    async def _open_intent(self, action: Action, *, timeout: float) -> str:
+        intent_action = action.intent_action or ""
+        if not intent_action:
+            raise ValueError("open_intent requires action.intent_action")
+        if not _ANDROID_INTENT_NAME_RE.match(intent_action):
+            raise ValueError(f"Invalid Android intent action for open_intent: {intent_action!r}")
+
+        remote_args = ["am", "start", "-W", "-a", intent_action]
+        if action.text:
+            if "\x00" in action.text:
+                raise ValueError("open_intent data URI must not contain NUL bytes")
+            remote_args.extend(["-d", action.text])
+        if action.mime_type:
+            if "\x00" in action.mime_type:
+                raise ValueError("open_intent MIME type must not contain NUL bytes")
+            remote_args.extend(["-t", action.mime_type])
+        for category in action.categories:
+            if not _ANDROID_INTENT_NAME_RE.match(category):
+                raise ValueError(f"Invalid Android intent category for open_intent: {category!r}")
+            remote_args.extend(["-c", category])
+        if action.component:
+            if not _ANDROID_COMPONENT_RE.match(action.component):
+                raise ValueError(f"Invalid Android component for open_intent: {action.component!r}")
+            remote_args.extend(["-n", action.component])
+        if action.package:
+            if not _ANDROID_PACKAGE_RE.match(action.package):
+                raise ValueError(f"Invalid Android package for open_intent: {action.package!r}")
+            remote_args.extend(["-p", action.package])
+        if any(_is_android_uri_extra(key, value) for key, value in action.extras):
+            remote_args.append("--grant-read-uri-permission")
+        for key, value in action.extras:
+            if not _ANDROID_EXTRA_KEY_RE.match(key):
+                raise ValueError(f"Invalid Android extra key for open_intent: {key!r}")
+            if isinstance(value, bool):
+                remote_args.extend(["--ez", key, "true" if value else "false"])
+            elif isinstance(value, int) and not isinstance(value, bool):
+                remote_args.extend(
+                    ["--ei" if -2147483648 <= value <= 2147483647 else "--el", key, str(value)]
+                )
+            elif isinstance(value, float):
+                remote_args.extend(["--ef", key, str(value)])
+            else:
+                text_value = "" if value is None else str(value)
+                if "\x00" in text_value:
+                    raise ValueError(f"open_intent extra {key!r} must not contain NUL bytes")
+                if key == _ANDROID_EXTRA_STREAM and _is_android_uri_extra(key, value):
+                    remote_args.extend(["--eu", key, text_value])
+                else:
+                    remote_args.extend(["--es", key, text_value])
+
+        return await self._run_am_start_with_fallbacks(
+            remote_args,
+            timeout=timeout,
+            label="open_intent",
+        )
+
+    async def _run_am_start_with_fallbacks(
+        self,
+        remote_args: list[str],
+        *,
+        timeout: float,
+        label: str,
+    ) -> str:
+        variants: list[tuple[str, list[str]]] = []
+
+        def add_variant(name: str, args: list[str]) -> None:
+            key = tuple(args)
+            if any(tuple(existing) == key for _, existing in variants):
+                return
+            variants.append((name, args))
+
+        add_variant("primary", list(remote_args))
+        add_variant("no_wait", _without_am_start_wait(remote_args))
+        if "-n" in remote_args:
+            implicit_args = _without_am_start_option(remote_args, "-n")
+            add_variant("implicit", implicit_args)
+            add_variant("implicit_no_wait", _without_am_start_wait(implicit_args))
+        if "-p" in remote_args and _am_start_data_scheme(remote_args) in {"http", "https"}:
+            browser_redirect_args = _without_am_start_option(remote_args, "-p")
+            add_variant("browser_redirect", browser_redirect_args)
+            add_variant("browser_redirect_no_wait", _without_am_start_wait(browser_redirect_args))
+
+        errors: list[str] = []
+        for variant_name, args in variants:
+            remote_cmd = " ".join(shlex.quote(arg) for arg in args)
+            try:
+                output = await self._run("shell", remote_cmd, timeout=timeout)
+            except (AdbError, TimeoutError, asyncio.TimeoutError) as exc:
+                errors.append(f"{variant_name}: {type(exc).__name__}: {exc}")
+                continue
+            if _am_start_output_failed(output):
+                errors.append(f"{variant_name}: {output}")
+                continue
+            if variant_name != "primary":
+                logger.info("%s succeeded via %s fallback", label, variant_name)
+            return _annotate_am_start_launch_variant(output, variant_name)
+
+        detail = " | ".join(errors) if errors else "no launch variants attempted"
+        raise AdbError(f"{label} failed: {detail}")
 
     async def _capture_screenshot(self, screenshot_path: Path, *, timeout: float) -> None:
         prefix = screenshot_path.stem
@@ -425,6 +624,12 @@ def _clean_optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _describe_launch_action(action: Action, action_result: str) -> str:
+    description = describe_action(action)
+    marker = _am_start_launch_variant_marker(action_result or "")
+    return f"{description}\n{marker}" if marker else description
 
 
 def _mobileworld_open_app_name(value: str) -> str:

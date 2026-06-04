@@ -479,6 +479,7 @@ class GuiConfig(Base):
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)
+    enable_skill_valid_state: bool = True
     enable_prompt_skill_selection: bool = False
     prompt_skill_top_k: int = 5
     prompt_shortcut_only: bool = False

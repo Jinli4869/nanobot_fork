@@ -61,6 +61,10 @@ COMPOSITE_ACTION_DEFINITIONS: dict[str, tuple[str, str]] = {
         "Tap a visible input field and type text into it",
         '`{"action_type":"click_and_type","coordinate":[x,y],"text":"Hello"}`',
     ),
+    "click_then_type": (
+        "Tap a visible coordinate and type text; set auto_enter true for search submission",
+        '`{"action_type":"click_then_type","coordinate":[x,y],"text":"Hello","auto_enter":false}`',
+    ),
     "click_multi": (
         "Tap multiple visible coordinates in sequence",
         '`{"action_type":"click_multi","coordinates":[[x1,y1],[x2,y2]]}`',
@@ -208,7 +212,12 @@ def build_compact_prompt_parts(
         decision_rules.append(
             "0a. You may use listed composite actions directly as action_type values "
             "when they exactly match the next local UI operation. Do not invent composite "
-            "actions that are not listed in the action table."
+            "actions that are not listed in the action table. When the same screen has "
+            "multiple targets that need the same click and clicking them will not open a "
+            "confirmation dialog, prefer `click_multi` to complete them in one action. "
+            "When the next operation is tapping an input field and typing text, prefer "
+            "`click_and_type` or `click_then_type` instead of separate `click` and "
+            "`input_text` actions."
         )
 
     return CompactPromptParts(

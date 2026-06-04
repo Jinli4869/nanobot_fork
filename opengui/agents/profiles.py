@@ -62,6 +62,7 @@ from opengui.observation import Observation
 SUPPORTED_AGENT_PROFILES: tuple[str, ...] = (
     "general_e2e",
     "mobileworld_general_e2e",
+    "mobileworld_general_e2e_compact_skill",
     "planner_executor",
     "qwen3vl",
     "mai_ui",
@@ -80,6 +81,9 @@ _PROFILE_ALIASES: dict[str | None, str] = {
     "mobileworld-general-e2e": "mobileworld_general_e2e",
     "mw_general_e2e": "mobileworld_general_e2e",
     "mw-general-e2e": "mobileworld_general_e2e",
+    "mobileworld-general-e2e-compact-skill": "mobileworld_general_e2e_compact_skill",
+    "mw_general_e2e_compact_skill": "mobileworld_general_e2e_compact_skill",
+    "mw-general-e2e-compact-skill": "mobileworld_general_e2e_compact_skill",
     "gui-owl-1.5": "gui_owl_1_5",
     "gui_owl": "gui_owl_1_5",
     "venus": "ui_venus",
@@ -126,7 +130,11 @@ def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
 
 
 def _is_general_e2e_profile(profile_name: str | None) -> bool:
-    return canonicalize_agent_profile(profile_name) in {"general_e2e", "mobileworld_general_e2e"}
+    return canonicalize_agent_profile(profile_name) in {
+        "general_e2e",
+        "mobileworld_general_e2e",
+        "mobileworld_general_e2e_compact_skill",
+    }
 
 
 def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str, ...]]:

@@ -9,6 +9,7 @@ import logging
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -28,6 +29,7 @@ from opengui.agent_profiles import (
 from opengui.backends.adb import AdbBackend, AdbError
 from opengui.backends.dry_run import DryRunBackend
 from opengui.backends.hdc import HdcBackend
+from opengui.backends.mobileworld import MobileWorldBackend
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
 from opengui.prompts.system import build_system_prompt
@@ -606,6 +608,81 @@ async def test_adb_open_intent_uses_uri_extra_for_stream_payload() -> None:
 
 
 @pytest.mark.asyncio
+async def test_mobileworld_backend_executes_open_intent_through_adb() -> None:
+    backend = MobileWorldBackend(
+        base_url="http://mobileworld.invalid",
+        device="emulator-test",
+    )
+    calls: list[tuple[tuple[str, ...], float]] = []
+
+    async def fake_run(*args: str, timeout: float = 10.0) -> str:
+        calls.append((args, timeout))
+        return "Starting: Intent { act=android.intent.action.SEND }"
+
+    backend._run = fake_run  # type: ignore[method-assign]
+
+    result = await backend.execute(
+        Action(
+            action_type="open_intent",
+            intent_action="android.intent.action.SEND",
+            package="com.google.android.apps.messaging",
+            mime_type="text/plain",
+            extras=(("android.intent.extra.TEXT", "hello world"),),
+        ),
+        timeout=2.0,
+    )
+
+    assert result == "open intent 'android.intent.action.SEND'\n[opengui_launch_variant=primary]"
+    assert calls == [
+        (
+            (
+                "shell",
+                "am start -W -a android.intent.action.SEND -t text/plain "
+                "-p com.google.android.apps.messaging --es android.intent.extra.TEXT 'hello world'",
+            ),
+            2.0,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mobileworld_backend_executes_open_deeplink_through_adb() -> None:
+    backend = MobileWorldBackend(
+        base_url="http://mobileworld.invalid",
+        device="emulator-test",
+    )
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run(*args: str, timeout: float = 10.0) -> str:
+        del timeout
+        calls.append(args)
+        return "Starting: Intent { act=android.intent.action.VIEW }"
+
+    backend._run = fake_run  # type: ignore[method-assign]
+
+    result = await backend.execute(
+        Action(
+            action_type="open_deeplink",
+            text="https://example.com/search?q=hello world",
+            package="com.android.chrome",
+        ),
+        timeout=2.0,
+    )
+
+    assert result == (
+        "open deeplink 'https://example.com/search?q=hello world'\n"
+        "[opengui_launch_variant=primary]"
+    )
+    assert calls == [
+        (
+            "shell",
+            "am start -W -a android.intent.action.VIEW -d "
+            "'https://example.com/search?q=hello world' -p com.android.chrome",
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_agent_lazy_loads_shortcuts_for_foreground_app_and_updates_tools(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1111,6 +1188,10 @@ def test_build_system_prompt_supports_general_e2e_profile() -> None:
 
 def test_general_e2e_compact_skill_profile_is_alias() -> None:
     assert canonicalize_agent_profile("general_e2e_compact_skill") == "general_e2e"
+    assert (
+        canonicalize_agent_profile("mobileworld_general_e2e_compact_skill")
+        == "mobileworld_general_e2e_compact_skill"
+    )
 
 
 def test_annotate_android_apps_filters_unmapped_packages() -> None:
@@ -1156,6 +1237,7 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
         "Mattermost": "com.mattermost.rnbeta",
         "com.mattermost.rn": "com.mattermost.rnbeta",
         "Mastodon": "org.joinmastodon.android.mastodon",
+        "deskclock": "com.google.android.deskclock",
         "Taobao": "com.testmall.app",
         "com.taobao.taobao": "com.testmall.app",
         "Gallery": "gallery.photomanager.picturegalleryapp.imagegallery",
