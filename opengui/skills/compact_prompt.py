@@ -57,10 +57,6 @@ USE_SKILL_DECISION_RULE = (
 )
 
 COMPOSITE_ACTION_DEFINITIONS: dict[str, tuple[str, str]] = {
-    "click_and_type": (
-        "Tap a visible input field and type text into it",
-        '`{"action_type":"click_and_type","coordinate":[x,y],"text":"Hello"}`',
-    ),
     "click_then_type": (
         "Tap a visible coordinate and type text; set auto_enter true for search submission",
         '`{"action_type":"click_then_type","coordinate":[x,y],"text":"Hello","auto_enter":false}`',
@@ -216,8 +212,7 @@ def build_compact_prompt_parts(
             "multiple targets that need the same click and clicking them will not open a "
             "confirmation dialog, prefer `click_multi` to complete them in one action. "
             "When the next operation is tapping an input field and typing text, prefer "
-            "`click_and_type` or `click_then_type` instead of separate `click` and "
-            "`input_text` actions."
+            "`click_then_type` instead of separate `click` and `input_text` actions."
         )
 
     return CompactPromptParts(
