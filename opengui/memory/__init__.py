@@ -3,6 +3,7 @@
 from opengui.memory.types import MemoryEntry, MemoryType
 from opengui.memory.store import MemoryStore
 from opengui.memory.retrieval import EmbeddingProvider, MemoryRetriever
+from opengui.memory.gui_memory_item import GuiMemoryItem
 
 __all__ = [
     "MemoryEntry",
@@ -10,4 +11,5 @@ __all__ = [
     "MemoryStore",
     "EmbeddingProvider",
     "MemoryRetriever",
+    "GuiMemoryItem",
 ]
