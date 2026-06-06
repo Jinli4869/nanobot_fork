@@ -3215,6 +3215,11 @@ class GuiAgent:
             context=context,
         )
 
+    @staticmethod
+    def _task_without_advisory_hints(task: str) -> str:
+        """Return the user task text without injected advisory memory hints."""
+        return str(task or "").split("\n\nAdvisory hints from past GUI memory:", 1)[0]
+
     def _skill_app_filter(self, task: str, app_hint: str | None) -> str | None:
         platform = self.backend.platform
         if app_hint:
@@ -3222,7 +3227,7 @@ class GuiAgent:
             if normalized and normalized != "unknown":
                 return normalized
         if platform.strip().lower() == "android":
-            return find_android_app_in_text(task)
+            return find_android_app_in_text(self._task_without_advisory_hints(task))
         return None
 
     async def _build_prompt_skill_parts(
@@ -3256,6 +3261,7 @@ class GuiAgent:
         )
         self._prompt_composite_aliases = {action.alias for action in composite_actions}
 
+        skill_query = self._task_without_advisory_hints(task)
         retrieved_infos = []
         if self._prompt_skill_top_k > 0:
             search_k = max(
@@ -3265,7 +3271,7 @@ class GuiAgent:
                 else self._prompt_skill_top_k,
             )
             results = await self._skill_library.search(
-                task,
+                skill_query,
                 platform=self.backend.platform,
                 app=app,
                 top_k=search_k,

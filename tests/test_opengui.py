@@ -1293,6 +1293,14 @@ def test_gui_agent_skill_app_filter_prefers_hint_then_task_text(tmp_path: Path) 
     assert agent._skill_app_filter("In YouTube, search for a video.", None) == "com.google.android.youtube"
     assert agent._skill_app_filter("Search for a video.", "B站") == "tv.danmaku.bili"
     assert agent._skill_app_filter("Search for a video.", None) is None
+    task_with_hints = (
+        "Send the file 'waiver.jpg' as an email attachment to bob@gmail.com. "
+        "Title the email 'Updated waiver'.\n\n"
+        "Advisory hints from past GUI memory:\n"
+        "- [opengui/gui_memory:org.joinmastodon.android.mastodon:failure] "
+        "Locate server features within Settings > Server"
+    )
+    assert agent._skill_app_filter(task_with_hints, None) == "com.gmailclone"
 
 
 def test_build_system_prompt_android_apps_shows_display_names_only() -> None:
