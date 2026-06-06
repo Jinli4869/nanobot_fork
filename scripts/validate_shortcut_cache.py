@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import copy
 import json
 import os
 import re
@@ -418,6 +419,13 @@ class ProbePlan:
     variant_limit: int
 
 
+@dataclass(frozen=True)
+class ShortcutPostprocessItem:
+    record: dict[str, Any]
+    result: ProbeResult
+    plan: ProbePlan
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cache", type=Path, required=True, help="Path to shortcut_cache/<package>.json")
@@ -438,6 +446,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--llm-api-key", default="")
     parser.add_argument("--llm-api-key-env", default="OPENAI_API_KEY")
     parser.add_argument("--llm-temperature", type=float, default=0.0)
+    parser.add_argument(
+        "--shortcut-postprocess",
+        choices=("off", "rules", "llm"),
+        default="rules",
+        help=(
+            "Post-process validated shortcut records before promotion. "
+            "'rules' generalizes known probe payloads and merges duplicate pages; "
+            "'llm' also asks the verifier LLM to refine names/descriptions."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1668,6 +1686,7 @@ def write_sidecar(
     promotions: list[dict[str, Any]],
     probe_plans: list[ProbePlan],
     stopped_early: str | None = None,
+    postprocess_report: dict[str, Any] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -1680,6 +1699,7 @@ def write_sidecar(
         "execute": args.execute,
         "verifier_model": args.llm_model or None,
         "stopped_early": stopped_early,
+        "postprocess": postprocess_report or {},
         "created_at": time.time(),
         "results": [
             {
@@ -1704,6 +1724,442 @@ def result_probe_query(result: ProbeResult, args: argparse.Namespace) -> str:
     if result.probe_plan:
         return str(result.probe_plan.get("query") or "")
     return args.query
+
+
+# ---------------------------------------------------------------------------
+# Post-processing pipeline
+# ---------------------------------------------------------------------------
+
+
+def _plan_for_result(result: ProbeResult, probe_plans: list[ProbePlan]) -> ProbePlan:
+    """Match a result's probe_plan dict back to the original ProbePlan object."""
+    plan_record = result.probe_plan or {}
+    for plan in probe_plans:
+        if probe_plan_to_dict(plan) == plan_record:
+            return plan
+    return ProbePlan(
+        capability=str(plan_record.get("capability") or "manual"),
+        task=str(plan_record.get("task") or ""),
+        query=str(plan_record.get("query") or ""),
+        candidate_limit=int(plan_record.get("candidate_limit") or 1),
+        variant_limit=int(plan_record.get("variant_limit") or 1),
+    )
+
+
+def postprocess_validation_records(
+    args: argparse.Namespace,
+    items: list[ShortcutPostprocessItem],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Run the post-processing pipeline: generalize → merge → dedupe → optional LLM refine."""
+    mode = str(getattr(args, "shortcut_postprocess", "rules") or "rules").strip().lower()
+    raw_records = [copy.deepcopy(item.record) for item in items]
+    report: dict[str, Any] = {
+        "mode": mode,
+        "input_count": len(raw_records),
+        "rule_changes": [],
+        "merged_groups": [],
+        "llm": None,
+    }
+    if mode == "off":
+        records = dedupe_validation_records(raw_records)
+        records = force_shortcut_skip_valid_state(records)
+        report["output_count"] = len(records)
+        return records, report
+
+    generalized: list[dict[str, Any]] = []
+    for item in items:
+        record, changes = generalize_shortcut_record(item.record, item.result, item.plan)
+        generalized.append(record)
+        report["rule_changes"].extend(changes)
+
+    merged, merge_report = merge_shortcut_records(generalized)
+    report["merged_groups"] = merge_report
+    records = dedupe_validation_records(merged)
+
+    if mode == "llm":
+        records, llm_report = refine_shortcut_records_with_llm(args, records)
+        report["llm"] = llm_report
+
+    records = force_shortcut_skip_valid_state(records)
+    report["output_count"] = len(records)
+    return records, report
+
+
+def generalize_shortcut_record(
+    record: dict[str, Any],
+    result: ProbeResult,
+    plan: ProbePlan,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Apply rule-based generalization to a single validation record."""
+    updated = copy.deepcopy(record)
+    changes: list[dict[str, Any]] = []
+    capability = str(getattr(plan, "capability", "") or "")
+    package = str(updated.get("package") or "")
+    kind = str(updated.get("kind") or "")
+
+    # Chrome browser probe URL → {{url}}
+    if (
+        package == "com.android.chrome"
+        and kind == "deeplink"
+        and _is_fixed_browser_probe_url(updated.get("uri_template"), capability)
+    ):
+        before = copy.deepcopy(updated)
+        updated["uri_template"] = "{{url}}"
+        updated["parameters"] = _merge_record_parameters(updated, ["url"])
+        updated["name"] = "chrome_open_url"
+        updated["description"] = "Open an arbitrary full URL in Chrome"
+        updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+        changes.append(_postprocess_change("generalize_browser_url", before, updated))
+
+    # Chrome MEDIA_SEARCH → chrome_open_search_page
+    if _is_chrome_media_search_record(updated):
+        before = copy.deepcopy(updated)
+        updated["name"] = "chrome_open_search_page"
+        updated["description"] = "Open Chrome search UI without a prefilled query"
+        updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+        if before != updated:
+            changes.append(_postprocess_change("rename_chrome_media_search", before, updated))
+
+    # Deeplink with {{query}} → ensure query parameter
+    if kind == "deeplink" and "{{query}}" in str(updated.get("uri_template") or ""):
+        before = copy.deepcopy(updated)
+        updated["parameters"] = _merge_record_parameters(updated, ["query"])
+        if package == "com.android.chrome":
+            updated["name"] = "chrome_search"
+            updated["description"] = "Search the web in Chrome"
+            updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+        if before != updated:
+            changes.append(_postprocess_change("ensure_query_parameter", before, updated))
+
+    # Google Messages SMS compose → generalize recipient + body
+    if _is_messages_sms_compose_record(updated):
+        before = copy.deepcopy(updated)
+        updated["uri_template"] = _generalize_smsto_uri(updated.get("uri_template"))
+        updated["extras"] = _replace_or_add_extra(
+            updated.get("extras"),
+            "sms_body",
+            "{{body}}",
+        )
+        updated["parameters"] = _merge_record_parameters(updated, ["recipient", "body"])
+        updated["name"] = "messages_compose_sms"
+        updated["description"] = "Open SMS compose page with recipient and message body prefilled"
+        updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+        if before != updated:
+            changes.append(_postprocess_change("generalize_sms_body", before, updated))
+
+    # Media picker → generalize mime_type
+    if _is_media_picker_record(updated):
+        before = copy.deepcopy(updated)
+        params = _normalized_result_parameters(result)
+        if "mime_type" in params:
+            updated["mime_type"] = "{{mime_type}}"
+            updated["parameters"] = _merge_record_parameters(updated, ["mime_type"])
+            updated["name"] = _media_picker_name(updated)
+            updated["description"] = _media_picker_description(updated)
+            updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+        if before != updated:
+            changes.append(_postprocess_change("generalize_media_picker_mime", before, updated))
+
+    updated["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+    return updated, changes
+
+
+def merge_shortcut_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Group and merge media picker records; pass through everything else."""
+    media_groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+    passthrough: list[dict[str, Any]] = []
+    for record in records:
+        if _is_media_picker_record(record):
+            media_groups.setdefault(_media_picker_merge_key(record), []).append(record)
+        else:
+            passthrough.append(record)
+
+    merged = list(passthrough)
+    report: list[dict[str, Any]] = []
+    for key, group in media_groups.items():
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        merged_record = merge_media_picker_group(group)
+        merged.append(merged_record)
+        report.append(
+            {
+                "type": "merge_media_picker",
+                "key": list(key),
+                "input_count": len(group),
+                "input_names": [record.get("name") for record in group],
+                "output_name": merged_record.get("name"),
+                "output_parameters": merged_record.get("parameters", []),
+            }
+        )
+
+    return merged, report
+
+
+def merge_media_picker_group(group: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge a group of media picker records that share the same merge key."""
+    preferred = sorted(
+        group,
+        key=lambda record: (
+            str(record.get("mime_type") or "") != "image/*",
+            str(record.get("name") or ""),
+        ),
+    )[0]
+    merged = copy.deepcopy(preferred)
+    mime_types = sorted(
+        {
+            str(record.get("mime_type") or "").strip()
+            for record in group
+            if str(record.get("mime_type") or "").strip()
+        }
+    )
+    if len(mime_types) > 1:
+        merged["mime_type"] = "{{mime_type}}"
+        merged["parameters"] = _merge_record_parameters(merged, ["mime_type"])
+    merged["name"] = _media_picker_name(merged)
+    merged["description"] = _media_picker_description(merged)
+    merged["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+    return merged
+
+
+def refine_shortcut_records_with_llm(
+    args: argparse.Namespace,
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Optionally refine shortcut skill names/descriptions with an LLM pass."""
+    report: dict[str, Any] = {"enabled": True, "applied": 0, "error": None}
+    if not verifier_enabled(args):
+        report["enabled"] = False
+        report["error"] = "--shortcut-postprocess llm requires --llm-base-url and --llm-model"
+        return records, report
+    api_key = verifier_api_key(args)
+    if not api_key:
+        report["enabled"] = False
+        report["error"] = "LLM postprocess requested but API key is missing"
+        return records, report
+
+    compact_records = [
+        {
+            "index": index,
+            "package": record.get("package"),
+            "kind": record.get("kind"),
+            "name": record.get("name"),
+            "description": record.get("description"),
+            "parameters": record.get("parameters", []),
+            "valid_state": SHORTCUT_SKIP_VALID_STATE,
+            "uri_template": record.get("uri_template"),
+            "intent_action": record.get("intent_action"),
+            "component": record.get("component"),
+            "mime_type": record.get("mime_type"),
+            "extras": record.get("extras"),
+        }
+        for index, record in enumerate(records)
+    ]
+    prompt = {
+        "task": (
+            "Refine Android shortcut skill metadata after validation. "
+            "Return JSON only: {\"records\":[{\"index\":0,\"name\":\"...\","
+            "\"description\":\"...\"}]}. "
+            "Do not change payload fields, packages, status, parameters, valid_state, or indices. "
+            f"All promoted shortcut records must keep valid_state={SHORTCUT_SKIP_VALID_STATE!r}. "
+            "Prefer concise distinct names and descriptions that help an agent choose the right shortcut."
+        ),
+        "records": compact_records,
+    }
+    try:
+        from openai import OpenAI
+
+        client = OpenAI(base_url=args.llm_base_url, api_key=api_key)
+        response = client.chat.completions.create(
+            model=args.llm_model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You refine shortcut skill names/descriptions. Return only JSON.",
+                },
+                {"role": "user", "content": json.dumps(prompt, ensure_ascii=False)},
+            ],
+            temperature=args.llm_temperature,
+        )
+        payload = parse_json_object(response.choices[0].message.content or "")
+    except Exception as exc:
+        report["error"] = str(exc)[:300]
+        return records, report
+
+    proposals = payload.get("records") if isinstance(payload, dict) else None
+    if not isinstance(proposals, list):
+        report["error"] = "LLM response did not include records list"
+        return records, report
+
+    updated = [copy.deepcopy(record) for record in records]
+    for proposal in proposals:
+        if not isinstance(proposal, dict):
+            continue
+        index = proposal.get("index")
+        if not isinstance(index, int) or index < 0 or index >= len(updated):
+            continue
+        for key in ("name", "description"):
+            value = proposal.get(key)
+            if isinstance(value, str) and value.strip():
+                if key == "name":
+                    value = _safe_skill_name(value)
+                    if not value:
+                        continue
+                updated[index][key] = value.strip()
+        updated[index]["valid_state"] = SHORTCUT_SKIP_VALID_STATE
+        report["applied"] += 1
+
+    return force_shortcut_skip_valid_state(updated), report
+
+
+# ---------------------------------------------------------------------------
+# Post-processing helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_fixed_browser_probe_url(uri: Any, capability: str) -> bool:
+    text = str(uri or "").strip()
+    if capability != "browser_web":
+        return False
+    return text in {"https://example.com", "http://example.com", "https://www.example.com"}
+
+
+def _is_media_picker_record(record: dict[str, Any]) -> bool:
+    action = str(record.get("intent_action") or record.get("action") or "")
+    component = str(record.get("component") or "")
+    mime_type = str(record.get("mime_type") or "")
+    return (
+        str(record.get("kind") or "") == "intent"
+        and action in {"android.intent.action.GET_CONTENT", "android.intent.action.PICK"}
+        and bool(component)
+        and bool(mime_type)
+    )
+
+
+def _is_chrome_media_search_record(record: dict[str, Any]) -> bool:
+    action = str(record.get("intent_action") or record.get("action") or "")
+    return (
+        str(record.get("package") or "") == "com.android.chrome"
+        and str(record.get("kind") or "") == "intent"
+        and action == "android.intent.action.MEDIA_SEARCH"
+    )
+
+
+def _is_messages_sms_compose_record(record: dict[str, Any]) -> bool:
+    action = str(record.get("intent_action") or record.get("action") or "")
+    uri = str(record.get("uri_template") or "")
+    return (
+        str(record.get("package") or "") == "com.google.android.apps.messaging"
+        and str(record.get("kind") or "") == "intent"
+        and action == "android.intent.action.SENDTO"
+        and (uri.startswith("smsto:") or uri.startswith("sms:"))
+    )
+
+
+def _generalize_smsto_uri(uri_template: Any) -> str:
+    uri = str(uri_template or "")
+    if uri.startswith("smsto:") or uri.startswith("sms:"):
+        scheme = uri.split(":", 1)[0]
+        return f"{scheme}:{{{{recipient}}}}"
+    return "smsto:{{recipient}}"
+
+
+def _replace_or_add_extra(extras: Any, key: str, value: Any) -> list[list[Any]]:
+    output: list[list[Any]] = []
+    replaced = False
+    for item in extras or []:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        current_key = str(item[0])
+        if current_key == key:
+            output.append([current_key, value])
+            replaced = True
+        else:
+            output.append([item[0], item[1]])
+    if not replaced:
+        output.append([key, value])
+    return output
+
+
+def _media_picker_merge_key(record: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        record.get("package") or "",
+        record.get("kind") or "",
+        record.get("intent_action") or record.get("action") or "",
+        record.get("component") or "",
+        json.dumps(record.get("categories") or [], ensure_ascii=False, sort_keys=True),
+        json.dumps(record.get("extras") or [], ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _media_picker_name(record: dict[str, Any]) -> str:
+    package = str(record.get("package") or "")
+    if package == "gallery.photomanager.picturegalleryapp.imagegallery":
+        return "gallery_pick_media"
+    if package == "com.google.android.documentsui":
+        return "documents_pick_file"
+    return _safe_skill_name(f"{package.rsplit('.', 1)[-1]}_pick_media")
+
+
+def _media_picker_description(record: dict[str, Any]) -> str:
+    package = str(record.get("package") or "")
+    if package == "gallery.photomanager.picturegalleryapp.imagegallery":
+        return "Open Gallery media picker for a MIME type such as image/* or video/*"
+    if package == "com.google.android.documentsui":
+        return "Open Android file picker"
+    return "Open media picker"
+
+
+def _merge_record_parameters(record: dict[str, Any], names: list[str]) -> list[str]:
+    merged: list[str] = []
+    for name in [*record.get("parameters", []), *names]:
+        text = str(name).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
+
+
+def _normalized_result_parameters(result: ProbeResult) -> set[str]:
+    output: set[str] = set()
+    for name in getattr(result, "parameters", []) or []:
+        text = str(name).strip()
+        if text:
+            output.add(text)
+    return output
+
+
+def _postprocess_change(change_type: str, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": change_type,
+        "before": _compact_record_for_report(before),
+        "after": _compact_record_for_report(after),
+    }
+
+
+def _compact_record_for_report(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "package": record.get("package"),
+        "kind": record.get("kind"),
+        "name": record.get("name"),
+        "parameters": record.get("parameters", []),
+        "uri_template": record.get("uri_template"),
+        "intent_action": record.get("intent_action"),
+        "component": record.get("component"),
+        "mime_type": record.get("mime_type"),
+        "extras": record.get("extras", []),
+        "description": record.get("description"),
+    }
+
+
+def _safe_skill_name(value: str) -> str:
+    text = re.sub(r"\W+", "_", value.strip().lower()).strip("_")
+    if not text:
+        return ""
+    if text[0].isdigit():
+        text = f"skill_{text}"
+    return text[:60]
 
 
 def main() -> None:
@@ -1740,12 +2196,19 @@ def main() -> None:
         if stopped_early:
             break
 
-    validation_records = dedupe_validation_records([
-        record
-        for result in results
-        if (record := result_to_validation_record(result, query=result_probe_query(result, args))) is not None
-        and (record["status"] == "page_validated" or (args.allow_launchable_promote and record["status"] == "launchable"))
-    ])
+    validation_items: list[ShortcutPostprocessItem] = []
+    for result in results:
+        record = result_to_validation_record(result, query=result_probe_query(result, args))
+        if record is None:
+            continue
+        if record["status"] != "page_validated" and not (
+            args.allow_launchable_promote and record["status"] == "launchable"
+        ):
+            continue
+        plan = _plan_for_result(result, probe_plans)
+        validation_items.append(ShortcutPostprocessItem(record=record, result=result, plan=plan))
+
+    validation_records, postprocess_report = postprocess_validation_records(args, validation_items)
     promotions = asyncio.run(promote_results(args, validation_records))
     write_sidecar(
         path=sidecar_path,
@@ -1755,6 +2218,7 @@ def main() -> None:
         promotions=promotions,
         probe_plans=probe_plans,
         stopped_early=stopped_early,
+        postprocess_report=postprocess_report,
     )
 
     print(f"cache: {args.cache}")
@@ -1765,6 +2229,8 @@ def main() -> None:
     print("status_counts:", status_counts(results))
     if stopped_early:
         print(f"stopped_early: {stopped_early}")
+    if postprocess_report.get("mode") != "off":
+        print(f"postprocess: input={postprocess_report.get('input_count')} output={postprocess_report.get('output_count')}")
     if promotions:
         print("promotions:", json.dumps(promotions, ensure_ascii=False, indent=2))
 
