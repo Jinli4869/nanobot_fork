@@ -53,6 +53,10 @@ Note:
 
 4. Text Operations:
    - You MUST first click the input box to activate it before typing the text.
+{% if extra_action_rows and 'click_then_type' in extra_action_rows -%}
+   - If `click_then_type` is listed in the action table and the target text field is visible, use `click_then_type` as the single action to activate the field and type known text.
+   - Do NOT split this into `click` followed by `input_text` unless the field is already focused, existing text must be cleared/selected first, tapping the field opens an intermediate picker/suggestion flow that must be observed, or the text depends on the result of the click.
+{% endif -%}
    - For text manipulation:
      1. Long-press to select
      2. Use selection bar options (Copy/Paste/Select All)

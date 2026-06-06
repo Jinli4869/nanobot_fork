@@ -58,7 +58,7 @@ USE_SKILL_DECISION_RULE = (
 
 COMPOSITE_ACTION_DEFINITIONS: dict[str, tuple[str, str]] = {
     "click_then_type": (
-        "Tap a visible coordinate and type text; set auto_enter true for search submission",
+        "Preferred one-step action for visible text fields: tap a coordinate and type text. Use auto_enter true only for search submission.",
         '`{"action_type":"click_then_type","coordinate":[x,y],"text":"Hello","auto_enter":false}`',
     ),
     "click_multi": (
@@ -158,11 +158,10 @@ def composite_action_infos_from_skills(
         if alias is None or alias in seen:
             continue
         description, example = COMPOSITE_ACTION_DEFINITIONS[alias]
-        skill_description = str(getattr(skill, "description", "") or "").strip()
         out.append(
             CompositeActionInfo(
                 alias=alias,
-                description=skill_description or description,
+                description=description,
                 example=example,
                 source_skill_id=str(getattr(skill, "skill_id", "") or "") or None,
             )
@@ -211,8 +210,12 @@ def build_compact_prompt_parts(
             "actions that are not listed in the action table. When the same screen has "
             "multiple targets that need the same click and clicking them will not open a "
             "confirmation dialog, prefer `click_multi` to complete them in one action. "
-            "When the next operation is tapping an input field and typing text, prefer "
-            "`click_then_type` instead of separate `click` and `input_text` actions."
+            "When the next local operation is tapping a visible text field and entering "
+            "known text, default to `click_then_type` instead of separate `click` and "
+            "`input_text` actions. Use separate `click` and `input_text` only when the "
+            "field is already focused, the existing text must be cleared or selected, "
+            "tapping opens a picker/suggestion flow that must be observed first, or "
+            "the typed value depends on the result of that click."
         )
 
     return CompactPromptParts(
