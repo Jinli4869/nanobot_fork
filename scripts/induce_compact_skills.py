@@ -1,55 +1,69 @@
 #!/usr/bin/env python3
-"""Induce compact, parameterized GUI skills from successful MobileWorld trajectories.
+"""Induce compact, parameterized GUI skills from successful MobileWorld traces.
+
+This script no longer reimplements its own extraction prompt/filter.  Instead it
+reuses the mature :class:`opengui.skills.extractor.SkillExtractor` pipeline — the
+same codegen-driven structured evidence, fixed/parameter handling, ``state_contract``
+guards, quality loop, and contract alignment that the online extractor uses — and
+then applies a thin *compact* post-process on top:
+
+* keep only skills that fit the compact envelope (>=2 and <= ``--max-steps`` steps,
+  ``open_app`` only as the first step, at most ``--max-scroll-steps`` scrolls);
+* re-tag as ``["compact", "compact_extracted"]`` with ``compact:<app>:<name>`` ids
+  (step ``valid_state`` / ``state_contract`` guards are preserved verbatim — skipping
+  small-model NL validation for compact skills is a runtime tier policy, not baked
+  into the definition, so ``optional`` popup steps keep their conditional guard);
+* cluster across trajectories by ``(app, action sequence, contract signature,
+  parameter slots)`` and record ``success_count`` so high-frequency, repeatedly
+  successful skills are preferred at retrieval time.
+
+The target app is taken from the trajectory itself (``codegen`` app resolution),
+not guessed from the task name, so generated skills actually match at retrieval.
 
 Usage::
 
-    # Extract skills from a single task trace (dry-run)
-    python scripts/induce_compact_skills.py \\
-        --trace-dir ~/Project/MobileWorld_fork/traj_logs/v2/SomeTask \\
-        --dry-run
+    # Inspect the structured evidence that would be sent to the extractor
+    python scripts/induce_compact_skills.py --trace-dir /path/to/TaskDir --dry-run
 
-    # Batch-extract from all successful tasks in a trace root
+    # Batch-extract from all successful tasks under a trace root
     python scripts/induce_compact_skills.py \\
         --trace-root ~/Project/MobileWorld_fork/traj_logs/v2 \\
-        --output skills.py \\
-        --model deepseek-v4-pro \\
-        --base-url https://...
+        --output compact_skills.py \\
+        --model deepseek-v4-pro --base-url https://...
+
+Note: the extractor sends screenshots alongside the structured trajectory, so the
+``--model`` must be vision-capable.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import re
 import sys
-import time
-from dataclasses import dataclass, field
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-# -- project imports ----------------------------------------------------------
-try:
-    from opengui.skills.flat import CODE_HEADER, compile_flat_skills, export_skills_to_source
-except ImportError:
-    CODE_HEADER = "from opengui.skills.flat import C, R, action, skill, tag"
+from opengui.action import normalize_action_type
+from opengui.interfaces import LLMResponse
+from opengui.skills.data import Skill
+from opengui.skills.extractor import SkillExtractor
+from opengui.skills.flat import compile_flat_skills, export_skills_to_source
+from opengui.skills.state_contract import state_contract_fingerprint
+from opengui.skills.trajectory_codegen import codegen_to_extraction_text, codegen_trajectory
 
-# -- reuse trajectory formatting from induce_gui_memory -----------------------
+# Trace discovery / outcome helpers are shared with the gui-memory inducer.
 try:
     from scripts.induce_gui_memory import (
-        _event_type,
-        _extract_thought,
         _find_gui_task_traces,
-        _find_task_goal,
-        _load_jsonl,
-        _step_ui_hint,
         _trace_step_count,
-        _truncate,
         get_task_outcome,
     )
-except ImportError:
-    # Fallback copies for standalone use
+except ImportError:  # pragma: no cover - standalone fallback
+    import json
+
     def _load_jsonl(path: Path) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
         for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -64,52 +78,6 @@ except ImportError:
 
     def _event_type(event: dict[str, Any]) -> str:
         return str(event.get("type") or event.get("event") or "")
-
-    def _find_task_goal(events: list[dict[str, Any]]) -> str:
-        for e in events:
-            if _event_type(e) == "metadata":
-                return str(e.get("task") or "")
-        return ""
-
-    def _extract_thought(model_output: Any) -> str:
-        if isinstance(model_output, dict):
-            text = str(model_output.get("raw_content") or model_output.get("action_text") or "")
-        else:
-            text = str(model_output or "")
-        for delimiter in ("\nAction:", "Action:"):
-            idx = text.find(delimiter)
-            if idx >= 0:
-                text = text[:idx]
-                break
-        return text.replace("Thought:", "").strip()
-
-    def _truncate(text: str, max_chars: int) -> str:
-        if len(text) <= max_chars:
-            return text
-        return text[: max_chars - 3] + "..."
-
-    def _step_ui_hint(extra: dict[str, Any], *, max_chars: int) -> str:
-        if not isinstance(extra, dict):
-            return ""
-        values: list[str] = []
-        for key in ("clickable_text", "visible_text", "content_desc"):
-            raw = extra.get(key)
-            if not isinstance(raw, list):
-                continue
-            for v in raw:
-                text = str(v).strip()
-                if text:
-                    values.append(text)
-        deduped: list[str] = []
-        seen: set[str] = set()
-        for v in values:
-            if v in seen:
-                continue
-            deduped.append(v)
-            seen.add(v)
-            if len(deduped) >= 12:
-                break
-        return _truncate(", ".join(deduped), max_chars) if deduped else ""
 
     def _find_gui_task_traces(task_dir: Path) -> list[Path]:
         run_dir = task_dir / "nanobot_gui_task_runs"
@@ -142,455 +110,297 @@ except ImportError:
         return ("success", "") if score >= 1.0 else ("failure", f"score={score}")
 
 
-# ---------------------------------------------------------------------------
-# Prompt template
-# ---------------------------------------------------------------------------
-
-SKILL_SYSTEM_PROMPT = f"""\
-You are an expert in Android GUI automation. Given a successful trajectory,
-extract up to 3 compact, parameterized GUI skills that the agent can reuse
-as shortcuts for common same-screen operations.
-
-## Target format
-{CODE_HEADER}
-
-@skill(app="com.example", platform="android",
-       tags=["compact", "compact_extracted"],
-       skill_id="compact:com.example:short_name",
-       name="short_name",
-       description="When to use: ...")
-async def short_name(device, param1, param2):
-    await action("tap", target="stable button label",
-                 valid_state="No need to verify")
-    await action("input_text", target="{{{{param1}}}}",
-                 valid_state="No need to verify")
-    await action("tap", target="another stable label",
-                 valid_state="No need to verify")
-    await action("input_text", target="{{{{param2}}}}",
-                 valid_state="No need to verify")
-
-## What is a GOOD compact skill?
-A fixed 2-4 step shortcut that operates entirely on ONE screen.  Every
-task-specific value (email address, subject text, search query) becomes a
-function parameter with {{{{double_braces}}}} placeholders.  Stable UI
-labels (button names, field labels, toolbar icons) stay as literal strings.
-
-### GOOD examples (extract these):
-  - fill_email_composer(device, to_email, subject):
-    tap("To field") → input_text({{to_email}}) → tap("Subject field")
-    → input_text({{subject}})
-
-### BAD skills (DO NOT extract):
-  - Single-action skills (just one tap or one input_text)
-  - Skills containing open_app, scroll, swipe, drag, back, or home
-  - App initialisation: dismissing dialogs, setup screens, clearing popups
-  - Final actions: send, publish, post, purchase, checkout, delete
-  - Skills with 7+ steps
-
-## Flat DSL rules
-  - Output ONLY valid Python.  No markdown fences, no explanation text.
-  - Use ONLY `await action(...)` calls in function bodies.
-  - Action types: tap, long_press, double_tap, input_text, enter, wait.
-  - Parameters in targets use {{{{name}}}} syntax (double braces).
-  - Use valid_state="No need to verify" for EVERY step.
-  - Do NOT use state_contract, fixed, fixed_values, or C.from_dict.
-  - skill_id format: compact:<app_package>:<short_name>
-  - description format: "When to use: <one sentence>"
-  - Tags: ["compact", "compact_extracted"]
-  - Extract 0 to 3 skills.  If the trajectory has no reusable same-screen
-    subsequence, output nothing.
-"""
+_COMPACT_TAGS: tuple[str, ...] = ("compact", "compact_extracted")
+_SCROLL_ACTIONS = frozenset({"scroll", "swipe", "drag"})
+_PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
 
 
 # ---------------------------------------------------------------------------
-# Trajectory formatting for skill induction
+# LLM adapter
 # ---------------------------------------------------------------------------
 
-def format_trajectory_for_skill(
-    trace_path: Path,
-    *,
-    max_steps_full: int = 30,
-    keep_first: int = 3,
-    keep_last: int = 10,
-    thought_max_chars: int = 200,
-    ui_hint_max_chars: int = 240,
-) -> str | None:
-    """Convert a trace into LLM-readable text for skill extraction.
 
-    Same as ``format_trajectory_compact`` but enriched with action
-    details that help the LLM identify stable UI controls.
+class _OpenAICompatLLM:
+    """Minimal :class:`opengui.interfaces.LLMProvider` over an OpenAI-compatible API.
+
+    The extractor only ever calls ``chat(messages)`` with a single user message
+    that already contains the rendered prompt and screenshots, so this adapter
+    only has to forward that payload and surface token usage.
     """
-    events = _load_jsonl(trace_path)
-    if not events:
-        return None
 
-    task_goal = _find_task_goal(events) or trace_path.stem
-    steps = [e for e in events if _event_type(e) == "step"]
+    def __init__(self, *, api_key: str, base_url: str, model: str, max_tokens: int,
+                 temperature: float = 0.1) -> None:
+        from openai import AsyncOpenAI
 
-    step_lines: list[str] = []
-    for step in steps:
-        action = step.get("action") or {}
-        atype = action.get("action_type", "?")
-        observation = step.get("observation") or {}
-        obs_app = observation.get("foreground_app", "") or "?"
-        thought = _extract_thought(step.get("model_output") or "")
-        extra = observation.get("extra") or {}
-        ui_hint = _step_ui_hint(extra, max_chars=ui_hint_max_chars)
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+        self._model = model
+        self._max_tokens = max_tokens
+        self._temperature = temperature
 
-        # Include fixed-value hints: coordinates and text
-        params = action.get("action_params") or {}
-        fixed_detail = ""
-        if params:
-            parts = []
-            if "text" in params and str(params["text"]):
-                parts.append(f"text={_truncate(str(params['text']), 60)}")
-            if "x" in params and "y" in params:
-                parts.append(f"pos=({params['x']}, {params['y']})")
-            if parts:
-                fixed_detail = " | " + ", ".join(parts)
-
-        if len(thought) > thought_max_chars:
-            thought = thought[: thought_max_chars - 3] + "..."
-
-        idx = step.get("step_index", len(step_lines))
-        line = f"  Step {idx} [{atype}] ({obs_app}): {thought}"
-        if ui_hint:
-            line += f" | UI: {ui_hint}"
-        if fixed_detail:
-            line += fixed_detail
-        step_lines.append(line)
-
-    if not step_lines:
-        return None
-
-    if len(step_lines) > max_steps_full:
-        omitted = len(step_lines) - keep_first - keep_last
-        step_lines = (
-            step_lines[:keep_first]
-            + [f"  ... ({omitted} steps omitted) ..."]
-            + step_lines[-keep_last:]
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> LLMResponse:
+        response = await self._client.chat.completions.create(
+            model=model or self._model,
+            messages=messages,
+            max_tokens=max_tokens or self._max_tokens,
+            temperature=self._temperature,
+        )
+        usage = getattr(response, "usage", None)
+        usage_dict: dict[str, int] = {}
+        if usage is not None:
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = getattr(usage, key, None)
+                if value is not None:
+                    usage_dict[key] = int(value)
+        return LLMResponse(
+            content=response.choices[0].message.content or "",
+            tool_calls=None,
+            raw=response,
+            usage=usage_dict,
         )
 
-    parts: list[str] = [
-        f"Task: {task_goal}",
-        "",
-        "Action sequence:",
-        *step_lines,
-    ]
-
-    # Include app info from metadata
-    for e in events:
-        if _event_type(e) == "metadata":
-            fg = (e.get("foreground_app") or "").strip()
-            if fg:
-                parts.insert(1, f"Foreground app: {fg}")
-            break
-
-    return "\n".join(parts)
-
 
 # ---------------------------------------------------------------------------
-# Output processing
+# Compact post-process
 # ---------------------------------------------------------------------------
 
-def clean_skill_code(text: str) -> str:
-    """Strip markdown fences and ensure CODE_HEADER is present."""
-    t = (text or "").strip()
-    if t.startswith("```"):
-        lines = t.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        t = "\n".join(lines).strip()
 
-    if not t or t.upper() == "NO_SKILL":
-        return f"{CODE_HEADER}\n"
-
-    if not t.startswith("from opengui.skills.flat import"):
-        t = f"{CODE_HEADER}\n\n{t}"
-    return t.rstrip() + "\n"
-
-
-# ---------------------------------------------------------------------------
-# Quality filter (adapted from compact_extractor quality_report)
-# ---------------------------------------------------------------------------
-
-SUPPORTED_ACTIONS = {
-    "tap", "long_press", "double_tap", "input_text", "enter", "wait",
-}
-DENY_FINAL_WORDS = {
-    "send", "publish", "post", "purchase", "checkout", "pay",
-    "delete", "unfollow",
-}
-
-
-def filter_skills(
-    skills: list[Any],
+def compactify_skill(
+    skill: Skill,
     *,
-    max_steps: int = 8,
-    task_goal: str = "",
-) -> tuple[list[Any], dict[str, list[str]]]:
-    """Filter out poorly-defined skills. Returns (accepted, report)."""
-    report: dict[str, list[str]] = {}
-    accepted: list[Any] = []
+    max_steps: int,
+    max_scroll_steps: int,
+) -> Skill | None:
+    """Return a compact-tagged copy of *skill*, or ``None`` if it does not fit.
 
+    A skill fits the compact envelope when it has 2..``max_steps`` steps, uses
+    ``open_app`` only as the first step, and scrolls at most ``max_scroll_steps``
+    times.
+
+    Step guards (``valid_state`` and ``state_contract``) are preserved verbatim.
+    Whether to *skip* small-model NL ``valid_state`` validation for compact skills
+    is a runtime policy (tag-based tiering in the executor), not something baked
+    into the skill definition — rewriting ``valid_state`` here would strip the only
+    guard from uncontracted and ``optional=True`` (transient popup) steps and make
+    them execute unconditionally.
+    """
+    steps = tuple(getattr(skill, "steps", ()) or ())
+    if not 2 <= len(steps) <= max_steps:
+        return None
+
+    scroll_count = 0
+    for index, step in enumerate(steps):
+        action_type = normalize_action_type(step.action_type)
+        if action_type == "open_app" and index != 0:
+            return None
+        if action_type in _SCROLL_ACTIONS:
+            scroll_count += 1
+            if scroll_count > max_scroll_steps:
+                return None
+
+    name = str(getattr(skill, "name", "") or "skill")
+    app = str(getattr(skill, "app", "") or "")
+    return replace(
+        skill,
+        skill_id=f"compact:{app}:{name}",
+        name=name,
+        tags=_COMPACT_TAGS,
+    )
+
+
+def _placeholder_names(value: Any) -> frozenset[str]:
+    """Collect ``{{name}}`` placeholders nested anywhere inside *value*."""
+    if isinstance(value, str):
+        return frozenset(_PLACEHOLDER_RE.findall(value))
+    if isinstance(value, dict):
+        out: set[str] = set()
+        for key, item in value.items():
+            out |= _placeholder_names(key)
+            out |= _placeholder_names(item)
+        return frozenset(out)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        out = set()
+        for item in value:
+            out |= _placeholder_names(item)
+        return frozenset(out)
+    return frozenset()
+
+
+def _literal_target(text: str) -> str:
+    """Normalized target text with ``{{placeholders}}`` removed.
+
+    Used as a cluster discriminator so that two same-app workflows sharing an
+    action sequence but acting on different controls (``tap "To"`` vs
+    ``tap "Search"``) do not collapse into one cluster.  Placeholders are
+    stripped first so a parameterized target still matches across trajectories.
+    """
+    stripped = _PLACEHOLDER_RE.sub("", str(text or ""))
+    return re.sub(r"\s+", " ", stripped).strip().lower()
+
+
+def _cluster_key(skill: Skill) -> tuple[Any, ...]:
+    """Structural identity of a skill for cross-trajectory clustering.
+
+    Two skills cluster together when they target the same app and share the same
+    sequence of (normalized action type, ``state_contract`` signature, literal
+    target text, parameter slots).  Placeholder-only differences in a target are
+    ignored so the same parameterized workflow still clusters, but distinct
+    literal controls keep skills apart to avoid inflating ``success_count``.
+    """
+    step_sig = tuple(
+        (
+            normalize_action_type(step.action_type),
+            state_contract_fingerprint(step.state_contract),
+            _literal_target(step.target),
+            tuple(sorted(_placeholder_names((step.target, step.parameters, step.fixed_values)))),
+        )
+        for step in skill.steps
+    )
+    return (skill.app, step_sig)
+
+
+def cluster_compact_skills(skills: list[Skill], *, min_support: int) -> list[Skill]:
+    """Collapse structurally-identical skills, recording observed support.
+
+    Each surviving cluster carries ``success_count`` / ``success_streak`` equal to
+    the number of distinct trajectories it was induced from, so retrieval can
+    prefer skills that have repeatedly succeeded.  Skills below ``min_support``
+    are dropped.  The richest member (most ``state_contract`` guards) represents
+    the cluster.
+    """
+    groups: dict[tuple[Any, ...], list[Skill]] = {}
     for skill in skills:
-        issues: list[str] = []
-        sid = str(getattr(skill, "skill_id", "") or skill.name or "?")
+        groups.setdefault(_cluster_key(skill), []).append(skill)
 
-        if not getattr(skill, "steps", None):
-            issues.append("empty_skill")
-        step_count = len(skill.steps) if skill.steps else 0
-        if step_count > max_steps:
-            issues.append(f"too_many_steps:{step_count}")
-        if step_count < 2:
-            issues.append("single_step_skill")
-
-        # open_app / scroll / back / home
-        for i, step in enumerate(skill.steps):
-            atype = str(step.action_type)
-            if atype == "open_app":
-                issues.append(f"contains_open_app:{i}")
-            if atype in ("scroll", "swipe", "drag"):
-                issues.append(f"contains_scroll:{i}")
-            if atype == "back":
-                issues.append(f"contains_back:{i}")
-            if atype not in SUPPORTED_ACTIONS:
-                issues.append(f"unsupported_action:{i}:{atype}")
-
-        # Generic parameter names
-        generic = [
-            p for p in getattr(skill, "parameters", ())
-            if re.fullmatch(r"param\d+", str(p))
-        ]
-        if generic:
-            issues.append(f"generic_parameters:{','.join(map(str, generic))}")
-
-        # Final words in targets
-        for i, step in enumerate(skill.steps):
-            text = " ".join(str(v or "") for v in (
-                getattr(step, "target", ""),
-                getattr(step, "valid_state", ""),
-            )).lower()
-            if any(re.search(rf"\b{re.escape(w)}\b", text) for w in DENY_FINAL_WORDS):
-                issues.append(f"risky_final_word:{i}")
-
-        # Task literals leaking
-        literals = _task_specific_literals(task_goal)
-        for i, step in enumerate(skill.steps):
-            text = " ".join(str(v or "") for v in (
-                getattr(skill, "description", ""),
-                getattr(step, "target", ""),
-            )).lower()
-            hits = sorted(t for t in literals if t.lower() in text)
-            if hits:
-                issues.append(f"task_literals:{i}:{','.join(hits[:5])}")
-
-        # verbose valid_state
-        verbose = sum(
-            1 for s in skill.steps
-            if getattr(s, "valid_state", None)
-            and str(s.valid_state).strip().lower() not in (
-                "no need to verify", "none", "n/a", "", "return true",
+    selected: list[Skill] = []
+    for members in groups.values():
+        if len(members) < min_support:
+            continue
+        representative = max(members, key=_contract_richness)
+        selected.append(
+            replace(
+                representative,
+                success_count=len(members),
+                success_streak=len(members),
             )
         )
-        if verbose:
-            issues.append(f"verbose_valid_state:{verbose}")
 
-        if issues:
-            report[sid] = issues
+    selected.sort(key=lambda s: (-s.success_count, s.app, s.name))
+    return _disambiguate_skill_ids(selected)
+
+
+def _contract_richness(skill: Skill) -> int:
+    return sum(1 for step in skill.steps if step.state_contract)
+
+
+def _disambiguate_skill_ids(skills: list[Skill]) -> list[Skill]:
+    """Ensure skill ids are unique by suffixing structural collisions."""
+    seen: dict[str, int] = {}
+    out: list[Skill] = []
+    for skill in skills:
+        base_id = skill.skill_id
+        count = seen.get(base_id, 0)
+        seen[base_id] = count + 1
+        if count == 0:
+            out.append(skill)
+            continue
+        suffix = count + 1
+        out.append(replace(skill, skill_id=f"{base_id}_{suffix}", name=f"{skill.name}_{suffix}"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+
+
+def merge_into_output(skills: list[Skill], path: Path) -> int:
+    """Merge *skills* into the compact skills file by ``skill_id``.
+
+    Newly induced definitions win; ``success_count`` is kept monotonic (max of
+    existing and new) so re-running on a subset never silently lowers support.
+    Returns the number of newly added skill ids.
+    """
+    existing: list[Skill] = []
+    if path.exists():
+        compiled = compile_flat_skills(path.read_text(encoding="utf-8"))
+        if compiled.errors:
+            raise ValueError(f"existing {path} does not compile: {compiled.errors}")
+        existing = list(compiled.skills)
+
+    by_id: dict[str, Skill] = {s.skill_id: s for s in existing}
+    new_ids = 0
+    for skill in skills:
+        prior = by_id.get(skill.skill_id)
+        if prior is None:
+            new_ids += 1
+            by_id[skill.skill_id] = skill
         else:
-            accepted.append(skill)
+            by_id[skill.skill_id] = replace(
+                skill,
+                success_count=max(skill.success_count, prior.success_count),
+                success_streak=max(skill.success_streak, prior.success_streak),
+            )
 
-    return accepted, report
-
-
-def _task_specific_literals(task_goal: str) -> set[str]:
-    generic = {
-        "reply", "recent", "email", "message", "meeting", "cancel",
-        "available", "shopping", "cart", "weather", "login", "verification",
-        "settings", "wallpaper", "conference", "duration", "depart", "time",
-        "github", "repo", "repos", "invoice", "file", "files", "search",
-        "task", "android",
-    }
-    tokens = {
-        t for t in re.findall(r"[A-Za-z][A-Za-z0-9_-]{4,}", task_goal or "")
-        if t.lower() not in generic
-    }
-    for m in re.finditer(r"['\"]([^'\"]{4,80})['\"]", task_goal or ""):
-        phrase = re.sub(r"\s+", " ", m.group(1)).strip()
-        if phrase:
-            tokens.add(phrase)
-    return tokens
+    ordered = sorted(by_id.values(), key=lambda s: (-s.success_count, s.app, s.name))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(export_skills_to_source(ordered), encoding="utf-8")
+    return new_ids
 
 
 # ---------------------------------------------------------------------------
-# Skill induction (LLM call)
+# Pipeline
 # ---------------------------------------------------------------------------
 
-async def induce_skills(
+
+async def induce_from_trace(
+    extractor: SkillExtractor,
+    trace_path: Path,
     *,
-    trajectory_text: str,
-    app: str,
-    api_key: str,
-    base_url: str,
-    model: str,
-    max_tokens: int = 2048,
-    temperature: float = 0.1,
-    max_retries: int = 2,
-) -> tuple[str, list[Any]]:
-    """Call LLM, compile output, retry on errors. Returns (source, skills)."""
-    from openai import AsyncOpenAI
-
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    prompt_with_app = SKILL_SYSTEM_PROMPT.replace("com.example", app)
-
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": prompt_with_app},
-            {"role": "user", "content": trajectory_text},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    source = clean_skill_code(response.choices[0].message.content or "")
-
-    compiled = compile_flat_skills(source)
-    if not compiled.errors:
-        return source, list(compiled.skills)
-
-    # Retry with errors
-    for attempt in range(1, max_retries + 1):
-        retry_prompt = (
-            f"{trajectory_text}\n\n"
-            f"The previous Python code had compilation errors. Fix them:\n"
-            f"{json.dumps(list(compiled.errors), ensure_ascii=False, indent=2)}\n\n"
-            "Regenerate the entire skill code as valid Python only."
+    max_steps: int,
+    max_scroll_steps: int,
+) -> list[Skill]:
+    """Extract and compactify all skills from a single trace."""
+    result = codegen_trajectory(trace_path)
+    if result is None or not result.steps:
+        return []
+    extracted = await extractor.extract_from_codegen_result_multi(result, is_success=True)
+    compact: list[Skill] = []
+    for skill in extracted:
+        candidate = compactify_skill(
+            skill,
+            max_steps=max_steps,
+            max_scroll_steps=max_scroll_steps,
         )
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": prompt_with_app},
-                {"role": "user", "content": retry_prompt},
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        source = clean_skill_code(response.choices[0].message.content or "")
-        compiled = compile_flat_skills(source)
-        if not compiled.errors:
-            return source, list(compiled.skills)
-
-    return source, list(compiled.skills)  # Return whatever we have
+        if candidate is not None:
+            compact.append(candidate)
+    return compact
 
 
-# ---------------------------------------------------------------------------
-# Skill storage
-# ---------------------------------------------------------------------------
-
-def append_skills_to_file(skills: list[Any], path: Path) -> int:
-    """Append skills as Python source to a skills.py file, skipping duplicates."""
-    if not path.exists():
-        path.write_text(f"{CODE_HEADER}\n\n", encoding="utf-8")
-
-    existing = path.read_text(encoding="utf-8")
-    new_count = 0
-    with open(path, "a", encoding="utf-8") as fh:
-        for skill in skills:
-            sid = str(getattr(skill, "skill_id", "") or skill.name or "")
-            if sid and sid in existing:
-                continue
-            source = export_skills_to_source([skill])
-            # Strip CODE_HEADER since it's already in the file
-            source = source.replace(f"{CODE_HEADER}\n\n", "").replace(f"{CODE_HEADER}\n", "")
-            fh.write(source)
-            if not source.endswith("\n"):
-                fh.write("\n")
-            fh.write("\n")
-            new_count += 1
-    return new_count
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--format-only", type=Path,
-                   help="Format a single trace and print, then exit")
-    src = p.add_mutually_exclusive_group()
-    src.add_argument("--trace-dir", type=Path, help="Single task trace directory")
-    src.add_argument("--trace-root", type=Path, help="Root directory with task subdirs")
-
-    p.add_argument("--output", type=Path, default=Path("compact_skills.py"),
-                   help="Output skills.py file (default: compact_skills.py)")
-    p.add_argument("--model", default=os.getenv("SKILL_INDUCE_MODEL", "deepseek-v4-pro"))
-    p.add_argument("--base-url", default=os.getenv("SKILL_INDUCE_BASE_URL", ""))
-    p.add_argument("--api-key-env", default="OPENAI_API_KEY")
-    p.add_argument("--max-tokens", type=int, default=3072)
-    p.add_argument("--temperature", type=float, default=0.1)
-    p.add_argument("--task", action="append", dest="tasks",
-                   help="Only process specific task(s). Repeatable.")
-    p.add_argument("--limit", type=int, default=0)
-    p.add_argument("--dry-run", action="store_true",
-                   help="Print formatted trajectories without LLM calls")
-    p.add_argument("--max-skills-per-task", type=int, default=3)
-    return p.parse_args()
-
-
-def _guess_app(task_name: str) -> str:
-    lowered = task_name.lower()
-    if "mattermost" in lowered:
-        return "com.mattermost.rnbeta"
-    if "mastodon" in lowered:
-        return "org.joinmastodon.android.mastodon"
-    if "calendar" in lowered or "schedule" in lowered or "conference" in lowered:
-        return "org.fossify.calendar"
-    if "alarm" in lowered or "clock" in lowered:
-        return "com.google.android.deskclock"
-    if "chrome" in lowered or "github" in lowered:
-        return "com.android.chrome"
-    if "settings" in lowered or "airplane" in lowered or "flight" in lowered:
-        return "com.android.settings"
-    if any(k in lowered for k in ("cart", "mall", "checkout", "item", "taodian")):
-        return "com.testmall.app"
-    if any(k in lowered for k in ("photo", "gallery", "wallpaper", "selfie")):
-        return "gallery.photomanager.picturegalleryapp.imagegallery"
-    if any(k in lowered for k in ("file", "download", "count", "sum", "bid")):
-        return "com.google.android.documentsui"
-    if any(k in lowered for k in ("mail", "email", "gmail", "meeting", "send",
-                                    "event", "receipt", "invoice")):
-        return "com.gmailclone"
-    return "com.android.chrome"
+def _discover_task_dirs(args: argparse.Namespace) -> list[Path]:
+    if args.trace_dir:
+        return [args.trace_dir]
+    root = args.trace_root.expanduser()
+    task_dirs = sorted(d for d in root.iterdir() if d.is_dir() and not d.name.startswith("."))
+    if args.tasks:
+        task_dirs = [d for d in task_dirs if d.name in set(args.tasks)]
+    if args.limit > 0:
+        task_dirs = task_dirs[: args.limit]
+    return task_dirs
 
 
 async def main_async(args: argparse.Namespace) -> int:
-    if args.format_only:
-        text = format_trajectory_for_skill(args.format_only)
-        if text is None:
-            print("No usable steps found.", file=sys.stderr)
-            return 1
-        print(text)
-        return 0
-
     if not args.trace_dir and not args.trace_root:
         print("Error: --trace-dir or --trace-root required", file=sys.stderr)
         return 1
 
-    if args.trace_dir:
-        task_dirs = [args.trace_dir]
-    else:
-        root = args.trace_root.expanduser()
-        task_dirs = sorted(d for d in root.iterdir() if d.is_dir() and not d.name.startswith("."))
-        if args.tasks:
-            task_dirs = [d for d in task_dirs if d.name in set(args.tasks)]
-
-    if args.limit > 0:
-        task_dirs = task_dirs[: args.limit]
-
+    task_dirs = _discover_task_dirs(args)
     if not task_dirs:
         print("No task directories found.", file=sys.stderr)
         return 1
@@ -600,101 +410,113 @@ async def main_async(args: argparse.Namespace) -> int:
         print(f"Error: {args.api_key_env} not set", file=sys.stderr)
         return 1
 
-    output_path = args.output.expanduser()
-    all_skills: list[Any] = []
-    total_processed = 0
-    total_skipped_no_trace = 0
-    total_skipped_failure = 0
-    total_skipped_short = 0
+    extractor: SkillExtractor | None = None
+    if not args.dry_run:
+        extractor = SkillExtractor(
+            _OpenAICompatLLM(
+                api_key=api_key,
+                base_url=args.base_url,
+                model=args.model,
+                max_tokens=args.max_tokens,
+                temperature=args.temperature,
+            )
+        )
+
+    all_skills: list[Skill] = []
+    processed = 0
+    skipped_failure = 0
+    skipped_no_trace = 0
+    skipped_short = 0
 
     for task_dir in task_dirs:
-        task_name = task_dir.name
-
-        # Only process successful tasks
-        outcome, error_msg = get_task_outcome(task_dir)
+        outcome, _ = get_task_outcome(task_dir)
         if outcome != "success":
-            total_skipped_failure += 1
+            skipped_failure += 1
             continue
 
         trace_paths = _find_gui_task_traces(task_dir)
         if not trace_paths:
-            total_skipped_no_trace += 1
+            skipped_no_trace += 1
             continue
 
-        app = _guess_app(task_name)
-
-        formatted_jobs: list[tuple[Path, str, int]] = []
-        for trace_path in trace_paths:
-            step_count = _trace_step_count(trace_path)
-            if step_count <= 2:
-                total_skipped_short += 1
-                continue
-            text = format_trajectory_for_skill(trace_path)
-            if text is None:
-                continue
-            formatted_jobs.append((trace_path, text, step_count))
-
-        if not formatted_jobs:
+        usable = [tp for tp in trace_paths if _trace_step_count(tp) > 2]
+        skipped_short += len(trace_paths) - len(usable)
+        if not usable:
             continue
 
         if args.dry_run:
-            print(f"\n{'='*60}")
-            print(f"Task: {task_name}  App: {app}")
-            for tp, _, sc in formatted_jobs:
-                print(f"  Trace: {tp} ({sc} steps)")
-            print(f"{'='*60}")
-            for _, text, _ in formatted_jobs:
-                print(text[:1500])
-                if len(text) > 1500:
-                    print(f"... ({len(text)} chars total)")
+            print(f"\n{'=' * 60}\nTask dir: {task_dir.name}")
+            for tp in usable:
+                result = codegen_trajectory(tp)
+                if result is None:
+                    continue
+                print(f"--- {tp.name}  (app={result.app}) ---")
+                print(codegen_to_extraction_text(result)[:1800])
             continue
 
-        task_skills: list[Any] = []
-        print(f"[SKL] {task_name} ({app}) ... ", end="", flush=True)
-        for tp, trajectory_text, _ in formatted_jobs:
+        assert extractor is not None
+        print(f"[SKL] {task_dir.name} ... ", end="", flush=True)
+        task_skills: list[Skill] = []
+        for tp in usable:
             try:
-                source, skills = await induce_skills(
-                    trajectory_text=trajectory_text,
-                    app=app,
-                    api_key=api_key,
-                    base_url=args.base_url,
-                    model=args.model,
-                    max_tokens=args.max_tokens,
-                    temperature=args.temperature,
+                task_skills.extend(
+                    await induce_from_trace(
+                        extractor,
+                        tp,
+                        max_steps=args.max_steps,
+                        max_scroll_steps=args.max_scroll_steps,
+                    )
                 )
-            except Exception as exc:
-                print(f"\n  {tp}: LLM error: {exc}")
-                continue
-
-            # Apply quality filter
-            task_goal = _find_task_goal(_load_jsonl(tp))
-            accepted, report = filter_skills(
-                skills,
-                max_steps=8,
-                task_goal=task_goal,
-            )
-            if report:
-                for sid, issues in report.items():
-                    print(f"\n  [REJECTED] {sid}: {', '.join(issues)}")
-
-            accepted = accepted[: args.max_skills_per_task]
-            task_skills.extend(accepted)
-
-        print(f"{len(task_skills)} skill(s) accepted")
+            except Exception as exc:  # noqa: BLE001 - keep batch going
+                print(f"\n  {tp.name}: extraction error: {exc}")
+        print(f"{len(task_skills)} compact skill(s)")
         all_skills.extend(task_skills)
-        total_processed += 1
+        processed += 1
 
-    # Write output
-    if all_skills and not args.dry_run:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        new_count = append_skills_to_file(all_skills, output_path)
-        print(f"\nWrote {new_count} new skill(s) to {output_path}")
+    if args.dry_run:
+        return 0
 
-    print(f"\nProcessed: {total_processed} task(s)")
-    print(f"Skipped: {total_skipped_failure} failure(s), "
-          f"{total_skipped_no_trace} no-trace, {total_skipped_short} short")
+    clustered = cluster_compact_skills(all_skills, min_support=args.min_support)
+    print(
+        f"\nInduced {len(all_skills)} compact skill(s) -> "
+        f"{len(clustered)} after clustering (min_support={args.min_support})"
+    )
+    if clustered:
+        new_count = merge_into_output(clustered, args.output.expanduser())
+        print(f"Wrote {len(clustered)} skill(s) ({new_count} new) to {args.output}")
 
+    print(
+        f"Processed: {processed} task(s); skipped "
+        f"{skipped_failure} failure, {skipped_no_trace} no-trace, {skipped_short} short"
+    )
     return 0
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description=__doc__)
+    src = p.add_mutually_exclusive_group()
+    src.add_argument("--trace-dir", type=Path, help="Single task trace directory")
+    src.add_argument("--trace-root", type=Path, help="Root directory with task subdirs")
+
+    p.add_argument("--output", type=Path, default=Path("compact_skills.py"),
+                   help="Output skills file (default: compact_skills.py)")
+    p.add_argument("--model", default=os.getenv("SKILL_INDUCE_MODEL", "deepseek-v4-pro"))
+    p.add_argument("--base-url", default=os.getenv("SKILL_INDUCE_BASE_URL", ""))
+    p.add_argument("--api-key-env", default="OPENAI_API_KEY")
+    p.add_argument("--max-tokens", type=int, default=3072)
+    p.add_argument("--temperature", type=float, default=0.1)
+    p.add_argument("--task", action="append", dest="tasks",
+                   help="Only process specific task(s). Repeatable.")
+    p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--dry-run", action="store_true",
+                   help="Print codegen evidence per trace without LLM calls")
+    p.add_argument("--max-steps", type=int, default=7,
+                   help="Reject skills longer than this many steps (default: 7)")
+    p.add_argument("--max-scroll-steps", type=int, default=1,
+                   help="Reject skills with more than this many scroll/swipe/drag steps")
+    p.add_argument("--min-support", type=int, default=1,
+                   help="Keep only skills induced from at least this many trajectories")
+    return p.parse_args()
 
 
 def main() -> None:
