@@ -277,6 +277,72 @@ def _skill_entry_targets_android_launcher(skill: Any, first_step: Any) -> bool:
     return False
 
 
+def _render_skill_template(text: str, params: dict[str, str]) -> str:
+    """Substitute ``{{param}}`` placeholders in *text* with provided values."""
+    return _SKILL_PARAM_PLACEHOLDER_RE.sub(
+        lambda m: str(params.get(m.group(1), m.group(0))), str(text or "")
+    )
+
+
+def _observation_ui_text_blob(observation: Any) -> str:
+    """Lowercased concatenation of on-screen text from an observation.
+
+    Pulls visible text / content descriptions from the ``ui_tree`` and any
+    ``*_text`` lists in ``observation.extra``. Used for a cheap, deterministic
+    "is this control on screen" check without an LLM call.
+    """
+    extra = getattr(observation, "extra", None)
+    if not isinstance(extra, dict):
+        return ""
+    parts: list[str] = []
+    ui_tree = extra.get("ui_tree")
+    if isinstance(ui_tree, list):
+        for node in ui_tree:
+            if isinstance(node, dict):
+                for key in ("text", "content_desc"):
+                    value = node.get(key)
+                    if value:
+                        parts.append(str(value))
+    for key in ("clickable_text", "visible_text", "content_desc"):
+        value = extra.get(key)
+        if isinstance(value, list):
+            parts.extend(str(item) for item in value if item)
+        elif value:
+            parts.append(str(value))
+    return " ".join(parts).lower()
+
+
+def _prompt_skill_entry_allows(skill: Any, observation: Any, params: dict[str, str]) -> bool:
+    """Cheap deterministic entry guard for a prompt-selected ``use_skill``.
+
+    Fail-closed: a skill whose first step cannot be confirmed against the current
+    screen is rejected so the agent keeps control instead of having the grounder
+    blindly tap a wrong screen. Entry actions (``open_app`` / deeplink / intent)
+    are trusted to navigate themselves; otherwise a first-step ``state_contract``
+    must match, or — when no contract exists — the rendered first-step target text
+    must appear on screen.
+    """
+    steps = tuple(getattr(skill, "steps", ()) or ())
+    if not steps:
+        return False
+    first = steps[0]
+    first_action = str(getattr(first, "action_type", "") or "").strip().lower()
+    if first_action == "open_app":
+        return not _skill_entry_targets_android_launcher(skill, first)
+    if first_action in {"open_deeplink", "open_intent"}:
+        return True
+
+    contract = getattr(first, "state_contract", None)
+    if contract is not None:
+        return evaluate_state_contract(contract, observation=observation) is True
+
+    target = _render_skill_template(str(getattr(first, "target", "") or ""), params).strip().lower()
+    if not target:
+        return False  # nothing deterministic to check → fail closed
+    blob = _observation_ui_text_blob(observation)
+    return bool(blob) and target in blob
+
+
 class GuiAgent:
     """Standalone GUI automation agent with vision-action loop.
 
@@ -1702,6 +1768,33 @@ class GuiAgent:
         )
         try:
             try:
+                missing_params = _missing_skill_params(skill, params)
+                if missing_params:
+                    self._trajectory_recorder.record_event(
+                        "prompt_skill_rejected",
+                        skill_id=skill_id,
+                        skill_name=skill_name,
+                        reason="missing_required_params",
+                        missing_params=missing_params,
+                    )
+                    raise ActionError(
+                        f"use_skill {skill_name} is missing required params: "
+                        f"{', '.join(missing_params)}"
+                    )
+                if not _prompt_skill_entry_allows(skill, current_observation, params):
+                    self._trajectory_recorder.record_event(
+                        "prompt_skill_rejected",
+                        skill_id=skill_id,
+                        skill_name=skill_name,
+                        reason="entry_precondition_not_met",
+                        first_action=str(
+                            getattr(skill.steps[0], "action_type", "") if skill.steps else ""
+                        ),
+                    )
+                    raise ActionError(
+                        f"use_skill {skill_name} is not applicable on the current screen; "
+                        "use manual GUI actions instead"
+                    )
                 skill_result = await self._skill_executor.execute(
                     skill,
                     params=params,

@@ -307,13 +307,39 @@ class GuiConfig(Base):
     capture_ttft: bool = False
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
-    enable_skill_valid_state: bool = True
+    # Per-step skill validation policy:
+    #   strict        - deterministic state_contract + small-model NL valid_state + subgoal recovery
+    #   contract_only - deterministic state_contract only; skip NL validation and recovery
+    #   off           - skip all validation (contracts included)
+    # Compact (``compact_extracted``) skills auto-downgrade contracted steps to
+    # contract_only under ``strict``; ``optional`` popup steps always keep a guard
+    # unless the mode is ``off``. See opengui/skills/executor.py.
+    skill_valid_state_mode: Literal["strict", "contract_only", "off"] = "strict"
     enable_prompt_skill_selection: bool = False
     prompt_skill_top_k: int = 5
     prompt_shortcut_only: bool = False
     always_on_skill_tags: list[str] = Field(default_factory=lambda: ["compact_action"])
     shortcut_apps: list[str] = Field(default_factory=list)
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_skill_valid_state_mode(cls, data: Any) -> Any:
+        """Map the legacy ``enable_skill_valid_state`` bool onto the new mode.
+
+        The old ``False`` did not disable everything — deterministic
+        ``state_contract`` checks still ran — so it maps to ``contract_only``,
+        not ``off``, to preserve behaviour for existing configs.
+        """
+        if not isinstance(data, dict):
+            return data
+        if any(k in data for k in ("skill_valid_state_mode", "skillValidStateMode")):
+            return data
+        for key in ("enable_skill_valid_state", "enableSkillValidState"):
+            if key in data:
+                data["skill_valid_state_mode"] = "strict" if bool(data[key]) else "contract_only"
+                break
+        return data
 
     @field_validator("agent_profile")
     @classmethod

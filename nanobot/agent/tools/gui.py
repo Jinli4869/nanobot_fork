@@ -1309,7 +1309,7 @@ class GuiSubagentTool(Tool):
                 trajectory_recorder=recorder,
                 stop_on_failure=True,
                 max_recovery_steps=3,
-                enable_valid_state=self._gui_config.enable_skill_valid_state,
+                valid_state_mode=self._gui_config.skill_valid_state_mode,
             )
 
         skill_reuser = None
