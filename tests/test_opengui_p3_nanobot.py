@@ -532,7 +532,7 @@ async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
     tmp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent.tools.gui import GuiSubagentTool, GuiWorkflowPlan
+    from nanobot.agent.tools.gui import GuiRouterContext, GuiSubagentTool, GuiWorkflowPlan
 
     provider = _MockNanobotProvider([])
     tool = GuiSubagentTool(
@@ -546,6 +546,10 @@ async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
     monkeypatch.setattr(
         "nanobot.agent.tools.gui.GuiWorkflowRunner._plan_workflow",
         plan_workflow,
+    )
+    monkeypatch.setattr(
+        "nanobot.agent.tools.gui.GuiRouterMemoryRetriever.retrieve",
+        lambda *_args, **_kwargs: GuiRouterContext(),
     )
     run_task = AsyncMock(
         return_value=json.dumps(
@@ -599,7 +603,13 @@ def test_gui_router_memory_retriever_reads_workspace_evidence(tmp_workspace: Pat
     memory_dir = tmp_workspace / "memory"
     memory_dir.mkdir(parents=True)
     (memory_dir / "MEMORY.md").write_text(
-        "- GUI automation: Meituan triggers 身份核实/验证码 pages that block GUI automation.\n",
+        "\n".join(
+            [
+                "- GUI automation: Meituan triggers 身份核实/验证码 pages that block GUI automation.",
+                "- GUI deeplink evidence: tv.danmaku.bili supports `bilibili://search?keyword=关键词` for video search.",
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     (memory_dir / "history.jsonl").write_text(

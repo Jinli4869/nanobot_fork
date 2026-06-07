@@ -83,6 +83,48 @@ class ExecutionState(str, Enum):
     FAILED = "failed"
 
 
+class ValidStateMode(str, Enum):
+    """Per-step validation policy.
+
+    ``strict``
+        Deterministic ``state_contract`` (when present) plus small-model NL
+        ``valid_state`` validation, with subgoal recovery on failure.
+    ``contract_only``
+        Deterministic ``state_contract`` only.  When no contract yields a verdict
+        the step is allowed (trust grounder); the NL validator and recovery are
+        never invoked.
+    ``off``
+        Skip all validation, contracts included.
+    """
+
+    STRICT = "strict"
+    CONTRACT_ONLY = "contract_only"
+    OFF = "off"
+
+
+#: Source tag marking compact-induced skills (see scripts/induce_compact_skills.py).
+_COMPACT_VALID_STATE_TAG = "compact_extracted"
+
+
+def _coerce_valid_state_mode(value: "ValidStateMode | str | bool | None") -> ValidStateMode:
+    """Normalize a mode value, mapping the legacy bool (True/False).
+
+    The legacy ``enable_valid_state=False`` still evaluated deterministic
+    contracts, so it maps to ``contract_only`` rather than ``off``.
+    """
+    if isinstance(value, ValidStateMode):
+        return value
+    if isinstance(value, bool):
+        return ValidStateMode.STRICT if value else ValidStateMode.CONTRACT_ONLY
+    if value is None:
+        return ValidStateMode.STRICT
+    return ValidStateMode(str(value))
+
+
+def _skill_is_compact(skill: Skill) -> bool:
+    return _COMPACT_VALID_STATE_TAG in {str(tag) for tag in (getattr(skill, "tags", ()) or ())}
+
+
 # ---------------------------------------------------------------------------
 # Subgoal result
 # ---------------------------------------------------------------------------
@@ -662,10 +704,13 @@ class SkillExecutor:
     state_validator:
         Optional LLM-based validator for per-step ``valid_state`` checks.
         Falls back to pass-through (allow) when ``None``.
-    enable_valid_state:
-        Whether to execute per-step ``valid_state`` validation and recovery.
-        Skill definitions keep their ``valid_state`` text either way; disabling
-        this only skips runtime validator calls.
+    valid_state_mode:
+        Global per-step validation policy (:class:`ValidStateMode`, or a legacy
+        bool). ``compact_extracted`` skills auto-downgrade *contracted* steps to
+        ``contract_only`` under ``strict``; ``optional`` popup steps keep a guard
+        unless the mode is ``off``; ``visual_guarded`` steps stay ``strict`` unless
+        the mode is ``off``. Skill definitions keep their ``valid_state`` text
+        regardless — the mode only controls which runtime checks execute.
     action_grounder:
         Optional vision-LLM grounder for non-fixed steps. When ``None``,
         falls back to template substitution (legacy behaviour).
@@ -690,12 +735,51 @@ class SkillExecutor:
     trajectory_recorder: TrajectoryRecorder | None = None
     stop_on_failure: bool = True
     max_recovery_steps: int = 3
-    enable_valid_state: bool = True
+    valid_state_mode: ValidStateMode | str | bool = ValidStateMode.STRICT
     _last_contract_eval_detail: dict[str, Any] | None = dataclasses.field(
         default=None,
         init=False,
         repr=False,
     )
+
+    def __post_init__(self) -> None:
+        self.valid_state_mode = _coerce_valid_state_mode(self.valid_state_mode)
+
+    def _effective_mode(
+        self,
+        skill: Skill,
+        step: SkillStep,
+        *,
+        is_optional: bool,
+        visual_guarded_step: bool,
+    ) -> ValidStateMode:
+        """Resolve the validation mode for a single step.
+
+        ``off`` is absolute. Otherwise ``visual_guarded`` steps stay ``strict``;
+        ``optional`` steps keep a guard (``contract_only`` when contracted, else
+        ``strict``) so absent popups are skipped rather than blindly executed; and
+        compact skills downgrade only their *contracted* steps to ``contract_only``
+        (an uncontracted required step keeps the global mode to avoid running with
+        no guard at all).
+        """
+        mode = _coerce_valid_state_mode(self.valid_state_mode)
+        if mode is ValidStateMode.OFF:
+            return mode
+        if visual_guarded_step:
+            return ValidStateMode.STRICT
+        if is_optional:
+            return (
+                ValidStateMode.CONTRACT_ONLY
+                if step.state_contract is not None
+                else ValidStateMode.STRICT
+            )
+        if (
+            mode is ValidStateMode.STRICT
+            and step.state_contract is not None
+            and _skill_is_compact(skill)
+        ):
+            return ValidStateMode.CONTRACT_ONLY
+        return mode
 
     async def execute(
         self,
@@ -723,7 +807,7 @@ class SkillExecutor:
                 skill_id=skill.skill_id,
                 skill_name=skill.name,
                 step_count=len(skill.steps),
-                enable_valid_state=self.enable_valid_state,
+                valid_state_mode=_coerce_valid_state_mode(self.valid_state_mode).value,
             )
 
         for i, step in enumerate(skill.steps):
@@ -764,7 +848,13 @@ class SkillExecutor:
                     "request_intervention",
                 }
             )
-            if not self.enable_valid_state and step.state_contract is None:
+            mode = self._effective_mode(
+                skill,
+                step,
+                is_optional=is_optional,
+                visual_guarded_step=visual_guarded_step,
+            )
+            if mode is ValidStateMode.OFF:
                 valid, validate_usage, validate_dur = True, {}, None
             elif visual_guarded_step and step.state_contract is None and not step.valid_state:
                 visual_guard_block_reason = "missing visual valid_state"
@@ -789,6 +879,7 @@ class SkillExecutor:
                     step,
                     screenshot,
                     observation=observation,
+                    mode=mode,
                 )
             _merge_usage(total_token_usage, validate_usage)
 
@@ -806,7 +897,7 @@ class SkillExecutor:
             )
             if not valid and should_enforce_state and visual_guard_block_reason is None:
                 can_recover_with_subgoal = (
-                    self.enable_valid_state
+                    mode is ValidStateMode.STRICT
                     and has_valid_state
                     and not _should_skip_validation(step.valid_state)
                     and self.subgoal_runner is not None
@@ -931,6 +1022,7 @@ class SkillExecutor:
                             step,
                             post_screenshot,
                             observation=post_observation,
+                            mode=mode,
                         )
                         _merge_usage(total_token_usage, post_usage)
                         _merge_usage(validate_usage, post_usage)
@@ -939,6 +1031,11 @@ class SkillExecutor:
                             break
                         if attempt_index < attempts - 1:
                             await asyncio.sleep(_OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS)
+                    if execution_error is not None and mode is ValidStateMode.OFF:
+                        # off skips validation, but a caught backend execution error
+                        # is a hard failure that must not be masked as a successful
+                        # post-state (there was no positive verification under off).
+                        post_valid = False
                     if (
                         post_valid
                         and execution_error is not None
@@ -1160,7 +1257,7 @@ class SkillExecutor:
             backend_result=step_result.backend_result,
             valid_state=step.valid_state,
             state_contract=step.state_contract,
-            enable_valid_state=self.enable_valid_state,
+            valid_state_mode=_coerce_valid_state_mode(self.valid_state_mode).value,
             valid_state_check=step_result.valid_state_check,
             observation=step_result.observation,
             screenshot_path=step_result.screenshot_path,
@@ -1190,8 +1287,14 @@ class SkillExecutor:
         screenshot: Path | bytes | None,
         *,
         observation: Observation | None = None,
+        mode: ValidStateMode | str | bool | None = None,
     ) -> tuple[bool, dict[str, int], float | None]:
         """Validate per-step valid_state. Returns ``(valid, token_usage, duration_s)``.
+
+        ``mode`` selects the policy (defaults to the executor's global mode):
+        ``off`` allows immediately, ``contract_only`` returns the deterministic
+        ``state_contract`` verdict and otherwise allows (no NL call), ``strict``
+        falls through to small-model NL validation when the contract is silent.
 
         ``duration_s`` is ``None`` when validation is intentionally skipped
         (no validator configured or state confirmed by a prior done-judgment)
@@ -1202,6 +1305,13 @@ class SkillExecutor:
         coordinates instead of LLM grounding), not state validation. A fixed
         step with a meaningful ``valid_state`` still requires verification.
         """
+        resolved_mode = _coerce_valid_state_mode(
+            mode if mode is not None else self.valid_state_mode
+        )
+        if resolved_mode is ValidStateMode.OFF:
+            self._last_contract_eval_detail = None
+            return True, {}, None
+
         contract_detail = evaluate_state_contract_detail(
             step.state_contract,
             observation=observation,
@@ -1215,8 +1325,10 @@ class SkillExecutor:
             )
             return bool(contract_detail.passed), {}, None
 
-        if not self.enable_valid_state:
-            logger.debug("valid_state disabled; allowing step %s", step.action_type)
+        if resolved_mode is ValidStateMode.CONTRACT_ONLY:
+            logger.debug(
+                "contract_only: no contract verdict for step %s; allowing", step.action_type
+            )
             self._last_contract_eval_detail = None
             return True, {}, None
 
