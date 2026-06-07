@@ -17,6 +17,13 @@ then applies a thin *compact* post-process on top:
   parameter slots)`` and record ``success_count`` so high-frequency, repeatedly
   successful skills are preferred at retrieval time.
 
+By default only *successful* tasks are mined. ``--include-failures`` additionally
+mines the reusable succeeded *prefix* of FAILED trajectories (the extractor's
+failure mode forbids fixing terminal actions like send/pay/delete). Failure
+sources never count toward ``success_count`` and a skill is produced only when it
+also appears in a success trace; clusters that drew on a failure source are tagged
+``from_failure``.
+
 The target app is taken from the trajectory itself (``codegen`` app resolution),
 not guessed from the task name, so generated skills actually match at retrieval.
 
@@ -111,8 +118,39 @@ except ImportError:  # pragma: no cover - standalone fallback
 
 
 _COMPACT_TAGS: tuple[str, ...] = ("compact", "compact_extracted")
+_FROM_FAILURE_TAG = "from_failure"
 _SCROLL_ACTIONS = frozenset({"scroll", "swipe", "drag"})
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+#: Irreversible / terminal action labels. A skill mined from a FAILED trajectory
+#: that still contains one of these is rejected — the extractor's prompt forbids
+#: fixing them, but this is the deterministic backstop so a failed terminal suffix
+#: can never leak into a compact skill via ``--include-failures``.
+_TERMINAL_TARGET_WORDS = frozenset({
+    "send", "publish", "post", "purchase", "checkout", "pay", "submit",
+    "delete", "unfollow", "buy", "order", "confirm",
+})
+_TERMINAL_TARGET_RE = re.compile(
+    r"\b(?:" + "|".join(re.escape(w) for w in sorted(_TERMINAL_TARGET_WORDS)) + r")\b"
+)
+_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _normalize_target_text(text: str) -> str:
+    """Lowercase, splitting snake_case / camelCase so word boundaries are reliable.
+
+    ``send_button`` and ``submitOrder`` become ``send button`` / ``submit order``
+    so identifier-style targets cannot evade the terminal-action backstop.
+    """
+    spaced = _CAMEL_BOUNDARY_RE.sub(" ", str(text or "")).replace("_", " ")
+    return spaced.lower()
+
+
+def _has_terminal_action(skill: Skill) -> bool:
+    """True if any step targets an irreversible / terminal action."""
+    return any(
+        _TERMINAL_TARGET_RE.search(_normalize_target_text(getattr(step, "target", "")))
+        for step in skill.steps
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -265,29 +303,43 @@ def _cluster_key(skill: Skill) -> tuple[Any, ...]:
     return (skill.app, step_sig)
 
 
-def cluster_compact_skills(skills: list[Skill], *, min_support: int) -> list[Skill]:
+def cluster_compact_skills(
+    items: list[tuple[Skill, bool]],
+    *,
+    min_support: int,
+) -> list[Skill]:
     """Collapse structurally-identical skills, recording observed support.
 
-    Each surviving cluster carries ``success_count`` / ``success_streak`` equal to
-    the number of distinct trajectories it was induced from, so retrieval can
-    prefer skills that have repeatedly succeeded.  Skills below ``min_support``
-    are dropped.  The richest member (most ``state_contract`` guards) represents
-    the cluster.
+    ``items`` pairs each induced skill with whether its source trajectory
+    *succeeded*.  A cluster is produced only when it has at least one
+    success-derived member (so a workflow only ever seen failing is never
+    promoted) and its total member count reaches ``min_support`` (failure-derived
+    members may help reach the threshold).  ``success_count`` / ``success_streak``
+    count *success-derived* members only, so failures never inflate confidence;
+    clusters that include any failure-derived member are tagged ``from_failure``.
+    The richest success member (most ``state_contract`` guards) represents the
+    cluster.
     """
-    groups: dict[tuple[Any, ...], list[Skill]] = {}
-    for skill in skills:
-        groups.setdefault(_cluster_key(skill), []).append(skill)
+    groups: dict[tuple[Any, ...], list[tuple[Skill, bool]]] = {}
+    for skill, is_success in items:
+        groups.setdefault(_cluster_key(skill), []).append((skill, is_success))
 
     selected: list[Skill] = []
     for members in groups.values():
-        if len(members) < min_support:
+        success_members = [skill for skill, ok in members if ok]
+        if not success_members or len(members) < min_support:
             continue
-        representative = max(members, key=_contract_richness)
+        representative = max(success_members, key=_contract_richness)
+        has_failure = len(success_members) < len(members)
+        tags = representative.tags
+        if has_failure and _FROM_FAILURE_TAG not in tags:
+            tags = (*tags, _FROM_FAILURE_TAG)
         selected.append(
             replace(
                 representative,
-                success_count=len(members),
-                success_streak=len(members),
+                success_count=len(success_members),
+                success_streak=len(success_members),
+                tags=tags,
             )
         )
 
@@ -365,12 +417,20 @@ async def induce_from_trace(
     *,
     max_steps: int,
     max_scroll_steps: int,
+    is_success: bool = True,
 ) -> list[Skill]:
-    """Extract and compactify all skills from a single trace."""
+    """Extract and compactify all skills from a single trace.
+
+    When ``is_success`` is False the extractor mines only the reusable succeeded
+    *prefix* of a failed trajectory (its ``_FAILURE_NOTE`` forbids fixing terminal
+    actions such as send/pay/delete).
+    """
     result = codegen_trajectory(trace_path)
     if result is None or not result.steps:
         return []
-    extracted = await extractor.extract_from_codegen_result_multi(result, is_success=True)
+    extracted = await extractor.extract_from_codegen_result_multi(
+        result, is_success=is_success
+    )
     compact: list[Skill] = []
     for skill in extracted:
         candidate = compactify_skill(
@@ -378,8 +438,14 @@ async def induce_from_trace(
             max_steps=max_steps,
             max_scroll_steps=max_scroll_steps,
         )
-        if candidate is not None:
-            compact.append(candidate)
+        if candidate is None:
+            continue
+        # Deterministic backstop: a skill mined from a failed trajectory must not
+        # carry a terminal/irreversible suffix action (only the succeeded prefix
+        # is reusable). Success traces may legitimately end on such actions.
+        if not is_success and _has_terminal_action(candidate):
+            continue
+        compact.append(candidate)
     return compact
 
 
@@ -422,7 +488,7 @@ async def main_async(args: argparse.Namespace) -> int:
             )
         )
 
-    all_skills: list[Skill] = []
+    all_items: list[tuple[Skill, bool]] = []
     processed = 0
     skipped_failure = 0
     skipped_no_trace = 0
@@ -430,7 +496,8 @@ async def main_async(args: argparse.Namespace) -> int:
 
     for task_dir in task_dirs:
         outcome, _ = get_task_outcome(task_dir)
-        if outcome != "success":
+        is_success = outcome == "success"
+        if not is_success and not args.include_failures:
             skipped_failure += 1
             continue
 
@@ -445,7 +512,8 @@ async def main_async(args: argparse.Namespace) -> int:
             continue
 
         if args.dry_run:
-            print(f"\n{'=' * 60}\nTask dir: {task_dir.name}")
+            tag = "success" if is_success else "FAILURE(prefix)"
+            print(f"\n{'=' * 60}\nTask dir: {task_dir.name}  [{tag}]")
             for tp in usable:
                 result = codegen_trajectory(tp)
                 if result is None:
@@ -455,7 +523,8 @@ async def main_async(args: argparse.Namespace) -> int:
             continue
 
         assert extractor is not None
-        print(f"[SKL] {task_dir.name} ... ", end="", flush=True)
+        print(f"[SKL] {task_dir.name} ({'ok' if is_success else 'fail'}) ... ",
+              end="", flush=True)
         task_skills: list[Skill] = []
         for tp in usable:
             try:
@@ -465,20 +534,21 @@ async def main_async(args: argparse.Namespace) -> int:
                         tp,
                         max_steps=args.max_steps,
                         max_scroll_steps=args.max_scroll_steps,
+                        is_success=is_success,
                     )
                 )
             except Exception as exc:  # noqa: BLE001 - keep batch going
                 print(f"\n  {tp.name}: extraction error: {exc}")
         print(f"{len(task_skills)} compact skill(s)")
-        all_skills.extend(task_skills)
+        all_items.extend((skill, is_success) for skill in task_skills)
         processed += 1
 
     if args.dry_run:
         return 0
 
-    clustered = cluster_compact_skills(all_skills, min_support=args.min_support)
+    clustered = cluster_compact_skills(all_items, min_support=args.min_support)
     print(
-        f"\nInduced {len(all_skills)} compact skill(s) -> "
+        f"\nInduced {len(all_items)} compact skill(s) -> "
         f"{len(clustered)} after clustering (min_support={args.min_support})"
     )
     if clustered:
@@ -515,7 +585,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-scroll-steps", type=int, default=1,
                    help="Reject skills with more than this many scroll/swipe/drag steps")
     p.add_argument("--min-support", type=int, default=1,
-                   help="Keep only skills induced from at least this many trajectories")
+                   help="Keep only skills whose cluster reaches this many trajectories "
+                        "(success + failure sources)")
+    p.add_argument("--include-failures", action="store_true",
+                   help="Also mine the reusable succeeded prefix of FAILED trajectories. "
+                        "Failure-derived skills never count toward success_count and are "
+                        "kept only when the same skill also appears in a success trace; "
+                        "such clusters are tagged 'from_failure'.")
     return p.parse_args()
 
 

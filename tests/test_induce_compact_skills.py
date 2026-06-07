@@ -8,6 +8,7 @@ from opengui.skills.data import Skill, SkillStep
 from opengui.skills.flat import C, R
 
 from scripts.induce_compact_skills import (
+    _has_terminal_action,
     _placeholder_names,
     cluster_compact_skills,
     compactify_skill,
@@ -49,6 +50,11 @@ def _skill(
         steps=tuple(steps),
         parameters=(),
     )
+
+
+def _succ(*skills: Skill) -> list[tuple[Skill, bool]]:
+    """Wrap skills as success-derived cluster items."""
+    return [(s, True) for s in skills]
 
 
 # ---------------------------------------------------------------------------
@@ -148,15 +154,15 @@ class TestClustering:
             compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1),
             compactify_skill(self._email_skill("flat:b"), max_steps=7, max_scroll_steps=1),
         ]
-        clustered = cluster_compact_skills([s for s in skills if s], min_support=1)
+        clustered = cluster_compact_skills(_succ(*[s for s in skills if s]), min_support=1)
         assert len(clustered) == 1
         assert clustered[0].success_count == 2
         assert clustered[0].success_streak == 2
 
     def test_min_support_filters_singletons(self):
         skill = compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1)
-        assert cluster_compact_skills([skill], min_support=2) == []
-        assert len(cluster_compact_skills([skill], min_support=1)) == 1
+        assert cluster_compact_skills(_succ(skill), min_support=2) == []
+        assert len(cluster_compact_skills(_succ(skill), min_support=1)) == 1
 
     def test_distinct_structures_do_not_cluster(self):
         a = compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1)
@@ -165,7 +171,7 @@ class TestClustering:
                    name="search_flow", skill_id="flat:c"),
             max_steps=7, max_scroll_steps=1,
         )
-        clustered = cluster_compact_skills([a, b], min_support=1)
+        clustered = cluster_compact_skills(_succ(a, b), min_support=1)
         assert len(clustered) == 2
 
     def test_same_sequence_different_literal_target_stays_apart(self):
@@ -181,9 +187,61 @@ class TestClustering:
                    name="fill_search", skill_id="flat:b"),
             max_steps=7, max_scroll_steps=1,
         )
-        clustered = cluster_compact_skills([to_field, search], min_support=1)
+        clustered = cluster_compact_skills(_succ(to_field, search), min_support=1)
         assert len(clustered) == 2
         assert all(s.success_count == 1 for s in clustered)
+
+
+class TestTerminalActionBackstop:
+    def test_detects_terminal_targets(self):
+        assert _has_terminal_action(_skill(_step("tap", "Send"), _step("tap", "ok")))
+        assert _has_terminal_action(_skill(_step("tap", "Delete message")))
+        assert _has_terminal_action(_skill(_step("tap", "Confirm purchase")))
+
+    def test_benign_targets_pass(self):
+        assert not _has_terminal_action(_skill(_step("tap", "To"), _step("input_text", "{{q}}")))
+        # word-boundary: "sender" / "reorder" must not trip send / order rules
+        assert not _has_terminal_action(_skill(_step("tap", "Sender name")))
+        assert not _has_terminal_action(_skill(_step("tap", "Reorder list")))
+
+    def test_identifier_style_targets_detected(self):
+        # snake_case / camelCase must not evade the backstop
+        assert _has_terminal_action(_skill(_step("tap", "send_button")))
+        assert _has_terminal_action(_skill(_step("tap", "submitOrder")))
+
+
+class TestFailureProvenance:
+    def _email(self, skill_id: str) -> Skill:
+        return compactify_skill(
+            _skill(_step("tap", "To"), _step("input_text", "{{to_email}}"),
+                   name="fill_email", skill_id=skill_id),
+            max_steps=7, max_scroll_steps=1,
+        )
+
+    def test_failure_only_cluster_dropped(self):
+        # A workflow only ever seen failing is never promoted.
+        fail = self._email("flat:a")
+        assert cluster_compact_skills([(fail, False)], min_support=1) == []
+
+    def test_failure_corroborates_success_without_inflating_count(self):
+        # 1 success + 1 failure reaches min_support=2, but success_count stays 1
+        # and the cluster is tagged from_failure.
+        clustered = cluster_compact_skills(
+            [(self._email("flat:a"), True), (self._email("flat:b"), False)],
+            min_support=2,
+        )
+        assert len(clustered) == 1
+        assert clustered[0].success_count == 1
+        assert "from_failure" in clustered[0].tags
+
+    def test_pure_success_cluster_not_tagged(self):
+        clustered = cluster_compact_skills(
+            [(self._email("flat:a"), True), (self._email("flat:b"), True)],
+            min_support=2,
+        )
+        assert len(clustered) == 1
+        assert "from_failure" not in clustered[0].tags
+        assert clustered[0].success_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -198,13 +256,13 @@ class TestMergeOutput:
             _skill(_step("tap", "To"), _step("input_text", "{{to_email}}"), name="fill_email"),
             max_steps=7, max_scroll_steps=1,
         )
-        clustered = cluster_compact_skills([skill, skill], min_support=1)  # support=2
+        clustered = cluster_compact_skills(_succ(skill, skill), min_support=1)  # support=2
         added = merge_into_output(clustered, out)
         assert added == 1
         assert out.exists()
 
         # Re-merge a lower-support version of the same skill: support must not drop.
-        weaker = cluster_compact_skills([skill], min_support=1)  # support=1
+        weaker = cluster_compact_skills(_succ(skill), min_support=1)  # support=1
         added2 = merge_into_output(weaker, out)
         assert added2 == 0
         from opengui.skills.flat import compile_flat_skills
