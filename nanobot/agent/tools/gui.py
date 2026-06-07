@@ -148,6 +148,7 @@ class GuiRouterMemoryRetriever:
     """Read-only retrieval from nanobot workspace memory for GUI workflow routing."""
 
     _MAX_EVIDENCE = 5
+    _MAX_GUI_MEMORY_EMBED = 3
     _MAX_EXCERPT_CHARS = 650
     _MIN_EVIDENCE_SCORE_WITHOUT_APP = 2
     _MIN_POLICY_SCORE_WITHOUT_APP = 4
@@ -245,13 +246,59 @@ class GuiRouterMemoryRetriever:
         "opentalk": {"mastodon", "opentalk", "org.joinmastodon.android.mastodon"},
     }
 
-    def __init__(self, workspace: Path) -> None:
+    def __init__(self, workspace: Path, *, embedding_provider: Any | None = None) -> None:
         self._workspace = Path(workspace)
+        # When present, GUI-memory items are retrieved semantically via the
+        # framework's hybrid BM25+FAISS MemoryRetriever instead of the keyword
+        # scorer below — induced lessons are deliberately abstract / keyword-sparse,
+        # which the keyword path under-retrieves.  MEMORY.md / history stay keyword.
+        self._embedding_provider = embedding_provider
 
     def retrieve(self, task: str, *, platform: str) -> GuiRouterContext:
+        """Synchronous keyword-only retrieval over every source (incl. GUI memory).
+
+        Kept for callers without an event loop / embedding provider (e.g. the
+        offline router audit).  The workflow runner prefers :meth:`retrieve_async`.
+        """
         app_candidates = self._app_candidates(task, platform=platform)
         evidence = self._retrieve_evidence(task, app_candidates=app_candidates)
         return GuiRouterContext(app_candidates=tuple(app_candidates), evidence=tuple(evidence))
+
+    async def retrieve_async(self, task: str, *, platform: str) -> GuiRouterContext:
+        """Retrieve evidence, using embedding search for GUI-memory items.
+
+        Without an embedding provider this is exactly :meth:`retrieve`.  With one,
+        GUI-memory items are ranked semantically while MEMORY.md / history keep the
+        keyword path; the two evidence lists are merged (GUI memory first), deduped,
+        and capped.  If embedding retrieval fails, GUI memory degrades to keyword so
+        nothing is silently dropped.
+        """
+        if self._embedding_provider is None:
+            return self.retrieve(task, platform=platform)
+
+        app_candidates = self._app_candidates(task, platform=platform)
+        embed_evidence = await self._retrieve_gui_memory_embedding(task)
+        # ``None`` signals the embedding path errored → keep GUI memory in the
+        # keyword pass as a fallback; otherwise the keyword pass excludes it to
+        # avoid surfacing the same items twice.
+        embedding_failed = embed_evidence is None
+        keyword_evidence = self._retrieve_evidence(
+            task,
+            app_candidates=app_candidates,
+            include_gui_memory=embedding_failed,
+        )
+
+        merged: list[GuiRouterMemoryEvidence] = []
+        seen: set[str] = set()
+        for item in [*(embed_evidence or []), *keyword_evidence]:
+            key = item.text.casefold()
+            if key in seen:
+                continue
+            merged.append(item)
+            seen.add(key)
+            if len(merged) >= self._MAX_EVIDENCE:
+                break
+        return GuiRouterContext(app_candidates=tuple(app_candidates), evidence=tuple(merged))
 
     def _app_candidates(self, task: str, *, platform: str) -> list[str]:
         if platform.strip().lower() != "android":
@@ -263,6 +310,7 @@ class GuiRouterMemoryRetriever:
         task: str,
         *,
         app_candidates: list[str],
+        include_gui_memory: bool = True,
     ) -> list[GuiRouterMemoryEvidence]:
         query_terms = self._query_terms(task, app_candidates)
         generic_terms = {term.casefold() for term in self._TASK_TERMS}
@@ -271,6 +319,10 @@ class GuiRouterMemoryRetriever:
         scored: list[tuple[int, int, GuiRouterMemoryEvidence]] = []
         order = 0
         for source, text in self._iter_chunks():
+            # When GUI-memory items are served by embedding search instead, drop them
+            # from the keyword pass so the same item is not surfaced twice.
+            if not include_gui_memory and source.startswith("opengui/gui_memory"):
+                continue
             score = self._score(text, query_terms=query_terms, app_candidates=app_candidates)
             if score <= 0:
                 continue
@@ -342,6 +394,71 @@ class GuiRouterMemoryRetriever:
             source = f"opengui/gui_memory:{app}:{status}" if app else f"opengui/gui_memory:{status}"
             chunks.append((source, searchable))
         return chunks
+
+    @classmethod
+    def _load_gui_memory_entries(cls) -> list[tuple[Any, str]]:
+        """Load the GUI memory bank as ``(MemoryEntry, source_label)`` pairs.
+
+        Reuses :meth:`_iter_opengui_memory_chunks` so the searchable text and the
+        ``opengui/gui_memory:{app}:{status}`` source label stay identical to the
+        keyword path; only the ranking changes.
+        """
+        from opengui.memory.types import MemoryEntry, MemoryType
+
+        entries: list[tuple[Any, str]] = []
+        for idx, (source, searchable) in enumerate(cls._iter_opengui_memory_chunks()):
+            # The MemoryType is irrelevant: this retriever instance only ever holds
+            # GUI-memory entries and is never type-filtered, and the entry never
+            # surfaces to the agent (evidence is re-labelled with ``source`` below).
+            entry = MemoryEntry(
+                entry_id=f"gm-{idx}",
+                memory_type=MemoryType.APP_GUIDE,
+                platform="android",
+                content=searchable,
+            )
+            entries.append((entry, source))
+        return entries
+
+    async def _retrieve_gui_memory_embedding(
+        self, task: str
+    ) -> list[GuiRouterMemoryEvidence] | None:
+        """Semantically retrieve GUI-memory items via the hybrid MemoryRetriever.
+
+        Returns the top evidence (empty list when the bank is empty), or ``None``
+        when retrieval errors (missing faiss, embedding API failure, …) so the
+        caller can fall back to the keyword path rather than lose GUI memory.
+        """
+        if self._embedding_provider is None:
+            return []
+        entries_with_source = self._load_gui_memory_entries()
+        if not entries_with_source:
+            return []
+        try:
+            from opengui.memory.retrieval import MemoryRetriever
+
+            retriever = MemoryRetriever(
+                embedding_provider=self._embedding_provider,
+                top_k=self._MAX_GUI_MEMORY_EMBED,
+            )
+            await retriever.index([entry for entry, _ in entries_with_source])
+            results = await retriever.search(task, top_k=self._MAX_GUI_MEMORY_EMBED)
+        except Exception:
+            logger.debug(
+                "GUI memory embedding retrieval failed; falling back to keyword.",
+                exc_info=True,
+            )
+            return None
+
+        source_by_id = {entry.entry_id: source for entry, source in entries_with_source}
+        evidence: list[GuiRouterMemoryEvidence] = []
+        for entry, _score in results:
+            evidence.append(
+                GuiRouterMemoryEvidence(
+                    source=source_by_id.get(entry.entry_id, "opengui/gui_memory"),
+                    text=self._excerpt(entry.content),
+                )
+            )
+        return evidence
 
     @staticmethod
     def _iter_markdown_chunks(path: Path, source: str) -> list[tuple[str, str]]:
@@ -486,7 +603,7 @@ class GuiWorkflowRunner:
         self._router_memory = router_memory
 
     async def run(self, active_backend: Any, task: str, **kwargs: Any) -> str:
-        router_context = self._build_router_context(
+        router_context = await self._build_router_context(
             task,
             platform=str(getattr(active_backend, "platform", "") or "unknown"),
         )
@@ -523,10 +640,10 @@ class GuiWorkflowRunner:
         )
         return "\n".join(lines)
 
-    def _build_router_context(self, task: str, *, platform: str) -> GuiRouterContext | None:
+    async def _build_router_context(self, task: str, *, platform: str) -> GuiRouterContext | None:
         if self._router_memory is None:
             return None
-        context = self._router_memory.retrieve(task, platform=platform)
+        context = await self._router_memory.retrieve_async(task, platform=platform)
         return context if context.has_context() else None
 
     async def _safe_plan_workflow(
@@ -1211,7 +1328,9 @@ class GuiSubagentTool(Tool):
             llm=self._llm_adapter,
             run_task=self._run_task,
             load_latest_step_event=self._load_latest_step_event,
-            router_memory=GuiRouterMemoryRetriever(self._workspace),
+            router_memory=GuiRouterMemoryRetriever(
+                self._workspace, embedding_provider=self._embedding_adapter
+            ),
         )
         return await runner.run(active_backend, task, **kwargs)
 

@@ -22,12 +22,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import re
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -251,8 +251,15 @@ MEMORY_ITEM_RE = re.compile(
 )
 
 
-def parse_memory_items(text: str, *, app: str | None = None) -> list[GuiMemoryItem]:
-    """Parse LLM output into GuiMemoryItem objects."""
+def parse_memory_items(
+    text: str, *, app: str | None = None, status: str = "success"
+) -> list[GuiMemoryItem]:
+    """Parse LLM output into GuiMemoryItem objects.
+
+    ``status`` is applied at construction time so each item goes through
+    ``GuiMemoryItem.__post_init__`` validation — unlike a post-hoc
+    ``object.__setattr__`` on the frozen dataclass, which would silently bypass it.
+    """
     items: list[GuiMemoryItem] = []
     for match in MEMORY_ITEM_RE.finditer(text):
         title = match.group(1).strip()
@@ -263,7 +270,7 @@ def parse_memory_items(text: str, *, app: str | None = None) -> list[GuiMemoryIt
                 title=title,
                 description=description,
                 content=content,
-                status="success",  # caller should override for failure traces
+                status=status,
                 app=app,
             ))
     return items
@@ -302,13 +309,7 @@ async def induce_memory_items(
         temperature=temperature,
     )
     content = response.choices[0].message.content or ""
-    items = parse_memory_items(content, app=app)
-
-    # Set correct status
-    for item in items:
-        object.__setattr__(item, "status", task_outcome)
-
-    return items
+    return parse_memory_items(content, app=app, status=task_outcome)
 
 
 # ---------------------------------------------------------------------------
@@ -339,6 +340,77 @@ def get_task_outcome(task_dir: Path) -> tuple[str, str]:
     return "failure", f"score={score}"
 
 
+def get_trace_outcome(trace_path: Path) -> tuple[str, str] | None:
+    """Return ``(outcome, note)`` for a single trace from its own ``result`` event.
+
+    The recorder writes a terminal ``result`` event with an explicit ``success``
+    bool (``opengui/trajectory/recorder.py``).  That signal is authoritative for
+    *this* gui-task run and is preferred over the task-level ``result.txt``, which
+    is shared by every run under a task dir and otherwise mislabels mixed-outcome
+    sub-runs (a failed run inheriting a sibling's success, or vice versa).
+
+    Returns ``None`` when the trace has no usable success signal so the caller can
+    fall back to :func:`get_task_outcome`.
+    """
+    result = _find_result(_load_jsonl(trace_path))
+    if result is None or "success" not in result:
+        return None
+    if result.get("success"):
+        return "success", ""
+    error = str(result.get("error") or "").strip()
+    return "failure", error or "trace result.success is false"
+
+
+#: ``result.error`` prefixes marking a trajectory cut short by a detector or
+#: infrastructure noise rather than a genuine task outcome.  Mirrors
+#: ``opengui.postprocessing._ABNORMAL_TERMINATION_PREFIXES``.
+_ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
+    "stagnation_detected",
+    "step_timeout",
+    "intervention_cancelled",
+)
+
+
+def _is_abnormal_termination(result_event: dict[str, Any] | None) -> bool:
+    """True if a trajectory ended abnormally (intervention / stagnation / timeout).
+
+    Mirrors ``opengui.postprocessing._is_abnormal_termination`` so the offline
+    inducers agree with the online skill pipeline:
+
+    * ``intervention_cancelled`` (human-takeover handoff that was cancelled) is
+      always abnormal — there is no learnable agent behaviour to mine.
+    * ``stagnation_detected`` / ``step_timeout`` count as abnormal only when the
+      run made *no* progress (``total_steps == 0``); a detector that fired after
+      real steps still leaves a learnable (failed) trajectory and is kept.
+    * any error on a zero-step run is abnormal.
+    """
+    if not result_event:
+        return False
+    error = result_event.get("error")
+    total_steps = result_event.get("total_steps") or 0
+    if total_steps == 0 and error:
+        return True
+    if not isinstance(error, str):
+        return False
+    if total_steps > 0 and (
+        error == "stagnation_detected"
+        or error.startswith("stagnation_detected:")
+        or error == "step_timeout"
+        or error.startswith("step_timeout:")
+    ):
+        return False
+    return any(
+        error == prefix or error.startswith(prefix + ":")
+        for prefix in _ABNORMAL_TERMINATION_PREFIXES
+    )
+
+
+def trace_is_abnormal(trace_path: Path) -> bool:
+    """True when *trace_path* ended in abnormal termination (see
+    :func:`_is_abnormal_termination`).  Shared with the compact-skill inducer."""
+    return _is_abnormal_termination(_find_result(_load_jsonl(trace_path)))
+
+
 # ---------------------------------------------------------------------------
 # Memory bank I/O
 # ---------------------------------------------------------------------------
@@ -362,23 +434,80 @@ def load_memory_bank(path: Path) -> list[GuiMemoryItem]:
     return items
 
 
-def append_to_memory_bank(items: list[GuiMemoryItem], path: Path) -> None:
-    """Append items to a JSONL memory bank, skipping exact (title, content) duplicates."""
+#: Default Jaccard overlap above which a new item is treated as a near-duplicate
+#: of an existing same-app item and skipped.
+_DEFAULT_DEDUP_THRESHOLD = 0.6
+
+#: Latin filler words dropped before similarity so overlap reflects content words.
+_DEDUP_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with", "is",
+    "are", "be", "this", "that", "these", "those", "when", "use", "using", "your",
+    "you", "it", "its", "as", "at", "by", "from", "then", "if", "which", "while",
+    "after", "before", "into", "any", "all", "not", "do", "does", "will", "can",
+    "should", "must", "may", "each", "via", "than", "such",
+})
+
+#: Tokenizer: Latin/digit runs as words, CJK characters individually (no spaces).
+_DEDUP_TOKEN_RE = re.compile(r"[a-z0-9]+|[一-鿿㐀-䶿]")
+
+
+def _dedup_token_set(item: GuiMemoryItem) -> frozenset[str]:
+    """Content-word token set over an item's title + content (case-folded)."""
+    text = f"{item.title}\n{item.content}".lower()
+    tokens: set[str] = set()
+    for tok in _DEDUP_TOKEN_RE.findall(text):
+        if len(tok) == 1:  # single CJK character
+            tokens.add(tok)
+        elif len(tok) >= 2 and tok not in _DEDUP_STOPWORDS:
+            tokens.add(tok)
+    return frozenset(tokens)
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
+def append_to_memory_bank(
+    items: list[GuiMemoryItem],
+    path: Path,
+    *,
+    similarity_threshold: float = _DEFAULT_DEDUP_THRESHOLD,
+) -> int:
+    """Append items, skipping near-duplicates of existing same-app entries.
+
+    Exact ``(title, content)`` matching was never enough: the LLM rephrases the
+    same lesson across runs, so the bank accumulated semantic duplicates.  An item
+    is skipped when its title+content token set has Jaccard overlap >=
+    ``similarity_threshold`` with an already-kept item *for the same app*
+    (cross-app items never collide).  Distinct facets of one flow stay below the
+    threshold and are kept; an exact repeat (overlap 1.0) is still caught.
+    """
     existing = load_memory_bank(path)
-    seen = {(item.title.strip(), item.content.strip()) for item in existing}
+    # (app_key, token_set) for everything already kept; extended as we append so
+    # near-duplicates *within this batch* are collapsed too.
+    seen: list[tuple[str, frozenset[str]]] = [
+        ((it.app or "").casefold(), _dedup_token_set(it)) for it in existing
+    ]
 
     new_count = 0
     with open(path, "a", encoding="utf-8") as fh:
         for item in items:
-            key = (item.title.strip(), item.content.strip())
-            if key in seen:
+            app_key = (item.app or "").casefold()
+            tokens = _dedup_token_set(item)
+            if any(
+                app_key == seen_app and _jaccard(tokens, seen_tokens) >= similarity_threshold
+                for seen_app, seen_tokens in seen
+            ):
                 continue
             fh.write(json.dumps(item.to_dict(), ensure_ascii=False) + "\n")
-            seen.add(key)
+            seen.append((app_key, tokens))
             new_count += 1
 
     if new_count:
         print(f"Appended {new_count} new item(s) to {path}")
+    return new_count
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +527,14 @@ def parse_args() -> argparse.Namespace:
     # Output
     p.add_argument("--memory-bank", type=Path, default=DEFAULT_MEMORY_BANK_PATH,
                    help=f"JSONL memory bank path (default: {DEFAULT_MEMORY_BANK_PATH})")
+    p.add_argument("--dedup-threshold", type=float, default=_DEFAULT_DEDUP_THRESHOLD,
+                   help="Skip a new item when its title+content token overlap (Jaccard) "
+                        "with an existing same-app item reaches this value "
+                        f"(default: {_DEFAULT_DEDUP_THRESHOLD}; lower = more aggressive)")
+    p.add_argument("--max-items-per-task", type=int, default=_DEFAULT_MAX_ITEMS_PER_TASK,
+                   help="Cap how many memory items a single task dir may contribute, "
+                        "keeping failures first then round-robin across apps "
+                        f"(default: {_DEFAULT_MAX_ITEMS_PER_TASK}; 0 = unlimited)")
 
     # LLM config
     p.add_argument("--model", default=os.getenv("MEMORY_INDUCE_MODEL", "deepseek-v4-pro"))
@@ -417,6 +554,40 @@ def parse_args() -> argparse.Namespace:
                    help="Print formatted trajectories and exit without LLM calls")
 
     return p.parse_args()
+
+
+#: Default per-task item budget (0 = unlimited).
+_DEFAULT_MAX_ITEMS_PER_TASK = 5
+
+
+def _select_task_items(items: list[GuiMemoryItem], budget: int) -> list[GuiMemoryItem]:
+    """Cap one task's contribution to ``budget`` items, deterministically.
+
+    A single task dir can contain many gui-task runs, so it may produce far more
+    items than are worth keeping (the MastodonInviteTask example yielded 13).  When
+    over budget we keep failure-derived items first (they are the scarcer, more
+    valuable signal) and round-robin across apps so one app cannot crowd the others
+    out.  ``budget <= 0`` disables the cap.
+    """
+    if budget <= 0 or len(items) <= budget:
+        return items
+
+    groups: dict[str, list[GuiMemoryItem]] = {}
+    for item in items:
+        groups.setdefault(item.app or "", []).append(item)
+    # Within each app, failures (status != "success") come first; otherwise stable.
+    for app_items in groups.values():
+        app_items.sort(key=lambda it: it.status == "success")
+
+    order = list(groups.keys())  # first-seen app order — deterministic
+    selected: list[GuiMemoryItem] = []
+    idx = 0
+    while len(selected) < budget and any(groups[app] for app in order):
+        app = order[idx % len(order)]
+        if groups[app]:
+            selected.append(groups[app].pop(0))
+        idx += 1
+    return selected
 
 
 async def main_async(args: argparse.Namespace) -> int:
@@ -472,27 +643,42 @@ async def main_async(args: argparse.Namespace) -> int:
             print(f"[SKIP] {task_name}: no trace found")
             continue
 
-        # Determine outcome
-        outcome, error_msg = get_task_outcome(task_dir)
+        # Outcome and app are resolved PER trace from the trajectory itself; the
+        # task-level result.txt / task-name only serve as fallbacks because they are
+        # shared across every gui-task run under this dir and would otherwise
+        # mislabel mixed-outcome runs or mis-tag the app.
+        task_outcome, task_error = get_task_outcome(task_dir)
 
-        formatted_jobs: list[tuple[Path, str, int]] = []
+        # job = (trace_path, trajectory_text, step_count, outcome, app)
+        jobs: list[tuple[Path, str, int, str, str | None]] = []
         skipped_short = 0
         skipped_empty = 0
+        skipped_abnormal = 0
         for trace_path in trace_paths:
             step_count = _trace_step_count(trace_path)
             if step_count <= 2:
                 skipped_short += 1
                 continue
+            # Skip degenerate runs (human-intervention cancel, no-progress
+            # stagnation/timeout): mining "lessons" from them yields only noise.
+            if trace_is_abnormal(trace_path):
+                skipped_abnormal += 1
+                continue
             trajectory_text = format_trajectory_compact(trace_path)
             if trajectory_text is None:
                 skipped_empty += 1
                 continue
-            formatted_jobs.append((trace_path, trajectory_text, step_count))
+            trace_outcome = get_trace_outcome(trace_path)
+            outcome = trace_outcome[0] if trace_outcome is not None else task_outcome
+            app = _resolve_trace_app(trace_path) or _guess_app(task_name)
+            jobs.append((trace_path, trajectory_text, step_count, outcome, app))
 
-        if not formatted_jobs:
+        if not jobs:
             detail = []
             if skipped_short:
                 detail.append(f"{skipped_short} short trace(s)")
+            if skipped_abnormal:
+                detail.append(f"{skipped_abnormal} abnormal trace(s)")
             if skipped_empty:
                 detail.append(f"{skipped_empty} empty trace(s)")
             suffix = f" ({', '.join(detail)})" if detail else ""
@@ -501,31 +687,33 @@ async def main_async(args: argparse.Namespace) -> int:
 
         if args.dry_run:
             print(f"\n{'='*60}")
-            print(f"Task: {task_name}  Outcome: {outcome}")
-            if error_msg:
-                print(f"Error: {error_msg}")
+            print(f"Task: {task_name}  (task-level outcome: {task_outcome})")
+            if task_error:
+                print(f"Task-level note: {task_error}")
             print("Traces:")
-            for trace_path, _, step_count in formatted_jobs:
-                print(f"  - {trace_path} ({step_count} steps)")
-            if skipped_short or skipped_empty:
-                print(f"Skipped: {skipped_short} short, {skipped_empty} empty")
+            for trace_path, _, step_count, outcome, app in jobs:
+                print(f"  - {trace_path} ({step_count} steps) "
+                      f"outcome={outcome} app={app or '-'}")
+            if skipped_short or skipped_abnormal or skipped_empty:
+                print(f"Skipped: {skipped_short} short, "
+                      f"{skipped_abnormal} abnormal, {skipped_empty} empty")
             print(f"{'='*60}")
-            for trace_path, trajectory_text, _ in formatted_jobs:
+            for trace_path, trajectory_text, _, _, _ in jobs:
                 print(f"\n--- GUI task trace: {trace_path.parent.name} ---")
                 print(trajectory_text[:1500])
                 if len(trajectory_text) > 1500:
                     print(f"... ({len(trajectory_text)} chars total)")
             continue
 
-        # Call LLM once per memory-worthy GUI task trace.
+        # Call LLM once per memory-worthy GUI task trace, with per-trace outcome+app.
         task_items: list[GuiMemoryItem] = []
-        print(f"[{outcome.upper()[:3]}] {task_name} ... ", end="", flush=True)
-        for trace_path, trajectory_text, _ in formatted_jobs:
+        print(f"[GM] {task_name} ... ", end="", flush=True)
+        for trace_path, trajectory_text, _, outcome, app in jobs:
             try:
                 items = await induce_memory_items(
                     trajectory_text=trajectory_text,
                     task_outcome=outcome,
-                    app=_guess_app(task_name),
+                    app=app,
                     api_key=api_key,
                     base_url=args.base_url,
                     model=args.model,
@@ -537,15 +725,22 @@ async def main_async(args: argparse.Namespace) -> int:
                 continue
             task_items.extend(items)
 
-        print(f"{len(task_items)} item(s)")
-        all_items.extend(task_items)
+        selected = _select_task_items(task_items, args.max_items_per_task)
+        dropped = len(task_items) - len(selected)
+        suffix = f" (+{dropped} over per-task budget dropped)" if dropped else ""
+        print(f"{len(selected)} item(s){suffix}")
+        all_items.extend(selected)
 
     # -- write memory bank ---------------------------------------------------
     if all_items:
         bank_path = args.memory_bank.expanduser()
         bank_path.parent.mkdir(parents=True, exist_ok=True)
-        append_to_memory_bank(all_items, bank_path)
-        print(f"\nTotal: {len(all_items)} new memory item(s) in {bank_path}")
+        added = append_to_memory_bank(
+            all_items, bank_path, similarity_threshold=args.dedup_threshold
+        )
+        skipped = len(all_items) - added
+        suffix = f" ({skipped} near-duplicate(s) skipped)" if skipped else ""
+        print(f"\nTotal: {added} new memory item(s) in {bank_path}{suffix}")
 
     return 0
 
@@ -676,8 +871,60 @@ def _trace_step_count(trace_path: Path) -> int:
     return sum(1 for event in _load_jsonl(trace_path) if _event_type(event) == "step")
 
 
+#: Launcher / system surfaces that are never the *target* app of a GUI task.
+#: Compared case-folded against each step's foreground app.  Some backends report
+#: a human-readable label (e.g. MobileWorld uses "桌面" / "Settings") instead of a
+#: package, so both package names and display-name labels are listed here.
+_LAUNCHER_OR_SYSTEM_PACKAGES = frozenset({
+    # package names
+    "",
+    "?",
+    "android",
+    "com.android.systemui",
+    "com.android.launcher",
+    "com.android.launcher3",
+    "com.sec.android.app.launcher",
+    "com.google.android.apps.nexuslauncher",
+    "com.google.android.apps.pixellauncher",
+    # display-name labels (already case-folded)
+    "桌面",
+    "主屏幕",
+    "launcher",
+    "desktop",
+    "home",
+    "system ui",
+    "系统界面",
+    "android system",
+})
+
+
+def _resolve_trace_app(trace_path: Path) -> str | None:
+    """Resolve the target app from the trajectory itself, not the task name.
+
+    Returns the most frequent non-launcher / non-system ``foreground_app`` observed
+    across the trace's steps, or ``None`` when none is usable.  This mirrors the
+    validated principle in ``induce_compact_skills.py`` (take the app from the
+    trace, via codegen there) so the stored ``app`` actually matches what ran,
+    instead of a brittle keyword guess on the task name.
+    """
+    counter: Counter[str] = Counter()
+    for event in _load_jsonl(trace_path):
+        if _event_type(event) != "step":
+            continue
+        observation = event.get("observation") or {}
+        app = str(observation.get("foreground_app") or observation.get("app") or "").strip()
+        if app and app.casefold() not in _LAUNCHER_OR_SYSTEM_PACKAGES:
+            counter[app] += 1
+    if not counter:
+        return None
+    return counter.most_common(1)[0][0]
+
+
 def _guess_app(task_name: str) -> str | None:
-    """Heuristic: map task name to likely Android app.
+    """Heuristic fallback: map task name to likely Android app.
+
+    Only used when :func:`_resolve_trace_app` cannot determine the app from the
+    trajectory (e.g. every step's foreground app is a launcher or missing).
 
     Explicit app names are checked FIRST to avoid generic keywords
     (``event``, ``send``) matching ``Mail`` before ``Calendar``, etc.

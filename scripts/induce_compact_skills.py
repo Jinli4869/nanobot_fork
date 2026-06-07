@@ -67,6 +67,7 @@ try:
         _find_gui_task_traces,
         _trace_step_count,
         get_task_outcome,
+        trace_is_abnormal,
     )
 except ImportError:  # pragma: no cover - standalone fallback
     import json
@@ -85,6 +86,31 @@ except ImportError:  # pragma: no cover - standalone fallback
 
     def _event_type(event: dict[str, Any]) -> str:
         return str(event.get("type") or event.get("event") or "")
+
+    def _find_result(events: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for event in reversed(events):
+            if _event_type(event) == "result":
+                return event
+        return None
+
+    _ABNORMAL_PREFIXES = ("stagnation_detected", "step_timeout", "intervention_cancelled")
+
+    def trace_is_abnormal(trace_path: Path) -> bool:
+        result = _find_result(_load_jsonl(trace_path))
+        if not result:
+            return False
+        error = result.get("error")
+        total_steps = result.get("total_steps") or 0
+        if total_steps == 0 and error:
+            return True
+        if not isinstance(error, str):
+            return False
+        if total_steps > 0 and (
+            error == "stagnation_detected" or error.startswith("stagnation_detected:")
+            or error == "step_timeout" or error.startswith("step_timeout:")
+        ):
+            return False
+        return any(error == p or error.startswith(p + ":") for p in _ABNORMAL_PREFIXES)
 
     def _find_gui_task_traces(task_dir: Path) -> list[Path]:
         run_dir = task_dir / "nanobot_gui_task_runs"
@@ -493,6 +519,7 @@ async def main_async(args: argparse.Namespace) -> int:
     skipped_failure = 0
     skipped_no_trace = 0
     skipped_short = 0
+    skipped_abnormal = 0
 
     for task_dir in task_dirs:
         outcome, _ = get_task_outcome(task_dir)
@@ -506,8 +533,17 @@ async def main_async(args: argparse.Namespace) -> int:
             skipped_no_trace += 1
             continue
 
-        usable = [tp for tp in trace_paths if _trace_step_count(tp) > 2]
-        skipped_short += len(trace_paths) - len(usable)
+        usable: list[Path] = []
+        for tp in trace_paths:
+            if _trace_step_count(tp) <= 2:
+                skipped_short += 1
+                continue
+            # Degenerate runs (intervention cancel / no-progress stagnation or
+            # timeout) carry no reusable skill — drop them before extraction.
+            if trace_is_abnormal(tp):
+                skipped_abnormal += 1
+                continue
+            usable.append(tp)
         if not usable:
             continue
 
@@ -557,7 +593,8 @@ async def main_async(args: argparse.Namespace) -> int:
 
     print(
         f"Processed: {processed} task(s); skipped "
-        f"{skipped_failure} failure, {skipped_no_trace} no-trace, {skipped_short} short"
+        f"{skipped_failure} failure, {skipped_no_trace} no-trace, "
+        f"{skipped_short} short, {skipped_abnormal} abnormal"
     )
     return 0
 
