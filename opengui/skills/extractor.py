@@ -219,6 +219,35 @@ class SkillExtractor:
             return []
         return await self._extract_all(result, is_success)
 
+    async def extract_from_codegen_result_multi(
+        self,
+        result: CodegenResult,
+        *,
+        is_success: bool = True,
+    ) -> list[Skill]:
+        """Extract skills from an already-computed :class:`CodegenResult`.
+
+        This is the side-effect-free counterpart to
+        :meth:`extract_from_file_multi`: it never writes ``extraction_result.json``
+        to the trace directory and does not apply the single-foreground-app guard
+        (single-app success traces are exactly what compact-skill induction feeds
+        in). App selection, codegen evidence, the prompt/quality loop, and contract
+        alignment are all reused unchanged.
+
+        The per-app segment split and its quality filter (launch-only / single-core
+        / scroll-only rejection) are kept identical to the online extractor: a
+        result whose segments are all rejected yields no skill, by design.
+        """
+        self._last_diagnostics = []
+        if result is None or not result.steps:
+            return []
+        raw_segments = _split_codegen_result_by_app(result)
+        segments, _skipped = _filter_codegen_segments_for_extraction(raw_segments)
+        skills: list[Skill] = []
+        for segment in segments:
+            skills.extend(await self._extract_all(segment, is_success))
+        return skills
+
     # -- internal --
 
     async def _extract_all(self, result: CodegenResult, is_success: bool) -> list[Skill]:

@@ -1,178 +1,215 @@
-"""Tests for induce_compact_skills.py."""
+"""Tests for scripts/induce_compact_skills.py compact post-processing."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-import pytest
+from opengui.skills.data import Skill, SkillStep
+from opengui.skills.flat import C, R
+
+from scripts.induce_compact_skills import (
+    _placeholder_names,
+    cluster_compact_skills,
+    compactify_skill,
+    merge_into_output,
+)
 
 
-# ---------------------------------------------------------------------------
-# format_trajectory_for_skill
-# ---------------------------------------------------------------------------
-
-def _write_trace(path: Path, events: list[dict]) -> None:
-    path.write_text(
-        "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events),
-        encoding="utf-8",
+def _step(
+    action_type: str,
+    target: str = "button",
+    *,
+    valid_state: str | None = "field is visible",
+    state_contract: dict | None = None,
+    parameters: dict | None = None,
+    fixed_values: dict | None = None,
+) -> SkillStep:
+    return SkillStep(
+        action_type=action_type,
+        target=target,
+        parameters=parameters or {},
+        valid_state=valid_state,
+        state_contract=state_contract,
+        fixed_values=fixed_values or {},
     )
 
 
-class TestFormatForSkill:
-    def test_includes_ui_and_params(self, tmp_path):
-        from scripts.induce_compact_skills import format_trajectory_for_skill
-
-        trace = tmp_path / "t.jsonl"
-        _write_trace(trace, [
-            {"type": "metadata", "task": "Send email"},
-            {
-                "type": "step", "step_index": 0,
-                "action": {"action_type": "tap", "action_params": {"x": 100, "y": 200}},
-                "observation": {
-                    "foreground_app": "Mail",
-                    "extra": {"clickable_text": ["To", "Subject", "Compose"]},
-                },
-                "model_output": "Thought: Open the To field. Action: {}",
-            },
-            {"type": "result", "success": True},
-        ])
-
-        text = format_trajectory_for_skill(trace)
-        assert text is not None
-        assert "Step 0 [tap] (Mail)" in text
-        assert "UI: To, Subject, Compose" in text
-        assert "pos=(100, 200)" in text
-
-    def test_empty_trace(self, tmp_path):
-        from scripts.induce_compact_skills import format_trajectory_for_skill
-        trace = tmp_path / "t.jsonl"
-        _write_trace(trace, [
-            {"type": "metadata", "task": "No steps"},
-            {"type": "result"},
-        ])
-        assert format_trajectory_for_skill(trace) is None
-
-    def test_truncates_long(self, tmp_path):
-        from scripts.induce_compact_skills import format_trajectory_for_skill
-        trace = tmp_path / "t.jsonl"
-        events = [{"type": "metadata", "task": "Long"}]
-        for i in range(40):
-            events.append({
-                "type": "step", "step_index": i,
-                "action": {"action_type": "tap"},
-                "observation": {"foreground_app": "App"},
-                "model_output": f"Thought: step {i}. Action: {{}}",
-            })
-        events.append({"type": "result"})
-        _write_trace(trace, events)
-        text = format_trajectory_for_skill(trace)
-        assert "steps omitted" in text
-        assert "Step 39" in text
+def _skill(
+    *steps: SkillStep,
+    name: str = "fill_form",
+    app: str = "com.gmailclone",
+    skill_id: str = "flat:fill_form",
+) -> Skill:
+    return Skill(
+        skill_id=skill_id,
+        name=name,
+        description="When to use: test",
+        app=app,
+        platform="android",
+        steps=tuple(steps),
+        parameters=(),
+    )
 
 
 # ---------------------------------------------------------------------------
-# clean_skill_code
+# compactify_skill
 # ---------------------------------------------------------------------------
 
-class TestCleanSkillCode:
-    def test_strips_fences(self):
-        from scripts.induce_compact_skills import clean_skill_code
-        result = clean_skill_code("```python\n@skill(...)\ndef f(): pass\n```")
-        assert "```" not in result
-        assert "from opengui.skills.flat import" in result
 
-    def test_adds_header(self):
-        from scripts.induce_compact_skills import clean_skill_code
-        result = clean_skill_code("")
-        assert "from opengui.skills.flat import" in result
-
-    def test_preserves_code(self):
-        from scripts.induce_compact_skills import clean_skill_code
-        code = (
-            "from opengui.skills.flat import C, R, action, skill, tag\n\n"
-            "@skill(app='x', platform='android')\n"
-            "async def f(device):\n    await action('tap', target='x')\n"
+class TestCompactifySkill:
+    def test_accepts_and_retags(self):
+        skill = _skill(
+            _step("tap", "To field"),
+            _step("input_text", "{{to_email}}"),
+            _step("tap", "Subject field"),
+            _step("input_text", "{{subject}}"),
         )
-        result = clean_skill_code(code)
-        assert "async def f(device)" in result
+        out = compactify_skill(skill, max_steps=7, max_scroll_steps=1)
+        assert out is not None
+        assert out.tags == ("compact", "compact_extracted")
+        assert out.skill_id == "compact:com.gmailclone:fill_form"
+        # Guards are preserved verbatim; skipping NL validation is a runtime policy.
+        assert [s.valid_state for s in out.steps] == ["field is visible"] * 4
 
-
-# ---------------------------------------------------------------------------
-# filter_skills
-# ---------------------------------------------------------------------------
-
-# -- shared test dataclasses for skill-like objects ---------------------------
-
-from dataclasses import dataclass
-
-
-@dataclass
-class _FakeStep:
-    action_type: str = "tap"
-    target: str = "button"
-    valid_state: str = "No need to verify"
-
-
-@dataclass
-class _FakeSkill:
-    skill_id: str = "compact:test:x"
-    name: str = "test_skill"
-    steps: tuple = ()
-    parameters: tuple = ()
-    description: str = "When to use: test"
-    tags: tuple = ("compact", "compact_extracted")
-
-
-class TestFilterSkills:
-    def test_accepts_good_skill(self):
-        from scripts.induce_compact_skills import filter_skills
-        skill = _FakeSkill(
-            skill_id="compact:test:fill",
-            name="fill_form",
-            steps=(
-                _FakeStep("tap", "To field"),
-                _FakeStep("input_text", "{{to_email}}"),
-                _FakeStep("tap", "Subject field"),
-                _FakeStep("input_text", "{{subject}}"),
-            ),
-            parameters=("to_email", "subject"),
+    def test_preserves_step_guards(self):
+        contract = C(app="com.gmailclone", required=[R(resource_id="to_field", visible=True)])
+        skill = _skill(
+            _step("tap", "To field", valid_state="To field is focused", state_contract=contract),
+            _step("input_text", "{{to_email}}"),
         )
-        accepted, report = filter_skills([skill], max_steps=4)
-        assert len(accepted) == 1
-        assert report == {}
+        out = compactify_skill(skill, max_steps=7, max_scroll_steps=1)
+        assert out is not None
+        # Both the deterministic contract and the prose valid_state survive intact.
+        assert out.steps[0].state_contract == contract
+        assert out.steps[0].valid_state == "To field is focused"
 
     def test_rejects_single_step(self):
-        from scripts.induce_compact_skills import filter_skills
-        skill = _FakeSkill(steps=(_FakeStep(),))
-        accepted, report = filter_skills([skill], max_steps=4)
-        assert len(accepted) == 0
-        assert "single_step_skill" in str(report.get("compact:test:x", ""))
+        assert compactify_skill(_skill(_step("tap")), max_steps=7, max_scroll_steps=1) is None
 
-    def test_rejects_open_app(self):
-        from scripts.induce_compact_skills import filter_skills
-        skill = _FakeSkill(steps=(
-            _FakeStep("open_app", "com.app"),
-            _FakeStep("tap", "button"),
-        ))
-        accepted, report = filter_skills([skill], max_steps=4)
-        assert len(accepted) == 0
-        assert "contains_open_app" in str(report.get("compact:test:x", ""))
+    def test_rejects_too_many_steps(self):
+        steps = [_step("tap", f"b{i}") for i in range(8)]
+        assert compactify_skill(_skill(*steps), max_steps=7, max_scroll_steps=1) is None
 
-    def test_rejects_scroll(self):
-        from scripts.induce_compact_skills import filter_skills
-        skill = _FakeSkill(steps=(
-            _FakeStep("tap", "header"),
-            _FakeStep("scroll", "list"),
-        ))
-        accepted, report = filter_skills([skill], max_steps=4)
-        assert "contains_scroll" in str(report.get("compact:test:x", ""))
+    def test_accepts_open_app_as_first_step(self):
+        skill = _skill(
+            _step("open_app", "com.gmailclone"),
+            _step("tap", "compose"),
+            _step("input_text", "{{subject}}"),
+        )
+        assert compactify_skill(skill, max_steps=7, max_scroll_steps=1) is not None
 
-    def test_flags_verbose_valid_state(self):
-        from scripts.induce_compact_skills import filter_skills
-        skill = _FakeSkill(steps=(
-            _FakeStep("tap", "X", "field is visible"),
-            _FakeStep("input_text", "{{x}}", "text entered"),
-        ))
-        accepted, report = filter_skills([skill], max_steps=4)
-        assert "verbose_valid_state" in str(report.get("compact:test:x", ""))
+    def test_rejects_open_app_in_middle(self):
+        skill = _skill(
+            _step("tap", "compose"),
+            _step("open_app", "com.other"),
+        )
+        assert compactify_skill(skill, max_steps=7, max_scroll_steps=1) is None
+
+    def test_scroll_budget(self):
+        two_scrolls = _skill(
+            _step("scroll", "list"),
+            _step("scroll", "list"),
+            _step("tap", "item"),
+        )
+        assert compactify_skill(two_scrolls, max_steps=7, max_scroll_steps=1) is None
+        assert compactify_skill(two_scrolls, max_steps=7, max_scroll_steps=2) is not None
+
+
+# ---------------------------------------------------------------------------
+# placeholder extraction
+# ---------------------------------------------------------------------------
+
+
+class TestPlaceholderNames:
+    def test_extracts_from_nested_structures(self):
+        assert _placeholder_names("{{to}}") == frozenset({"to"})
+        assert _placeholder_names({"text": "{{a}}", "k": "{{b}}"}) == frozenset({"a", "b"})
+        assert _placeholder_names(["{{x}}", {"y": "{{y}}"}]) == frozenset({"x", "y"})
+        assert _placeholder_names("literal") == frozenset()
+
+
+# ---------------------------------------------------------------------------
+# cross-trajectory clustering
+# ---------------------------------------------------------------------------
+
+
+class TestClustering:
+    def _email_skill(self, skill_id: str) -> Skill:
+        # Same structure, different literal targets — must still cluster.
+        return _skill(
+            _step("tap", "To"),
+            _step("input_text", "{{to_email}}"),
+            name="fill_email",
+            skill_id=skill_id,
+        )
+
+    def test_identical_structure_clusters_with_support(self):
+        skills = [
+            compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1),
+            compactify_skill(self._email_skill("flat:b"), max_steps=7, max_scroll_steps=1),
+        ]
+        clustered = cluster_compact_skills([s for s in skills if s], min_support=1)
+        assert len(clustered) == 1
+        assert clustered[0].success_count == 2
+        assert clustered[0].success_streak == 2
+
+    def test_min_support_filters_singletons(self):
+        skill = compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1)
+        assert cluster_compact_skills([skill], min_support=2) == []
+        assert len(cluster_compact_skills([skill], min_support=1)) == 1
+
+    def test_distinct_structures_do_not_cluster(self):
+        a = compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1)
+        b = compactify_skill(
+            _skill(_step("tap", "search"), _step("input_text", "{{q}}"), _step("tap", "go"),
+                   name="search_flow", skill_id="flat:c"),
+            max_steps=7, max_scroll_steps=1,
+        )
+        clustered = cluster_compact_skills([a, b], min_support=1)
+        assert len(clustered) == 2
+
+    def test_same_sequence_different_literal_target_stays_apart(self):
+        # Same app, same action sequence and placeholder name, but different
+        # literal controls must NOT collapse (would inflate success_count).
+        to_field = compactify_skill(
+            _skill(_step("tap", "To", valid_state=None), _step("input_text", "{{value}}"),
+                   name="fill_to", skill_id="flat:a"),
+            max_steps=7, max_scroll_steps=1,
+        )
+        search = compactify_skill(
+            _skill(_step("tap", "Search", valid_state=None), _step("input_text", "{{value}}"),
+                   name="fill_search", skill_id="flat:b"),
+            max_steps=7, max_scroll_steps=1,
+        )
+        clustered = cluster_compact_skills([to_field, search], min_support=1)
+        assert len(clustered) == 2
+        assert all(s.success_count == 1 for s in clustered)
+
+
+# ---------------------------------------------------------------------------
+# output merge
+# ---------------------------------------------------------------------------
+
+
+class TestMergeOutput:
+    def test_writes_and_merges_monotonic_support(self, tmp_path: Path):
+        out = tmp_path / "compact_skills.py"
+        skill = compactify_skill(
+            _skill(_step("tap", "To"), _step("input_text", "{{to_email}}"), name="fill_email"),
+            max_steps=7, max_scroll_steps=1,
+        )
+        clustered = cluster_compact_skills([skill, skill], min_support=1)  # support=2
+        added = merge_into_output(clustered, out)
+        assert added == 1
+        assert out.exists()
+
+        # Re-merge a lower-support version of the same skill: support must not drop.
+        weaker = cluster_compact_skills([skill], min_support=1)  # support=1
+        added2 = merge_into_output(weaker, out)
+        assert added2 == 0
+        from opengui.skills.flat import compile_flat_skills
+
+        compiled = compile_flat_skills(out.read_text(encoding="utf-8"))
+        assert not compiled.errors
+        assert len(compiled.skills) == 1
+        assert compiled.skills[0].success_count == 2
