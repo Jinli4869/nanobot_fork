@@ -37,6 +37,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
 _EMBEDDING_BATCH_SIZE = 10
+
+#: Process-wide cache of the embedded GUI-memory index, keyed on
+#: (bank path, mtime, size, embedding-provider identity).  Holds only the current
+#: bank version, so per-subtask and repeated gui_task retrievals reuse one embed
+#: instead of re-embedding the whole bank each call.
+_GUI_MEMORY_INDEX_CACHE: dict[tuple[Any, ...], tuple[Any, dict[str, str]]] = {}
 _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
     {"display_id", "monitor_index", "desktop_name", "width", "height", "platform"}
 )
@@ -430,26 +436,26 @@ class GuiRouterMemoryRetriever:
         """
         if self._embedding_provider is None:
             return []
-        entries_with_source = self._load_gui_memory_entries()
-        if not entries_with_source:
-            return []
         try:
-            from opengui.memory.retrieval import MemoryRetriever
-
-            retriever = MemoryRetriever(
-                embedding_provider=self._embedding_provider,
-                top_k=self._MAX_GUI_MEMORY_EMBED,
+            index = await self._gui_memory_index()
+        except Exception:
+            logger.debug(
+                "GUI memory embedding index build failed; falling back to keyword.",
+                exc_info=True,
             )
-            await retriever.index([entry for entry, _ in entries_with_source])
+            return None
+        if index is None:
+            return []
+        retriever, source_by_id = index
+        try:
             results = await retriever.search(task, top_k=self._MAX_GUI_MEMORY_EMBED)
         except Exception:
             logger.debug(
-                "GUI memory embedding retrieval failed; falling back to keyword.",
+                "GUI memory embedding search failed; falling back to keyword.",
                 exc_info=True,
             )
             return None
 
-        source_by_id = {entry.entry_id: source for entry, source in entries_with_source}
         evidence: list[GuiRouterMemoryEvidence] = []
         for entry, _score in results:
             evidence.append(
@@ -459,6 +465,39 @@ class GuiRouterMemoryRetriever:
                 )
             )
         return evidence
+
+    async def _gui_memory_index(self) -> tuple[Any, dict[str, str]] | None:
+        """Build (or reuse) the embedded index over the GUI memory bank.
+
+        Cached on (bank path, mtime, size, embedding-provider identity) so the
+        bank is embedded once and reused across subtasks and repeated gui_task
+        calls; the cache holds only the current bank version.  Returns
+        ``(retriever, source_by_id)``, or ``None`` when the bank is empty/missing.
+        """
+        bank_path = DEFAULT_OPENGUI_MEMORY_DIR / "gui_memory_bank.jsonl"
+        try:
+            stat = bank_path.stat()
+        except OSError:
+            return None
+        cache_key = (str(bank_path), stat.st_mtime_ns, stat.st_size, id(self._embedding_provider))
+        cached = _GUI_MEMORY_INDEX_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
+        entries_with_source = self._load_gui_memory_entries()
+        if not entries_with_source:
+            return None
+        from opengui.memory.retrieval import MemoryRetriever
+
+        retriever = MemoryRetriever(
+            embedding_provider=self._embedding_provider,
+            top_k=self._MAX_GUI_MEMORY_EMBED,
+        )
+        await retriever.index([entry for entry, _ in entries_with_source])
+        source_by_id = {entry.entry_id: source for entry, source in entries_with_source}
+        _GUI_MEMORY_INDEX_CACHE.clear()  # keep only the latest bank version
+        _GUI_MEMORY_INDEX_CACHE[cache_key] = (retriever, source_by_id)
+        return retriever, source_by_id
 
     @staticmethod
     def _iter_markdown_chunks(path: Path, source: str) -> list[tuple[str, str]]:
@@ -783,6 +822,7 @@ class GuiWorkflowRunner:
         payloads: list[dict[str, Any]] = []
         total_steps = 0
         remaining_steps = self._positive_int_or_none(kwargs.get("max_steps"))
+        platform = str(getattr(active_backend, "platform", "") or "unknown")
 
         for index, subtask in enumerate(plan.subtasks, start=1):
             if remaining_steps is not None and remaining_steps <= 0:
@@ -811,6 +851,11 @@ class GuiWorkflowRunner:
                 )
 
             task_prompt = self._append_known_values(subtask.task, blackboard, subtask.inputs)
+            # GUI memory is induced at gui-task-run granularity, so retrieve hints
+            # for THIS subtask's own goal — the multi_app path otherwise never
+            # forwards the (compound-task) router hints to subtask agents.
+            subtask_context = await self._build_router_context(subtask.task, platform=platform)
+            task_prompt = self._task_with_router_hints(task_prompt, subtask_context)
             run_kwargs = dict(kwargs)
             if remaining_steps is not None:
                 run_kwargs["max_steps"] = remaining_steps
