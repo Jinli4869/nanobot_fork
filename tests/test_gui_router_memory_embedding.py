@@ -8,14 +8,24 @@ fails, it degrades to the keyword path so nothing is silently dropped.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
 
 import nanobot.agent.tools.gui as gui_tools
-from nanobot.agent.tools.gui import GuiRouterMemoryRetriever
+from nanobot.agent.tools.gui import (
+    GuiRouterContext,
+    GuiRouterMemoryEvidence,
+    GuiRouterMemoryRetriever,
+    GuiWorkflowPlan,
+    GuiWorkflowRunner,
+    GuiWorkflowSubtask,
+)
 from scripts.induce_gui_memory import GuiMemoryItem, append_to_memory_bank
 
 
@@ -49,6 +59,17 @@ class _TopicEmbedder:
 class _BoomEmbedder:
     async def embed(self, texts: list[str]) -> np.ndarray:
         raise RuntimeError("embedding endpoint down")
+
+
+class _CountingEmbedder(_TopicEmbedder):
+    """Topic embedder that records the batch size of each embed call."""
+
+    def __init__(self) -> None:
+        self.batch_sizes: list[int] = []
+
+    async def embed(self, texts: list[str]) -> np.ndarray:
+        self.batch_sizes.append(len(texts))
+        return await super().embed(texts)
 
 
 _COMPOSE = GuiMemoryItem(
@@ -129,3 +150,74 @@ async def test_empty_bank_yields_no_evidence(tmp_path, monkeypatch):
     retriever = GuiRouterMemoryRetriever(tmp_path / "ws", embedding_provider=_TopicEmbedder())
     context = await retriever.retrieve_async("write an email", platform="android")
     assert context.evidence == ()
+
+
+async def test_index_is_cached_across_retrievals(tmp_path, monkeypatch):
+    """The bank is embedded once; later retrievals reuse the cached index."""
+    _make_bank(tmp_path, monkeypatch, [_COMPOSE, _SCROLL])
+    emb = _CountingEmbedder()
+    retriever = GuiRouterMemoryRetriever(tmp_path / "ws", embedding_provider=emb)
+
+    await retriever.retrieve_async("write an email", platform="android")
+    await retriever.retrieve_async("scroll the feed list", platform="android")
+
+    # The 2 bank docs are embedded exactly once (a single batch of size 2);
+    # each retrieval only adds its own query embedding (batch of size 1).
+    assert emb.batch_sizes.count(2) == 1
+    assert emb.batch_sizes.count(1) == 2
+
+
+# ---------------------------------------------------------------------------
+# A+: multi-app subtasks retrieve memory per subtask
+# ---------------------------------------------------------------------------
+
+
+class _RecordingRouter:
+    """Stub router that records each retrieval query and returns a naming hint."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def retrieve_async(self, task: str, *, platform: str) -> GuiRouterContext:
+        self.queries.append(task)
+        return GuiRouterContext(
+            app_candidates=(),
+            evidence=(GuiRouterMemoryEvidence(source="opengui/gui_memory:x:success",
+                                              text=f"hint-for::{task}"),),
+        )
+
+
+async def test_multi_app_retrieves_memory_per_subtask():
+    router = _RecordingRouter()
+    run_task = AsyncMock(return_value=json.dumps({
+        "success": True, "summary": "ok", "model_summary": None,
+        "trace_path": None, "steps_taken": 1, "error": None,
+    }))
+    runner = GuiWorkflowRunner(
+        llm=MagicMock(),
+        run_task=run_task,
+        load_latest_step_event=MagicMock(),
+        router_memory=router,
+    )
+    plan = GuiWorkflowPlan(
+        mode="multi_app",
+        subtasks=[
+            GuiWorkflowSubtask(task="Open Settings and toggle wifi.", app_hint="Settings"),
+            GuiWorkflowSubtask(task="Open Chrome and load a page.", app_hint="Chrome"),
+        ],
+    )
+    backend = SimpleNamespace(platform="android")
+
+    await runner._run_multi_app(backend, "compound task", plan)
+
+    # one retrieval per subtask, each queried with that subtask's OWN goal
+    assert router.queries == [
+        "Open Settings and toggle wifi.",
+        "Open Chrome and load a page.",
+    ]
+    # each subtask agent prompt carries its own subtask-specific hint
+    prompts = [call.args[1] for call in run_task.await_args_list]
+    assert "Advisory hints from past GUI memory" in prompts[0]
+    assert "hint-for::Open Settings and toggle wifi." in prompts[0]
+    assert "hint-for::Open Chrome and load a page." in prompts[1]
+    assert "hint-for::Open Settings" not in prompts[1]  # not the other subtask's hint
