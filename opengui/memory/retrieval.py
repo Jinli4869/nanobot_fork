@@ -216,8 +216,24 @@ class MemoryRetriever:
         # Embeddings via external API → FAISS
         if self._documents:
             embeddings = await self.embedding_provider.embed(self._documents)
+            self._last_embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
             self._faiss.build(embeddings)
 
+        self._dirty = False
+
+    def index_from_embeddings(self, entries: list[MemoryEntry], embeddings: np.ndarray) -> None:
+        """(Re)build indices from pre-computed embeddings, skipping the API call.
+
+        *embeddings* must be the raw (unnormalized) float32 array of shape
+        ``(len(entries), dim)`` as originally returned by the embedding provider
+        and saved via :attr:`_last_embeddings`.
+        """
+        self._entries = list(entries)
+        self._documents = [self._entry_text(e) for e in self._entries]
+        self._bm25.build(self._documents)
+        if self._documents:
+            self._last_embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
+            self._faiss.build(embeddings)
         self._dirty = False
 
     async def search(

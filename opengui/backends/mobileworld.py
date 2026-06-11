@@ -65,6 +65,7 @@ _MOBILEWORLD_PACKAGE_TO_APP_NAME = {
     "com.testmall.app": "Taodian",
     "com.mattermost.rnbeta": "Mattermost",
     "com.mattermost.rn": "Mattermost",
+    "org.joinmastodon.android": "Mastodon",
     "org.joinmastodon.android.mastodon": "Mastodon",
     "com.gmailclone": "Mail",
     "com.google.android.apps.messaging": "SMS",
