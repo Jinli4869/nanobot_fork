@@ -206,7 +206,14 @@ def _trace_metrics(trace_path: Path | None) -> dict[str, Any]:
             if not raw_line.strip():
                 continue
             event = json.loads(raw_line)
-            if event.get("type") != "step":
+            event_type = event.get("type")
+            if event_type not in ("step", "skill_step", "subgoal_step"):
+                continue
+            # Skill/subgoal sub-steps carry their own token usage; sum all of them
+            # so the total matches the recorder, but keep step/latency stats on
+            # agent steps only so per-step latency keeps its meaning.
+            _sum_usage(event.get("token_usage"), total_usage)
+            if event_type != "step":
                 continue
             step_count += 1
             phase = event.get("phase")
@@ -214,7 +221,6 @@ def _trace_metrics(trace_path: Path | None) -> dict[str, Any]:
                 skill_steps += 1
             elif phase == "agent":
                 agent_steps += 1
-            _sum_usage(event.get("token_usage"), total_usage)
             try:
                 duration_sum += float(event.get("duration_s") or 0.0)
             except (TypeError, ValueError):

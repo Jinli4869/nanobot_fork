@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from opengui.action import Action, ActionError, parse_action
+from opengui.backends.mobileworld import MobileWorldBackend
 from opengui.interfaces import DeviceBackend
 from opengui.observation import Observation
 from opengui.skills.data import Skill, SkillStep
@@ -1059,6 +1060,8 @@ class SkillExecutor:
                                 f"execution failed and post-state not reached: "
                                 f"{state_description}: {execution_error}"
                             )
+                        failed_token_usage = dict(validate_usage)
+                        _merge_usage(failed_token_usage, grounding_usage)
                         step_result = StepResult(
                             step_index=i,
                             action=action,
@@ -1070,7 +1073,7 @@ class SkillExecutor:
                             recovery_result=recovery_result,
                             action_summary=f"{action.action_type} on {step.target or 'target'}",
                             error=error_text,
-                            token_usage=dict(validate_usage),
+                            token_usage=failed_token_usage,
                             duration_s=step_dur,
                             validate_duration_s=validate_dur,
                             grounding_duration_s=grounding_dur,
@@ -1204,7 +1207,9 @@ class SkillExecutor:
 
         resolved = (
             normalize_adb_app_identifier(action.text)
-            if platform == "android" and hasattr(self.backend, "_run")
+            if platform == "android"
+            and hasattr(self.backend, "_run")
+            and not isinstance(self.backend, MobileWorldBackend)
             else normalize_app_identifier(platform, action.text)
         )
         if resolved == action.text:
