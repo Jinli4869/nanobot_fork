@@ -117,6 +117,12 @@ class StepResult:
     intervention_requested: bool = False
     done: bool = False
     step_usage: dict[str, int] = dataclasses.field(default_factory=dict)
+    # Token usage to attribute to this step's own trajectory event. Differs from
+    # ``step_usage`` only when the step nested a skill execution (whose tokens are
+    # already recorded on its own skill_step/subgoal_step events): ``step_usage``
+    # keeps the merged total for run-level accounting, ``event_usage`` keeps just
+    # this step's own LLM tokens so the recorder doesn't double-count.
+    event_usage: dict[str, int] = dataclasses.field(default_factory=dict)
     duration_s: float = 0.0
     chat_latency_s: float | None = None
     ttft_s: float | None = None
@@ -1097,7 +1103,7 @@ class GuiAgent:
                     if result.next_observation else self._scrub_for_artifact(obs.extra)
                 ),
                 interaction_target=self._scrub_for_artifact(result.interaction_target),
-                token_usage=result.step_usage or None,
+                token_usage=(result.event_usage or result.step_usage) or None,
                 duration_s=result.duration_s or None,
                 chat_latency_s=result.chat_latency_s,
                 ttft_s=result.ttft_s,
@@ -1874,6 +1880,7 @@ class GuiAgent:
                 "done": False,
             },
             step_usage=merged_usage,
+            event_usage=dict(step_usage),
             duration_s=time.monotonic() - step_start,
             chat_latency_s=step_chat_latency_s or None,
             ttft_s=step_ttft_s,

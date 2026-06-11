@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import logging
@@ -252,13 +253,22 @@ class GuiRouterMemoryRetriever:
         "opentalk": {"mastodon", "opentalk", "org.joinmastodon.android.mastodon"},
     }
 
-    def __init__(self, workspace: Path, *, embedding_provider: Any | None = None) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        embedding_provider: Any | None = None,
+        embedding_signature: str | None = None,
+    ) -> None:
         self._workspace = Path(workspace)
         # When present, GUI-memory items are retrieved semantically via the
         # framework's hybrid BM25+FAISS MemoryRetriever instead of the keyword
         # scorer below — induced lessons are deliberately abstract / keyword-sparse,
         # which the keyword path under-retrieves.  MEMORY.md / history stay keyword.
         self._embedding_provider = embedding_provider
+        # Stable string identifier for the embedding model+endpoint; used as part
+        # of the persistent disk cache key so the index survives process restarts.
+        self._embedding_signature = embedding_signature
 
     def retrieve(self, task: str, *, platform: str) -> GuiRouterContext:
         """Synchronous keyword-only retrieval over every source (incl. GUI memory).
@@ -469,34 +479,80 @@ class GuiRouterMemoryRetriever:
     async def _gui_memory_index(self) -> tuple[Any, dict[str, str]] | None:
         """Build (or reuse) the embedded index over the GUI memory bank.
 
-        Cached on (bank path, mtime, size, embedding-provider identity) so the
-        bank is embedded once and reused across subtasks and repeated gui_task
-        calls; the cache holds only the current bank version.  Returns
-        ``(retriever, source_by_id)``, or ``None`` when the bank is empty/missing.
+        Uses a two-level cache:
+        1. In-process dict — zero-cost hit within the same ``mw eval`` run.
+        2. Disk cache under ``~/.opengui/memory/.embed_cache/`` — survives process
+           restarts so a re-run of ``mw eval`` does not re-call the embedding API
+           unless ``gui_memory_bank.jsonl`` has actually changed (mtime / size).
+
+        Cache key: SHA-256 of ``"{bank_path}|{mtime_ns}|{size}|{embedding_signature}"``.
+        Only the current bank version is kept (old files are cleaned up on write).
         """
         bank_path = DEFAULT_OPENGUI_MEMORY_DIR / "gui_memory_bank.jsonl"
         try:
             stat = bank_path.stat()
         except OSError:
             return None
-        cache_key = (str(bank_path), stat.st_mtime_ns, stat.st_size, id(self._embedding_provider))
-        cached = _GUI_MEMORY_INDEX_CACHE.get(cache_key)
+
+        # Stable string key — works both in-process and across restarts.
+        embed_sig = self._embedding_signature or str(id(self._embedding_provider))
+        mem_cache_key = (str(bank_path), stat.st_mtime_ns, stat.st_size, embed_sig)
+        cached = _GUI_MEMORY_INDEX_CACHE.get(mem_cache_key)
         if cached is not None:
             return cached
 
         entries_with_source = self._load_gui_memory_entries()
         if not entries_with_source:
             return None
+
         from opengui.memory.retrieval import MemoryRetriever
 
         retriever = MemoryRetriever(
             embedding_provider=self._embedding_provider,
             top_k=self._MAX_GUI_MEMORY_EMBED,
         )
-        await retriever.index([entry for entry, _ in entries_with_source])
+        entries = [entry for entry, _ in entries_with_source]
+
+        # --- Disk cache lookup ---
+        disk_key_str = f"{bank_path}|{stat.st_mtime_ns}|{stat.st_size}|{embed_sig}"
+        cache_hex = hashlib.sha256(disk_key_str.encode()).hexdigest()[:24]
+        cache_dir = DEFAULT_OPENGUI_MEMORY_DIR / ".embed_cache"
+        cache_file = cache_dir / f"gui_mem_{cache_hex}.npz"
+
+        loaded_from_disk = False
+        if cache_file.is_file():
+            try:
+                data = np.load(cache_file)
+                retriever.index_from_embeddings(entries, data["embeddings"])
+                loaded_from_disk = True
+                logger.debug("Loaded GUI memory embedding index from disk cache %s", cache_file)
+            except Exception:
+                logger.debug(
+                    "Disk embedding cache %s unreadable; will re-embed.", cache_file, exc_info=True
+                )
+
+        if not loaded_from_disk:
+            await retriever.index(entries)
+            # Persist to disk so the next process start skips the API call.
+            try:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                # Remove stale cache files for this bank before writing the new one.
+                for old in cache_dir.glob("gui_mem_*.npz"):
+                    if old != cache_file:
+                        try:
+                            old.unlink()
+                        except OSError:
+                            pass
+                embeddings = getattr(retriever, "_last_embeddings", None)
+                if embeddings is not None:
+                    np.savez_compressed(cache_file, embeddings=embeddings)
+                    logger.debug("Saved GUI memory embedding index to disk cache %s", cache_file)
+            except Exception:
+                logger.debug("Failed to save GUI memory embedding cache to disk.", exc_info=True)
+
         source_by_id = {entry.entry_id: source for entry, source in entries_with_source}
         _GUI_MEMORY_INDEX_CACHE.clear()  # keep only the latest bank version
-        _GUI_MEMORY_INDEX_CACHE[cache_key] = (retriever, source_by_id)
+        _GUI_MEMORY_INDEX_CACHE[mem_cache_key] = (retriever, source_by_id)
         return retriever, source_by_id
 
     @staticmethod
@@ -1374,7 +1430,9 @@ class GuiSubagentTool(Tool):
             run_task=self._run_task,
             load_latest_step_event=self._load_latest_step_event,
             router_memory=GuiRouterMemoryRetriever(
-                self._workspace, embedding_provider=self._embedding_adapter
+                self._workspace,
+                embedding_provider=self._embedding_adapter,
+                embedding_signature=self._embedding_signature,
             ),
         )
         return await runner.run(active_backend, task, **kwargs)
