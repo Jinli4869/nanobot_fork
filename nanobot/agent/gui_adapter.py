@@ -29,10 +29,17 @@ class NanobotLLMAdapter:
         model: str,
         *,
         capture_ttft: bool = False,
+        max_tokens: int | None = 2048,
     ) -> None:
         self._provider = provider
         self._model = model
         self._capture_ttft = capture_ttft
+        # Default per-call output cap for GUI decision steps. The nanobot
+        # provider otherwise falls back to ``generation.max_tokens`` (which can
+        # be very large, e.g. 8192), letting a single step run away — e.g. a
+        # non-thinking model rolling out dozens of repeated ``Thought:/Action:``
+        # pairs until the server cap. Callers may override per-call.
+        self._max_tokens = max_tokens
 
     async def chat(
         self,
@@ -42,14 +49,15 @@ class NanobotLLMAdapter:
         model: str | None = None,
         max_tokens: int | None = None,
     ) -> OpenGuiLLMResponse:
+        effective_max_tokens = max_tokens if max_tokens is not None else self._max_tokens
         kwargs: dict[str, Any] = dict(
             messages=messages,
             tools=tools,
             model=model or self._model,
             tool_choice=tool_choice,
         )
-        if max_tokens is not None:
-            kwargs["max_tokens"] = max_tokens
+        if effective_max_tokens is not None:
+            kwargs["max_tokens"] = effective_max_tokens
 
         ttft_s: float | None = None
         start = time.perf_counter()
