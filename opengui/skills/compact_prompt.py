@@ -8,7 +8,6 @@ aliases in the general_e2e action table.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,26 +17,18 @@ ACTION_ALIAS_TAG_PREFIXES = ("action_alias:", "alias:")
 
 COMPACT_SKILL_INSTRUCTIONS = """\
 # Optional Compact GUI Skills
-You may choose one compact GUI skill as a single action when it is clearly useful
-for the user's task. This is optional. If no listed skill clearly matches, keep
-using the normal GUI actions above.
+Optionally pick ONE listed compact skill as a single action when it clearly matches
+the task. If none clearly matches, keep using the normal GUI actions above.
 
 Skill action format:
-`{{"action_type":"use_skill","skill_id":"listed_skill_id","skill_name":"listed_skill_name","arguments":{{"param":"value"}},"reason":"short reason"}}`
+`{{"action_type":"use_skill","skill_id":"listed_skill_id","arguments":{{"param":"value"}}}}`
 
 Rules:
-- First compare the user task with the compact skill list. If a listed skill
-  clearly matches the requested app/workflow, prefer `use_skill` over manual
-  navigation.
-- Use `use_skill` only when the skill id/name, description, app, transport, and
-  parameters clearly match the user's task and would be a valid next prefix.
-- When a `skill_id` is listed, copy it exactly into the `use_skill` action.
-- A compact skill may include navigation/opening the target app internally; the
-  current screen does not need to already show the target app.
-- Fill `arguments` only when the task provides obvious values; otherwise use an
-  empty object.
-- If a skill is not clearly applicable, output a normal GUI action such as
-  `click`, `input_text`, `scroll`, `answer`, or `status`.
+- Prefer `use_skill` over manual navigation when a listed skill clearly matches the
+  requested app/workflow; copy its `skill_id` exactly.
+- A skill may open/navigate the target app internally, so the target app need not
+  already be on screen.
+- Fill `arguments` only with values the task makes obvious; otherwise use `{{}}`.
 
 Compact skills:
 {catalog}
@@ -45,15 +36,13 @@ Compact skills:
 
 USE_SKILL_ACTION_ROW = (
     '| `use_skill`     | Run a listed compact GUI skill prefix when it clearly matches the task | '
-    '`{"action_type":"use_skill","skill_id":"listed_skill_id","skill_name":"listed_skill_name","arguments":{}}` |'
+    '`{"action_type":"use_skill","skill_id":"listed_skill_id","arguments":{}}` |'
 )
 
 USE_SKILL_DECISION_RULE = (
-    "0. Before choosing a manual GUI action, compare the user task with the compact "
-    "skill list. If one compact skill clearly matches the requested app/workflow, "
-    "choose `use_skill` as the next action. A compact skill may open/navigate to "
-    "the target app internally, so do not first open the app manually when the "
-    "skill itself matches the whole requested workflow."
+    "0. Before a manual GUI action, check the compact skill list; if one clearly "
+    "matches the requested app/workflow, choose `use_skill` (it may open the target "
+    "app internally, so do not open it manually first)."
 )
 
 COMPOSITE_ACTION_DEFINITIONS: dict[str, tuple[str, str]] = {
@@ -205,17 +194,13 @@ def build_compact_prompt_parts(
         action_rows.extend(_format_composite_action_row(action) for action in composite_actions)
         composite_aliases = [action.alias for action in composite_actions]
         decision_rules.append(
-            "0a. You may use listed composite actions directly as action_type values "
-            "when they exactly match the next local UI operation. Do not invent composite "
-            "actions that are not listed in the action table. When the same screen has "
-            "multiple targets that need the same click and clicking them will not open a "
-            "confirmation dialog, prefer `click_multi` to complete them in one action. "
-            "When the next local operation is tapping a visible text field and entering "
-            "known text, default to `click_then_type` instead of separate `click` and "
-            "`input_text` actions. Use separate `click` and `input_text` only when the "
-            "field is already focused, the existing text must be cleared or selected, "
-            "tapping opens a picker/suggestion flow that must be observed first, or "
-            "the typed value depends on the result of that click."
+            "0a. Use listed composite actions only when they exactly match the next "
+            "local operation. Prefer `click_multi` when several targets on screen need "
+            "the same tap and none opens a confirmation dialog. Prefer `click_then_type` "
+            "over separate `click`+`input_text` when tapping a visible text field to enter "
+            "known text — unless the field is already focused, existing text must be "
+            "cleared, tapping opens a picker to observe first, or the text depends on the "
+            "tap result."
         )
 
     return CompactPromptParts(
@@ -235,44 +220,13 @@ def _format_catalog_line(skill: SkillInfo) -> str:
     ]
     if skill.app:
         parts.append(f"app={skill.app}")
-    if skill.tags:
-        parts.append(f"tags={','.join(skill.tags)}")
     if skill.parameters:
         parts.append(f"parameters={','.join(skill.parameters)}")
-    if skill.first_action_type:
-        parts.append(f"first_action={skill.first_action_type}")
-    if skill.first_action_target:
-        parts.append(f"target={skill.first_action_target}")
-    if skill.first_action_parameters:
-        params = json.dumps(
-            _compact_mapping(skill.first_action_parameters),
-            ensure_ascii=False,
-            sort_keys=True,
-        )
-        parts.append(f"action_parameters={params}")
-    if skill.first_valid_state:
-        parts.append(f"valid_state={skill.first_valid_state}")
-    if skill.score is not None:
-        parts.append(f"retrieval_score={skill.score:.4f}")
     return "- " + "; ".join(parts)
 
 
 def _format_composite_action_row(action: CompositeActionInfo) -> str:
     return f"| `{action.alias}` | {action.description} | {action.example} |"
-
-
-def _compact_mapping(mapping: dict[str, Any]) -> dict[str, Any]:
-    return {str(key): _compact_value(value) for key, value in mapping.items()}
-
-
-def _compact_value(value: Any) -> Any:
-    if isinstance(value, tuple):
-        return [_compact_value(item) for item in value]
-    if isinstance(value, list):
-        return [_compact_value(item) for item in value]
-    if isinstance(value, dict):
-        return _compact_mapping(value)
-    return value
 
 
 __all__ = [
