@@ -55,7 +55,10 @@ def parse_action(plan_output: str) -> tuple[str, str]:
         Tuple of (thought, action)
     """
     try:
-        match = re.search(r"(?m)^[ \t]*Action:", plan_output)
+        # Match the first ``Action:`` anywhere, not only at a line start: an
+        # over-generating model emits it inline (``Thought: ... Action: {...}``)
+        # or after a stray ``</think>``, which a line-anchored match would miss.
+        match = re.search(r"Action:", plan_output)
         if match is None:
             raise ValueError("Expected at least one 'Action:' in the output")
         thought_part = plan_output[: match.start()].strip()
@@ -65,6 +68,15 @@ def parse_action(plan_output: str) -> tuple[str, str]:
             thought = thought_part
 
         action = plan_output[match.end():].strip()
+        # Keep only the first JSON object, discarding any trailing (runaway)
+        # Thought/Action pairs appended past end-of-turn.
+        brace = action.find("{")
+        if brace != -1:
+            try:
+                _obj, end = json.JSONDecoder().raw_decode(action[brace:])
+                action = action[brace:brace + end]
+            except json.JSONDecodeError:
+                pass  # fall back to the full remainder (handled downstream)
 
         return thought, action
 
