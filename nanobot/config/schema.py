@@ -490,6 +490,9 @@ class GuiConfig(Base):
     enable_prompt_skill_selection: bool = False
     prompt_skill_top_k: int = 5
     prompt_shortcut_only: bool = False
+    # When False, disable app-based filtering of the prompt skill catalog (retrieve
+    # skills across all apps). JSON alias: ``promptSkillAppFilter``.
+    prompt_skill_app_filter: bool = True
     always_on_skill_tags: list[str] = Field(default_factory=lambda: ["compact_action"])
     shortcut_apps: list[str] = Field(default_factory=list)
     evaluation: GuiEvaluationConfig = Field(default_factory=GuiEvaluationConfig)
