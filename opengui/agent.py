@@ -411,6 +411,7 @@ class GuiAgent:
         prompt_skill_top_k: int = 5,
         prompt_shortcut_only: bool = False,
         always_on_skill_tags: list[str] | tuple[str, ...] | None = None,
+        skill_app_filter_enabled: bool = True,
     ) -> None:
         self.llm = llm
         self.backend = backend
@@ -451,6 +452,10 @@ class GuiAgent:
             parsed_prompt_skill_top_k = 5
         self._prompt_skill_top_k = max(0, parsed_prompt_skill_top_k)
         self._prompt_shortcut_only = bool(prompt_shortcut_only)
+        # When False, skip app-based skill-catalog filtering entirely (retrieve
+        # over all apps). Off-switch for the foreground/text app detector that can
+        # mis-route the catalog (e.g. "phone" -> dialer).
+        self._skill_app_filter_enabled = bool(skill_app_filter_enabled)
         self._always_on_skill_tags = tuple(
             str(tag)
             for tag in (always_on_skill_tags if always_on_skill_tags is not None else (ALWAYS_ON_SKILL_TAG,))
@@ -1353,6 +1358,47 @@ class GuiAgent:
     # Single step
     # ------------------------------------------------------------------
 
+    def _skipped_step_result(
+        self,
+        *,
+        reason: str,
+        step_usage: dict[str, int],
+        step_start: float,
+        step_chat_latency_s: float,
+        step_ttft_s: float | None,
+        prompt_snapshot: dict[str, Any] | None,
+        current_observation: Observation,
+        model_snapshot: dict[str, Any] | None = None,
+    ) -> StepResult:
+        """Skip a step whose model output could not be parsed.
+
+        Instead of injecting a "Format error" message and re-querying the model
+        (which polluted the context and spiralled into ``request_intervention``),
+        record a benign no-op and let the outer loop continue with the next
+        observation. The screen is unchanged, so repeated skips are bounded by
+        ``stagnation_limit``.
+        """
+        note = f"Step skipped: {reason}"
+        return StepResult(
+            action=Action(action_type="wait"),
+            tool_call_id="skipped",
+            tool_result=note,
+            assistant_message={"role": "assistant", "content": ""},
+            action_summary=note,
+            next_observation=current_observation,
+            prompt_snapshot=prompt_snapshot,
+            model_snapshot=model_snapshot,
+            execution_snapshot={
+                "tool_result": note,
+                "next_observation": None,
+                "done": False,
+            },
+            step_usage=step_usage,
+            duration_s=time.monotonic() - step_start,
+            chat_latency_s=step_chat_latency_s or None,
+            ttft_s=step_ttft_s,
+        )
+
     async def _run_step(
         self,
         messages: list[dict[str, Any]],
@@ -1396,21 +1442,18 @@ class GuiAgent:
                     model_name=self.model,
                 )
             except ValueError as exc:
-                detail = f"{exc}. Follow the required response format exactly."
-                feedback = self._build_tool_format_error(
-                    native_tools=native_tools_enabled,
-                    detail=detail,
-                )
-                if retries_left > 0:
-                    messages.append({
-                        "role": "user",
-                        "content": feedback,
-                    })
-                    continue
-                raise _StepExecutionError(
-                    f"Failed to parse profile response after retries: {exc}",
+                # Unparsable response: skip this step (no feedback injection) and
+                # let the outer loop continue with a fresh observation.
+                return self._skipped_step_result(
+                    reason=f"unparsable response: {exc}",
+                    step_usage=step_usage,
+                    step_start=_step_start,
+                    step_chat_latency_s=step_chat_latency_s,
+                    step_ttft_s=step_ttft_s,
+                    prompt_snapshot=prompt_snapshot,
+                    current_observation=current_observation,
                     model_snapshot=raw_response_snapshot,
-                ) from exc
+                )
 
             # Append assistant message
             assistant_msg = self._build_assistant_message(
@@ -1425,22 +1468,14 @@ class GuiAgent:
 
             # Validate tool call
             if not response.tool_calls or len(response.tool_calls) == 0:
-                if retries_left > 0:
-                    feedback = self._build_tool_format_error(
-                        native_tools=native_tools_enabled,
-                        detail=(
-                            "No action payload found. "
-                            "Return one `Thought:` + `Action:` response "
-                            "in the configured profile format."
-                        ),
-                    )
-                    messages.append({
-                        "role": "user",
-                        "content": feedback,
-                    })
-                    continue
-                raise _StepExecutionError(
-                    "LLM did not return a computer_use tool call after retries.",
+                return self._skipped_step_result(
+                    reason="no action payload",
+                    step_usage=step_usage,
+                    step_start=_step_start,
+                    step_chat_latency_s=step_chat_latency_s,
+                    step_ttft_s=step_ttft_s,
+                    prompt_snapshot=prompt_snapshot,
+                    current_observation=current_observation,
                     model_snapshot=assistant_snapshot,
                 )
 
@@ -1496,39 +1531,32 @@ class GuiAgent:
                         state_summary=state_summary,
                     )
                 except ActionError as exc:
-                    if retries_left > 0:
-                        messages.append({
-                            "role": "user",
-                            "content": f"Format error: {exc}. Please return a listed skill/composite action or a normal GUI action.",
-                        })
-                        continue
-                    raise _StepExecutionError(
-                        f"Failed to dispatch prompt special action after retries: {exc}",
+                    return self._skipped_step_result(
+                        reason=f"invalid skill/composite action: {exc}",
+                        step_usage=step_usage,
+                        step_start=_step_start,
+                        step_chat_latency_s=step_chat_latency_s,
+                        step_ttft_s=step_ttft_s,
+                        prompt_snapshot=prompt_snapshot,
+                        current_observation=current_observation,
                         model_snapshot=assistant_snapshot,
-                    ) from exc
+                    )
 
             # Parse action
             try:
                 action = parse_action(tool_call.arguments)
                 action = self._normalize_relative_coordinates(action)
             except ActionError as exc:
-                if retries_left > 0:
-                    if native_tools_enabled:
-                        messages.append({
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": f"Error parsing action: {exc}. Please fix and retry.",
-                        })
-                    else:
-                        messages.append({
-                            "role": "user",
-                            "content": f"Format error: {exc}. Please return {tool_call.name} output in the configured profile format.",
-                        })
-                    continue
-                raise _StepExecutionError(
-                    f"Failed to parse action after retries: {exc}",
+                return self._skipped_step_result(
+                    reason=f"unparsable action: {exc}",
+                    step_usage=step_usage,
+                    step_start=_step_start,
+                    step_chat_latency_s=step_chat_latency_s,
+                    step_ttft_s=step_ttft_s,
+                    prompt_snapshot=prompt_snapshot,
+                    current_observation=current_observation,
                     model_snapshot=assistant_snapshot,
-                ) from exc
+                )
 
             # Report progress
             if self.progress_callback is not None:
@@ -2761,16 +2789,6 @@ class GuiAgent:
         first_line = first_line.strip('"')
         return first_line.strip()
 
-    @staticmethod
-    def _build_tool_format_error(
-        *,
-        native_tools: bool,
-        detail: str,
-    ) -> str:
-        if native_tools:
-            return f"Error: {detail}"
-        return "Format error: " + detail
-
     def _snapshot_step_prompt(
         self,
         *,
@@ -3321,6 +3339,8 @@ class GuiAgent:
         return str(task or "").split("\n\nAdvisory hints from past GUI memory:", 1)[0]
 
     def _skill_app_filter(self, task: str, app_hint: str | None) -> str | None:
+        if not self._skill_app_filter_enabled:
+            return None
         platform = self.backend.platform
         if app_hint:
             normalized = normalize_app_identifier(platform, app_hint)

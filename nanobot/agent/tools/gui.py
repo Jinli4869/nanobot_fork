@@ -1570,6 +1570,7 @@ class GuiSubagentTool(Tool):
             enable_prompt_skill_selection=self._gui_config.enable_prompt_skill_selection,
             prompt_skill_top_k=self._gui_config.prompt_skill_top_k,
             prompt_shortcut_only=self._gui_config.prompt_shortcut_only,
+            skill_app_filter_enabled=self._gui_config.prompt_skill_app_filter,
             always_on_skill_tags=self._gui_config.always_on_skill_tags,
             shortcut_backend=shortcut_backend,
             shortcut_cache_dir=str(sc_dir),
