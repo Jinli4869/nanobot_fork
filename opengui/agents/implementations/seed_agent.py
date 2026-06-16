@@ -66,6 +66,34 @@ def _extract_parameters(func_content: str) -> dict:
     return params
 
 
+def _repair_seed_xml(response_text: str) -> str:
+    """Repair common malformed function/parameter tags from Seed/Doubao output.
+
+    Seed-style (Doubao-Seed, seed-2.0-lite) models intermittently drop the ``=``
+    in ``<function=NAME>`` / ``<parameter=KEY>`` (writing ``<function>NAME>`` or
+    ``<parameter KEY>``) or use an HTML-attribute style ``<function name="NAME">``.
+    Normalize these back to the canonical form before the strict parser runs.
+
+    Examples repaired:
+        <function name="open_app">   -> <function=open_app>
+        <function>click>             -> <function=click>
+        <function>wait</function>    -> <function=wait></function>
+        <parameter point>            -> <parameter=point>
+    """
+    if not response_text:
+        return response_text
+    text = response_text
+    # <function name="NAME"> / <function name='NAME'>  ->  <function=NAME>
+    text = re.sub(r"<function\s+name=[\"']([^\"']+)[\"']\s*>", r"<function=\1>", text)
+    # <function>NAME>  ->  <function=NAME>
+    text = re.sub(r"<function>\s*(\w+)\s*>", r"<function=\1>", text)
+    # <function>NAME<  ->  <function=NAME><   (e.g. <function>wait</function>)
+    text = re.sub(r"<function>\s*(\w+)\s*(?=<)", r"<function=\1>", text)
+    # <parameter NAME>  ->  <parameter=NAME>   (space instead of '=')
+    text = re.sub(r"<parameter\s+(\w+)\s*>", r"<parameter=\1>", text)
+    return text
+
+
 def parse_seed_xml_action(response_text: str) -> list[dict]:
     """
     Parse Seed model's XML-style action format.
@@ -77,6 +105,7 @@ def parse_seed_xml_action(response_text: str) -> list[dict]:
     </function>
     </tool_call>
     """
+    response_text = _repair_seed_xml(response_text)
     parsed_actions = []
 
     # Find tool call blocks

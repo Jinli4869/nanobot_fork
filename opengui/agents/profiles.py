@@ -58,6 +58,10 @@ from opengui.agents.utils.prompts import (
 )
 from opengui.interfaces import LLMResponse, ToolCall
 from opengui.observation import Observation
+from opengui.skills.compact_prompt import (
+    USE_SKILL_ACTION_TYPE,
+    format_seed_skill_instructions,
+)
 
 SUPPORTED_AGENT_PROFILES: tuple[str, ...] = (
     "general_e2e",
@@ -122,6 +126,22 @@ def profile_uses_native_tools(profile_name: str | None) -> bool:
 def coordinate_mode_for_profile(profile_name: str | None, model_name: str = "") -> str:
     del profile_name, model_name
     return "absolute"
+
+
+# Native LLM runtime defaults per agent profile, mirroring the vendored
+# MobileWorld agent implementations. Applied by GuiAgent when the caller does
+# not explicitly override them, so e.g. the ``seed`` profile runs with the same
+# thinking/output budget as MobileWorld's SeedAgent (reasoning_effort="high",
+# use_thinking=True, max_tokens=4096). temperature (0.7) already matches the
+# nanobot provider default, so it is not repeated here.
+_PROFILE_LLM_DEFAULTS: dict[str, dict[str, Any]] = {
+    "seed": {"reasoning_effort": "high", "max_tokens": 4096},
+}
+
+
+def profile_llm_defaults(profile_name: str | None) -> dict[str, Any]:
+    """Return native LLM runtime defaults for ``profile_name`` (possibly empty)."""
+    return dict(_PROFILE_LLM_DEFAULTS.get(canonicalize_agent_profile(profile_name), {}))
 
 
 def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
@@ -195,6 +215,7 @@ def build_mobileworld_messages(
             current_observation=current_observation,
             history=history,
             history_image_window=history_image_window,
+            compact_prompt_parts=compact_prompt_parts,
         )
     if profile == "gui_owl_1_5":
         return _build_gui_owl_messages(
@@ -528,6 +549,7 @@ def _build_seed_messages(
     current_observation: Observation,
     history: list[Any],
     history_image_window: int,
+    compact_prompt_parts: Any | None = None,
 ) -> list[dict[str, Any]]:
     observations = [turn.observation for turn in history] + [current_observation]
     messages = [
@@ -536,6 +558,16 @@ def _build_seed_messages(
             "content": "You are provided with a task description, a history of previous actions, and corresponding screenshots. Your goal is to perform the next action to complete the task. Please note that if performing the same action multiple times results in a static screen with no changes, you should attempt a modified or alternative action.",
         },
         {"role": "system", "content": SEED_PROMPT.render(tools=[])},
+    ]
+    # Compact skill catalog: shown in the seed (XML function-call) format so the
+    # model can emit ``<function=use_skill>``.  The catalog body is shared with
+    # general_e2e; only the invocation syntax differs.  Skipped when empty.
+    seed_skill_block = format_seed_skill_instructions(
+        getattr(compact_prompt_parts, "catalog", "") or ""
+    )
+    if seed_skill_block:
+        messages.append({"role": "system", "content": seed_skill_block})
+    messages += [
         {"role": "user", "content": task},
         _seed_user_message(observations[0], None),
     ]
@@ -898,11 +930,45 @@ def _mai_ui_to_action(
     return {"action_type": UNKNOWN, "text": f"Unknown action: {action_type}"}
 
 
+def _parse_seed_skill_arguments(raw: Any) -> dict[str, Any]:
+    """Parse the seed ``use_skill`` ``arguments`` parameter into a dict.
+
+    Seed XML parameters arrive as strings, so a JSON object string is expected
+    (e.g. ``{"query":"hi"}``). Falls back to an empty dict on missing/invalid
+    input so the downstream executor surfaces a clean ActionError rather than
+    crashing on a non-dict ``arguments``.
+    """
+    if isinstance(raw, dict):
+        return raw
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _seed_to_action(
     parsed_action: dict[str, Any], *, screen_width: int, screen_height: int
 ) -> dict[str, Any]:
     func_name = parsed_action["function"]
     params = parsed_action["parameters"]
+    if func_name == USE_SKILL_ACTION_TYPE:
+        # Mirror the general_e2e use_skill payload shape so the (profile-agnostic)
+        # prompt-skill dispatch/executor handles seed skills identically.
+        if "arguments" in params:
+            arguments = _parse_seed_skill_arguments(params.get("arguments"))
+        else:
+            # Tolerate `<parameter=key>val</parameter>` style: treat the leftover
+            # params as the skill arguments.
+            arguments = {key: value for key, value in params.items() if key != "skill_id"}
+        return {
+            "action_type": USE_SKILL_ACTION_TYPE,
+            "skill_id": str(params.get("skill_id") or "").strip(),
+            "arguments": arguments,
+        }
     if func_name == seed_agent.FINISH_WORD:
         return {"action_type": ANSWER, "text": params.get("content", "success")}
     if func_name == seed_agent.WAIT_WORD:
@@ -910,7 +976,9 @@ def _seed_to_action(
     if func_name == seed_agent.CALL_USER:
         return {"action_type": ASK_USER, "text": params.get("content", "")}
     if func_name in {"click", "left_double", "long_press"}:
-        x, y = seed_agent.parse_point_string(params.get("point", "0 0"))
+        # Require a real point: an empty/missing one raises so the caller can
+        # re-roll instead of silently clicking the origin.
+        x, y = seed_agent.parse_point_string(params.get("point", ""))
         action_type = {"click": CLICK, "left_double": DOUBLE_TAP, "long_press": LONG_PRESS}[
             func_name
         ]
@@ -920,8 +988,12 @@ def _seed_to_action(
             "y": int(y * screen_height / 1000),
         }
     if func_name == "drag":
-        sx, sy = seed_agent.parse_point_string(params.get("start_point", "0 0"))
-        ex, ey = seed_agent.parse_point_string(params.get("end_point", "0 0"))
+        # Some outputs misplace the start coordinate into a stray ``point``
+        # parameter and leave ``start_point`` empty; fall back to it.
+        start_raw = params.get("start_point") or params.get("point") or ""
+        end_raw = params.get("end_point") or ""
+        sx, sy = seed_agent.parse_point_string(start_raw)
+        ex, ey = seed_agent.parse_point_string(end_raw)
         return {
             "action_type": DRAG,
             "start_x": int(sx * screen_width / 1000),
@@ -939,6 +1011,11 @@ def _seed_to_action(
         }
     if func_name == "type":
         return {"action_type": INPUT_TEXT, "text": params.get("content", "")}
+    if func_name == "open_app":
+        app_name = (params.get("app_name") or "").strip()
+        if not app_name:
+            raise ValueError("open_app requires a non-empty app_name")
+        return {"action_type": OPEN_APP, "app_name": app_name}
     if func_name == "press_home":
         return {"action_type": NAVIGATE_HOME}
     if func_name == "press_back":
