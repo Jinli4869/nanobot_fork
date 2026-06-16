@@ -45,6 +45,43 @@ USE_SKILL_DECISION_RULE = (
     "app internally, so do not open it manually first)."
 )
 
+# Seed-family models use XML-style function calls instead of the general_e2e JSON
+# action table, so the ``use_skill`` capability is described in their own format.
+# The catalog body is shared (it is format-agnostic); only the invocation syntax
+# differs.  ``__CATALOG__`` is substituted via :func:`format_seed_skill_instructions`
+# (plain replace, not str.format, to avoid escaping the JSON braces below).
+SEED_COMPACT_SKILL_INSTRUCTIONS = """\
+## Optional Compact GUI Skills
+Optionally pick ONE listed compact skill as a single action when it clearly matches
+the task. If none clearly matches, keep using the normal functions above.
+
+- Additional function available:
+{"type": "function", "name": "use_skill", "parameters": {"type": "object", "properties": {"skill_id": {"type": "string", "description": "Exact skill_id copied from the Compact skills list below."}, "arguments": {"type": "string", "description": "JSON object string of skill arguments, e.g. {\\"query\\":\\"hello\\"}. Use {} when no arguments are needed."}}, "required": ["skill_id"]}, "description": "Run a listed compact GUI skill when it clearly matches the requested app/workflow. The skill may open/navigate the target app internally."}
+
+- To call it, use the standard call structure, for example:
+<tool_call><function=use_skill><parameter=skill_id>listed_skill_id</parameter><parameter=arguments>{}</parameter></function></tool_call>
+
+Rules:
+- Prefer use_skill over manual navigation when a listed skill clearly matches the
+  requested app/workflow; copy its skill_id exactly.
+- A skill may open/navigate the target app internally, so the target app need not
+  already be on screen.
+- Fill arguments only with values the task makes obvious; otherwise use {}.
+
+Compact skills:
+__CATALOG__"""
+
+
+def format_seed_skill_instructions(catalog: str) -> str:
+    """Render the seed-format compact-skill block for a given catalog body.
+
+    Returns an empty string when there is no catalog so callers can skip the
+    injection entirely.
+    """
+    if not catalog:
+        return ""
+    return SEED_COMPACT_SKILL_INSTRUCTIONS.replace("__CATALOG__", catalog)
+
 COMPOSITE_ACTION_DEFINITIONS: dict[str, tuple[str, str]] = {
     "click_then_type": (
         "Preferred one-step action for visible text fields: tap a coordinate and type text. Use auto_enter true only for search submission.",
@@ -88,6 +125,10 @@ class CompactPromptParts:
     compact_skill_instructions: str = ""
     skill_ids: tuple[str, ...] = ()
     composite_aliases: tuple[str, ...] = ()
+    # Raw, format-agnostic catalog body (one line per retrieved skill). Profiles
+    # that do not use the general_e2e JSON action table (e.g. ``seed``) wrap this
+    # in their own invocation instructions. Empty when no skills were retrieved.
+    catalog: str = ""
 
 
 def skill_info_from_flat_skill(skill: Any, *, score: float | None = None) -> SkillInfo:
@@ -180,6 +221,7 @@ def build_compact_prompt_parts(
     decision_rules: list[str] = []
     skill_ids: list[str] = []
     composite_aliases: list[str] = []
+    catalog = ""
 
     if retrieved_skills:
         action_rows.append(USE_SKILL_ACTION_ROW)
@@ -209,6 +251,7 @@ def build_compact_prompt_parts(
         compact_skill_instructions=compact_skill_instructions,
         skill_ids=tuple(skill_ids),
         composite_aliases=tuple(composite_aliases),
+        catalog=catalog,
     )
 
 
@@ -235,11 +278,13 @@ __all__ = [
     "COMPOSITE_ACTION_DEFINITIONS",
     "CompactPromptParts",
     "CompositeActionInfo",
+    "SEED_COMPACT_SKILL_INSTRUCTIONS",
     "SkillInfo",
     "USE_SKILL_ACTION_ROW",
     "USE_SKILL_ACTION_TYPE",
     "USE_SKILL_DECISION_RULE",
     "build_catalog",
+    "format_seed_skill_instructions",
     "build_compact_prompt_parts",
     "composite_action_infos_from_skills",
     "composite_alias_from_skill",
