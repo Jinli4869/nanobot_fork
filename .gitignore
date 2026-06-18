@@ -106,4 +106,5 @@ nanobot/tui/web/.vite/
 nanobot/tui/web/coverage/
 .opengui
 gui_runs/
-
+gui-claw-demo-video/
+node_modules/
