@@ -1521,7 +1521,7 @@ class GuiSubagentTool(Tool):
                     artifacts_root=run_dir,
                     trajectory_recorder=recorder,
                     agent_profile=self._gui_config.agent_profile,
-                    step_timeout=30.0,
+                    step_timeout=90.0,
                     image_scale_ratio=self._gui_config.image_scale_ratio,
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
@@ -1571,6 +1571,7 @@ class GuiSubagentTool(Tool):
             prompt_skill_top_k=self._gui_config.prompt_skill_top_k,
             prompt_shortcut_only=self._gui_config.prompt_shortcut_only,
             skill_app_filter_enabled=self._gui_config.prompt_skill_app_filter,
+            reasoning_effort=self._gui_config.reasoning_effort,
             always_on_skill_tags=self._gui_config.always_on_skill_tags,
             shortcut_backend=shortcut_backend,
             shortcut_cache_dir=str(sc_dir),

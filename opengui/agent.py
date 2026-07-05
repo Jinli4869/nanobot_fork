@@ -31,8 +31,10 @@ from opengui.agent_profiles import (
     build_mobileworld_messages,
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
+    general_e2e_scale_factor,
     normalize_profile_response_for_observation,
     normalize_profile_response_for_screen,
+    profile_llm_defaults,
     profile_uses_native_tools,
     prompt_contract_for_profile,
 )
@@ -387,7 +389,7 @@ class GuiAgent:
         model: str = "",
         artifacts_root: Path | str = ".opengui/runs",
         max_steps: int = 15,
-        step_timeout: float = 30.0,
+        step_timeout: float = 90.0,
         history_image_window: int = 3,
         include_date_context: bool = True,
         history_text_window: int = 8,
@@ -412,11 +414,25 @@ class GuiAgent:
         prompt_shortcut_only: bool = False,
         always_on_skill_tags: list[str] | tuple[str, ...] | None = None,
         skill_app_filter_enabled: bool = True,
+        reasoning_effort: str | None = None,
     ) -> None:
         self.llm = llm
         self.backend = backend
         self.model = model
         self.agent_profile = canonicalize_agent_profile(agent_profile)
+        # Per-step thinking/output budget for the main decision call. Start from
+        # the profile's native defaults (e.g. seed -> reasoning_effort="high",
+        # max_tokens=4096, matching MobileWorld's SeedAgent), then let an explicit
+        # config override win. ``reasoning_effort`` left None/""/"auto" defers to
+        # the profile default, which preserves prior behaviour for profiles that
+        # declare none.
+        _profile_llm = profile_llm_defaults(self.agent_profile)
+        self._reasoning_effort = (
+            reasoning_effort
+            if reasoning_effort not in (None, "", "auto")
+            else _profile_llm.get("reasoning_effort")
+        )
+        self._step_max_tokens = _profile_llm.get("max_tokens")
         self.artifacts_root = Path(artifacts_root)
         self.max_steps = max_steps
         self.step_timeout = step_timeout
@@ -1421,11 +1437,16 @@ class GuiAgent:
 
             # Call LLM
             native_tools_enabled = profile_uses_native_tools(self.agent_profile)
-            response: LLMResponse = await self.llm.chat(
-                messages=messages,
-                tools=self._build_tools_list() if native_tools_enabled else None,
-                tool_choice="required" if native_tools_enabled else None,
-            )
+            chat_kwargs: dict[str, Any] = {
+                "messages": messages,
+                "tools": self._build_tools_list() if native_tools_enabled else None,
+                "tool_choice": "required" if native_tools_enabled else None,
+            }
+            if self._reasoning_effort is not None:
+                chat_kwargs["reasoning_effort"] = self._reasoning_effort
+            if self._step_max_tokens is not None:
+                chat_kwargs["max_tokens"] = self._step_max_tokens
+            response: LLMResponse = await self.llm.chat(**chat_kwargs)
             for k, v in (response.usage or {}).items():
                 step_usage[k] = step_usage.get(k, 0) + v
             if response.latency_s is not None:
@@ -1442,8 +1463,11 @@ class GuiAgent:
                     model_name=self.model,
                 )
             except ValueError as exc:
-                # Unparsable response: skip this step (no feedback injection) and
-                # let the outer loop continue with a fresh observation.
+                # Unparsable response: re-roll the LLM on the same observation
+                # (no feedback injection); skip the step only after exhausting
+                # retries, so a transient format glitch does not waste the step.
+                if retries_left > 0:
+                    continue
                 return self._skipped_step_result(
                     reason=f"unparsable response: {exc}",
                     step_usage=step_usage,
@@ -2108,8 +2132,7 @@ class GuiAgent:
             return self._point_to_screen([payload["x"], payload["y"]], observation)
         raise ActionError("Composite action requires 'coordinate' or 'x'/'y'.")
 
-    @staticmethod
-    def _point_to_screen(point: Any, observation: Observation) -> tuple[int, int]:
+    def _point_to_screen(self, point: Any, observation: Observation) -> tuple[int, int]:
         if not isinstance(point, (list, tuple)) or len(point) != 2:
             raise ActionError(f"Invalid coordinate {point!r}.")
         try:
@@ -2119,12 +2142,14 @@ class GuiAgent:
             raise ActionError(f"Invalid coordinate {point!r}.") from exc
         width = int(observation.screen_width or 1000)
         height = int(observation.screen_height or 1000)
-        if 0 <= raw_x <= 999 and 0 <= raw_y <= 999:
-            return (
-                int(round(raw_x / 999 * (width - 1))),
-                int(round(raw_y / 999 * (height - 1))),
-            )
-        return int(raw_x), int(raw_y)
+        # Scale identically to the normal-action coordinate path, per profile/model:
+        # kimi-k -> [0,1]; qwen/default -> [0,1000]; claude/opus -> image dims.
+        # (Previously hard-coded /999, which mis-scaled kimi's [0,1] coords to ~(1,1).)
+        scale = general_e2e_scale_factor(self.model, width, height)
+        scale_x, scale_y = (scale, scale) if isinstance(scale, int) else scale
+        px = int(round(raw_x * width / scale_x))
+        py = int(round(raw_y * height / scale_y))
+        return max(0, min(px, width - 1)), max(0, min(py, height - 1))
 
     @staticmethod
     def _composite_action_text(arguments: dict[str, Any]) -> str:

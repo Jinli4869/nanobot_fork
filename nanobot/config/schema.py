@@ -305,6 +305,7 @@ class GuiConfig(Base):
     display_height: int = 720
     image_scale_ratio: float = 0.5
     capture_ttft: bool = False
+    reasoning_effort: str | None = None  # low / medium / high / adaptive - enables GUI LLM thinking mode
     enable_skill_extraction: bool = False
     enable_skill_execution: bool = False
     # Per-step skill validation policy:

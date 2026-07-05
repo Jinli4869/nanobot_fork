@@ -793,6 +793,9 @@ def _general_e2e_scale_factor(
     return 1000
 
 
+general_e2e_scale_factor = _general_e2e_scale_factor
+
+
 def _general_e2e_action_text(content: str) -> str:
     if "Action:" not in content:
         action_str = content.strip()
