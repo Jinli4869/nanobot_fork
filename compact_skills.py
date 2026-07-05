@@ -1,627 +1,1002 @@
 from opengui.skills.flat import C, R, action, skill, tag
 
 
-@skill(app='com.android.camera2', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.camera2:take_photo', name='take_photo', description='Opens the camera application and captures a photo by tapping the shutter button.', created_at=1780854017.3433895, success_count=1, success_streak=1)
+@skill(app='com.android.settings', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.settings:navigate_to_display_size_and_text', name='navigate_to_display_size_and_text', description='Navigate to the Display size and text settings page within the Android system settings application.', created_at=1782831642.0960736, success_count=2, success_streak=2)
+async def navigate_to_display_size_and_text(device):
+    await action('open_app', target='com.android.settings', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.settings'})
+    await action('scroll', target='settings list', valid_state='settings list is visible and scrollable', fixed=True, fixed_values={'direction': 'down', 'pixels': 400})
+    await action('tap', target='Display option', valid_state='Display option is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.settings'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.settings:id/settings_homepage_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1994})
+    await action('tap', target='Display size and text option', valid_state='Display size and text option is visible and clickable', fixed=True, fixed_values={'x': 540, 'y': 2114})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_about_mastodon', name='navigate_to_about_mastodon', description="Navigate to the 'About Mastodon' section in the app settings to access web-based features.", created_at=1782837814.9192138, success_count=2, success_streak=2)
+async def navigate_to_about_mastodon(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='settings button', valid_state='settings button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/settings'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 911, 'y': 201})
+    await action('tap', target='About Mastodon option', valid_state='About Mastodon option is visible', fixed=True, fixed_values={'x': 303, 'y': 1387})
+
+
+@skill(app='android', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:android:open_file_in_downloads', name='open_file_in_downloads', description='Open a text file in the Downloads directory and select a viewer application.', created_at=1782833572.4207454, success_count=1, success_streak=1)
+async def open_file_in_downloads(device, filename):
+    await action('open_app', target='android', valid_state='No need to verify', fixed=True, fixed_values={'text': 'android'})
+    await action('tap', target=filename, valid_state='file is visible in the list')
+    await action('tap', target='Chrome option in Open with dialog', optional=True, valid_state='Open with dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'android'}, 'signature': {'required': [{'selector': {'resource_id': 'android:id/profile_tabhost'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed_values={'text': 'Chrome', 'x': 199, 'y': 1783})
+
+
+@skill(app='android', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:android:open_image_file', name='open_image_file', description='Open an image file from the Downloads folder using the Gallery app to view its content.', created_at=1782833718.3461401, success_count=1, success_streak=1)
+async def open_image_file(device, file_name):
+    await action('tap', target=file_name + ' file entry', valid_state='file entry is visible', fixed=True, fixed_values={'x': 287.0, 'y': 746.0})
+    await action('tap', target='Gallery option in Open with dialog', optional=True, valid_state='Open with dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'android'}, 'signature': {'required': [{'selector': {'resource_id': 'android:id/profile_tabhost'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 189.0, 'y': 1927.0})
+
+
+@skill(app='at.tomtasche.reader', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:at.tomtasche.reader:read_pdf_technical_details', name='read_pdf_technical_details', description='Open a PDF document and scroll through it to locate technical specifications or parameter counts.', created_at=1782842880.9758217, success_count=1, success_streak=1)
+async def read_pdf_technical_details(device):
+    await action('open_app', target='at.tomtasche.reader', valid_state='No need to verify', fixed=True, fixed_values={'text': 'at.tomtasche.reader'})
+    await action('scroll', target='document content', valid_state='document is loaded and scrollable')
+    await action('done', target='technical details located', valid_state='relevant information is visible')
+
+
+@skill(app='com.android.camera2', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.camera2:take_photo', name='take_photo', description='Opens the camera application and captures a single photo.', created_at=1782844552.1742656, success_count=1, success_streak=1)
 async def take_photo(device):
     await action('open_app', target='com.android.camera2', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.camera2'})
-    await action('tap', target='location permission option', optional=True, valid_state='permission dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.camera2'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.camera2:id/sticky_bottom_capture_layout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1468})
-    await action('tap', target='shutter button', valid_state='shutter button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.camera2'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.camera2:id/bottom_bar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2176})
+    await action('tap', target="location permission 'While using the app' button", optional=True, valid_state='location permission dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.camera2'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.camera2:id/sticky_bottom_capture_layout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1473})
+    await action('tap', target='camera shutter button', valid_state='camera viewfinder is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.camera2'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.camera2:id/bottom_bar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2188})
 
 
-@skill(app='com.android.camera2', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.camera2:take_photo_2', name='take_photo_2', description='Opens the camera app and captures a photo.', created_at=1780854052.2194104, success_count=1, success_streak=1)
-async def take_photo_2(device):
-    await action('open_app', target='com.android.camera2', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.camera2'})
-    await action('tap', target='shutter button', valid_state='camera viewfinder is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.camera2'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.camera2:id/bottom_bar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2184})
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:add_featured_hashtag', name='add_featured_hashtag', description='Adds a hashtag to the featured hashtags section in Mastodon profile via web UI.', created_at=1782835254.6634638, success_count=1, success_streak=1)
+async def add_featured_hashtag(device, hashtag):
+    await action('tap', target='Even more settings link', valid_state='Even more settings is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Account settings - Mastodon'}, 'state': ['visible', 'enabled', 'focused', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 219, 'y': 352})
+    await action('tap', target='Toggle menu button', valid_state='Toggle menu is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'content_desc': 'Toggle menu'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1002, 'y': 336})
+    await action('tap', target='Public profile menu item', valid_state='Public profile is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Public profile'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 224, 'y': 612})
+    await action('tap', target='Featured hashtags option', valid_state='Featured hashtags is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Featured hashtags'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 285, 'y': 1012})
+    await action('tap', target='Hashtag input field', valid_state='Input field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Featured hashtags - Mastodon'}, 'state': ['visible', 'enabled', 'focused', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1641})
+    await action('input_text', target='Hashtag input field', text=hashtag, valid_state='Input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'featured_tag_name', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': 'cdc6ef49d6d4a7f7878cf53ff50b10544f0d7d638b9579f355289f757095be1c'}))
+    await action('tap', target='Add new button', valid_state='Add new button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Add new'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1807})
 
 
-@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:import_muted_list', name='import_muted_list', description='Navigates to the Mastodon web import settings and selects the muted list type.', created_at=1780851029.2665827, success_count=1, success_streak=1)
-async def import_muted_list(device):
-    await action('tap', target='Even more settings', valid_state='web UI is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Account settings - Mastodon'}, 'state': ['visible', 'enabled', 'focused', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 216, 'y': 355})
-    await action('tap', target='Toggle menu', valid_state='hamburger menu is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'content_desc': 'Toggle menu'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1013, 'y': 355})
-    await action('tap', target='Import and export', valid_state='Import and export option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Import and export'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 286, 'y': 1752})
-    await action('tap', target='Toggle menu', valid_state='hamburger menu is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'content_desc': 'Toggle menu'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1013, 'y': 355})
-    await action('tap', target='Import', valid_state='Import option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Import'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 216, 'y': 1500})
-    await action('tap', target='Import type', valid_state='Import type dropdown is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Import type *'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 518, 'y': 948})
-    await action('tap', target='Muting list', valid_state='Muting list option is visible', fixed=True, fixed_values={'x': 270, 'y': 1488})
-
-
-@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:navigate_to_url', name='navigate_to_url', description='Navigate to a web address in Chrome', created_at=1780853850.7577283, success_count=1, success_streak=1)
-async def navigate_to_url(device, url):
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:chrome_weather_search', name='chrome_weather_search', description='Search for weather information using Chrome browser', created_at=1782833465.1867452, success_count=1, success_streak=1)
+async def chrome_weather_search(device, query):
     await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
-    await action('tap', target='address bar', valid_state='address bar is visible', fixed=True, fixed_values={'x': 534, 'y': 204})
-    await action('input_text', target=url, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.android.chrome:id/url_bar'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '577c87ef3befb80a2d3bb87d41f84ec0c034e55e8aadb4f3be1735c9b3a254c7'}))
-
-
-@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:open_mastodon_preferences', name='open_mastodon_preferences', description='Navigates to the Mastodon preferences menu from the account settings page.', created_at=1780850948.5222223, success_count=1, success_streak=1)
-async def open_mastodon_preferences(device):
-    await action('tap', target='menu toggle button', valid_state='menu button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'content_desc': 'Toggle menu'}, 'state': ['visible', 'clickable', 'enabled', 'focused']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1004.0, 'y': 348.0})
-    await action('tap', target='preferences option', valid_state='preferences option is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Preferences'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 216.0, 'y': 739.0})
-
-
-@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:search_github_repository', name='search_github_repository', description='Search for a GitHub repository using the Chrome browser and navigate to the repository page.', created_at=1780848779.20861, success_count=1, success_streak=1)
-async def search_github_repository(device, query):
-    await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
-    await action('tap', target='dismiss account setup button', optional=True, valid_state='account setup dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/signin_fre_dismiss_button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2090})
-    await action('tap', target='dismiss notification popup', optional=True, valid_state='notification popup is visible', fixed=True, fixed_values={'x': 577, 'y': 1742})
-    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 432, 'y': 405})
-    await action('input_text', target=query, valid_state='search field is focused')
-    await action('enter', valid_state='search field is focused')
-    await action('tap', target='first search result link', valid_state='search results are displayed', fixed=True, fixed_values={'x': 334, 'y': 928})
-
-
-@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:search_in_chrome', name='search_in_chrome', description='Search for a query in the Chrome browser.', created_at=1780852592.835042, success_count=1, success_streak=1)
-async def search_in_chrome(device, query):
-    await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
-    await action('tap', target='search input field', valid_state='search field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 324, 'y': 408})
+    await action('tap', target='Use without an account button', optional=True, valid_state='welcome screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/signin_fre_dismiss_button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2100})
+    await action('tap', target='No thanks button', optional=True, valid_state='notification popup is visible', fixed=True, fixed_values={'x': 590, 'y': 1740})
+    await action('tap', target='search input field', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 403})
     await action('input_text', target=query, valid_state='input field is focused')
-    await action('enter', target='search bar', valid_state='search bar is focused')
-    await action('done')
+    await action('enter', target='keyboard enter key', valid_state='search suggestions are visible')
+    await action('done', target='weather forecast section', valid_state='weather information is displayed')
 
 
-@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:search_in_chrome_2', name='search_in_chrome_2', description='Search for a query in the Chrome browser.', created_at=1780853790.1176612, success_count=1, success_streak=1)
-async def search_in_chrome_2(device, query):
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:export_mastodon_follows', name='export_mastodon_follows', description='Export follows list from Mastodon account settings via web interface.', created_at=1782838365.463691, success_count=1, success_streak=1)
+async def export_mastodon_follows(device):
     await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
-    await action('tap', target='Use without an account button', optional=True, valid_state='welcome screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/signin_fre_dismiss_button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2090})
-    await action('tap', target='No thanks button', optional=True, valid_state='notification prompt is visible', fixed=True, fixed_values={'x': 612, 'y': 1749})
-    await action('tap', target='search input field', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 438, 'y': 405})
-    await action('input_text', target=query, valid_state='input field is focused')
-    await action('enter', target='search query', valid_state='keyboard is active')
+    await action('tap', target='Even more settings link', valid_state='About Mastodon page is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Account settings - Mastodon'}, 'state': ['visible', 'enabled', 'focused', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 219.0, 'y': 352.0})
+    await action('tap', target='Toggle menu button', valid_state='Account settings page is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'content_desc': 'Toggle menu'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1002.0, 'y': 336.0})
+    await action('tap', target='Import and export menu option', valid_state='Navigation menu is open', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Import and export'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 272.0, 'y': 1740.0})
+    await action('tap', target='CSV download button for Follows', valid_state='Export page is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'CSV'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 803.0, 'y': 931.0})
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:compose_and_send_email', name='compose_and_send_email', description='Compose and send an email to a recipient with a message', created_at=1780853759.6093013, success_count=1, success_streak=1)
-async def compose_and_send_email(device, recipient, message):
-    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='recipient input field', valid_state='recipient field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Enter email address'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 324, 'y': 504})
-    await action('input_text', target=recipient, valid_state='input field is focused')
-    await action('tap', target='email body field', valid_state='email body field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 216, 'y': 792})
-    await action('input_text', target=message, valid_state='input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891, 'y': 204})
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:find_in_page_search', name='find_in_page_search', description="Search for a term within the current webpage using the 'Find in page' feature.", created_at=1782833631.9622438, success_count=1, success_streak=1)
+async def find_in_page_search(device, search_query):
+    await action('tap', target='Find in page menu item', valid_state='Find in page menu item is visible', fixed=True, fixed_values={'x': 640, 'y': 1363})
+    await action('input_text', target=search_query, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/find_query', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8a2a7aa5a6ea5b93e0078ce234c681be724558db7e083fb31a554936bbc4ba17'}))
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:compose_email_with_attachment', name='compose_email_with_attachment', description='Compose a new email with a recipient and subject, then open the attachment menu.', created_at=1780853494.107165, success_count=1, success_streak=1)
-async def compose_email_with_attachment(device, recipient, subject):
-    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='Compose button', valid_state='Compose button is visible and clickable', fixed=True, fixed_values={'x': 810, 'y': 2011})
-    await action('tap', target='To field', valid_state='To field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Enter email address'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 302, 'y': 499})
-    await action('input_text', target=recipient, valid_state='input field is focused')
-    await action('tap', target='Subject field', valid_state='Subject field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Subject'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 270, 'y': 660})
-    await action('input_text', target=subject, valid_state='input field is focused')
-    await action('tap', target='Attachment button', valid_state='Attachment button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 775, 'y': 204})
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:google_search', name='google_search', description='Search for a query using the Google search bar in Chrome', created_at=1782841803.5487185, success_count=1, success_streak=1)
+async def google_search(device, query):
+    await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
+    await action('tap', target='search box', valid_state='search box is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 400})
+    await action('input_text', target=query, valid_state='search box is focused')
+    await action('enter', target='execute search', valid_state='keyboard is active')
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:confirm_attachment_and_send', name='confirm_attachment_and_send', description='Select an attachment file, send the email, and verify it appears in the Sent folder.', created_at=1780854006.3857265, success_count=1, success_streak=1)
-async def confirm_attachment_and_send(device, attachment_file):
-    await action('tap', target=attachment_file, valid_state='file selection screen is visible')
-    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 888, 'y': 204})
-    await action('tap', target='menu icon', valid_state='menu icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue5c4'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 73, 'y': 204})
-    await action('tap', target='navigation icon', valid_state='navigation icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue5d2'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 84, 'y': 204})
-    await action('tap', target='Sent folder', valid_state='Sent folder is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Sent'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 444, 'y': 1159})
-    await action('tap', target='sent email', valid_state='sent email is visible')
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:import_muted_list', name='import_muted_list', description='Import a muted accounts list from a CSV file in Mastodon.', created_at=1782838839.929208, success_count=1, success_streak=1)
+async def import_muted_list(device, file_name):
+    await action('tap', target=file_name, valid_state='file picker is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Import type *'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='Upload button', valid_state='Upload button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Upload'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1687})
+    await action('tap', target='Confirm button', valid_state='Confirmation dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'text': 'Confirm'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 792, 'y': 948})
     await action('done', text='task finished')
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:open_email_and_report', name='open_email_and_report', description='Open the email application, tap on an email from a sender, and report the extracted information.', created_at=1780849006.0342226, success_count=1, success_streak=1)
-async def open_email_and_report(device, sender_name, result_text):
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:search_arxiv_paper', name='search_arxiv_paper', description='Search for a academic paper on arXiv using the Chrome browser.', created_at=1782844379.3683915, success_count=1, success_streak=1)
+async def search_arxiv_paper(device, query):
+    await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
+    await action('tap', target='dismiss welcome screen', optional=True, valid_state='welcome screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/signin_fre_dismiss_button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2100})
+    await action('tap', target='dismiss notification popup', optional=True, valid_state='notification popup is visible', fixed=True, fixed_values={'x': 590, 'y': 1740})
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 403})
+    await action('input_text', target=query, valid_state='search field is focused')
+    await action('enter', target='execute search', valid_state='search bar is active')
+    await action('tap', target='arXiv paper link', valid_state='search results are displayed', fixed=True, fixed_values={'x': 423, 'y': 1855})
+
+
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:search_github_repo', name='search_github_repo', description='Search for a GitHub repository using Google and navigate to the repository page.', created_at=1782833243.6931186, success_count=1, success_streak=1)
+async def search_github_repo(device, query):
+    await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
+    await action('tap', target='Use without an account button', optional=True, valid_state='welcome screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/signin_fre_dismiss_button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2100})
+    await action('tap', target="notification popup 'No thanks' button", optional=True, valid_state='notification popup is visible', fixed=True, fixed_values={'x': 590, 'y': 1740})
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 393})
+    await action('input_text', target=query, valid_state='input field is focused')
+    await action('enter', target='keyboard enter key', valid_state='input field is focused')
+    await action('tap', target='first search result link', valid_state='search results are visible', fixed=True, fixed_values={'x': 470, 'y': 921})
+
+
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:view_document_content', name='view_document_content', description='Open a document in Chrome and scroll to view its content', created_at=1782833592.2417772, success_count=1, success_streak=1)
+async def view_document_content(device):
+    await action('tap', target='Just once button', optional=True, valid_state='open with dialog is visible', fixed=True, fixed_values={'x': 743, 'y': 2246})
+    await action('scroll', target='document content', valid_state='document content is visible', fixed=True, fixed_values={'direction': 'down', 'pixels': 400})
+
+
+@skill(app='com.android.chrome', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.chrome:web_search', name='web_search', description='Perform a web search query in the Chrome browser.', created_at=1782844577.6004558, success_count=1, success_streak=1)
+async def web_search(device, query):
+    await action('open_app', target='com.android.chrome', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.chrome'})
+    await action('tap', target='close sync suggestion popup', optional=True, valid_state='close sync suggestion popup is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/sync_promo_close_button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 964, 'y': 1183})
+    await action('tap', target='search input field', valid_state='search input field is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.chrome'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.chrome:id/search_box_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 403})
+    await action('input_text', target=query, valid_state='search field is focused')
+    await action('enter', target='submit search query', valid_state='keyboard is active')
+
+
+@skill(app='com.android.settings', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.settings:adjust_display_size', name='adjust_display_size', description='Sets the display size slider to the maximum value in the Android display settings.', created_at=1782831693.3699496, success_count=1, success_streak=1)
+async def adjust_display_size(device):
+    await action('open_app', target='com.android.settings', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.settings'})
+    await action('tap', target='notification popup', valid_state='popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.settings'}, 'signature': {'required': [{'selector': {'content_desc': 'Preview'}, 'state': ['visible', 'enabled', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1334})
+    await action('drag', target='Display size slider', valid_state='Display size slider is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.settings'}, 'signature': {'required': [{'selector': {'content_desc': 'Display size'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 361, 'y': 2316, 'x2': 880, 'y2': 2316})
+    await action('done', target='task finished', valid_state='Display size slider is at maximum')
+
+
+@skill(app='com.android.settings', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.settings:navigate_to_display_settings', name='navigate_to_display_settings', description='Navigate to the display settings menu within the system settings application.', created_at=1782831604.1522589, success_count=1, success_streak=1)
+async def navigate_to_display_settings(device):
+    await action('open_app', target='com.android.settings', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.android.settings'})
+    await action('scroll', target='settings list', direction='down', pixels=400, valid_state='settings list is visible and scrollable')
+    await action('tap', target='Display settings option', x=540.0, y=2004.0, valid_state='Display option is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.android.settings'}, 'signature': {'required': [{'selector': {'resource_id': 'com.android.settings:id/settings_homepage_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:attach_file_and_send', name='attach_file_and_send', description='Attaches a file to the current email draft and sends the email.', created_at=1782844491.4201112, success_count=1, success_streak=1)
+async def attach_file_and_send(device):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='email from ' + sender_name, valid_state='email from sender is visible')
-    await action('done', target=result_text, valid_state='task completed')
+    await action('tap', target='recent file item', valid_state='file list is visible', fixed=True, fixed_values={'x': 540, 'y': 960})
+    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891, 'y': 208})
+    await action('done', target='task finished', fixed=True, fixed_values={'text': 'task finished'})
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:open_email_by_subject', name='open_email_by_subject', description='Open the email application and locate a email by scrolling through the inbox.', created_at=1780848696.7805905, success_count=1, success_streak=1)
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:attach_file_via_files', name='attach_file_via_files', description='Open the attachment menu in the email compose window and select the Files option to browse for documents.', created_at=1782844049.8453083, success_count=1, success_streak=1)
+async def attach_file_via_files(device):
+    await action('tap', target='From field', valid_state='From field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'From'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72, 'y': 405})
+    await action('tap', target='attachment icon', valid_state='attachment icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 775, 'y': 204})
+    await action('tap', target='Files option', valid_state='Files option is visible')
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:check_email_content', name='check_email_content', description='Open the mail application and locate a email by subject to verify its contents.', created_at=1782833086.7276344, success_count=1, success_streak=1)
+async def check_email_content(device, email_subject):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='email list item', valid_state='email list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'CoolHacks Registration'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:compose_email', name='compose_email', description='Compose a new email in Gmail with a recipient and subject line.', created_at=1782843243.0559106, success_count=1, success_streak=1)
+async def compose_email(device, recipient, subject):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='compose button', valid_state='compose button is visible and clickable', fixed=True, fixed_values={'x': 820, 'y': 2020})
+    await action('tap', target='To field', valid_state='To field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'To, \ue313'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 506})
+    await action('input_text', target=recipient, valid_state='To field is focused')
+    await action('tap', target='Subject field', valid_state='Subject field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'Subject'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 662})
+    await action('input_text', target=subject, valid_state='Subject field is focused')
+    await action('tap', target='attachment icon', valid_state='attachment icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 775, 'y': 208})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:compose_email_2', name='compose_email_2', description='Open the email application and start composing a new message.', created_at=1782843314.2437236, success_count=1, success_streak=1)
+async def compose_email_2(device):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='Compose email button', valid_state='Compose email button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 772})
+    await action('tap', target='Attachment icon', valid_state='Attachment icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 775, 'y': 208})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:compose_email_3', name='compose_email_3', description='Compose an email with a recipient, subject, and attachment.', created_at=1782843989.641542, success_count=1, success_streak=1)
+async def compose_email_3(device, recipient, subject):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='To field', valid_state='To field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'To, \ue313'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 506})
+    await action('input_text', target=recipient, valid_state='To field is focused')
+    await action('tap', target='Subject field', valid_state='Subject field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'Subject'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 662})
+    await action('input_text', target=subject, valid_state='Subject field is focused')
+    await action('tap', target='attachment icon', valid_state='attachment icon is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 775, 'y': 204})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:find_and_download_email_attachment', name='find_and_download_email_attachment', description='Locate an email in the Gmail app by subject, download its attachment, and open the file for viewing.', created_at=1782833674.1828523, success_count=1, success_streak=1)
+async def find_and_download_email_attachment(device, email_subject, attachment_name):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('scroll', target='inbox list', valid_state='inbox is visible')
+    await action('tap', target=email_subject, valid_state='email row is visible')
+    await action('tap', target='download icon', valid_state='download icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\U000f01da'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
+    await action('wait', target='download progress', valid_state='download completes')
+    await action('tap', target=attachment_name, valid_state='attachment is visible')
+    await action('long_press', target=attachment_name, valid_state='attachment is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'class': 'android.widget.TextView'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:navigate_to_awaiting_shipment', name='navigate_to_awaiting_shipment', description='Navigate to the awaiting shipment order list within the application', created_at=1782831869.0361888, success_count=1, success_streak=1)
+async def navigate_to_awaiting_shipment(device):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='profile tab', valid_state='bottom navigation bar is visible', fixed=True, fixed_values={'x': 942, 'y': 2265})
+    await action('tap', target='awaiting shipment section', valid_state='awaiting shipment option is visible', fixed=True, fixed_values={'x': 424, 'y': 952})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:open_email_by_subject', name='open_email_by_subject', description='Open a email in the Gmail clone app by locating it in the inbox.', created_at=1782833147.0409307, success_count=1, success_streak=1)
 async def open_email_by_subject(device, email_subject):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
     await action('scroll', target='inbox list', valid_state='inbox is visible', fixed=True, fixed_values={'direction': 'down', 'pixels': 400})
-    await action('tap', target=email_subject + ' email', valid_state='email is visible')
+    await action('tap', target='email with subject ' + email_subject, valid_state='email list is visible')
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:read_email', name='read_email', description='Opens the Gmail application and reads the content of a email identified by its subject.', created_at=1780853176.3490634, success_count=1, success_streak=1)
-async def read_email(device, email_subject):
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:open_gmail_and_select_email', name='open_gmail_and_select_email', description='Opens the Gmail application and selects an email from the inbox.', created_at=1782844358.5951874, success_count=1, success_streak=1)
+async def open_gmail_and_select_email(device):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='email with subject ' + email_subject, valid_state='email is visible and clickable')
+    await action('tap', target='email from Tony', valid_state='email is visible and clickable', fixed=True, fixed_values={'x': 540, 'y': 986})
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:reply_email_with_attachment', name='reply_email_with_attachment', description='Reply to an email with text content and initiate file attachment.', created_at=1780853939.137708, success_count=1, success_streak=1)
-async def reply_email_with_attachment(device, email_subject, reply_content):
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:open_mail_and_tap_email', name='open_mail_and_tap_email', description='Opens the Gmail application and taps on a email in the inbox.', created_at=1782833385.0996256, success_count=1, success_streak=1)
+async def open_mail_and_tap_email(device, email_sender):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='email with subject ' + email_subject, valid_state='email is visible in inbox')
-    await action('tap', target='reply button', valid_state='reply button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue612'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 883, 'y': 525})
-    await action('tap', target='compose email field', valid_state='compose field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 162, 'y': 804})
-    await action('input_text', target=reply_content, valid_state='input field is focused')
-    await action('tap', target='attach file button', valid_state='attach button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 778, 'y': 204})
+    await action('tap', target='email from ' + email_sender, valid_state='inbox is visible')
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:reply_to_email', name='reply_to_email', description='Reply to an email by locating it via subject, typing a message, and sending it.', created_at=1780848296.69664, success_count=1, success_streak=1)
-async def reply_to_email(device, subject, message):
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:reply_to_email', name='reply_to_email', description="Reply to a contact's email with a custom message.", created_at=1782831575.7811081, success_count=1, success_streak=1)
+async def reply_to_email(device, contact_name, reply_message):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='email with subject ' + subject, valid_state='email with subject ' + subject + ' is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Meeting Thursday'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target='reply button', valid_state='reply button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue612'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 888, 'y': 518})
-    await action('tap', target='compose email field', valid_state='compose field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 180, 'y': 801})
-    await action('input_text', target=message, valid_state='input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 888, 'y': 204})
+    await action('tap', target='email from ' + contact_name, valid_state='email is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Meeting Thursday'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='reply button', valid_state='reply button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue612'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 886, 'y': 523})
+    await action('tap', target='compose email field', valid_state='compose field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 801})
+    await action('input_text', target=reply_message, valid_state='input field is focused')
+    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891, 'y': 204})
+    await action('done', target='task finished', valid_state='email sent successfully')
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:reply_to_email_2', name='reply_to_email_2', description='Open the mail app, locate an email by subject, reply to it with a message, and send it.', created_at=1780848325.2102857, success_count=1, success_streak=1)
-async def reply_to_email_2(device, email_subject, message_body):
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:reply_to_email_2', name='reply_to_email_2', description="Reply to a contact's email with a custom message", created_at=1782831745.1145709, success_count=1, success_streak=1)
+async def reply_to_email_2(device, contact_name, email_subject, reply_message):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('tap', target='email with subject ' + email_subject, valid_state='email list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Meeting Thursday'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target='reply button', valid_state='reply button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue612'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 880, 'y': 516})
-    await action('tap', target='compose text area', valid_state='compose screen is active', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 178, 'y': 801})
+    await action('tap', target='email from ' + contact_name, valid_state='email is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Meeting Thursday'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 993})
+    await action('tap', target='reply button', valid_state='reply button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue612'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 886, 'y': 523})
+    await action('tap', target='compose email body', valid_state='compose area is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 801})
+    await action('input_text', target=reply_message, valid_state='input field is focused')
+    await action('tap', target='send button', valid_state='send button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891, 'y': 204})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:reply_to_email_3', name='reply_to_email_3', description='Open Gmail, reply to an email, compose a message, and initiate file attachment.', created_at=1782844461.9003425, success_count=1, success_streak=1)
+async def reply_to_email_3(device, message_body):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='reply button', valid_state='reply button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': '\ue612'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 886, 'y': 523})
+    await action('tap', target='compose email field', valid_state='compose email field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 801})
     await action('input_text', target=message_body, valid_state='input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 888, 'y': 204})
+    await action('tap', target='attach file button', valid_state='attach file button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\U000f0066'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 775, 'y': 208})
 
 
-@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:scroll_inbox', name='scroll_inbox', description='Open the mail application and scroll through the inbox to locate a message.', created_at=1780853245.1945376, success_count=1, success_streak=1)
-async def scroll_inbox(device):
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:search_email', name='search_email', description='Search for an email by keyword and open the matching message.', created_at=1782832953.7630267, success_count=1, success_streak=1)
+async def search_email(device, query):
     await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
-    await action('back', target='back button', valid_state='email detail view is visible')
-    await action('scroll', target='inbox list', valid_state='inbox is visible')
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Search in mail'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 374})
+    await action('input_text', target=query, valid_state='search field is focused')
+    await action('tap', target='email result', valid_state='email result is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'MCFT Conference'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
 
 
-@skill(app='com.google.android.apps.maps', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.maps:search_driving_directions', name='search_driving_directions', description='Search for driving directions between two locations in Google Maps.', created_at=1780854074.6984894, success_count=1, success_streak=1)
-async def search_driving_directions(device, origin, destination):
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:send_email', name='send_email', description='Compose and send an email in Gmail to a recipient with a subject.', created_at=1782842404.6995952, success_count=1, success_streak=1)
+async def send_email(device, recipient_email, subject_text):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='Compose button', valid_state='Compose button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Attachments:'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='To field', valid_state='To field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'To, \ue313'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 506})
+    await action('input_text', target=recipient_email, valid_state='input field is focused')
+    await action('tap', target='Subject field', valid_state='Subject field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'Subject'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 662})
+    await action('input_text', target=subject_text, valid_state='input field is focused')
+    await action('tap', target='Send button', valid_state='Send button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891, 'y': 201})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:send_email_2', name='send_email_2', description='Compose and send an email with attachments.', created_at=1782843930.9082572, success_count=1, success_streak=1)
+async def send_email_2(device):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='email body', valid_state='compose email field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540.0, 'y': 1161.0})
+    await action('tap', target='send button', valid_state='send button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891.0, 'y': 208.0})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:send_email_with_attachment', name='send_email_with_attachment', description='In com.gmailclone, attaches a file to an email and sends it.', created_at=1782834294.479449, success_count=1, success_streak=1)
+async def send_email_with_attachment(device):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='file item', valid_state='file list is visible', fixed=True, fixed_values={'x': 287, 'y': 2284})
+    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891, 'y': 208})
+    await action('done', target='task finished', valid_state='email sent successfully')
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:send_email_with_attachment_2', name='send_email_with_attachment_2', description='Send an email with an attachment in Gmail.', created_at=1782844110.9602046, success_count=1, success_streak=1)
+async def send_email_with_attachment_2(device, contact, subject):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='Compose button', valid_state='Compose button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
+    await action('input_text', target=contact, valid_state='To field is focused')
+    await action('input_text', target=subject, valid_state='Subject field is focused')
+    await action('tap', target='Attach button', valid_state='Attach button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='attachment file', valid_state='File picker is visible', fixed=True, fixed_values={'x': 540, 'y': 948})
+    await action('tap', target='send button', valid_state='Send button is visible', fixed=True, fixed_values={'x': 891, 'y': 204})
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:send_email_with_attachments', name='send_email_with_attachments', description='Send an email with pre-attached media files to a recipient with a custom message.', created_at=1782844323.960018, success_count=1, success_streak=1)
+async def send_email_with_attachments(device, recipient, message_body):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='To field', valid_state='To field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'content_desc': 'To, \ue313'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540.0, 'y': 504.0})
+    await action('input_text', target=recipient, valid_state='Input field is focused')
+    await action('tap', target='Compose email body field', valid_state='Body field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': 'Compose email'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540.0, 'y': 799.0})
+    await action('input_text', target=message_body, valid_state='Input field is focused')
+    await action('tap', target='Send button', valid_state='Send button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.gmailclone'}, 'signature': {'required': [{'selector': {'text': '\ue163'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 891.0, 'y': 204.0})
+    await action('done', text='task finished')
+
+
+@skill(app='com.gmailclone', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.gmailclone:view_email_inbox', name='view_email_inbox', description='Open the email application, tap an email in the inbox to view its contents, and return to the home screen.', created_at=1782842989.388709, success_count=1, success_streak=1)
+async def view_email_inbox(device):
+    await action('open_app', target='com.gmailclone', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.gmailclone'})
+    await action('tap', target='email item in inbox', valid_state='email list is visible')
+    await action('home', target='home button', valid_state='home screen is visible', fixed=True)
+
+
+@skill(app='com.google.android.apps.maps', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.maps:navigate_to_cart_and_scroll', name='navigate_to_cart_and_scroll', description='Open the target application, access the shopping cart via the bottom navigation bar, and scroll through the item list to review product details.', created_at=1782832710.3381827, success_count=1, success_streak=1)
+async def navigate_to_cart_and_scroll(device):
     await action('open_app', target='com.google.android.apps.maps', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.maps'})
-    await action('tap', target='skip sign-in button', optional=True, valid_state='skip button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'text': 'SKIP'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 965, 'y': 194})
-    await action('tap', target='search bar', valid_state='search bar is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'text': 'Search here'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 324, 'y': 208})
-    await action('input_text', target='search input field', text='driving directions from ' + origin + ' to ' + destination, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.maps:id/search_omnibox_edit_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '19db6d6b0829f2bcf38754ecee1f8c3101abc49a76b11decf72410800938a7dc'}))
-    await action('tap', target='search suggestion', valid_state='search suggestion is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/home_bottom_sheet_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 486, 'y': 364})
+    await action('tap', target='shopping cart icon', valid_state='shopping cart icon is visible and clickable', fixed=True, fixed_values={'x': 680.0, 'y': 2256.0})
+    await action('scroll', target='shopping cart list', valid_state='cart list is displayed and scrollable', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
 
 
-@skill(app='com.google.android.apps.maps', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.maps:search_location_details', name='search_location_details', description='Search for a location in Google Maps and scroll through its details.', created_at=1780849085.2283223, success_count=1, success_streak=1)
-async def search_location_details(device, query):
+@skill(app='com.google.android.apps.maps', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.maps:search_location', name='search_location', description='Search for a location or business in Google Maps and select the primary result.', created_at=1782834376.4225602, success_count=1, success_streak=1)
+async def search_location(device, query):
     await action('open_app', target='com.google.android.apps.maps', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.maps'})
-    await action('tap', target='skip button', optional=True, valid_state='skip button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'text': 'SKIP'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 960, 'y': 194})
-    await action('tap', target='search input field', valid_state='search field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'text': 'Search here'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 405, 'y': 211})
-    await action('input_text', target=query, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.maps:id/search_omnibox_edit_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '19db6d6b0829f2bcf38754ecee1f8c3101abc49a76b11decf72410800938a7dc'}))
-    await action('tap', target='first search result', valid_state='search result is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/home_bottom_sheet_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 528, 'y': 535})
-    await action('scroll', target='location details panel', valid_state='details panel is visible', fixed=True, fixed_values={'direction': 'down', 'pixels': 400})
+    await action('tap', target='skip sign-in button', optional=True, valid_state='sign-in prompt is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'text': 'SKIP'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 954, 'y': 201})
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/search_omnibox_text_box'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 218})
+    await action('input_text', target=query, valid_state='search field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/search_omnibox_edit_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '19db6d6b0829f2bcf38754ecee1f8c3101abc49a76b11decf72410800938a7dc'}))
+    await action('tap', target='first search result', valid_state='search results are visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.maps'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/home_bottom_sheet_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 374})
 
 
-@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:reply_to_sms', name='reply_to_sms', description='Reply to the current conversation in the Messages app with a text message.', created_at=1780853330.2784138, success_count=1, success_streak=1)
-async def reply_to_sms(device, reply_text):
+@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:reply_to_message', name='reply_to_message', description='Reply to a message in the Google Messages app.', created_at=1782843082.648559, success_count=1, success_streak=1)
+async def reply_to_message(device, message_content):
     await action('open_app', target='com.google.android.apps.messaging', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.messaging'})
-    await action('tap', target='text input field', valid_state='input field is visible', fixed=True, fixed_values={'x': 449, 'y': 2246})
-    await action('input_text', target='text input field', text=reply_text, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.messaging:id/compose_message_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
-    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 981, 'y': 2128})
+    await action('tap', target='first conversation in list', valid_state='conversation list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/group_name_edit_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 441})
+    await action('tap', target='close icon on banner', optional=True, valid_state='banner is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/banner_close_icon'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1017, 'y': 374})
+    await action('tap', target='text input field', valid_state='input field is visible', fixed=True, fixed_values={'x': 540, 'y': 2258})
+    await action('input_text', target=message_content, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/compose_message_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
+    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 977, 'y': 2143})
 
 
-@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:send_sms', name='send_sms', description='Send an SMS message to a specified recipient with custom content.', created_at=1780848368.361123, success_count=1, success_streak=1)
-async def send_sms(device, recipient_phone, message_content):
+@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:reply_to_message_2', name='reply_to_message_2', description='Opens the messaging app, selects a conversation, dismisses any save-contact popup, and sends a reply message.', created_at=1782843130.312011, success_count=1, success_streak=1)
+async def reply_to_message_2(device, reply_text):
     await action('open_app', target='com.google.android.apps.messaging', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.messaging'})
-    await action('tap', target='Start chat button', valid_state='chat list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/group_name_edit_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 842, 'y': 2203})
-    await action('tap', target='recipient phone number field', valid_state='new conversation screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 378, 'y': 357})
-    await action('input_text', target=recipient_phone, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.messaging:id/compose_message_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
-    await action('tap', target='recipient suggestion', valid_state='recipient suggestion is visible', fixed=True, fixed_values={'x': 378, 'y': 501})
-    await action('input_text', target=message_content, valid_state='message input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 981, 'y': 2140})
+    await action('tap', target='conversation list item', valid_state='conversation list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/group_name_edit_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 446})
+    await action('tap', target='close popup button', optional=True, valid_state='popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/banner_close_icon'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1017, 'y': 381})
+    await action('tap', target='message input field', valid_state='input field is visible', fixed=True, fixed_values={'x': 540, 'y': 2246})
+    await action('input_text', target=reply_text, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/compose_message_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
+    await action('tap', target='send button', valid_state='send button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 977, 'y': 2138})
 
 
-@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:send_sms_2', name='send_sms_2', description='Send an SMS message to a specified recipient.', created_at=1780853461.3118608, success_count=1, success_streak=1)
-async def send_sms_2(device, recipient, message):
+@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:search_location', name='search_location', description='Searches for a location or business in Google Maps and scrolls to view details.', created_at=1782834318.3433747, success_count=1, success_streak=1)
+async def search_location_2(device, query):
     await action('open_app', target='com.google.android.apps.messaging', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.messaging'})
-    await action('input_text', target=recipient, valid_state='recipient field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.messaging:id/compose_message_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
-    await action('tap', target='recipient suggestion', valid_state='recipient suggestion is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target='message input field', valid_state='input field is visible')
-    await action('input_text', target=message, valid_state='input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible', fixed=True, fixed_values={'x': 982, 'y': 2128})
+    await action('tap', target='skip sign-in button', optional=True, valid_state='skip button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'text': 'SKIP'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 954, 'y': 204})
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'text': 'Search here'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 218})
+    await action('input_text', target=query, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/search_omnibox_edit_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '6dd184fe82f2bf60580058aa4f9ecb3ac698ea8b3283136aa403eda6be5d98e8'}))
+    await action('tap', target='first search result', valid_state='search results are visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.maps:id/home_bottom_sheet_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('scroll', target='location details section', text='down', pixels=400, valid_state='location page is loaded')
 
 
-@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:send_sms_3', name='send_sms_3', description='Send an SMS message to a specified recipient with a given text content.', created_at=1780854114.5302026, success_count=1, success_streak=1)
-async def send_sms_3(device, recipient, message):
-    await action('open_app', target='com.google.android.apps.messaging', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.messaging'})
-    await action('tap', target='Start chat button', valid_state='Start chat button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/group_name_edit_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 842.0, 'y': 2203.0})
-    await action('input_text', target='recipient input field', text=recipient, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.messaging:id/compose_message_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
-    await action('tap', target='suggested recipient', valid_state='suggested recipient is visible and clickable', fixed=True, fixed_values={'x': 413.0, 'y': 494.0})
-    await action('input_text', target='message input field', text=message, valid_state='input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 981.0, 'y': 2138.0})
+@skill(app='com.google.android.apps.wallpaper', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.wallpaper:apply_wallpaper', name='apply_wallpaper', description='Apply a selected wallpaper to the device screens.', created_at=1782832648.6201546, success_count=1, success_streak=1)
+async def apply_wallpaper(device, photo_target, screen_choice):
+    await action('open_app', target='com.google.android.apps.wallpaper', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.wallpaper'})
+    await action('tap', target=photo_target, valid_state='photo grid is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.wallpaper'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.wallpaper:id/wallpaper_control_button_group'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='Set Wallpaper button', valid_state='preview is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.wallpaper'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.wallpaper:id/button_set_wallpaper'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 873.0, 'y': 204.0})
+    await action('tap', target=screen_choice, valid_state='dialog is visible')
 
 
-@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:send_sms_message', name='send_sms_message', description='Send an SMS message to a contact by entering their phone number and typing the message content.', created_at=1780853217.0481167, success_count=1, success_streak=1)
-async def send_sms_message(device, recipient_phone, message_text):
-    await action('open_app', target='com.google.android.apps.messaging', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.messaging'})
-    await action('tap', target='Start chat button', valid_state='Start chat button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/group_name_edit_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 852, 'y': 2196})
-    await action('input_text', target=recipient_phone, valid_state='Recipient input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'com.google.android.apps.messaging:id/compose_message_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '8bf97448dc6b66def31bc1da7e3f4886a66cb4521b8fb7a5a0ca8d7a58e86c04'}))
-    await action('tap', target='recipient selection result', valid_state='Recipient selection option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target='message composition text field', valid_state='Message input field is visible', fixed=True, fixed_values={'x': 449, 'y': 2136})
-    await action('input_text', target=message_text, valid_state='Message input field is focused')
-    await action('tap', target='send message button', valid_state='Send button is visible and clickable', fixed=True, fixed_values={'x': 980, 'y': 2128})
+@skill(app='com.google.android.apps.wallpaper', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.wallpaper:navigate_to_wallpaper_selection', name='navigate_to_wallpaper_selection', description='Open the wallpaper settings app and navigate to the wallpaper selection screen.', created_at=1782832585.035508, success_count=1, success_streak=1)
+async def navigate_to_wallpaper_selection(device):
+    await action('open_app', target='com.google.android.apps.wallpaper', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.wallpaper'})
+    await action('tap', target='More wallpapers', valid_state='More wallpapers button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.wallpaper'}, 'signature': {'required': [{'selector': {'text': 'More wallpapers'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 585, 'y': 2124})
 
 
-@skill(app='com.google.android.apps.messaging', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.apps.messaging:start_new_conversation', name='start_new_conversation', description='Open the messaging app and initiate a new conversation by searching for a contact name.', created_at=1780853402.9680624, success_count=1, success_streak=1)
-async def start_new_conversation(device, contact_name):
-    await action('open_app', target='com.google.android.apps.messaging', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.apps.messaging'})
-    await action('tap', target='Start chat button', valid_state='Start chat button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/group_name_edit_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 843, 'y': 2203})
-    await action('tap', target='search input field', valid_state='search field is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.apps.messaging'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.messaging:id/home_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 414, 'y': 357})
-    await action('input_text', target=contact_name, valid_state='input field is focused')
-    await action('enter', target='keyboard enter key', valid_state='search field is focused')
-
-
-@skill(app='com.google.android.deskclock', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.deskclock:set_alarm', name='set_alarm', description='Opens the Clock app, navigates to the Alarm tab, and sets a new alarm to the specified time.', created_at=1780848754.7974992, success_count=1, success_streak=1)
-async def set_alarm(device, alarm_time):
+@skill(app='com.google.android.deskclock', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.deskclock:set_alarm', name='set_alarm', description='Sets a new alarm at a specified time.', created_at=1782833194.383293, success_count=1, success_streak=1)
+async def set_alarm(device, hour, minute):
     await action('open_app', target='com.google.android.deskclock', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.deskclock'})
-    await action('tap', target='Alarm tab', valid_state='Alarm tab is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.deskclock'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.deskclock:id/tab_menu_alarm'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 118, 'y': 2220})
-    await action('tap', target='Add alarm button', valid_state='Add alarm button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.deskclock'}, 'signature': {'required': [{'selector': {'content_desc': 'Add alarm'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1960})
-    await action('input_text', target='time input field', text=alarm_time, valid_state='time input field is focused')
-    await action('tap', target='OK button', valid_state='OK button is visible and clickable', fixed=True, fixed_values={'x': 864, 'y': 1821})
+    await action('tap', target='Alarm tab', valid_state='Alarm tab is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.deskclock'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.deskclock:id/tab_menu_alarm'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 108, 'y': 2232})
+    await action('tap', target='Add alarm button', valid_state='Add alarm button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.deskclock'}, 'signature': {'required': [{'selector': {'content_desc': 'Add alarm'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1963})
+    await action('input_text', target=hour + ':' + minute, valid_state='time input field is focused')
+    await action('tap', target='OK button', valid_state='OK button is visible', fixed=True, fixed_values={'x': 867, 'y': 1819})
 
 
-@skill(app='com.google.android.dialer', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.dialer:navigate_to_contacts', name='navigate_to_contacts', description='Opens the phone application, navigates to the contacts section, and scrolls through the contact list to locate an entry.', created_at=1780837473.2451031, success_count=1, success_streak=1)
-async def navigate_to_contacts(device):
+@skill(app='com.google.android.dialer', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.dialer:find_contact_in_phone_app', name='find_contact_in_phone_app', description='Opens the phone application, navigates to the contacts tab, and scrolls to locate a contact.', created_at=1782838714.3730042, success_count=1, success_streak=1)
+async def find_contact_in_phone_app(device):
     await action('open_app', target='com.google.android.dialer', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.dialer'})
-    await action('tap', target='search button', valid_state='search button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.dialer'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.dialer:id/search_fragment_container'}, 'state': ['visible', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '5c5fa38f86deefb9e21521f590a301216544e4faafcff8eccb8c837faa6f7086'}), fixed=True, fixed_values={'x': 169, 'y': 1970})
-    await action('tap', target='contacts tab', valid_state='contacts tab is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.dialer'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.dialer:id/tab_contacts'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': 'b694939ae5f7978b7e87776c86c9899d14f6b6543be2993c5a400760310e313c'}), fixed=True, fixed_values={'x': 672, 'y': 2239})
-    await action('scroll', target='contacts list', valid_state='contacts list is visible and scrollable', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
+    await action('tap', target='Contacts tab', valid_state='Contacts tab is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.dialer'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.dialer:id/tab_contacts'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 675, 'y': 2232})
+    await action('scroll', target='contacts list', valid_state='contacts list is visible', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
 
 
-@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:navigate_to_folder', name='navigate_to_folder', description='Navigate to a folder in the Android file picker.', created_at=1780853550.8622124, success_count=1, success_streak=1)
-async def navigate_to_folder(device, folder_name):
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:extract_archive_contents', name='extract_archive_contents', description='Extracts the contents of a selected archive to the current directory.', created_at=1782833539.846864, success_count=1, success_streak=1)
+async def extract_archive_contents(device):
     await action('open_app', target='com.google.android.documentsui', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.documentsui'})
-    await action('tap', target='menu button', valid_state='menu button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'content_desc': 'Show roots'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72, 'y': 194})
-    await action('tap', target=folder_name, valid_state='folder list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/collapsing_toolbar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='Extract to... menu option', valid_state='Extract to... option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 687, 'y': 573})
+    await action('tap', target='EXTRACT button', valid_state='EXTRACT button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 437, 'y': 2287})
+    await action('back', target='Back', valid_state='Returned to Downloads folder')
 
 
-@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:save_file_to_downloads', name='save_file_to_downloads', description='Saves a file to the Downloads folder with a specified filename.', created_at=1780853882.8548908, success_count=1, success_streak=1)
-async def save_file_to_downloads(device, filename):
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:navigate_to_downloads', name='navigate_to_downloads', description='Navigate to the Downloads folder in the file picker application.', created_at=1782843278.110341, success_count=1, success_streak=1)
+async def navigate_to_downloads(device):
     await action('open_app', target='com.google.android.documentsui', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.documentsui'})
-    await action('tap', target='Save option', valid_state='Save option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/collapsing_toolbar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 702.0, 'y': 458.0})
-    await action('tap', target='breadcrumb navigation', valid_state='breadcrumb navigation is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/collapsing_toolbar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 270.0, 'y': 319.0})
-    await action('tap', target='Download folder', valid_state='Download folder is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 756.0, 'y': 909.0})
-    await action('tap', target='filename input field', valid_state='filename input field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 486.0, 'y': 2268.0})
+    await action('tap', target='Files', optional=True, valid_state='Files option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1948})
+    await action('tap', target='Show roots menu button', valid_state='Menu button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'content_desc': 'Show roots'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 73, 'y': 192})
+    await action('tap', target='Downloads', valid_state='Downloads option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/collapsing_toolbar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 259, 'y': 804})
+
+
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:open_app_drawer', name='open_app_drawer', description='Navigates to the home screen and opens the application drawer to locate applications.', created_at=1782844530.8830383, success_count=1, success_streak=1)
+async def open_app_drawer(device):
+    await action('tap', target='home button', valid_state='home button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'content_desc': 'Home'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 71, 'y': 204})
+    await action('drag', target='screen swipe up', valid_state='home screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.apps.nexuslauncher:id/search_container_hotseat'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 2280, 'x2': 540, 'y2': 1920})
+
+
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:open_file_in_zip', name='open_file_in_zip', description='Open a file located inside a ZIP archive within the Downloads directory.', created_at=1782833501.0489907, success_count=1, success_streak=1)
+async def open_file_in_zip(device, zip_name, file_name):
+    await action('open_app', target='com.google.android.documentsui', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.documentsui'})
+    await action('tap', target='ZIP archive named ' + zip_name, valid_state='ZIP archive is visible in the list', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='text file named ' + file_name, valid_state='text file is visible inside the archive', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+
+
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:rename_file', name='rename_file', description='Rename a file in the Documents/Files app', created_at=1782838420.2359502, success_count=1, success_streak=1)
+async def rename_file(device, new_name):
+    await action('tap', target='Rename option', valid_state='Rename option is visible', fixed=True, fixed_values={'x': 664, 'y': 1094})
+    await action('long_press', target='text input field', valid_state='text input field is visible and focused', fixed=True, fixed_values={'x': 540, 'y': 1248})
+    await action('input_text', target=new_name, valid_state='text input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'android:id/text1', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '81031f11ed4127540570e0a4ab4f6480fd5a8082d2dd41863a3b2b20d15ccbb5'}))
+    await action('tap', target='OK button', valid_state='OK button is visible', fixed=True, fixed_values={'x': 884, 'y': 1408})
+
+
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:save_file_to_directory', name='save_file_to_directory', description='Save a file to a specified directory within the Documents app.', created_at=1782844427.874688, success_count=1, success_streak=1)
+async def save_file_to_directory(device, target_folder, filename):
+    await action('open_app', target='com.google.android.documentsui', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.documentsui'})
+    await action('tap', target='Save option', valid_state='toolbar is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/collapsing_toolbar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 641.0, 'y': 458.0})
+    await action('tap', target='parent folder link', valid_state='parent folder link is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/collapsing_toolbar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target=target_folder, valid_state='folder list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='filename input field', valid_state='filename input field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.documentsui:id/container_search_fragment'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 494.0, 'y': 2287.0})
     await action('input_text', target=filename, valid_state='input field is focused')
 
 
-@skill(app='com.google.android.providers.media.module', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.providers.media.module:open_media_picker_and_scroll', name='open_media_picker_and_scroll', description='Opens the system media picker application and scrolls through the recent photos to locate an image.', created_at=1780853522.3538644, success_count=1, success_streak=1)
-async def open_media_picker_and_scroll(device):
-    await action('open_app', target='com.google.android.providers.media.module', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.providers.media.module'})
-    await action('tap', target='Photos tab', valid_state='Photos tab is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.providers.media.module'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.providers.media.module:id/picker_tab_viewpager'}, 'state': ['visible', 'enabled', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 285, 'y': 1771})
-    await action('scroll', target='photo gallery', valid_state='photo gallery is visible', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
+@skill(app='com.google.android.documentsui', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.documentsui:select_file_in_downloads', name='select_file_in_downloads', description='Open the Files app and long press a file in the Downloads folder to select it.', created_at=1782838412.791141, success_count=1, success_streak=1)
+async def select_file_in_downloads(device, file_name):
+    await action('open_app', target='com.google.android.documentsui', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.documentsui'})
+    await action('long_press', target=file_name, valid_state='Downloads folder is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.documentsui'}, 'signature': {'required': [{'selector': {'class': 'android.widget.LinearLayout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
 
 
-@skill(app='com.google.android.providers.media.module', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.providers.media.module:select_image_from_gallery', name='select_image_from_gallery', description="Selects a image from the device's photo gallery to attach to a message.", created_at=1780852963.4671786, success_count=1, success_streak=1)
-async def select_image_from_gallery(device, image_description):
-    await action('open_app', target='com.google.android.providers.media.module', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.google.android.providers.media.module'})
-    await action('tap', target='permission allow button', optional=True, valid_state='permission dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.providers.media.module'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.providers.media.module:id/picker_tab_viewpager'}, 'state': ['visible', 'enabled', 'scrollable']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1233})
+@skill(app='com.google.android.providers.media.module', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.google.android.providers.media.module:select_image_from_picker', name='select_image_from_picker', description='Selects a image from the system photo picker to attach to a post.', created_at=1782839069.0217555, success_count=1, success_streak=1)
+async def select_image_from_picker(device, image_description):
+    await action('tap', target='photo picker grid', valid_state='photo picker is open', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.providers.media.module'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.providers.media.module:id/picker_tab_viewpager'}, 'state': ['visible', 'enabled', 'scrollable']}], 'forbidden': []}}))
     await action('tap', target=image_description, valid_state='image is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.google.android.providers.media.module'}, 'signature': {'required': [{'selector': {'resource_id': 'com.google.android.providers.media.module:id/picker_tab_viewpager'}, 'state': ['visible', 'enabled', 'scrollable']}], 'forbidden': []}}))
 
 
-@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:confirm_and_send_message', name='confirm_and_send_message', description='Confirm an attached media item and send the message in Mattermost.', created_at=1780853010.8657358, success_count=1, success_streak=1)
-async def confirm_and_send_message(device):
-    await action('tap', target='Add (1) button', valid_state='file selection dialog is open', fixed=True, fixed_values={'x': 925, 'y': 2241})
-    await action('tap', target='send button', valid_state='compose view is active', fixed=True, fixed_values={'x': 952, 'y': 2152})
-    await action('done', target='task finished', valid_state='message sent successfully')
-
-
-@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:copy_message_in_channel', name='copy_message_in_channel', description='Locate a message in a Mattermost channel and copy its text content.', created_at=1780851947.9870255, success_count=1, success_streak=1)
-async def copy_message_in_channel(device):
+@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:copy_message_text', name='copy_message_text', description='Copies the text content of a message within a Mattermost channel.', created_at=1782840620.4638374, success_count=1, success_streak=1)
+async def copy_message_text(device, message_item):
     await action('open_app', target='com.mattermost.rnbeta', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.mattermost.rnbeta'})
-    await action('tap', target='Announcements channel', valid_state='Announcements channel is visible', fixed=True, fixed_values={'x': 313, 'y': 892})
-    await action('scroll', target='message list area', valid_state='message list is visible', fixed=True, fixed_values={'direction': 'up', 'pixels': 400})
-    await action('long_press', target='security announcement message', valid_state='message is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'class': 'android.view.ViewGroup'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 486, 'y': 568})
-    await action('tap', target='Copy Text option', valid_state='context menu is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'content_desc': 'Bottom Sheet'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 249, 'y': 2143})
+    await action('long_press', target=message_item, valid_state='message is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'class': 'android.view.ViewGroup'}, 'state': ['visible', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': 'ff4618ab5ae5ceb34704aab6b70ddbc571839ce611d244783a8f1c50efe59c8a'}))
+    await action('tap', target='Copy Text option', valid_state='context menu is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'content_desc': 'Bottom Sheet'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 251, 'y': 2148})
 
 
-@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:create_private_channel', name='create_private_channel', description='Create a new private channel with a specified name.', created_at=1780850007.445288, success_count=1, success_streak=1)
-async def create_private_channel(device, channel_name):
+@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:navigate_to_mattermost_channel', name='navigate_to_mattermost_channel', description='Navigate to a channel in Mattermost to view messages.', created_at=1782842205.7392704, success_count=1, success_streak=1)
+async def navigate_to_mattermost_channel(device, channel_name):
     await action('open_app', target='com.mattermost.rnbeta', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.mattermost.rnbeta'})
-    await action('tap', target='plus button', valid_state='plus button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'text': '\U000f0415'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 991, 'y': 314})
-    await action('tap', target='Create New Channel', valid_state='Create New Channel option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'text': 'Create New Channel'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 380, 'y': 2162})
-    await action('tap', target='Name input field', valid_state='Name input field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'resource_id': 'channel_info_form.display_name.input'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 528, 'y': 708})
-    await action('input_text', target=channel_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'channel_info_form.display_name.input'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '9b558cda05be3b8b0978895d1a3725abc6b3f0f4da61db3344793877deafa0f7'}))
-    await action('tap', target='Make Private toggle', valid_state='Make Private toggle is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'resource_id': 'channel_info_form.make_private.toggled.false.button'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 959, 'y': 458})
-    await action('tap', target='CREATE button', valid_state='CREATE button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'text': 'CREATE'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 991, 'y': 206})
+    await action('tap', target=channel_name + ' channel', valid_state='channel list is visible')
 
 
-@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:open_mattermost_shift_requests_channel', name='open_mattermost_shift_requests_channel', description='Open Mattermost application and navigate to the shift requests channel.', created_at=1780853020.6168196, success_count=1, success_streak=1)
-async def open_mattermost_shift_requests_channel(device):
+@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:open_direct_message', name='open_direct_message', description='Opens a direct message conversation with a contact in Mattermost.', created_at=1782842358.8962023, success_count=1, success_streak=1)
+async def open_direct_message(device, contact_name):
     await action('open_app', target='com.mattermost.rnbeta', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.mattermost.rnbeta'})
-    await action('tap', target='Shift Requests channel', valid_state='Shift Requests channel is visible in the sidebar', fixed=True, fixed_values={'x': 313, 'y': 1524})
+    await action('tap', target='direct message entry for ' + contact_name, valid_state=contact_name + ' is visible in the direct messages list')
 
 
-@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:post_message_in_channel', name='post_message_in_channel', description='Opens Mattermost, navigates to a channel, and posts a message.', created_at=1780852860.31884, success_count=1, success_streak=1)
-async def post_message_in_channel(device, channel_name, message_content):
+@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:post_confirmation_message', name='post_confirmation_message', description='Post a confirmation message in a Mattermost channel listing created calendar events.', created_at=1782842324.1007879, success_count=1, success_streak=1)
+async def post_confirmation_message(device, message_content):
     await action('open_app', target='com.mattermost.rnbeta', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.mattermost.rnbeta'})
-    await action('tap', target=channel_name, valid_state='channel list is visible')
-    await action('tap', target='message input field', valid_state='input field is visible', fixed=True, fixed_values={'x': 297, 'y': 2172})
+    await action('tap', target='message input field', valid_state='input field is visible and enabled', fixed=True, fixed_values={'x': 540, 'y': 2188})
     await action('input_text', target=message_content, valid_state='input field is focused')
-    await action('tap', target='send button', valid_state='send button is visible', fixed=True, fixed_values={'x': 941, 'y': 2150})
+    await action('tap', target='send button', valid_state='send button is visible and clickable', fixed=True, fixed_values={'x': 953, 'y': 2160})
 
 
-@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:start_direct_message', name='start_direct_message', description='In Mattermost, initiate a private direct message conversation with a user.', created_at=1780852923.0795321, success_count=1, success_streak=1)
-async def start_direct_message(device, recipient_name):
+@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:review_shift_requests_channel', name='review_shift_requests_channel', description='Open Mattermost and navigate to the shift-requests channel to review pending shift swap requests.', created_at=1782842506.8695512, success_count=1, success_streak=1)
+async def review_shift_requests_channel(device):
     await action('open_app', target='com.mattermost.rnbeta', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.mattermost.rnbeta'})
-    await action('tap', target='new message button', valid_state='plus button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'text': '\U000f0415'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 992, 'y': 208})
-    await action('tap', target='open direct message option', valid_state='menu is open', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'content_desc': 'Bottom Sheet'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 378, 'y': 2284})
-    await action('tap', target=recipient_name + ' user entry', valid_state='recipient list is displayed', state_contract=C.from_dict({'anchor': {'app_package': 'com.mattermost.rnbeta'}, 'signature': {'required': [{'selector': {'text': '\U000f0766'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target='start conversation button', valid_state='start conversation button is visible', fixed=True, fixed_values={'x': 577, 'y': 2234})
+    await action('tap', target='Shift Requests channel', valid_state='Shift Requests channel is visible in the sidebar', fixed=True, fixed_values={'x': 287, 'y': 1521})
+    await action('scroll', target='message history', valid_state='messages are visible in the channel', fixed=True, fixed_values={'direction': 'up', 'pixels': 400})
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:confirm_deletion_and_scroll', name='confirm_deletion_and_scroll', description='Confirms item deletion in the shopping cart and scrolls through the list to verify removal.', created_at=1780848538.8478634, success_count=1, success_streak=1)
-async def confirm_deletion_and_scroll(device):
-    await action('tap', target='confirmation dialog OK button', optional=True, valid_state='confirmation dialog is visible', fixed=True, fixed_values={'x': 722.0, 'y': 1365.0})
-    await action('scroll', target='shopping cart list', valid_state='cart list is visible', fixed_values={'pixels': 400, 'direction': 'down'})
+@skill(app='com.mattermost.rnbeta', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.mattermost.rnbeta:send_message', name='send_message', description='Sends a text message in Mattermost.', created_at=1782842419.5045989, success_count=1, success_streak=1)
+async def send_message(device, message):
+    await action('open_app', target='com.mattermost.rnbeta', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.mattermost.rnbeta'})
+    await action('tap', target='message input field', valid_state='input field is visible', fixed=True, fixed_values={'x': 540, 'y': 2167})
+    await action('input_text', target=message, valid_state='input field is focused')
+    await action('tap', target='send button', valid_state='send button is visible', fixed=True, fixed_values={'x': 951, 'y': 2167})
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:extract_awaiting_shipment_order_details', name='extract_awaiting_shipment_order_details', description='Extracts product names, order numbers, and recipient information from items awaiting shipment in the TaoDian app.', created_at=1780848338.9648197, success_count=1, success_streak=1)
-async def extract_awaiting_shipment_order_details(device):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:awaiting_shipment_orders', name='awaiting_shipment_orders', description='Navigate to the awaiting shipment orders section in the TaoDian app.', created_at=1782832417.7471998, success_count=1, success_streak=1)
+async def awaiting_shipment_orders(device):
     await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
-    await action('tap', target='close popup button', optional=True, valid_state='popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 484})
-    await action('tap', target='profile tab', valid_state='bottom navigation bar is visible', fixed=True, fixed_values={'x': 942, 'y': 2265})
-    await action('tap', target='awaiting shipment section', valid_state='order management section is visible', fixed=True, fixed_values={'x': 424, 'y': 952})
-    await action('tap', target='first order item', valid_state='order list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '⏰'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 552})
-    await action('done', target='order details page', valid_state='order details are visible')
+    await action('tap', target='Awaiting Shipment tab', valid_state='tab is visible and clickable', fixed=True, fixed_values={'x': 290, 'y': 554})
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:login_via_sms', name='login_via_sms', description='Opens the app, navigates to the cart to trigger login, and switches to SMS login mode.', created_at=1780849149.4194784, success_count=1, success_streak=1)
-async def login_via_sms(device):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:confirm_delete_selection', name='confirm_delete_selection', description='Confirms the deletion of selected items in a shopping cart and verifies the updated list.', created_at=1782832546.642198, success_count=1, success_streak=1)
+async def confirm_delete_selection(device):
+    await action('tap', target='OK button in confirmation dialog', valid_state='confirmation dialog is visible', fixed=True, fixed_values={'x': 718.0, 'y': 1380.0})
+    await action('scroll', target='shopping cart item list', valid_state='cart list is visible', fixed=True, fixed_values={'direction': 'up', 'pixels': 400})
+
+
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:filter_orders_by_period', name='filter_orders_by_period', description='Filter order list by time period', created_at=1782842961.676514, success_count=1, success_streak=1)
+async def filter_orders_by_period(device, period):
     await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
-    await action('tap', target='cart icon', valid_state='cart icon is visible', fixed=True, fixed_values={'x': 675.0, 'y': 2263.0})
-    await action('tap', target='SMS login tab', valid_state='login screen is visible', fixed=True, fixed_values={'x': 772.0, 'y': 801.0})
+    await action('tap', target='filter icon', valid_state='filter icon is visible', fixed=True, fixed_values={'x': 1020, 'y': 312})
+    await action('tap', target=period, valid_state='filter dialog is open')
+    await action('tap', target='confirm button', valid_state='confirm button is visible', fixed=True, fixed_values={'x': 794, 'y': 2232})
+    await action('tap', target='all orders tab', valid_state='tab bar is visible', fixed=True, fixed_values={'x': 96, 'y': 312})
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:navigate_to_cart', name='navigate_to_cart', description='Open the application and navigate to the shopping cart section.', created_at=1780848400.2683132, success_count=1, success_streak=1)
-async def navigate_to_cart(device):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:find_awaiting_shipment_orders', name='find_awaiting_shipment_orders', description='Navigate to the awaiting shipment orders section in the TaoDian app.', created_at=1782831840.448404, success_count=1, success_streak=1)
+async def find_awaiting_shipment_orders(device):
     await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
-    await action('tap', target='shopping cart icon in bottom navigation bar', valid_state='cart icon is visible and clickable', fixed=True, fixed_values={'x': 679.0, 'y': 2272.0})
-    await action('tap', target='SMS login button', optional=True, valid_state='login screen is displayed', fixed=True, fixed_values={'x': 775.0, 'y': 804.0})
+    await action('tap', target='close button', optional=True, valid_state='cash popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '3cc140c99cc090d3256e5a748a5f80352abf0037143c05a2c266bbdce8bde514'}))
+    await action('tap', target='My profile tab', valid_state='home page is visible')
+    await action('tap', target='My Orders menu item', valid_state='My profile page is loaded')
+    await action('tap', target='Awaiting Shipment tab', valid_state='Orders page is visible')
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:navigate_to_orders', name='navigate_to_orders', description='Navigate to the order history page in the shopping application to view past purchases.', created_at=1780848917.1688774, success_count=1, success_streak=1)
-async def navigate_to_orders(device):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:locate_order_item', name='locate_order_item', description='Navigate to the order list and locate the target product order item.', created_at=1782839004.4070506, success_count=1, success_streak=1)
+async def locate_order_item(device):
     await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
-    await action('tap', target='close button on the promotional popup', optional=True, valid_state='popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 489})
-    await action('tap', target='profile tab at the bottom right', valid_state='profile tab is visible and clickable', fixed=True, fixed_values={'x': 942, 'y': 2270})
-    await action('tap', target='all orders option under my orders section', valid_state='all orders option is visible and clickable', fixed=True, fixed_values={'x': 942, 'y': 794})
+    await action('tap', target='close button', optional=True, valid_state='popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 482})
+    await action('tap', target='My profile tab', valid_state='My tab is visible', fixed=True, fixed_values={'x': 945, 'y': 2263})
+    await action('tap', target='All orders button', valid_state='All orders button is visible', fixed=True, fixed_values={'x': 945, 'y': 799})
+    await action('scroll', target='order list', valid_state='order list is scrollable', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
+    await action('tap', target='target order item', valid_state='target order item is visible and clickable', fixed=True, fixed_values={'x': 540, 'y': 2232})
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:sms_login', name='sms_login', description='Log in to the app using SMS verification code.', created_at=1780848423.008302, success_count=1, success_streak=1)
-async def sms_login(device, verification_code):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:navigate_to_cart_and_sms_login', name='navigate_to_cart_and_sms_login', description='Open the app, navigate to the shopping cart, and switch to SMS login mode.', created_at=1782832467.860085, success_count=1, success_streak=1)
+async def navigate_to_cart_and_sms_login(device):
     await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
-    await action('tap', target='OK button on consent popup', optional=True, valid_state='consent popup is visible', fixed=True, fixed_values={'x': 895, 'y': 1372})
-    await action('input_text', target='verification code input field', text=verification_code, valid_state='verification code input field is focused')
+    await action('tap', target='shopping cart tab', valid_state='shopping cart tab is visible', fixed=True, fixed_values={'x': 675.0, 'y': 2292.0})
+    await action('tap', target='sms login option', valid_state='sms login option is visible', fixed=True, fixed_values={'x': 775.0, 'y': 799.0})
 
 
-@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:view_shopping_cart', name='view_shopping_cart', description='Navigate to the shopping cart and scroll through the item list to view products.', created_at=1780848671.1741035, success_count=1, success_streak=1)
-async def view_shopping_cart(device):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:open_app_and_dismiss_popup', name='open_app_and_dismiss_popup', description='Open the app and dismiss the promotional cash popup.', created_at=1782842895.743952, success_count=1, success_streak=1)
+async def open_app_and_dismiss_popup(device):
     await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
-    await action('tap', target='close button', optional=True, valid_state='popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 484})
-    await action('tap', target='shopping cart icon', valid_state='shopping cart icon is visible', fixed=True, fixed_values={'x': 680, 'y': 2256})
-    await action('scroll', target='shopping cart list', direction='down', pixels=400, valid_state='shopping cart list is visible')
+    await action('tap', target='close button on cash popup', optional=True, valid_state='cash popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '3cc140c99cc090d3256e5a748a5f80352abf0037143c05a2c266bbdce8bde514'}))
 
 
-@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:open_gallery_and_select_image', name='open_gallery_and_select_image', description='Open the gallery app, navigate to an album, and select an image.', created_at=1780848641.055012, success_count=1, success_streak=1)
-async def open_gallery_and_select_image(device, album_name, image_description):
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:open_app_and_switch_to_sms_login', name='open_app_and_switch_to_sms_login', description='Open the TaoDian shopping application and switch the login method to SMS verification code.', created_at=1782834387.8479908, success_count=1, success_streak=1)
+async def open_app_and_switch_to_sms_login(device):
+    await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
+    await action('tap', target='cart tab', valid_state='bottom navigation bar is visible', fixed=True, fixed_values={'x': 675, 'y': 2292})
+    await action('tap', target='sms login option', valid_state='login page is displayed', fixed=True, fixed_values={'x': 775, 'y': 806})
+
+
+@skill(app='com.testmall.app', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.testmall.app:open_app_dismiss_popup', name='open_app_dismiss_popup', description='Opens the TaoDian app and dismisses the initial promotional popup.', created_at=1782832682.4496725, success_count=1, success_streak=1)
+async def open_app_dismiss_popup(device):
+    await action('open_app', target='com.testmall.app', valid_state='No need to verify', fixed=True, fixed_values={'text': 'com.testmall.app'})
+    await action('tap', target='close button on promotional popup', optional=True, valid_state='promotional popup is visible', state_contract=C.from_dict({'anchor': {'app_package': 'com.testmall.app'}, 'signature': {'required': [{'selector': {'text': '×'}, 'state': ['visible', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '3cc140c99cc090d3256e5a748a5f80352abf0037143c05a2c266bbdce8bde514'}))
+
+
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:create_new_folder', name='create_new_folder', description="Create a new folder within the gallery app's move dialog.", created_at=1782842771.1959045, success_count=1, success_streak=1)
+async def create_new_folder(device, folder_name):
+    await action('tap', target='New Folder button', valid_state='New Folder button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'text': 'New Folder'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 127, 'y': 1552})
+    await action('input_text', target=folder_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'resource_id': 'gallery.photomanager.picturegalleryapp.imagegallery:id/new_folder_et', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': 'e066c5c3af7a979f238b537be8a5cd455a95abdc1d196179629e3d493505ce93'}))
+
+
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:finalize_photo_organization', name='finalize_photo_organization', description='Finalizes photo organization by confirming permissions and returning to the main gallery view.', created_at=1782842811.4575891, success_count=1, success_streak=1)
+async def finalize_photo_organization(device):
     await action('open_app', target='gallery.photomanager.picturegalleryapp.imagegallery', valid_state='No need to verify', fixed=True, fixed_values={'text': 'gallery.photomanager.picturegalleryapp.imagegallery'})
-    await action('tap', target=album_name + ' album', valid_state='album list is visible')
-    await action('long_press', target=image_description + ' image', valid_state='image grid is visible', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'class': 'android.widget.RelativeLayout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='Allow button on permission dialog', optional=True, valid_state='permission dialog is visible', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'text': 'No pictures'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 801, 'y': 1466})
+    await action('tap', target='Navigate up button', valid_state='back button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'content_desc': 'Navigate up'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72, 'y': 208})
 
 
-@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:select_gallery_photos', name='select_gallery_photos', description='Opens the gallery app, navigates to an album, and selects multiple photos by long-pressing to enter selection mode and tapping the desired images.', created_at=1780853715.7228124, success_count=1, success_streak=1)
-async def select_gallery_photos(device, album_name, photo1, photo2):
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:move_photos_to_new_folder', name='move_photos_to_new_folder', description='Move selected photos to a newly created folder in the gallery app.', created_at=1782842713.4414334, success_count=1, success_streak=1)
+async def move_photos_to_new_folder(device, folder_name):
     await action('open_app', target='gallery.photomanager.picturegalleryapp.imagegallery', valid_state='No need to verify', fixed=True, fixed_values={'text': 'gallery.photomanager.picturegalleryapp.imagegallery'})
-    await action('tap', target=album_name, valid_state='album is visible and clickable')
-    await action('long_press', target=photo1, valid_state='image is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'class': 'android.widget.RelativeLayout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target=photo1, valid_state='selection mode is active')
-    await action('tap', target=photo2, valid_state='selection mode is active')
+    await action('tap', target='Move to button', valid_state='Move to button is visible', fixed=True, fixed_values={'x': 810, 'y': 336})
+    await action('tap', target='New Folder button', valid_state='New Folder button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'text': 'New Folder'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 127, 'y': 1792})
+    await action('input_text', target=folder_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'resource_id': 'gallery.photomanager.picturegalleryapp.imagegallery:id/new_folder_et', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': 'e066c5c3af7a979f238b537be8a5cd455a95abdc1d196179629e3d493505ce93'}))
 
 
-@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:select_image_and_share', name='select_image_and_share', description='Selects a specified image in the gallery and initiates the sharing process.', created_at=1780853744.797174, success_count=1, success_streak=1)
-async def select_image_and_share(device, image_description):
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:open_gallery_and_select_album', name='open_gallery_and_select_album', description='Opens the picture and wallpaper application and navigates to a album within the photo picker.', created_at=1782832620.1393328, success_count=1, success_streak=1)
+async def open_gallery_and_select_album(device, album_name):
     await action('open_app', target='gallery.photomanager.picturegalleryapp.imagegallery', valid_state='No need to verify', fixed=True, fixed_values={'text': 'gallery.photomanager.picturegalleryapp.imagegallery'})
-    await action('tap', target=image_description, valid_state='image is visible')
-    await action('tap', target='share button', valid_state='share button is visible', fixed=True, fixed_values={'x': 793, 'y': 208})
+    await action('tap', target='My photos button', valid_state='My photos button is visible', fixed=True, fixed_values={'x': 540, 'y': 660})
+    await action('tap', target=album_name + ' album', valid_state='Album list is visible')
 
 
-@skill(app='mcurrentfocus-window-5ccb194-u0-media-viewer', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-5ccb194-u0-media-viewer:favorite_post', name='favorite_post', description='Favorites a post in the Mastodon application.', created_at=1780849940.0790048, success_count=1, success_streak=1)
-async def favorite_post(device):
-    await action('open_app', target='mcurrentfocus-window-5ccb194-u0-media-viewer', valid_state='No need to verify', fixed=True, fixed_values={'text': 'mcurrentfocus-window-5ccb194-u0-media-viewer'})
-    await action('tap', target='bottom navigation bar', valid_state='bottom bar is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-5ccb194-u0-media-viewer'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/bottom_bar'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 572, 'y': 2126})
-    await action('tap', target='favorite button', valid_state='favorite button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-5ccb194-u0-media-viewer'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 444, 'y': 2265})
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:select_images_in_album', name='select_images_in_album', description='Open a gallery application, navigate to a specified album, and select multiple images by long-pressing the first item and tapping subsequent items.', created_at=1782844275.3026183, success_count=1, success_streak=1)
+async def select_images_in_album(device, album_name, image_1, image_2, image_3, image_4):
+    await action('open_app', target='gallery.photomanager.picturegalleryapp.imagegallery', valid_state='No need to verify', fixed=True, fixed_values={'text': 'gallery.photomanager.picturegalleryapp.imagegallery'})
+    await action('tap', target=album_name, valid_state='album list is visible')
+    await action('long_press', target=image_1, valid_state='image grid is visible', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'class': 'android.widget.RelativeLayout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target=image_2, valid_state='image grid is visible')
+    await action('tap', target=image_3, valid_state='image grid is visible')
+    await action('tap', target=image_4, valid_state='image grid is visible')
 
 
-@skill(app='mcurrentfocus-window-8faa1d0-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-8faa1d0-u0-dropdown-menu:navigate_to_lists_mastodon', name='navigate_to_lists_mastodon', description='Navigate to the Lists feature in Mastodon via the navigation drawer.', created_at=1780850083.0798602, success_count=1, success_streak=1)
-async def navigate_to_lists_mastodon(device):
-    await action('tap', target='hamburger menu', valid_state='hamburger menu is visible', fixed=True, fixed_values={'x': 91.0, 'y': 199.0})
-    await action('tap', target='Lists menu item', valid_state='Lists option is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-8faa1d0-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Lists'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 162.0, 'y': 712.0})
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:select_photos_in_album', name='select_photos_in_album', description='Select multiple photos in the gallery album view to prepare for organization.', created_at=1782842744.9034867, success_count=1, success_streak=1)
+async def select_photos_in_album(device):
+    await action('open_app', target='gallery.photomanager.picturegalleryapp.imagegallery', valid_state='No need to verify', fixed=True, fixed_values={'text': 'gallery.photomanager.picturegalleryapp.imagegallery'})
+    await action('tap', target='Allow permission button', optional=True, valid_state='permission dialog is visible', fixed=True, fixed_values={'x': 801.0, 'y': 1466.0})
+    await action('long_press', target='first photo thumbnail', valid_state='album view is visible', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'resource_id': 'gallery.photomanager.picturegalleryapp.imagegallery:id/picture_iv'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 135.0, 'y': 429.0})
+    await action('tap', target='second photo thumbnail', valid_state='selection mode is active', fixed=True, fixed_values={'x': 405.0, 'y': 429.0})
+    await action('tap', target='third photo thumbnail', valid_state='selection mode is active', fixed=True, fixed_values={'x': 675.0, 'y': 429.0})
+    await action('tap', target='fourth photo thumbnail', valid_state='selection mode is active', fixed=True, fixed_values={'x': 945.0, 'y': 429.0})
 
 
-@skill(app='mcurrentfocus-window-9c1df19-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-9c1df19-u0-dropdown-menu:navigate_to_lists', name='navigate_to_lists', description='Navigate to the Lists section in Mastodon', created_at=1780851236.433366, success_count=1, success_streak=1)
+@skill(app='gallery.photomanager.picturegalleryapp.imagegallery', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:gallery.photomanager.picturegalleryapp.imagegallery:view_photo_details', name='view_photo_details', description='Open the gallery app, navigate to an album, open a photo, and display its metadata details.', created_at=1782842664.4815543, success_count=1, success_streak=1)
+async def view_photo_details(device, album_name):
+    await action('open_app', target='gallery.photomanager.picturegalleryapp.imagegallery', valid_state='No need to verify', fixed=True, fixed_values={'text': 'gallery.photomanager.picturegalleryapp.imagegallery'})
+    await action('tap', target=album_name + ' album', valid_state='album grid is visible')
+    await action('tap', target='a photo thumbnail', valid_state='photo grid is visible')
+    await action('tap', target='info button', valid_state='photo viewer is open', state_contract=C.from_dict({'anchor': {'app_package': 'gallery.photomanager.picturegalleryapp.imagegallery'}, 'signature': {'required': [{'selector': {'resource_id': 'gallery.photomanager.picturegalleryapp.imagegallery:id/pull_back_layout'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 720, 'y': 2212})
+
+
+@skill(app='mcurrentfocus-window-2199e49-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-2199e49-u0-dropdown-menu:navigate_to_lists', name='navigate_to_lists', description='Navigate to the Lists section in the Mastodon app via the main navigation menu', created_at=1782839936.758789, success_count=1, success_streak=1)
 async def navigate_to_lists(device):
-    await action('tap', target='navigation toggle button', valid_state='navigation toggle is visible', fixed=True, fixed_values={'x': 91.0, 'y': 196.0})
-    await action('tap', target='Lists menu item', valid_state='Lists option is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-9c1df19-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Lists'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 248.0, 'y': 708.0})
+    await action('tap', target='dropdown arrow next to Home', valid_state='dropdown arrow is visible and clickable', fixed=True, fixed_values={'x': 93.0, 'y': 204.0})
+    await action('tap', target='Lists option in the dropdown menu', valid_state='Lists option is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-2199e49-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Lists'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 129.0, 'y': 722.0})
 
 
-@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:check_calendar_conflict', name='check_calendar_conflict', description='Open the Fossify Calendar application, navigate to a date to view scheduled events, and return to the home screen.', created_at=1780853281.3482127, success_count=1, success_streak=1)
-async def check_calendar_conflict(device):
+@skill(app='mcurrentfocus-window-62a7d1e-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-62a7d1e-u0-dropdown-menu:navigate_to_followed_hashtags', name='navigate_to_followed_hashtags', description='Navigate to the followed hashtags list in Mastodon', created_at=1782839872.2762997, success_count=1, success_streak=1)
+async def navigate_to_followed_hashtags(device):
+    await action('tap', target='Home dropdown menu', valid_state='Home dropdown menu is visible', fixed=True, fixed_values={'x': 95, 'y': 196})
+    await action('tap', target='Followed hashtags menu item', valid_state='Followed hashtags menu item is visible', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-62a7d1e-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Followed hashtags'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 168, 'y': 866})
+
+
+@skill(app='mcurrentfocus-window-7fd322a-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-7fd322a-u0-dropdown-menu:navigate_to_followed_hashtags', name='navigate_to_followed_hashtags', description='Navigate to the followed hashtags management list in Mastodon.', created_at=1782839787.3697548, success_count=1, success_streak=1)
+async def navigate_to_followed_hashtags_2(device):
+    await action('tap', target='Home dropdown menu', valid_state='Home header is visible', fixed=True, fixed_values={'x': 95, 'y': 196})
+    await action('tap', target='Followed hashtags menu item', valid_state='dropdown menu is open', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-7fd322a-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Followed hashtags'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 168, 'y': 866})
+    await action('scroll', target='hashtag list', valid_state='hashtag list is visible', fixed=True, fixed_values={'direction': 'down', 'pixels': 400})
+
+
+@skill(app='mcurrentfocus-window-84609a8-u0-media-viewer', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-84609a8-u0-media-viewer:save_image_from_mastodon_post', name='save_image_from_mastodon_post', description='Save an image from a Mastodon post by opening it in the media viewer and downloading it.', created_at=1782842078.313857, success_count=1, success_streak=1)
+async def save_image_from_mastodon_post(device, target_image):
+    await action('tap', target=target_image, valid_state='image is visible and clickable')
+    await action('tap', target='download button', valid_state='download button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-84609a8-u0-media-viewer'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/btn_download'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 995, 'y': 201})
+    await action('done', text='task finished')
+
+
+@skill(app='mcurrentfocus-window-bc6dc45-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-bc6dc45-u0-dropdown-menu:navigate_to_lists', name='navigate_to_lists', description='Navigate to the Lists section in the Mastodon app via the side menu.', created_at=1782837594.2066112, success_count=1, success_streak=1)
+async def navigate_to_lists_2(device):
+    await action('tap', target='side menu button', valid_state='menu button is visible', fixed=True, fixed_values={'x': 93, 'y': 201})
+    await action('tap', target='Lists option in the dropdown menu', valid_state='Lists option is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-bc6dc45-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Lists'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 129, 'y': 715})
+
+
+@skill(app='mcurrentfocus-window-d32cf2b-u0-dropdown-menu', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-d32cf2b-u0-dropdown-menu:navigate_to_followed_hashtags', name='navigate_to_followed_hashtags', description='Navigate to the followed hashtags management section via the application menu.', created_at=1782839202.4434469, success_count=1, success_streak=1)
+async def navigate_to_followed_hashtags_3(device):
+    await action('tap', target='menu button', valid_state='menu button is visible', fixed=True, fixed_values={'x': 95, 'y': 196})
+    await action('tap', target='Followed hashtags menu item', valid_state='Followed hashtags menu item is visible', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-d32cf2b-u0-dropdown-menu'}, 'signature': {'required': [{'selector': {'text': 'Followed hashtags'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 168, 'y': 866})
+
+
+@skill(app='mcurrentfocus-window-e9c5824-u0-popupwindow-a7c530c', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-e9c5824-u0-popupwindow-a7c530c:bookmark_mastodon_post', name='bookmark_mastodon_post', description='Bookmark a post in Mastodon by accessing the post options menu.', created_at=1782834496.4010837, success_count=1, success_streak=1)
+async def bookmark_mastodon_post(device):
+    await action('tap', target='post options menu button', valid_state='post options menu button is visible', fixed=True, fixed_values={'x': 1010, 'y': 1468})
+    await action('tap', target='Bookmark option', valid_state='Bookmark option is visible', fixed=True, fixed_values={'x': 814, 'y': 283})
+
+
+@skill(app='mcurrentfocus-window-f9f9001-u0-media-viewer', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:mcurrentfocus-window-f9f9001-u0-media-viewer:save_image_from_media_viewer', name='save_image_from_media_viewer', description='Taps an image preview to view it full-screen and then taps the download button to save the image.', created_at=1782842008.9041035, success_count=1, success_streak=1)
+async def save_image_from_media_viewer(device):
+    await action('tap', target='image preview', valid_state='image preview is visible', fixed=True, fixed_values={'x': 540, 'y': 1020})
+    await action('tap', target='download button', valid_state='download button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'mcurrentfocus-window-f9f9001-u0-media-viewer'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/btn_download'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 995, 'y': 201})
+
+
+@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:check_calendar_date', name='check_calendar_date', description='Open the calendar app and navigate to a date to view scheduled events.', created_at=1782842540.5307298, success_count=1, success_streak=1)
+async def check_calendar_date(device, date):
     await action('open_app', target='org.fossify.calendar', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.fossify.calendar'})
-    await action('tap', target='October 20', valid_state='October 20 is visible and clickable', fixed=True, fixed_values={'x': 226.0, 'y': 1524.0})
-    await action('back', target='calendar month view', valid_state='calendar month view is visible')
-    await action('back', target='home screen', valid_state='home screen is visible')
+    await action('tap', target='date cell for ' + date, valid_state='date cell is visible and clickable')
 
 
-@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:open_calendar_app', name='open_calendar_app', description='Open the Fossify Calendar app and navigate to the month view.', created_at=1780853081.9951274, success_count=1, success_streak=1)
-async def open_calendar_app(device):
+@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:check_calendar_events', name='check_calendar_events', description='Opens the calendar app and allows viewing events on dates to retrieve scheduling information.', created_at=1782832920.0464797, success_count=1, success_streak=1)
+async def check_calendar_events(device):
     await action('open_app', target='org.fossify.calendar', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.fossify.calendar'})
-    await action('tap', target='calendar header', valid_state='header is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.fossify.calendar'}, 'signature': {'required': [{'selector': {'resource_id': 'org.fossify.calendar:id/top_value'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 364})
-    await action('tap', target='confirm button', valid_state='button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.fossify.calendar'}, 'signature': {'required': [{'selector': {'resource_id': 'org.fossify.calendar:id/date_picker'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 841, 'y': 1512})
+    await action('tap', target='calendar grid cell for October 4', valid_state='October 4 is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.fossify.calendar'}, 'signature': {'required': [{'selector': {'content_desc': '4 October'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1002.0, 'y': 544.0})
+    await action('back', target='system back button', valid_state='month view is visible', fixed=True)
+    await action('tap', target='calendar grid cell for October 11', valid_state='October 11 is visible and clickable', fixed=True, fixed_values={'x': 1002.0, 'y': 852.0})
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:bookmark_post', name='bookmark_post', description='Bookmark posts with hashtags on a Mastodon user profile.', created_at=1780846972.2818851, success_count=1, success_streak=1)
-async def bookmark_post(device):
+@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:navigate_calendar_to_previous_month', name='navigate_calendar_to_previous_month', description='Navigate the calendar view to the previous month to review scheduled events.', created_at=1782842616.395477, success_count=1, success_streak=1)
+async def navigate_calendar_to_previous_month(device):
+    await action('open_app', target='org.fossify.calendar', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.fossify.calendar'})
+    await action('tap', target='previous month arrow', valid_state='calendar view is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.fossify.calendar'}, 'signature': {'required': [{'selector': {'resource_id': 'org.fossify.calendar:id/top_left_arrow'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72, 'y': 367})
+
+
+@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:open_calendar_and_view_date', name='open_calendar_and_view_date', description='Opens the Fossify Calendar app and navigates to a date to view scheduled events.', created_at=1782832827.4029808, success_count=1, success_streak=1)
+async def open_calendar_and_view_date(device, param1):
+    await action('open_app', target='org.fossify.calendar', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.fossify.calendar'})
+    await action('tap', target=param1, valid_state='calendar month view is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.fossify.calendar'}, 'signature': {'required': [{'selector': {'content_desc': '7 October'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
+
+
+@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:open_calendar_and_view_event', name='open_calendar_and_view_event', description='Open the calendar application and tap on an event to view its details.', created_at=1782832751.6064677, success_count=1, success_streak=1)
+async def open_calendar_and_view_event(device):
+    await action('open_app', target='org.fossify.calendar', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.fossify.calendar'})
+    await action('tap', target='calendar event', valid_state='event is visible and clickable', fixed=True, fixed_values={'x': 312, 'y': 1168})
+
+
+@skill(app='org.fossify.calendar', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.fossify.calendar:view_calendar_events', name='view_calendar_events', description='Opens the Fossify Calendar app and displays the schedule for a specified date.', created_at=1782833058.1283252, success_count=1, success_streak=1)
+async def view_calendar_events(device, target_date):
+    await action('open_app', target='org.fossify.calendar', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.fossify.calendar'})
+    await action('tap', target='calendar grid cell for ' + target_date, valid_state='date cell is visible and clickable')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:back_to_hashtag_feed_and_scroll', name='back_to_hashtag_feed_and_scroll', description='Navigate back from a post detail view to the hashtag feed and scroll down to view more posts.', created_at=1782837570.7121835, success_count=1, success_streak=1)
+async def back_to_hashtag_feed_and_scroll(device):
+    await action('tap', target='Back button', valid_state='Back button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Back'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72, 'y': 201})
+    await action('scroll', target='hashtag feed', valid_state='feed is visible', fixed_values={'text': 'down', 'pixels': 400, 'direction': 'down'})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:bookmark_posts_on_profile', name='bookmark_posts_on_profile', description='Search for a user on Mastodon, navigate to their profile, and bookmark their posts.', created_at=1782834611.1386054, success_count=1, success_streak=1)
+async def bookmark_posts_on_profile(device, user_name):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Bookmark option in post menu', valid_state='Bookmark option is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Header image'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '2fb898fb959fe24643a1e0983afe9f2a78d6f2c79f2d4cd21a7f515fb75b2d71'}), fixed=True, fixed_values={'x': 702, 'y': 300})
-    await action('scroll', target='post timeline', direction='down', pixels=400, valid_state='Timeline is visible')
+    await action('tap', target='search button', valid_state='search button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_action_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('input_text', target=user_name, valid_state='search field is focused')
+    await action('tap', target='user profile result', valid_state='user profile result is visible')
+    await action('tap', target='post options menu', valid_state='post options menu is visible', fixed=True, fixed_values={'x': 814, 'y': 571})
+    await action('tap', target='bookmark option', valid_state='bookmark option is visible')
+    await action('scroll', target='timeline', pixels=400, direction='down', valid_state='timeline is scrollable')
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:compose_post', name='compose_post', description='Compose a new post with specified content in Mastodon.', created_at=1780851976.2326794, success_count=1, success_streak=1)
-async def compose_post(device, content):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:compose_post', name='compose_post', description='Compose a new post by entering text content', created_at=1782839024.1542847, success_count=1, success_streak=1)
+async def compose_post(device, post_content):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='compose button', valid_state='compose button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'New post'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 972.0, 'y': 2008.0})
-    await action('input_text', target=content, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'org.joinmastodon.android.mastodon:id/toot_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '879f56728334dff2069d5649bb4b439037071fa74aeaaa2f215fa106082bd2e4'}))
+    await action('tap', target='New post button', valid_state='New post button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'New post'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 964, 'y': 2006})
+    await action('tap', target='text input field', valid_state='text input field is visible', fixed=True, fixed_values={'x': 540, 'y': 607})
+    await action('input_text', target=post_content, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/toot_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '879f56728334dff2069d5649bb4b439037071fa74aeaaa2f215fa106082bd2e4'}))
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:compose_post_2', name='compose_post_2', description='Compose and post a message with visibility and mentions in Mastodon.', created_at=1780852538.4589908, success_count=1, success_streak=1)
-async def compose_post_2(device, content):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='compose button', valid_state='compose button is visible and clickable', fixed=True, fixed_values={'x': 950, 'y': 1700})
-    await action('tap', target='visibility dropdown', valid_state='visibility dropdown is visible', fixed=True, fixed_values={'x': 259, 'y': 1000})
-    await action('input_text', target=content, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'org.joinmastodon.android.mastodon:id/toot_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '879f56728334dff2069d5649bb4b439037071fa74aeaaa2f215fa106082bd2e4'}))
-    await action('tap', target='publish button', valid_state='publish button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Publish'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1015, 'y': 204})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:create_list', name='create_list', description='Create a new Mastodon list with a specified name.', created_at=1780850134.3166232, success_count=1, success_streak=1)
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:create_list', name='create_list', description='Creates a new Mastodon list with a specified name.', created_at=1782837636.6514227, success_count=1, success_streak=1)
 async def create_list(device, list_name):
-    await action('tap', target='Create list option', valid_state='Create list option is visible', fixed=True, fixed_values={'x': 199.0, 'y': 909.0})
-    await action('tap', target='List name input field', valid_state='List name input field is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 216.0, 'y': 381.0})
-    await action('input_text', target=list_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '28f96ad2adbcc4e7db57b3454686a7d04f81184cda1a2851695036b53159d333'}))
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Create list menu item', valid_state='Lists submenu is visible', fixed=True, fixed_values={'x': 178, 'y': 902})
+    await action('tap', target='List name input field', valid_state='List name field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 379})
+    await action('input_text', target=list_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '28f96ad2adbcc4e7db57b3454686a7d04f81184cda1a2851695036b53159d333'}))
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:create_mastodon_list', name='create_mastodon_list', description='Create a new Mastodon list with a specified name.', created_at=1780851807.7552426, success_count=1, success_streak=1)
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:create_mastodon_list', name='create_mastodon_list', description='Navigate to list management and initiate list creation by entering a name.', created_at=1782839980.7252452, success_count=1, success_streak=1)
 async def create_mastodon_list(device, list_name):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Manage lists', valid_state='Manage lists option is visible and clickable', fixed=True, fixed_values={'x': 248.0, 'y': 1053.0})
-    await action('tap', target='Create list button', valid_state='Create list button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Create list'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 972.0, 'y': 2181.0})
-    await action('tap', target='List name input field', valid_state='List name input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 248.0, 'y': 381.0})
-    await action('input_text', target=list_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '28f96ad2adbcc4e7db57b3454686a7d04f81184cda1a2851695036b53159d333'}))
+    await action('tap', target='Manage lists menu item', valid_state='Lists submenu is visible', fixed=True, fixed_values={'x': 203, 'y': 1065})
+    await action('tap', target='Create list floating action button', valid_state='Create list button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Create list'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 964, 'y': 2188})
+    await action('tap', target='List name input field', valid_state='List name field is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 374})
+    await action('input_text', target=list_name, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '28f96ad2adbcc4e7db57b3454686a7d04f81184cda1a2851695036b53159d333'}))
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:create_mastodon_list_2', name='create_mastodon_list_2', description='Creates a new list in Mastodon with a specified name and hides members in following.', created_at=1780851889.1007185, success_count=1, success_streak=1)
-async def create_mastodon_list_2(device, list_name):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:edit_image_alt_text', name='edit_image_alt_text', description='Edit the alt text of an image in a Mastodon post by adding a prefix to the existing text.', created_at=1782841915.7934196, success_count=1, success_streak=1)
+async def edit_image_alt_text(device, prefix_text):
+    await action('tap', target='Edit option in context menu', valid_state='context menu is visible', fixed=True, fixed_values={'x': 642.0, 'y': 1185.0})
+    await action('tap', target='Edit alt text button', valid_state='edit button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 784.0, 'y': 1355.0})
+    await action('tap', target='Start of alt text input field', valid_state='alt text input field is visible', fixed=True, fixed_values={'x': 87.0, 'y': 787.0})
+    await action('input_text', target=prefix_text, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '28f96ad2adbcc4e7db57b3454686a7d04f81184cda1a2851695036b53159d333'}))
+    await action('tap', target='Back button', valid_state='back button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Back'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72.0, 'y': 204.0})
+    await action('tap', target='Save button', valid_state='save button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Save'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1016.0, 'y': 204.0})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:favorite_post', name='favorite_post', description='Favorite a post on Mastodon by tapping the star icon and returning to the feed.', created_at=1782837441.0115995, success_count=1, success_streak=1)
+async def favorite_post(device):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Create list floating action button', valid_state='Create list button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Create list'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 972.0, 'y': 2181.0})
-    await action('tap', target='List name input field', valid_state='Input field is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 248.0, 'y': 381.0})
-    await action('input_text', target=list_name, valid_state='Input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'org.joinmastodon.android.mastodon:id/edit'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '28f96ad2adbcc4e7db57b3454686a7d04f81184cda1a2851695036b53159d333'}))
-    await action('tap', target='Hide members in Following toggle', valid_state='Toggle is visible and clickable', fixed=True, fixed_values={'x': 972.0, 'y': 756.0})
-    await action('tap', target='Create button', valid_state='Create button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/btn_next'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540.0, 'y': 2143.0})
+    await action('tap', target='star icon', valid_state='post detail view is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 695, 'y': 1754})
+    await action('tap', target='back button', valid_state='post detail view is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Back'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 72, 'y': 201})
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:edit_profile_header', name='edit_profile_header', description='Navigate to the profile page and open the profile editing interface to change the header image.', created_at=1780849828.6090121, success_count=1, success_streak=1)
-async def edit_profile_header(device):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_bookmarks', name='navigate_to_bookmarks', description='Navigate to the Bookmarks section in the Mastodon Android app.', created_at=1782835286.1652534, success_count=1, success_streak=1)
+async def navigate_to_bookmarks(device):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Profile tab in bottom navigation bar', valid_state='Profile tab is visible and clickable', fixed=True, fixed_values={'x': 950.0, 'y': 2220.0})
-    await action('tap', target='Edit profile button', valid_state='Edit profile button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_action_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 476.0, 'y': 1065.0})
+    await action('tap', target='Profile tab', valid_state='Profile tab is visible', fixed=True, fixed_values={'x': 945, 'y': 2220})
+    await action('tap', target='Saved tab', valid_state='Saved tab is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Saved'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 945, 'y': 1154})
+    await action('tap', target='Bookmarks tab', valid_state='Bookmarks tab is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'text': 'Bookmarks'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 479, 'y': 1576})
+    await action('tap', target='First bookmarked post', valid_state='Bookmarked post is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_saved'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1900})
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:favorite_hashtag_posts', name='favorite_hashtag_posts', description='Favorites posts containing a hashtag in Mastodon.', created_at=1780849908.8415606, success_count=1, success_streak=1)
-async def favorite_hashtag_posts(device, hashtag):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_hashtags_tab', name='navigate_to_hashtags_tab', description='Navigate to the hashtags tab in the Explore section of Mastodon.', created_at=1782839178.7255177, success_count=1, success_streak=1)
+async def navigate_to_hashtags_tab(device):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Explore icon in bottom navigation bar', valid_state='Explore icon is visible', fixed=True, fixed_values={'x': 407.0, 'y': 2220.0})
-    await action('tap', target='search input field', valid_state='search field is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 347.0, 'y': 249.0})
+    await action('tap', target='Profile icon', valid_state='profile icon is visible', fixed=True, fixed_values={'x': 945, 'y': 2232})
+    await action('tap', target='Explore icon', valid_state='explore icon is visible', fixed=True, fixed_values={'x': 405, 'y': 2232})
+    await action('tap', target='Hashtags tab', valid_state='hashtags tab is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'text': 'Hashtags'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 422, 'y': 420})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_mastodon_web_settings', name='navigate_to_mastodon_web_settings', description='Navigate to the Mastodon web settings interface via the Android app to configure advanced options like language filters.', created_at=1782838515.8680618, success_count=1, success_streak=1)
+async def navigate_to_mastodon_web_settings(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='settings gear icon', valid_state='settings menu is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/settings'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 911, 'y': 201})
+    await action('tap', target='About Mastodon option', valid_state='About Mastodon option is visible', fixed=True, fixed_values={'x': 303, 'y': 1408})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_oldest_post', name='navigate_to_oldest_post', description="Navigate to the user's profile in Mastodon and scroll to the bottom to locate the oldest published post.", created_at=1782841217.2118762, success_count=1, success_streak=1)
+async def navigate_to_oldest_post(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Profile tab', valid_state='Profile tab is visible and clickable', fixed=True, fixed_values={'x': 945, 'y': 2220})
+    await action('scroll', target='timeline', valid_state='timeline is visible and scrollable', fixed=True, fixed_values={'text': 'down', 'pixels': 400, 'direction': 'down'})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_orders', name='navigate_to_orders', description='Navigate to the orders section within the application to review transaction history.', created_at=1782842927.6394837, success_count=1, success_streak=1)
+async def navigate_to_orders(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='profile tab', valid_state='profile tab is visible and clickable', fixed=True, fixed_values={'x': 942, 'y': 2270})
+    await action('tap', target='all orders option', valid_state='all orders option is visible and clickable', fixed=True, fixed_values={'x': 942, 'y': 794})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_profile', name='navigate_to_profile', description="Open the Mastodon app and navigate to the user's profile page.", created_at=1782835984.552357, success_count=1, success_streak=1)
+async def navigate_to_profile(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Profile tab', valid_state='Profile tab is visible and clickable', fixed=True, fixed_values={'x': 945, 'y': 2220})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_user_profile', name='navigate_to_user_profile', description="Navigate to a user's profile in Mastodon by searching for their username.", created_at=1782834468.0473247, success_count=1, success_streak=1)
+async def navigate_to_user_profile(device, username):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Explore tab', valid_state='Explore tab is visible and clickable', fixed=True, fixed_values={'x': 405, 'y': 2215})
+    await action('tap', target='search bar', valid_state='search bar is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 247})
+    await action('input_text', target=username, valid_state='search field is focused')
+    await action('tap', target='user ' + username, valid_state='user result is visible')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:open_bookmarked_post', name='open_bookmarked_post', description='Open a bookmarked post from the saved list to view its details.', created_at=1782835362.86595, success_count=1, success_streak=1)
+async def open_bookmarked_post(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='close button', optional=True, valid_state='image viewer is open', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'text': 'TEST'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 83, 'y': 208})
+    await action('tap', target='bookmarked post text area', valid_state='bookmark list is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_saved'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1132})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:open_mastodon_web_settings', name='open_mastodon_web_settings', description='Navigate to the Mastodon web settings page to configure account preferences.', created_at=1782837148.5819247, success_count=1, success_streak=1)
+async def open_mastodon_web_settings(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='settings button', valid_state='settings button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/settings'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 911, 'y': 204})
+    await action('tap', target='About Mastodon menu item', valid_state='About Mastodon menu item is visible and clickable', fixed=True, fixed_values={'x': 303, 'y': 1382})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:open_post_from_feed', name='open_post_from_feed', description='Open a post from a hashtag feed to view details.', created_at=1782837476.1302314, success_count=1, success_streak=1)
+async def open_post_from_feed(device, post_text):
+    await action('tap', target='back button', optional=True, valid_state='image viewer is open', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Back'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 83.0, 'y': 201.0})
+    await action('tap', target='post containing text ' + post_text, valid_state='post is visible')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:open_post_in_hashtag_feed', name='open_post_in_hashtag_feed', description='Opens a post in the Mastodon app by searching for a hashtag and scrolling to the post.', created_at=1782837395.786865, success_count=1, success_streak=1)
+async def open_post_in_hashtag_feed(device, query, item):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('input_text', target='search field', text=query, valid_state='search field is visible')
+    await action('enter', target='search field', valid_state='search field is focused')
+    await action('scroll', target='hashtag feed', text='down', pixels=400, direction='down', valid_state='feed is visible')
+    await action('tap', target=item, valid_state='post is visible')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:post_mastodon_message', name='post_mastodon_message', description='Compose and input text into a new Mastodon post.', created_at=1782840629.9388468, success_count=1, success_streak=1)
+async def post_mastodon_message(device, message_text):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='compose button', valid_state='compose button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'New post'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 964, 'y': 2004})
+    await action('tap', target='text input field', valid_state='text input field is visible', fixed=True, fixed_values={'x': 540, 'y': 607})
+    await action('input_text', target=message_text, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/toot_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '879f56728334dff2069d5649bb4b439037071fa74aeaaa2f215fa106082bd2e4'}))
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:post_toot', name='post_toot', description='Compose and publish a new toot in the Mastodon app', created_at=1782841180.6890452, success_count=1, success_streak=1)
+async def post_toot(device, content):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='New post button', valid_state='New post button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'New post'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 964, 'y': 2016})
+    await action('tap', target='text input field', valid_state='text input field is visible', fixed=True, fixed_values={'x': 540, 'y': 604})
+    await action('input_text', target=content, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/toot_text', 'class': 'android.widget.EditText'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '879f56728334dff2069d5649bb4b439037071fa74aeaaa2f215fa106082bd2e4'}))
+    await action('tap', target='publish button', valid_state='publish button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Publish'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1016, 'y': 201})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:process_bookmarked_post', name='process_bookmarked_post', description='Removes a bookmark from a post, adds it to favorites, and boosts it.', created_at=1782835928.5469668, success_count=1, success_streak=1)
+async def process_bookmarked_post(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='remove bookmark menu item', valid_state='menu is visible', fixed=True, fixed_values={'x': 779.0, 'y': 439.0})
+    await action('tap', target='favorite button', valid_state='favorite button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 694.0, 'y': 2112.0})
+    await action('tap', target='boost button', valid_state='boost button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/boost_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 380.0, 'y': 2112.0})
+    await action('back', target='back navigation', valid_state='post view is active')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:process_bookmarked_post_2', name='process_bookmarked_post_2', description='Removes the bookmark from the current post, adds it to favorites, and boosts it.', created_at=1782835952.1950474, success_count=1, success_streak=1)
+async def process_bookmarked_post_2(device):
+    await action('tap', target='Remove bookmark option', valid_state='menu is open with Remove bookmark visible', fixed=True, fixed_values={'x': 765, 'y': 439})
+    await action('scroll', target='action bar area', valid_state='action bar is not fully visible', fixed=True, fixed_values={'direction': 'down', 'pixels': 400})
+    await action('tap', target='favorite button', valid_state='favorite button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 694, 'y': 2059})
+    await action('tap', target='boost button', valid_state='boost button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/boost_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 380, 'y': 2059})
+    await action('back', target='back navigation', valid_state='post view is active')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:publish_mastodon_post', name='publish_mastodon_post', description='Post a status update on Mastodon with followers-only visibility.', created_at=1782841172.5516791, success_count=1, success_streak=1)
+async def publish_mastodon_post(device, content):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='compose button', valid_state='compose button is visible')
+    await action('input_text', target=content, valid_state='input field is focused')
+    await action('tap', target='visibility dropdown', valid_state='visibility dropdown is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Publish'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='Followers visibility option', valid_state='Followers option is visible', fixed=True, fixed_values={'x': 259, 'y': 1008})
+    await action('tap', target='Publish button', valid_state='Publish button is visible and clickable', fixed=True, fixed_values={'x': 1015, 'y': 201})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:publish_post_with_image', name='publish_post_with_image', description='Publish a post with attached image on Mastodon.', created_at=1782839129.4382515, success_count=1, success_streak=1)
+async def publish_post_with_image(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Add (1) button', valid_state='image is selected', fixed=True, fixed_values={'x': 920, 'y': 2246})
+    await action('tap', target='Publish button', valid_state='publish button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Publish'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1016, 'y': 196})
+    await action('scroll', target='Home feed', valid_state='Home feed is visible', fixed=True, fixed_values={'pixels': 400, 'direction': 'up'})
+    await action('done', target='task finished', fixed=True, fixed_values={'text': 'task finished'})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:replace_profile_header', name='replace_profile_header', description='Replaces the profile header image in Mastodon by accessing the edit profile menu and selecting a new image.', created_at=1782836533.1708906, success_count=1, success_streak=1)
+async def replace_profile_header(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Edit profile button', valid_state='Edit profile button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_action_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 479, 'y': 1046})
+    await action('tap', target='header image area', valid_state='header image is visible', fixed=True, fixed_values={'x': 83, 'y': 208})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:replace_profile_header_2', name='replace_profile_header_2', description='Replace the profile header image with a specified photo in Mastodon.', created_at=1782836602.8201597, success_count=1, success_streak=1)
+async def replace_profile_header_2(device, param1):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Profile tab', valid_state='home feed is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_about'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='Edit profile button', valid_state='profile page is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_actions'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
+    await action('tap', target='header image', valid_state='edit mode is active')
+    await action('tap', target=param1, valid_state='photo gallery is open')
+    await action('tap', target='Save changes button', valid_state='save button is visible', fixed=True, fixed_values={'x': 540, 'y': 1312})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:scroll_profile_timeline', name='scroll_profile_timeline', description="Scroll through a user's timeline to view posts.", created_at=1782834649.7185662, success_count=1, success_streak=1)
+async def scroll_profile_timeline(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='background to close menu', optional=True, valid_state='menu is open', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_timeline'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 270, 'y': 720})
+    await action('scroll', target='timeline feed', valid_state='timeline is visible', fixed=True, fixed_values={'text': 'down', 'pixels': 400, 'direction': 'down'})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_and_follow_user', name='search_and_follow_user', description='Search for a user by username on Mastodon and follow their profile.', created_at=1782838742.0758648, success_count=1, success_streak=1)
+async def search_and_follow_user(device, username):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Explore tab', valid_state='Explore tab is visible', fixed=True, fixed_values={'x': 405, 'y': 2232})
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 247})
+    await action('input_text', target=username, valid_state='search field is focused')
+    await action('tap', target='user account result', valid_state='user result is visible')
+    await action('tap', target='Follow button', valid_state='Follow button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_action_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 479, 'y': 1003})
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_hashtag_feed', name='search_hashtag_feed', description='Search for a hashtag on Mastodon and navigate to the corresponding posts feed.', created_at=1782837221.9795332, success_count=1, success_streak=1)
+async def search_hashtag_feed(device, hashtag):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Explore tab', valid_state='Explore tab is visible', fixed=True, fixed_values={'x': 405, 'y': 2220})
+    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 242})
     await action('input_text', target=hashtag, valid_state='input field is focused')
-    await action('tap', target="Posts with '" + hashtag + "' search result", valid_state='search result list is visible', fixed=True, fixed_values={'x': 356.0, 'y': 427.0})
-    await action('tap', target='favorite button (star icon)', valid_state='favorite button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 572.0, 'y': 2126.0})
-    await action('scroll', target='feed content', valid_state='posts are visible', fixed_values={'pixels': 400, 'direction': 'down'})
+    await action('tap', target='search result for posts with the hashtag', valid_state='search suggestions are visible')
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:favorite_hashtag_posts_2', name='favorite_hashtag_posts_2', description='Favorites posts associated with a hashtag in Mastodon by scrolling through the feed and tapping the favorite button.', created_at=1780849981.5180173, success_count=1, success_streak=1)
-async def favorite_hashtag_posts_2(device, hashtag):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='search icon', valid_state='search icon is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
-    await action('input_text', target='search input field', text=hashtag, valid_state='search input field is focused')
-    await action('enter', target='search input field', valid_state='search input field is focused')
-    await action('scroll', target='feed', valid_state='feed is scrollable', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
-    await action('tap', target='favorite button', valid_state='favorite button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:favorite_post', name='favorite_post', description='Favorites the currently displayed post in Mastodon by tapping the star icon.', created_at=1780850900.3897398, success_count=1, success_streak=1)
-async def favorite_post_2(device):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='favorite button', valid_state='favorite button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}))
-    await action('back', target='back button', valid_state='feed is visible')
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_following_list', name='navigate_to_following_list', description='Navigate to the following list in the Mastodon app.', created_at=1780852788.058235, success_count=1, success_streak=1)
-async def navigate_to_following_list(device):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='profile icon', valid_state='profile icon is visible and clickable', fixed=True, fixed_values={'x': 950.0, 'y': 2220.0})
-    await action('tap', target='following link', valid_state='following link is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/following_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 378.0, 'y': 960.0})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:navigate_to_mastodon_profile_and_explore', name='navigate_to_mastodon_profile_and_explore', description='Open the Mastodon app and navigate to the Profile and Explore sections to locate the Lists feature.', created_at=1780850055.410962, success_count=1, success_streak=1)
-async def navigate_to_mastodon_profile_and_explore(device):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Profile tab', valid_state='Profile tab is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/tab_profile_ava'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 950.0, 'y': 2208.0})
-    await action('tap', target='Explore tab', valid_state='Explore tab is visible and clickable', fixed=True, fixed_values={'x': 405.0, 'y': 2208.0})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:open_mastodon_and_retry', name='open_mastodon_and_retry', description='Open the Mastodon application and handle connection errors by retrying.', created_at=1780852811.7180996, success_count=1, success_streak=1)
-async def open_mastodon_and_retry(device):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Retry button', optional=True, valid_state='connection error screen is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'text': 'Retry'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1327})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:open_settings', name='open_settings', description='Opens the Mastodon application and navigates to the main settings menu.', created_at=1780850911.3418238, success_count=1, success_streak=1)
-async def open_settings(device):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='settings button', valid_state='settings button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/settings'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 915, 'y': 199})
-    await action('scroll', target='settings list', text='down', pixels=400, valid_state='settings list is scrollable')
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:post_toot', name='post_toot', description='Post a new message to Mastodon.', created_at=1780852557.5885491, success_count=1, success_streak=1)
-async def post_toot(device, message):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='New post button', valid_state='compose button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'New post'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 961, 'y': 1992})
-    await action('input_text', target=message, valid_state='input field is focused', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'class': 'android.widget.EditText', 'resource_id': 'org.joinmastodon.android.mastodon:id/toot_text'}, 'state': ['visible', 'enabled', 'focused']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '879f56728334dff2069d5649bb4b439037071fa74aeaaa2f215fa106082bd2e4'}))
-    await action('tap', target='publish button', valid_state='publish button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Publish'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1015, 'y': 201})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_and_favorite_tag', name='search_and_favorite_tag', description='Search for a hashtag in Mastodon and favorite the first post.', created_at=1780850854.5103655, success_count=1, success_streak=1)
-async def search_and_favorite_tag(device, tag):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Explore tab', valid_state='Explore tab is visible', fixed=True, fixed_values={'x': 407, 'y': 2215})
-    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 347, 'y': 247})
-    await action('input_text', target=tag, valid_state='input field is focused')
-    await action('tap', target='hashtag search result', valid_state='search result is visible', fixed=True, fixed_values={'x': 356, 'y': 427})
-    await action('tap', target='favorite button', valid_state='favorite button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/favorite_btn'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 572, 'y': 2126})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_and_follow_mastodon_user', name='search_and_follow_mastodon_user', description='Search for a user by their nickname or handle on Mastodon and follow their profile.', created_at=1780837510.791751, success_count=1, success_streak=1)
-async def search_and_follow_mastodon_user(device, nickname):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Explore tab in bottom navigation bar', valid_state='bottom navigation bar is visible', fixed=True, fixed_values={'x': 407.0, 'y': 2217.0})
-    await action('tap', target='search input field', valid_state='search field is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '83e09e4b5b1fc3aca65dcd9dcee808db1be7ba9c3db1eea4c5991ae7e288a8a7'}), fixed=True, fixed_values={'x': 300.0, 'y': 240.0})
-    await action('input_text', target=nickname, valid_state='input field is focused')
-    await action('tap', target='matching profile result', valid_state='profile result is visible and clickable')
-    await action('tap', target='follow button', valid_state='follow button is visible and enabled', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_action_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '839fcd75ef66342e07f4a0bf04cdf5425116658a616848202ce92ec1d6e15c96'}), fixed=True, fixed_values={'x': 486.0, 'y': 984.0})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_hashtag', name='search_hashtag', description='Search Mastodon for a hashtag and browse the posts feed.', created_at=1780850243.2645533, success_count=1, success_streak=1)
-async def search_hashtag(device, query):
-    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='search bar', valid_state='search bar is visible', fixed=True, fixed_values={'x': 486, 'y': 244})
-    await action('tap', target='clear button', valid_state='clear button is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'content_desc': 'Clear'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 1013, 'y': 240})
-    await action('input_text', target=query, valid_state='input field is focused')
-    await action('tap', target='posts search result', valid_state='search suggestions are visible', fixed=True, fixed_values={'x': 378, 'y': 420})
-    await action('scroll', target='feed', valid_state='feed is loaded', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
-
-
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_mastodon_posts', name='search_mastodon_posts', description='Search Mastodon for posts using a query.', created_at=1780850217.596991, success_count=1, success_streak=1)
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_mastodon_posts', name='search_mastodon_posts', description='Search Mastodon for a query or hashtag to view related posts.', created_at=1782837723.1453607, success_count=1, success_streak=1)
 async def search_mastodon_posts(device, query):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Explore tab', valid_state='Explore tab is visible', fixed=True, fixed_values={'x': 403.0, 'y': 2241.0})
-    await action('tap', target='search bar', valid_state='search bar is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 361.0, 'y': 249.0})
-    await action('input_text', target=query, valid_state='search field is focused')
-    await action('tap', target='search result for posts', valid_state='search results are displayed')
+    await action('tap', target='Explore tab', valid_state='Explore tab is visible', fixed=True, fixed_values={'x': 405, 'y': 2220})
+    await action('tap', target='search bar', valid_state='search bar is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 242})
+    await action('input_text', target=query, valid_state='input field is focused')
+    await action('tap', target='Posts with query filter', valid_state='filter option is visible', fixed=True, fixed_values={'x': 540, 'y': 415})
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_posts_by_user_and_hashtag', name='search_posts_by_user_and_hashtag', description='In Mastodon, search for posts by a user containing a hashtag.', created_at=1780846880.5437229, success_count=1, success_streak=1)
-async def search_posts_by_user_and_hashtag(device, username, hashtag):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_user_and_open_post', name='search_user_and_open_post', description='Search for a user by name, navigate to their profile, and open a post identified by a description.', created_at=1782841973.1754704, success_count=1, success_streak=1)
+async def search_user_and_open_post(device, username, post_description):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Explore tab', valid_state='Explore tab is visible and clickable', fixed=True, fixed_values={'x': 402, 'y': 2229})
-    await action('tap', target='Search bar', valid_state='Search bar is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}, 'mask_rules': [], 'fingerprint': '83e09e4b5b1fc3aca65dcd9dcee808db1be7ba9c3db1eea4c5991ae7e288a8a7'}), fixed=True, fixed_values={'x': 347, 'y': 249})
-    await action('input_text', target=username + ' ' + hashtag, valid_state='Search input field is focused')
-    await action('tap', target="Posts with '" + username + ' ' + hashtag + "'", valid_state='Search result list item is visible and clickable')
+    await action('tap', target='Explore tab', valid_state='Explore tab is visible', fixed=True, fixed_values={'x': 405, 'y': 2220})
+    await action('tap', target='Search bar', valid_state='Search bar is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 247})
+    await action('input_text', target=username, valid_state='Input field is focused')
+    await action('tap', target=username + ' profile', valid_state='User profile result is visible')
+    await action('scroll', target='Timeline', valid_state='Timeline is scrollable', fixed=True, fixed_values={'pixels': 400, 'direction': 'down'})
+    await action('tap', target=post_description, valid_state='Post is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_timeline'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:search_user_profile', name='search_user_profile', description='Search for a user by username and navigate to their profile in Mastodon.', created_at=1780851121.0703084, success_count=1, success_streak=1)
-async def search_user_profile(device, username):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:set_brightness_minimum', name='set_brightness_minimum', description='Set the display brightness to the minimum level.', created_at=1782831613.188358, success_count=1, success_streak=1)
+async def set_brightness_minimum(device):
+    await action('tap', target='Brightness level', valid_state='Brightness level is visible', fixed=True, fixed_values={'x': 540, 'y': 840})
+    await action('drag', target='brightness slider', valid_state='brightness slider is visible', fixed=True, fixed_values={'x': 540, 'y': 216, 'x2': 54, 'y2': 216})
+    await action('done', text='task finished')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:unfollow_hashtag', name='unfollow_hashtag', description='Unfollow a hashtag from the followed hashtags list in Mastodon.', created_at=1782839754.719518, success_count=1, success_streak=1)
+async def unfollow_hashtag(device, hashtag):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target='Explore tab', valid_state='Explore tab is visible and clickable', fixed=True, fixed_values={'x': 403, 'y': 2241})
-    await action('tap', target='search bar', valid_state='search bar is visible and clickable', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/search_text'}, 'state': ['visible', 'clickable', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 234, 'y': 201})
-    await action('input_text', target=username, valid_state='input field is focused')
-    await action('tap', target='user profile result', valid_state='user profile result is visible and clickable', fixed=True, fixed_values={'x': 248, 'y': 998})
+    await action('tap', target=hashtag, valid_state='hashtag ' + hashtag + ' is visible in the list')
+    await action('tap', target='Following button', valid_state='Following button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/follow_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 914.0, 'y': 324.0})
+    await action('back', valid_state='back navigation is available')
 
 
-@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:update_profile_header', name='update_profile_header', description='Update the Mastodon profile header image.', created_at=1780849879.8917508, success_count=1, success_streak=1)
-async def update_profile_header(device, media_item):
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:unfollow_hashtag_2', name='unfollow_hashtag_2', description='Unfollows a hashtag in Mastodon by navigating to its page and toggling the follow status.', created_at=1782839855.6715639, success_count=1, success_streak=1)
+async def unfollow_hashtag_2(device, hashtag_name):
     await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
-    await action('tap', target=media_item, valid_state='profile header area is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_about'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}))
-    await action('tap', target='save changes button', valid_state='save changes button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/profile_actions'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 540, 'y': 1274})
+    await action('tap', target='#' + hashtag_name, valid_state='hashtag link is visible')
+    await action('tap', target='Following button', valid_state='Following button is visible', state_contract=C.from_dict({'anchor': {'app_package': 'org.joinmastodon.android.mastodon'}, 'signature': {'required': [{'selector': {'resource_id': 'org.joinmastodon.android.mastodon:id/follow_btn_wrap'}, 'state': ['visible', 'enabled']}], 'forbidden': []}}), fixed=True, fixed_values={'x': 914, 'y': 324})
+    await action('back', target='return to previous screen', valid_state='previous screen is visible')
+
+
+@skill(app='org.joinmastodon.android.mastodon', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:org.joinmastodon.android.mastodon:view_announcements_channel', name='view_announcements_channel', description='Navigate to and view the announcements channel in the Mastodon mobile application.', created_at=1782840594.376483, success_count=1, success_streak=1)
+async def view_announcements_channel(device):
+    await action('open_app', target='org.joinmastodon.android.mastodon', valid_state='No need to verify', fixed=True, fixed_values={'text': 'org.joinmastodon.android.mastodon'})
+    await action('tap', target='Announcements channel', valid_state='channel list is visible', fixed=True, fixed_values={'x': 313.0, 'y': 892.0})
+    await action('scroll', target='message list area', valid_state='message list is loaded', fixed=True, fixed_values={'direction': 'up', 'pixels': 400})
