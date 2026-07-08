@@ -1336,7 +1336,9 @@ def test_agent_uses_default_config_when_no_workspace_or_config_flags(mock_agent_
     awaited = mock_agent_runtime["agent_loop"].process_direct.await_args
     assert awaited.args == ("hello", "cli:direct")
     assert callable(awaited.kwargs["on_progress"])
-    assert set(awaited.kwargs) == {"on_progress"}
+    assert set(awaited.kwargs) == {"on_progress", "on_stream", "on_stream_end"}
+    assert callable(awaited.kwargs["on_stream"])
+    assert callable(awaited.kwargs["on_stream_end"])
     mock_agent_runtime["print_response"].assert_called_once_with(
         "mock-response", render_markdown=True, metadata={},
     )

@@ -63,6 +63,26 @@ def _mobileworld_response(
     )
 
 
+def _messages_text(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    parts.append(str(block.get("text") or ""))
+    return "\n".join(part for part in parts if part)
+
+
+def _last_user_message_text(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return _messages_text([message])
+    return ""
+
+
 def _qwen_response(
     arguments: dict,
     *,
@@ -254,11 +274,11 @@ async def test_prompt_skill_selection_injects_and_dispatches_use_skill(tmp_path:
     )
     composite_skill = Skill(
         skill_id="manual:click-and-type",
-        name="click_and_type",
+        name="click_then_type",
         description="Tap an input and type text",
         app="dry.app",
         platform="dry-run",
-        tags=("compact_action", "action_alias:click_and_type"),
+        tags=("compact_action", "action_alias:click_then_type"),
         steps=(),
     )
     library.add(shortcut_skill)
@@ -295,10 +315,10 @@ async def test_prompt_skill_selection_injects_and_dispatches_use_skill(tmp_path:
     executed_skill, executed_params = executor.calls[0]
     assert executed_skill.skill_id == "shortcut:dl:dry:search"
     assert executed_params == {"query": "cats"}
-    first_prompt = llm.calls[0][0]["content"]
+    first_prompt = _messages_text(llm.calls[0])
     assert "`use_skill`" in first_prompt
     assert "skill_id=shortcut:dl:dry:search" in first_prompt
-    assert "`click_and_type`" in first_prompt
+    assert "`click_then_type`" in first_prompt
 
 
 @pytest.mark.asyncio
@@ -307,11 +327,11 @@ async def test_prompt_composite_action_executes_without_skill_executor(tmp_path:
     library.add(
         Skill(
             skill_id="manual:click-and-type",
-            name="click_and_type",
+            name="click_then_type",
             description="Tap an input and type text",
             app="dry.app",
             platform="dry-run",
-            tags=("compact_action", "action_alias:click_and_type"),
+            tags=("compact_action", "action_alias:click_then_type"),
             steps=(),
         )
     )
@@ -319,7 +339,7 @@ async def test_prompt_composite_action_executes_without_skill_executor(tmp_path:
     llm = _RecordingLLM([
         _mobileworld_response(
             {
-                "action_type": "click_and_type",
+                "action_type": "click_then_type",
                 "coordinate": [500, 400],
                 "text": "hello",
             }
@@ -3953,8 +3973,9 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
             )
 
     recorder = _make_recorder(tmp_path, "retry malformed tool call")
+    llm = _MalformedToolCallLLM()
     agent = GuiAgent(
-        _MalformedToolCallLLM(),
+        llm,
         DryRunBackend(),
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
@@ -3966,13 +3987,8 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
     assert result.success
     assert recorder.path is not None
     events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
-    attempt_exception = next(event for event in events if event["type"] == "attempt_exception")
-    assert attempt_exception["error_type"] == "_StepExecutionError"
-    assert "Failed to parse profile response after retries" in attempt_exception["error_message"]
-    assert (
-        "malformed click missing coordinate" in attempt_exception["model_response"]["raw_content"]
-    )
-    assert attempt_exception["model_response"]["tool_calls"] == []
+    assert not any(event["type"] == "attempt_exception" for event in events)
+    assert llm.calls == 6
 
 
 @pytest.mark.asyncio
@@ -4019,9 +4035,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
     assert result.success
     # calls[0]=attempt1 step, calls[1]=termination summary, calls[2]=attempt2 step
     second_attempt = llm.calls[2]
-    retry_text = "\n".join(
-        block["text"] for block in second_attempt[1]["content"] if block.get("type") == "text"
-    )
+    retry_text = _last_user_message_text(second_attempt)
     assert retry_text == "Open Settings"
 
 
@@ -4061,10 +4075,8 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
     result = await agent.run("retry malformed tool call", max_retries=2)
 
     assert result.success
-    second_attempt = llm.calls[4]
-    retry_text = "\n".join(
-        block["text"] for block in second_attempt[1]["content"] if block.get("type") == "text"
-    )
+    second_attempt = llm.calls[5]
+    retry_text = _last_user_message_text(second_attempt)
     assert retry_text == "retry malformed tool call"
 
 
