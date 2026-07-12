@@ -43,8 +43,9 @@
     "artifactsDir": "gui_runs",
     "maxSteps": 15,
     "embeddingModel": null,
-    "skillThreshold": 0.6,
     "enableSkillExecution": false,
+    "enablePromptSkillSelection": false,
+    "promptSkillTopK": 5,
     "background": false,
     "displayNum": null,
     "displayWidth": 1280,
@@ -297,8 +298,9 @@ async def run_gui_task(provider, model: str, workspace: Path, task: str) -> dict
 | `gui.maxSteps` | `max_steps` | GUI 最大步数 |
 | `gui.artifactsDir` | run root | 截图和轨迹输出目录 |
 | `gui.embeddingModel` | embedding adapter | 可选技能检索 |
-| `gui.skillThreshold` | `skill_threshold` | 技能召回阈值 |
 | `gui.enableSkillExecution` | skill executor wiring | 是否启用技能执行 |
+| `gui.enablePromptSkillSelection` | prompt skill catalog | 是否将检索技能暴露给 GUI 模型 |
+| `gui.promptSkillTopK` | `prompt_skill_top_k` | 暴露给 GUI 模型的技能候选数 |
 | `gui.background` | background runtime | 本地桌面隔离运行 |
 | `gui.displayWidth` | display manager width | 虚拟显示宽度 |
 | `gui.displayHeight` | display manager height | 虚拟显示高度 |

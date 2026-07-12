@@ -65,19 +65,6 @@ class _RecordingLLM:
         return self._responses.pop(0)
 
 
-class _StaticSkillReuser:
-    def __init__(self, skill: Skill, score: float = 0.9) -> None:
-        self.skill = skill
-        self.score = score
-
-    async def find(self, task, library, platform=None, *, app=None, trajectory_recorder=None):
-        del task, library, platform, app, trajectory_recorder
-        return self.skill, self.score
-
-    def drain_usage(self):
-        return {}
-
-
 def _done_response(call_id: str = "tc_done") -> LLMResponse:
     return LLMResponse(
         content='Thought: task complete\nAction: {"action_type":"status","goal_status":"complete"}',
@@ -145,13 +132,13 @@ async def test_memory_injected_into_system_prompt(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# AGENT-05 / SKILL-08: Skill path chosen above threshold
+# AGENT-05 / SKILL-08: Skills are prompt-selected, not pre-run matched
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
-    """When a matching skill exists above threshold, GuiAgent should use SkillExecutor path."""
+async def test_skill_library_does_not_trigger_pre_run_skill_path(tmp_path: Path) -> None:
+    """A skill library alone should not execute a skill before the GUI model chooses it."""
     embedder = _FakeEmbedder()
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     skill = Skill(
@@ -182,21 +169,20 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
         llm, DryRunBackend(),
         trajectory_recorder=recorder,
         skill_library=lib, skill_executor=mock_executor,
-        skill_reuser=_StaticSkillReuser(skill),
-        skill_threshold=0.3,  # low threshold to ensure match
         artifacts_root=tmp_path / "runs", max_steps=1,
     )
 
     result = await agent.run("Toggle Wi-Fi", max_retries=1)
     assert result.success
+    mock_executor.execute.assert_not_called()
 
-    # Check trajectory has a SKILL phase change
+    # No pre-run SKILL phase should be recorded without a prompt-selected use_skill action.
     traj_path = recorder.path
     assert traj_path is not None and traj_path.exists()
     events = [json.loads(line) for line in traj_path.read_text().splitlines()]
     phase_changes = [e for e in events if e.get("type") == "phase_change"]
     skill_phases = [e for e in phase_changes if e.get("to_phase") == "skill"]
-    assert len(skill_phases) >= 1
+    assert len(skill_phases) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -205,8 +191,8 @@ async def test_skill_path_chosen_above_threshold(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_free_explore_when_no_skill_match(tmp_path: Path) -> None:
-    """When no skill matches, GuiAgent should use free exploration."""
+async def test_free_explore_when_prompt_skill_selection_disabled(tmp_path: Path) -> None:
+    """With prompt skill selection disabled, GuiAgent should use free exploration."""
     embedder = _FakeEmbedder()
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     # Add an unrelated skill
@@ -221,7 +207,7 @@ async def test_free_explore_when_no_skill_match(tmp_path: Path) -> None:
     agent = GuiAgent(
         llm, DryRunBackend(),
         trajectory_recorder=recorder,
-        skill_library=lib, skill_threshold=0.9,  # high threshold — no match
+        skill_library=lib,
         artifacts_root=tmp_path / "runs", max_steps=1,
     )
 
@@ -428,7 +414,7 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
         agent_llm, DryRunBackend(),
         trajectory_recorder=recorder,
         memory_retriever=retriever, skill_library=lib,
-        skill_executor=mock_executor, skill_threshold=0.3,
+        skill_executor=mock_executor,
         artifacts_root=tmp_path / "runs", max_steps=3,
     )
 

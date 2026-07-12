@@ -18,7 +18,6 @@ from opengui.skills import Skill, SkillStep
 from opengui.skills.executor import ExecutionState, SkillExecutor, SubgoalResult
 from opengui.skills.extractor import SkillExtractor
 from opengui.skills.flat import FlatSkillLibrary, compile_flat_skills
-from opengui.skills.reuser import SkillReuser
 from opengui.skills.state_contract import infer_focused_input_contract, infer_interaction_target
 from opengui.skills.trajectory_codegen import codegen_trajectory
 
@@ -99,22 +98,6 @@ class _FakeSubgoalRunner:
             "current_observation": current_observation,
         })
         return self.result
-
-
-class _FakeSkillLibrary:
-    def __init__(self, results: list[tuple[Skill, float]]) -> None:
-        self._results = results
-        self.calls: list[dict[str, Any]] = []
-
-    async def search(
-        self,
-        task: str,
-        platform: str | None = None,
-        app: str | None = None,
-        top_k: int = 5,
-    ) -> list[tuple[Skill, float]]:
-        self.calls.append({"task": task, "platform": platform, "app": app, "top_k": top_k})
-        return self._results
 
 
 class _RecordingEmbeddingProvider:
@@ -2228,79 +2211,3 @@ async def zhihu_search_text(device, query):
         "class": "android.widget.EditText",
     }
     assert required[0]["state"] == ["visible", "enabled", "focused"]
-
-
-@pytest.mark.asyncio
-async def test_skill_reuser_selects_llm_chosen_prefix() -> None:
-    skill = _make_skill(
-        "s1",
-        "Search Settings",
-        "Open settings and tap search",
-        steps=(
-            SkillStep(action_type="open_app", target="Settings", parameters={"text": "com.android.settings"}),
-            SkillStep(action_type="tap", target="Search"),
-        ),
-    )
-    llm = _ScriptedLLM([
-        '{"selected_skill_id": "s1", "end_step": 1, "reason": "opening settings helps"}'
-    ])
-    reuser = SkillReuser(llm, threshold=0.1, auto_accept_threshold=2.0)
-
-    selected = await reuser.find(
-        "Open Settings",
-        _FakeSkillLibrary([(skill, 0.9)]),
-        platform="android",
-    )
-
-    assert selected is not None
-    selected_skill, score = selected
-    assert score == 0.9
-    assert selected_skill.skill_id == "s1"
-    assert len(selected_skill.steps) == 1
-
-
-@pytest.mark.asyncio
-async def test_skill_reuser_does_not_auto_accept_high_retrieval_score() -> None:
-    skill = _make_skill(
-        "bili",
-        "search_and_play_bilibili_video",
-        "In Bilibili, search for a video and start playback through search results.",
-        app="tv.danmaku.bili",
-        steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili"),),
-    )
-    llm = _ScriptedLLM(['{"selected_skill_id": null, "end_step": null, "reason": "wrong app"}'])
-    reuser = SkillReuser(llm, threshold=0.1)
-
-    selected = await reuser.find(
-        "In YouTube, search for Never Gonna Give You Up and play it.",
-        _FakeSkillLibrary([(skill, 9.0)]),
-        platform="android",
-    )
-
-    assert selected is None
-    assert llm.messages
-
-
-@pytest.mark.asyncio
-async def test_skill_reuser_passes_app_filter_to_library_search() -> None:
-    skill = _make_skill(
-        "youtube",
-        "open_youtube",
-        "Open YouTube",
-        app="com.google.android.youtube",
-    )
-    library = _FakeSkillLibrary([(skill, 0.9)])
-    llm = _ScriptedLLM([
-        '{"selected_skill_id": "youtube", "end_step": 1, "reason": "same app"}'
-    ])
-    reuser = SkillReuser(llm, threshold=0.1, auto_accept_threshold=2.0)
-
-    selected = await reuser.find(
-        "In YouTube, open subscriptions.",
-        library,
-        platform="android",
-        app="com.google.android.youtube",
-    )
-
-    assert selected is not None
-    assert library.calls[0]["app"] == "com.google.android.youtube"

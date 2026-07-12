@@ -332,8 +332,9 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
     "adb": { "serial": null },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
-    "skillThreshold": 0.6,
     "enableSkillExecution": true,
+    "enablePromptSkillSelection": true,
+    "promptSkillTopK": 5,
     "evaluation": {
       "enabled": true,
       "judgeModel": "qwen3-vl-plus",
@@ -463,13 +464,14 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `artifactsDir` | `string` | `"gui_runs"` | Directory for screenshots and run logs (relative to workspace) |
 | `maxSteps` | `int` | `15` | Maximum actions per task before giving up |
 | `embeddingModel` | `string \| null` | `null` | Embedding model for semantic skill search (e.g. `"text-embedding-v4"`) |
-| `skillThreshold` | `float` | `0.6` | Minimum similarity score to attempt skill reuse |
 | `background` | `bool` | `false` | Use isolated virtual display (Linux only; requires `backend: "local"`) |
 | `displayNum` | `int \| null` | `null` | Xvfb display number |
 | `displayWidth` | `int` | `1280` | Virtual display width in pixels |
 | `displayHeight` | `int` | `720` | Virtual display height in pixels |
 | `enableSkillExtraction` | `bool` | `false` | Extract and store learned skills after GUI runs |
-| `enableSkillExecution` | `bool` | `false` | Enable learned skill replay (see [Skills System](#skills-system)) |
+| `enableSkillExecution` | `bool` | `false` | Wire the skill executor for model-selected `use_skill` actions |
+| `enablePromptSkillSelection` | `bool` | `false` | Retrieve relevant skills and expose them in the GUI prompt |
+| `promptSkillTopK` | `int` | `5` | Maximum retrieved skills shown to the GUI model |
 | `evaluation.enabled` | `bool` | `false` | Run post-task evaluation for successful GUI runs |
 | `evaluation.judgeModel` | `string` | `"qwen3-vl-plus"` | Judge model used for evaluation only |
 | `evaluation.apiKey` | `string` | `""` | API key for the judge endpoint; falls back to `OPENAI_API_KEY` when empty |
@@ -1060,7 +1062,7 @@ To delete an entry, simply remove its entire `##` section from the file.
 
 ## Skills System
 
-OpenGUI learns from successful task runs. After each task it extracts a reusable **skill** — a named, parameterised sequence of steps — and stores it in the skill library. On subsequent tasks it searches the library first; if a match scores above `skillThreshold`, the skill is replayed directly instead of exploring from scratch.
+OpenGUI learns from successful task runs. After each task it extracts a reusable **skill** — a named, parameterised sequence of steps — and stores it in the skill library. On subsequent tasks it retrieves the top-k relevant skills and exposes them in the GUI prompt; the GUI model may execute one by emitting a `use_skill` action, or continue with ordinary GUI actions.
 
 **Skill storage locations:**
 
@@ -1077,21 +1079,24 @@ Both skill learning (extraction) and skill execution (replay) are opt-in:
 "gui": {
   "enableSkillExtraction": true,
   "enableSkillExecution": true,
-  "skillThreshold": 0.6,
+  "enablePromptSkillSelection": true,
+  "promptSkillTopK": 5,
   "embeddingModel": "text-embedding-v4"
 }
 ```
 
 With `enableSkillExtraction: false` (default), OpenGUI skips post-run skill promotion entirely.
 
-With `enableSkillExecution: false` (default), OpenGUI does not replay learned skills during future runs.
+With `enableSkillExecution: false` (default), OpenGUI rejects `use_skill` actions because no skill executor is wired.
 
-### Tuning `skillThreshold`
+With `enablePromptSkillSelection: false` (default), OpenGUI does not expose retrieved skills in the GUI prompt.
+
+### Tuning `promptSkillTopK`
 
 | Value | Behaviour |
 |-------|-----------|
-| `1.0` | Only exact matches trigger replay |
-| `0.6` | Default — matches semantically similar tasks |
-| `0.3` | Aggressive reuse; may trigger on loosely related tasks |
+| `0` | Only always-on composite skill actions are exposed |
+| `5` | Default — show a compact set of relevant skills |
+| `10` | Show more candidates; increases prompt length |
 
 Skills that fail repeatedly are automatically pruned (confidence falls below 0.3 after 5+ attempts).

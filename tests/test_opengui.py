@@ -198,15 +198,6 @@ class _RecordingValidator:
         return self._returns.pop(0)
 
 
-class _NoopSkillReuser:
-    async def find(self, task, skill_library, platform, trajectory_recorder=None):
-        del task, skill_library, platform, trajectory_recorder
-        return None
-
-    def drain_usage(self) -> dict[str, int]:
-        return {}
-
-
 class _SkillTestBackend:
     def __init__(self) -> None:
         self.platform = "dry-run"

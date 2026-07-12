@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +31,6 @@ from opengui.cli import OpenAICompatibleEmbeddingProvider, OpenAICompatibleLLMPr
 from opengui.postprocessing import EvaluationConfig, PostRunProcessor
 from opengui.skills.executor import LLMStateValidator, SkillExecutor
 from opengui.skills.flat import FlatSkillLibrary
-from opengui.skills.reuser import SkillReuser
 from opengui.trajectory.recorder import TrajectoryRecorder
 
 
@@ -43,7 +41,6 @@ DEFAULT_TASK_SEED = 30
 DEFAULT_MAX_STEPS = 15
 DEFAULT_AGENT_MODEL = "qwen3.5-35b-a3b"
 DEFAULT_EXTRACT_MODEL = "qwen3.5-397b-a17b"
-DEFAULT_REUSER_MODEL = "qwen3.5-35b-a3b"
 DEFAULT_AGENT_PROFILE = "general_e2e"
 DEFAULT_TASK_COUNT = 20
 DEFAULT_ADB = Path.home() / "Library" / "Android" / "sdk" / "platform-tools" / "adb"
@@ -290,17 +287,16 @@ async def _run_one_task(
     backend: AdbBackend,
     runtime_provider: OpenAICompatibleLLMProvider,
     extraction_provider: OpenAICompatibleLLMProvider,
-    reuser_provider: OpenAICompatibleLLMProvider,
     embedding_provider: OpenAICompatibleEmbeddingProvider | None,
     embedding_signature: str | None,
     installed_apps: list[str] | None,
     run_root: Path,
     skill_root: Path,
     model: str,
-    reuser_model: str,
     max_steps: int,
     agent_profile: str,
     image_scale_ratio: float,
+    prompt_skill_top_k: int,
     enable_reuse: bool,
     enable_extraction: bool,
 ) -> dict[str, Any]:
@@ -340,7 +336,6 @@ async def _run_one_task(
     recorder = TrajectoryRecorder(output_dir=run_dir, task=task.goal, platform="android")
     skill_library = None
     skill_executor = None
-    skill_reuser = None
     if enable_reuse:
         skill_library = FlatSkillLibrary(
             store_dir=skill_root,
@@ -359,7 +354,6 @@ async def _run_one_task(
         skill_executor.trajectory_recorder = recorder
         if getattr(skill_executor, "subgoal_runner", None) is not None:
             skill_executor.subgoal_runner._trajectory_recorder = recorder
-        skill_reuser = SkillReuser(reuser_provider, threshold=0.6)
 
     agent = GuiAgent(
         llm=runtime_provider,
@@ -371,7 +365,8 @@ async def _run_one_task(
         installed_apps=installed_apps,
         skill_library=skill_library,
         skill_executor=skill_executor,
-        skill_reuser=skill_reuser,
+        enable_prompt_skill_selection=enable_reuse,
+        prompt_skill_top_k=prompt_skill_top_k,
         agent_profile=agent_profile,
         image_scale_ratio=image_scale_ratio,
         stagnation_limit=0,
@@ -538,11 +533,6 @@ async def _main(args: argparse.Namespace) -> None:
         model=args.extract_model,
         api_key=api_key,
     )
-    reuser_provider = OpenAICompatibleLLMProvider(
-        base_url=base_url,
-        model=args.reuser_model,
-        api_key=api_key,
-    )
     adb_path = _resolve_adb_path(args.adb_path)
     os.environ["ANDROID_ADB_SERVER_PORT"] = str(args.adb_server_port)
     backend = AdbBackend(
@@ -567,8 +557,8 @@ async def _main(args: argparse.Namespace) -> None:
         "tasks": task_names,
         "agent_model": args.agent_model,
         "extract_model": args.extract_model,
-        "reuser_model": args.reuser_model,
         "agent_profile": args.agent_profile,
+        "prompt_skill_top_k": args.prompt_skill_top_k,
         "max_steps": args.max_steps,
         "serial": args.serial,
         "adb_path": adb_path,
@@ -589,17 +579,16 @@ async def _main(args: argparse.Namespace) -> None:
                 backend=backend,
                 runtime_provider=runtime_provider,
                 extraction_provider=extraction_provider,
-                reuser_provider=reuser_provider,
                 embedding_provider=embedding_provider,
                 embedding_signature=embedding_signature,
                 installed_apps=installed_apps,
                 run_root=raw_root,
                 skill_root=skill_root,
                 model=args.agent_model,
-                reuser_model=args.reuser_model,
                 max_steps=args.max_steps,
                 agent_profile=args.agent_profile,
                 image_scale_ratio=args.image_scale_ratio,
+                prompt_skill_top_k=args.prompt_skill_top_k,
                 enable_reuse=False,
                 enable_extraction=True,
             ))
@@ -617,17 +606,16 @@ async def _main(args: argparse.Namespace) -> None:
                 backend=backend,
                 runtime_provider=runtime_provider,
                 extraction_provider=extraction_provider,
-                reuser_provider=reuser_provider,
                 embedding_provider=embedding_provider,
                 embedding_signature=embedding_signature,
                 installed_apps=installed_apps,
                 run_root=reuse_root,
                 skill_root=skill_root,
                 model=args.agent_model,
-                reuser_model=args.reuser_model,
                 max_steps=args.max_steps,
                 agent_profile=args.agent_profile,
                 image_scale_ratio=args.image_scale_ratio,
+                prompt_skill_top_k=args.prompt_skill_top_k,
                 enable_reuse=True,
                 enable_extraction=False,
             ))
@@ -647,8 +635,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--task-seed", type=int, default=DEFAULT_TASK_SEED)
     parser.add_argument("--agent-model", default=DEFAULT_AGENT_MODEL)
     parser.add_argument("--extract-model", default=DEFAULT_EXTRACT_MODEL)
-    parser.add_argument("--reuser-model", default=DEFAULT_REUSER_MODEL)
     parser.add_argument("--agent-profile", default=DEFAULT_AGENT_PROFILE)
+    parser.add_argument("--prompt-skill-top-k", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     parser.add_argument("--image-scale-ratio", type=float, default=0.5)
     parser.add_argument("--adb-path", default=None)

@@ -332,8 +332,9 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
     "adb": { "serial": null },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
-    "skillThreshold": 0.6,
     "enableSkillExecution": true,
+    "enablePromptSkillSelection": true,
+    "promptSkillTopK": 5,
     "evaluation": {
       "enabled": true,
       "judgeModel": "qwen3-vl-plus",
@@ -463,13 +464,14 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `artifactsDir` | `string` | `"gui_runs"` | 截图和运行日志目录（相对于 workspace） |
 | `maxSteps` | `int` | `15` | 单次任务最大操作步数 |
 | `embeddingModel` | `string \| null` | `null` | 语义技能检索的 Embedding 模型（如 `"text-embedding-v4"`） |
-| `skillThreshold` | `float` | `0.6` | 技能复用的最低相似度阈值 |
 | `background` | `bool` | `false` | 使用虚拟显示隔离运行（仅 Linux；需 `backend: "local"`） |
 | `displayNum` | `int \| null` | `null` | Xvfb 显示编号 |
 | `displayWidth` | `int` | `1280` | 虚拟显示宽度，像素 |
 | `displayHeight` | `int` | `720` | 虚拟显示高度，像素 |
 | `enableSkillExtraction` | `bool` | `false` | 是否在 GUI 任务后提取并存储技能 |
-| `enableSkillExecution` | `bool` | `false` | 开启技能回放（详见[技能系统](#技能系统)） |
+| `enableSkillExecution` | `bool` | `false` | 为模型选择的 `use_skill` 动作接入技能执行器 |
+| `enablePromptSkillSelection` | `bool` | `false` | 检索相关技能并暴露在 GUI prompt 中 |
+| `promptSkillTopK` | `int` | `5` | 展示给 GUI 模型的最多检索技能数 |
 | `evaluation.enabled` | `bool` | `false` | 是否对成功的 GUI 任务执行任务后评测 |
 | `evaluation.judgeModel` | `string` | `"qwen3-vl-plus"` | 仅用于评测的 judge 模型 |
 | `evaluation.apiKey` | `string` | `""` | judge 接口的 API Key；为空时回退到 `OPENAI_API_KEY` |
@@ -1051,7 +1053,7 @@ access_count: 0
 
 ## 技能系统
 
-OpenGUI 从成功的任务中学习。每次任务完成后，系统会提取一个可复用的**技能**——带参数的具名步骤序列——并存入技能库。下次执行相似任务时，系统先在技能库中检索；若匹配度超过 `skillThreshold`，则直接回放技能，无需从头探索。
+OpenGUI 从成功的任务中学习。每次任务完成后，系统会提取一个可复用的**技能**——带参数的具名步骤序列——并存入技能库。下次执行相似任务时，系统检索 top-k 相关技能并暴露在 GUI prompt 中；GUI 模型可以输出 `use_skill` 动作执行其中一个技能，也可以继续使用普通 GUI 动作。
 
 **技能存储路径：**
 
@@ -1068,21 +1070,24 @@ OpenGUI 从成功的任务中学习。每次任务完成后，系统会提取一
 "gui": {
   "enableSkillExtraction": true,
   "enableSkillExecution": true,
-  "skillThreshold": 0.6,
+  "enablePromptSkillSelection": true,
+  "promptSkillTopK": 5,
   "embeddingModel": "text-embedding-v4"
 }
 ```
 
 `enableSkillExtraction: false`（默认）时，OpenGUI 会直接跳过任务后的技能提取与存储。
 
-`enableSkillExecution: false`（默认）时，OpenGUI 不会在后续任务中回放已学习的技能。
+`enableSkillExecution: false`（默认）时，由于没有接入技能执行器，OpenGUI 会拒绝 `use_skill` 动作。
 
-### 调整 `skillThreshold`
+`enablePromptSkillSelection: false`（默认）时，OpenGUI 不会把检索到的技能暴露给 GUI 模型。
+
+### 调整 `promptSkillTopK`
 
 | 值 | 行为 |
 |----|------|
-| `1.0` | 仅精确匹配时触发回放 |
-| `0.6` | 默认值；匹配语义相似任务 |
-| `0.3` | 激进复用；可能对相关度较低的任务也触发 |
+| `0` | 只暴露 always-on 复合技能动作 |
+| `5` | 默认值；展示一组紧凑的相关技能 |
+| `10` | 展示更多候选，但会增加 prompt 长度 |
 
 多次失败的技能会被自动清除（在 5 次以上尝试后置信度降至 0.3 以下）。

@@ -455,7 +455,6 @@ class GuiConfig(Base):
     provider: str | None = None
     validator_model: str | None = None
     grounder_model: str | None = None
-    reuser_model: str | None = None
     agent_profile: str | None = None
     adb: AdbConfig = Field(default_factory=AdbConfig)
     scrcpy: ScrcpyConfig = Field(default_factory=ScrcpyConfig)
@@ -465,7 +464,6 @@ class GuiConfig(Base):
     artifacts_dir: str = "gui_runs"
     max_steps: int = 15
     stagnation_limit: int = 0
-    skill_threshold: float = 0.6
     embedding_model: str | None = None
     embedding_api_key: str = ""
     embedding_api_base: str | None = None

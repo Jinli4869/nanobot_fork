@@ -75,7 +75,6 @@ from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from opengui.trajectory.summarizer import build_state_note, is_state_note
 
 logger = logging.getLogger(__name__)
-_SKILL_PARAM_EXTRACTION_TIMEOUT_SECONDS = 60.0
 
 _DONE_FAILURE_HINTS: tuple[str, ...] = (
     "fail",
@@ -194,14 +193,6 @@ from opengui.skills.observation_provider import AgentScreenshotProvider as _Agen
 # ---------------------------------------------------------------------------
 # GuiAgent
 # ---------------------------------------------------------------------------
-
-
-def _clean_inferred_param(value: str) -> str:
-    return value.strip().strip('`"\'“”‘’').strip()
-
-
-def _looks_like_date_param(value: str) -> bool:
-    return bool(re.search(r"\d+\s*(?:月|号|日|/|-)", value))
 
 
 _SKILL_PARAM_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
@@ -397,9 +388,7 @@ class GuiAgent:
         memory_retriever: Any = None,
         skill_library: Any = None,
         skill_executor: Any = None,
-        skill_reuser: Any = None,
         memory_top_k: int = 5,
-        skill_threshold: float = 0.35,
         installed_apps: list[str] | None = None,
         shortcut_backend: DeviceBackend | None = None,
         shortcut_cache_dir: Path | str | None = None,
@@ -446,11 +435,6 @@ class GuiAgent:
         self._skill_library = skill_library
         self._skill_executor = skill_executor
         self._memory_top_k = memory_top_k
-        if skill_reuser is None and skill_library is not None:
-            from opengui.skills.reuser import SkillReuser
-            skill_reuser = SkillReuser(llm, threshold=skill_threshold)
-        self._skill_reuser = skill_reuser
-        self._skill_threshold = skill_threshold
         self._installed_apps = installed_apps
         self._shortcuts: dict[str, AppShortcutProfile] = {}
         self._shortcut_backend = shortcut_backend
@@ -574,94 +558,15 @@ class GuiAgent:
                 app=skill_app_filter,
             )
 
-        # 3. Search the flat skill library once; LLM-gated when SkillReuser is available.
-        reuser_usage: dict[str, int] = {}
-        if self._enable_prompt_skill_selection:
-            skill_match = None
-            self._trajectory_recorder.record_event(
-                "skill_search",
-                task=task,
-                source="prompt_skill_selection",
-                matched=False,
-                reason="deferred_to_model_prompt",
-                app_filter=skill_app_filter,
-            )
-        elif self._skill_reuser is not None and self._skill_library is not None:
-            skill_match = await self._skill_reuser.find(
-                task,
-                self._skill_library,
-                self.backend.platform,
-                app=skill_app_filter,
-                trajectory_recorder=self._trajectory_recorder,
-            )
-            reuser_usage = self._skill_reuser.drain_usage()
-        else:
-            skill_match = await self._search_skill(task, app=skill_app_filter)
-
-        matched_skill: Any | None = None
-        final_score: float | None = None
-        skill_match_for_maintenance: Any | None = skill_match
-        if skill_match is not None:
-            if hasattr(skill_match, "layer"):
-                matched_skill = skill_match.skill
-                final_score = skill_match.score
-            else:
-                matched_skill, final_score = skill_match
-
-        # 4. If skill matched, attempt skill execution first.
-        skill_result: Any | None = None
-        if matched_skill is not None and self._skill_executor is not None and final_score is not None:
-            entry_allowed = await self._skill_entry_allows_current_state(matched_skill)
-            if not entry_allowed:
-                skill_match_for_maintenance = None
-                matched_skill = None
-            else:
-                memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
-        elif matched_skill is not None:
-            memory_context = await self._inject_skill_memory_context(matched_skill, memory_context)
-
-        if matched_skill is not None and self._skill_executor is not None and final_score is not None:
-            self._trajectory_recorder.set_phase(
-                ExecutionPhase.SKILL,
-                reason=f"Matched skill: {matched_skill.name} (score={final_score:.2f})",
-            )
-            try:
-                skill_result = await self._execute_skill_with_params(task, matched_skill)
-                execution_summary = getattr(skill_result, "execution_summary", None)
-                skill_context = execution_summary if isinstance(execution_summary, str) else None
-                if skill_result.state.value == "succeeded":
-                    # Skill succeeded — fall through to agent for confirmation
-                    self._trajectory_recorder.set_phase(
-                        ExecutionPhase.AGENT,
-                        reason="Skill complete, agent confirms",
-                    )
-                else:
-                    # Skill partially succeeded — agent completes the rest
-                    self._trajectory_recorder.set_phase(
-                        ExecutionPhase.AGENT, reason="Skill partially succeeded, agent completes"
-                    )
-            except Exception:
-                # Skill failed — fall back to free exploration
-                self._trajectory_recorder.set_phase(
-                    ExecutionPhase.AGENT, reason="Skill execution failed, falling back"
-                )
-
-        # 5. Retry loop with free exploration
+        # 3. Retry loop with free exploration. Skills, when enabled, are exposed
+        # in the prompt and must be selected by the GUI model via ``use_skill``.
         last_error: str | None = None
         last_model_summary: str | None = None
         last_trace_path: str | None = None
         last_steps_taken = 0
         result: AgentResult | None = None
         retry_summaries: list[str] = []
-        # Seed total_usage with tokens consumed during skill retrieval + execution (if any)
-        skill_token_usage: dict[str, int] = {}
-        if skill_result is not None:
-            raw_skill_token_usage = getattr(skill_result, "token_usage", None)
-            if isinstance(raw_skill_token_usage, dict):
-                skill_token_usage = dict(raw_skill_token_usage)
-        total_usage: dict[str, int] = dict(skill_token_usage)
-        for k, v in reuser_usage.items():
-            total_usage[k] = total_usage.get(k, 0) + v
+        total_usage: dict[str, int] = {}
 
         try:
             for attempt in range(max_retries):
@@ -783,24 +688,6 @@ class GuiAgent:
             error=result.error,
             token_usage=result.token_usage or None,
         )
-
-        # 7. Post-run skill maintenance — use skill execution outcome,
-        #    not overall task result, so prefix skills aren't penalised
-        #    for agent failures after their steps complete.
-        skill_exec_success = (
-            skill_result is not None and skill_result.state.value == "succeeded"
-        ) if skill_result is not None else result.success
-
-        # 7b. Agent compensation detection — if the skill "succeeded" but the
-        #     agent needed significantly more steps than the skill itself had,
-        #     the skill didn't actually advance the task.  Demote to failure.
-        if skill_exec_success and skill_result is not None and result is not None:
-            skill_step_count = len(getattr(skill_result, "step_results", ()) or ())
-            agent_steps = getattr(result, "steps_taken", 0)
-            if agent_steps > skill_step_count + 1:
-                skill_exec_success = False
-
-        await self._skill_maintenance(skill_match_for_maintenance, skill_exec_success)
 
         return result
 
@@ -3455,390 +3342,6 @@ class GuiAgent:
             return True
         skill_app = str(getattr(skill, "app", "") or "").strip()
         return skill_app in {"", "*", "any", "unknown"} or skill_app == app
-
-    async def _search_skill(self, task: str, *, app: str | None = None) -> Any | None:
-        """Search the skill library and return the top match when above threshold."""
-        if self._skill_library is None:
-            self._trajectory_recorder.record_event(
-                "skill_search",
-                task=task,
-                source="none",
-                matched=False,
-                reason="no_library",
-                threshold=self._skill_threshold,
-                app_filter=app,
-            )
-            return None
-        from opengui.skills.data import compute_confidence
-
-        search_results = await self._skill_library.search(
-            task, platform=self.backend.platform, app=app, top_k=1,
-        )
-        if not search_results:
-            self._trajectory_recorder.record_event(
-                "skill_search",
-                task=task,
-                source="legacy",
-                matched=False,
-                reason="no_results",
-                threshold=self._skill_threshold,
-                app_filter=app,
-            )
-            return None
-        skill, relevance = search_results[0]
-        confidence = compute_confidence(skill)
-        final_score = relevance
-        if final_score >= self._skill_threshold:
-            self._trajectory_recorder.record_event(
-                "skill_search",
-                task=task,
-                source="legacy",
-                matched=True,
-                skill_id=skill.skill_id,
-                skill_name=skill.name,
-                score=round(final_score, 4),
-                confidence=round(confidence, 4),
-                relevance=round(relevance, 4),
-                threshold=self._skill_threshold,
-                app_filter=app,
-            )
-            return (skill, final_score)
-        self._trajectory_recorder.record_event(
-            "skill_search",
-            task=task,
-            source="legacy",
-            matched=False,
-            reason="below_threshold",
-            skill_name=skill.name,
-            score=round(final_score, 4),
-            confidence=round(confidence, 4),
-            relevance=round(relevance, 4),
-            threshold=self._skill_threshold,
-            app_filter=app,
-        )
-        return None
-
-    async def _execute_skill_with_params(self, task: str, skill: Any) -> Any:
-        """Execute a skill, extracting task parameters only when needed."""
-        if self._skill_executor is None:
-            raise RuntimeError("skill executor is not configured")
-        skill_params: dict[str, str] = {}
-        if getattr(skill, "parameters", None):
-            skill_params = await self._extract_skill_params(task, skill)
-            missing_params = _missing_skill_params(skill, skill_params)
-            if missing_params:
-                recorder = getattr(self, "_trajectory_recorder", None)
-                if recorder is not None:
-                    recorder.record_event(
-                        "skill_param_extraction_failed",
-                        skill_id=str(getattr(skill, "skill_id", "") or ""),
-                        skill_name=str(getattr(skill, "name", "") or ""),
-                        reason="missing_required_params",
-                        missing_params=missing_params,
-                        extracted_params=dict(skill_params),
-                    )
-                raise RuntimeError(
-                    "missing required skill params: " + ", ".join(missing_params)
-                )
-        return await self._skill_executor.execute(skill, params=skill_params)
-
-    async def _skill_entry_allows_current_state(self, skill: Any) -> bool:
-        """Fail closed on mid-flow skills unless their first contract matches now."""
-        steps = tuple(getattr(skill, "steps", ()) or ())
-        skill_id = str(getattr(skill, "skill_id", "") or "")
-        skill_name = str(getattr(skill, "name", "") or "")
-        if not steps:
-            self._trajectory_recorder.record_event(
-                "skill_entry_rejected",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                reason="empty_skill",
-            )
-            return False
-
-        first_step = steps[0]
-        first_action = str(getattr(first_step, "action_type", "") or "")
-        if first_action == "open_app" and _skill_entry_targets_android_launcher(skill, first_step):
-            self._trajectory_recorder.record_event(
-                "skill_entry_rejected",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                first_action=first_action,
-                reason="launcher_entry_package",
-                app=str(getattr(skill, "app", "") or "") or None,
-                target=str(getattr(first_step, "target", "") or "") or None,
-            )
-            return False
-        if first_action in {"open_app", "open_deeplink", "open_intent"}:
-            self._trajectory_recorder.record_event(
-                "skill_entry_accepted",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                first_action=first_action,
-                reason="entry_action",
-            )
-            return True
-
-        contract = getattr(first_step, "state_contract", None)
-        if contract is None:
-            self._trajectory_recorder.record_event(
-                "skill_entry_rejected",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                first_action=first_action,
-                reason="missing_first_step_state_contract",
-            )
-            return False
-
-        screenshot_path = self.artifacts_root / "skill_entry_gate" / "current.png"
-        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            observation = await self.backend.observe(
-                screenshot_path,
-                timeout=self.step_timeout,
-            )
-        except Exception as exc:
-            logger.warning("Skill entry observation failed for %s: %s", skill_name, exc)
-            self._trajectory_recorder.record_event(
-                "skill_entry_rejected",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                first_action=first_action,
-                reason="observe_failed",
-                error=str(exc),
-            )
-            return False
-
-        contract_result = evaluate_state_contract(contract, observation=observation)
-        if contract_result is True:
-            self._trajectory_recorder.record_event(
-                "skill_entry_accepted",
-                skill_id=skill_id,
-                skill_name=skill_name,
-                first_action=first_action,
-                reason="state_contract_matched",
-            )
-            return True
-
-        self._trajectory_recorder.record_event(
-            "skill_entry_rejected",
-            skill_id=skill_id,
-            skill_name=skill_name,
-            first_action=first_action,
-            reason="state_contract_unevaluable" if contract_result is None else "state_contract_failed",
-        )
-        return False
-
-    async def _inject_skill_memory_context(
-        self,
-        skill: Any,
-        existing_context: str | None,
-    ) -> str | None:
-        """No-op: legacy Skill objects do not carry a memory_context_id."""
-        return existing_context
-
-    async def _extract_skill_params(
-        self,
-        task: str,
-        skill: Any,
-    ) -> dict[str, str]:
-        """Extract runtime parameter values from the task description via LLM.
-
-        Uses the skill's declared ``parameters`` list as a schema and asks the
-        LLM to pull matching values from the task string.  Returns partial
-        values when some parameters can be inferred deterministically.
-        """
-        param_names: list[str] = _skill_param_names(skill)
-        if not param_names:
-            return {}
-        params = {
-            name: value
-            for name in param_names
-            if (value := self._guess_skill_param(task, name)) is not None
-        }
-        if len(params) == len(param_names):
-            return params
-        json_template = "{" + ", ".join(f'"{p}": "value"' for p in param_names) + "}"
-        prompt = (
-            f"Task: {task}\n\n"
-            f"Skill: {skill.name} — {skill.description}\n"
-            f"Parameters to extract: {param_names}\n\n"
-            f"Extract the value for each parameter from the task description.\n"
-            f"Return JSON only, with exactly these keys: {json_template}"
-        )
-        try:
-            response = await asyncio.wait_for(
-                self.llm.chat([{"role": "user", "content": prompt}]),
-                timeout=_SKILL_PARAM_EXTRACTION_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            logger.warning("Skill param extraction LLM call failed: %s", exc)
-            recorder = getattr(self, "_trajectory_recorder", None)
-            if recorder is not None:
-                recorder.record_event(
-                    "skill_param_extraction_failed",
-                    skill_id=str(getattr(skill, "skill_id", "") or ""),
-                    skill_name=str(getattr(skill, "name", "") or ""),
-                    reason="llm_call_failed",
-                    error=str(exc),
-                    exception_type=type(exc).__name__,
-                    missing_params=[name for name in param_names if name not in params],
-                    extracted_params=dict(params),
-                )
-            return params
-        text = (response.content or "").strip()
-        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if match:
-            try:
-                obj = json.loads(match.group(0))
-                for key, value in obj.items():
-                    if key in param_names and key not in params:
-                        text_value = str(value).strip()
-                        if text_value:
-                            params[key] = text_value
-                return params
-            except json.JSONDecodeError:
-                pass
-        logger.warning("Could not parse skill param extraction response: %r", text[:120])
-        recorder = getattr(self, "_trajectory_recorder", None)
-        if recorder is not None:
-            recorder.record_event(
-                "skill_param_extraction_failed",
-                skill_id=str(getattr(skill, "skill_id", "") or ""),
-                skill_name=str(getattr(skill, "name", "") or ""),
-                reason="parse_failed",
-                response=text[:240],
-                missing_params=[name for name in param_names if name not in params],
-                extracted_params=dict(params),
-            )
-        return params
-
-    @staticmethod
-    def _guess_skill_param(task: str, param_name: str) -> str | None:
-        name = param_name.strip().casefold()
-        normalized = " ".join((task or "").split())
-        if not normalized:
-            return None
-        quoted = re.search(r"[“\"']([^”\"']{1,80})[”\"']", normalized)
-        text_like_names = {
-            "search_query",
-            "search_term",
-            "query",
-            "keyword",
-            "title",
-            "subject",
-            "note",
-            "memo",
-            "message",
-            "description",
-            "text",
-            "name",
-            "contact_name",
-            "person",
-            "item",
-        }
-        if quoted is not None and name in text_like_names:
-            return quoted.group(1).strip()
-        if name in {"phone", "phone_number", "mobile", "mobile_phone", "tel", "telephone"}:
-            for pattern in (
-                r"(?:手机号|电话号码|联系电话|电话)\s*(?:是|为|:|：)?\s*([+()0-9][0-9()+\-\s]{5,24})",
-                r"(?:phone|mobile|tel(?:ephone)?)\s*(?:number)?\s*(?:is|:)?\s*([+()0-9][0-9()+\-\s]{5,24})",
-            ):
-                match = re.search(pattern, normalized, flags=re.IGNORECASE)
-                if match is not None:
-                    value = re.sub(r"\s+", "", match.group(1)).strip(".,;，。；")
-                    if value:
-                        return value
-            return None
-        if name in {"amount", "price", "cost", "total", "value", "money"}:
-            for pattern in (
-                r"(?:金额|价格|花费|费用|总额|支出)\s*(?:是|为|:|：)?\s*(?:¥|￥|\$)?\s*([0-9]+(?:\.[0-9]+)?)",
-                r"(?:amount|price|cost|total|value)\s*(?:is|:)?\s*(?:\$)?\s*([0-9]+(?:\.[0-9]+)?)",
-                r"(?:¥|￥|\$)\s*([0-9]+(?:\.[0-9]+)?)",
-            ):
-                match = re.search(pattern, normalized, flags=re.IGNORECASE)
-                if match is not None:
-                    return match.group(1).strip()
-            return None
-        if name in {"date", "day"}:
-            match = re.search(
-                r"(\d{4}[-/年]\d{1,2}[-/月]\d{1,2}日?|\d{1,2}\s*月\s*\d{1,2}\s*(?:日|号)?|\d{1,2}[-/]\d{1,2})",
-                normalized,
-            )
-            return _clean_inferred_param(match.group(1)) if match else None
-        if name in {"time", "clock_time"}:
-            match = re.search(
-                r"(\d{1,2}\s*[:：]\s*\d{2}(?:\s*(?:AM|PM|am|pm))?|\d{1,2}\s*(?:点|时)(?:\s*\d{1,2}\s*分?)?)",
-                normalized,
-            )
-            return _clean_inferred_param(match.group(1)) if match else None
-        if name in {"name", "contact_name", "person"}:
-            for pattern in (
-                r"(?:联系人|姓名|名字)\s*(?:是|为|叫|:|：)?\s*([^，,。.!?；;、]{1,40})",
-                r"(?:named|called|name(?:d)?\s+is)\s+([^,.;]{1,60})",
-            ):
-                match = re.search(pattern, normalized, flags=re.IGNORECASE)
-                if match is not None:
-                    value = _clean_inferred_param(match.group(1))
-                    if value:
-                        return value
-            return None
-        if name in {"city", "location", "destination", "place", "area"}:
-            for pattern in (
-                r"(?:搜索一下|搜一下|搜索|查找|找一下)\s*([^，,。.!?；;、]{2,30}?)(?:周边|附近|的酒店|酒店|民宿)",
-                r"(?:去|到)\s*([^，,。.!?；;、]{2,16}?)(?:附近|周边|住|的|，|,|要)",
-                r"住在\s*([^，,。.!?；;、]{2,16}?)(?:附近|周边|，|,|要)",
-            ):
-                for match in re.finditer(pattern, normalized, flags=re.IGNORECASE):
-                    value = _clean_inferred_param(match.group(1))
-                    if value and not _looks_like_date_param(value):
-                        return value
-            return None
-        if name not in {"search_query", "search_term", "query", "keyword"}:
-            return None
-        account = re.search(r"(?:找一下|找|搜索|搜)\s*([^，,。.!?；;、]{1,30}?)(?:的账号|账号)", normalized)
-        if account is not None:
-            value = _clean_inferred_param(account.group(1))
-            if value:
-                return value
-        for pattern in (
-            r"(?:搜索一下|搜一下|搜索|查找)\s*([^\s，,。.!?；;、]+)",
-            r"(?:search\s+for|search|find)\s*([^\s，,。.!?；;、]+)",
-        ):
-            match = re.search(pattern, normalized, flags=re.IGNORECASE)
-            if match is None:
-                continue
-            value = _clean_inferred_param(match.group(1))
-            if value:
-                return value
-        return None
-
-    async def _skill_maintenance(
-        self, skill_match: Any | None, success: bool
-    ) -> None:
-        """Post-run: update confidence while keeping failed skills evolvable."""
-        if skill_match is None or self._skill_library is None:
-            return
-        if hasattr(skill_match, "layer"):
-            return
-        skill, _ = skill_match
-        if success:
-            updated = replace(
-                skill,
-                success_count=skill.success_count + 1,
-                success_streak=skill.success_streak + 1,
-                failure_streak=0,
-            )
-        else:
-            updated = replace(
-                skill,
-                failure_count=skill.failure_count + 1,
-                failure_streak=skill.failure_streak + 1,
-                success_streak=0,
-            )
-
-        self._skill_library.update(skill.skill_id, updated)
-
 
 def _first_tool_call(model_snapshot: dict[str, Any]) -> dict[str, Any] | None:
     tool_calls = model_snapshot.get("tool_calls")

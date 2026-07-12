@@ -416,7 +416,6 @@ def test_gui_config_defaults() -> None:
     assert config.artifacts_dir == "gui_runs"
     assert config.max_steps == 15
     assert config.stagnation_limit == 0
-    assert config.skill_threshold == pytest.approx(0.6)
     assert config.image_scale_ratio == pytest.approx(0.5)
     assert config.agent_profile is None
 
