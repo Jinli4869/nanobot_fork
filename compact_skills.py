@@ -1,4 +1,4 @@
-from opengui.skills.flat import C, R, action, skill, tag
+from guiclaw.skills.flat import C, R, action, skill, tag
 
 
 @skill(app='com.android.settings', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.settings:navigate_to_display_size_and_text', name='navigate_to_display_size_and_text', description='Navigate to the Display size and text settings page within the Android system settings application.', created_at=1782831642.0960736, success_count=2, success_streak=2)

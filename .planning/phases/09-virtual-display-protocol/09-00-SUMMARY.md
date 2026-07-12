@@ -21,8 +21,8 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p9_virtual_display.py
-    - tests/test_opengui_p9_xvfb.py
+    - tests/test_guiclaw_p9_virtual_display.py
+    - tests/test_guiclaw_p9_xvfb.py
   modified: []
 
 key-decisions:
@@ -55,8 +55,8 @@ completed: 2026-03-20
 
 ## Accomplishments
 
-- Created `tests/test_opengui_p9_virtual_display.py` with 9 xfail stubs covering VDISP-01 (protocol), VDISP-02 (DisplayInfo), and VDISP-03 (NoOpDisplayManager)
-- Created `tests/test_opengui_p9_xvfb.py` with 12 skip/xfail stubs covering VDISP-04 (XvfbDisplayManager error paths and lifecycle)
+- Created `tests/test_guiclaw_p9_virtual_display.py` with 9 xfail stubs covering VDISP-01 (protocol), VDISP-02 (DisplayInfo), and VDISP-03 (NoOpDisplayManager)
+- Created `tests/test_guiclaw_p9_xvfb.py` with 12 skip/xfail stubs covering VDISP-04 (XvfbDisplayManager error paths and lifecycle)
 - All 21 tests run clean: 9 xfailed + 12 skipped — zero errors, zero unexpected failures
 
 ## Task Commits
@@ -67,12 +67,12 @@ completed: 2026-03-20
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p9_virtual_display.py` - 9 xfail stubs for protocol importability, DisplayInfo fields/defaults/frozen, and NoOpDisplayManager start/stop behaviour
-- `tests/test_opengui_p9_xvfb.py` - 12 skip/xfail stubs for XvfbDisplayManager isinstance check, start/stop lifecycle, error types, auto-increment display selection, and crash detection
+- `tests/test_guiclaw_p9_virtual_display.py` - 9 xfail stubs for protocol importability, DisplayInfo fields/defaults/frozen, and NoOpDisplayManager start/stop behaviour
+- `tests/test_guiclaw_p9_xvfb.py` - 12 skip/xfail stubs for XvfbDisplayManager isinstance check, start/stop lifecycle, error types, auto-increment display selection, and crash detection
 
 ## Decisions Made
 
-- Used direct imports (without guard) in the virtual_display test file because `opengui/backends/virtual_display.py` already exists with the required classes at Wave-0 time.
+- Used direct imports (without guard) in the virtual_display test file because `guiclaw/backends/virtual_display.py` already exists with the required classes at Wave-0 time.
 - Used guarded `try/except` imports in the xvfb test file because `XvfbNotFoundError` and `XvfbCrashedError` are not defined until Plan 02 Task 1 — the guard plus `pytestmark` `skipif` prevents collection errors.
 - Applied `pytestmark` (module-level) for xvfb tests instead of per-function decorators, which cleanly combines `skipif` and `xfail` in one place.
 
@@ -87,8 +87,8 @@ None - plan executed exactly as written. Test stub files were created in the pri
 ## Next Phase Readiness
 
 - Wave-0 scaffolding complete: Plans 01 and 02 can now replace stubs with real assertions without creating test files from scratch
-- `tests/test_opengui_p9_virtual_display.py` ready for Plan 01 to fill in protocol/DisplayInfo/NoOp assertions
-- `tests/test_opengui_p9_xvfb.py` ready for Plan 02 to fill in XvfbDisplayManager assertions once error types are defined
+- `tests/test_guiclaw_p9_virtual_display.py` ready for Plan 01 to fill in protocol/DisplayInfo/NoOp assertions
+- `tests/test_guiclaw_p9_xvfb.py` ready for Plan 02 to fill in XvfbDisplayManager assertions once error types are defined
 
 ---
 *Phase: 09-virtual-display-protocol*

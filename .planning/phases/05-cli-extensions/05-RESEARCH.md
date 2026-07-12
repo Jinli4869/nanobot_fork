@@ -1,7 +1,7 @@
 # Phase 5: CLI & Extensions - Research
 
 **Researched:** 2026-03-18
-**Domain:** Standalone `opengui` CLI wiring, OpenAI-compatible provider bridge, adapter documentation
+**Domain:** Standalone `guiclaw` CLI wiring, OpenAI-compatible provider bridge, adapter documentation
 **Confidence:** HIGH (phase boundary and integration seams verified against current codebase; only new dependency need is YAML parsing)
 
 ---
@@ -11,15 +11,15 @@
 
 ### Locked Decisions
 
-- Entry point is `python -m opengui.cli` via `opengui/cli.py` plus `opengui/__main__.py`
+- Entry point is `python -m guiclaw.cli` via `guiclaw/cli.py` plus `guiclaw/__main__.py`
 - Task can be passed positionally or with `--task`
 - Backend flags are minimal: `--backend adb|local|dry-run`, `--dry-run`, `--json`, `--config`
 - Default backend is `local`
-- LLM settings live in `~/.opengui/config.yaml`, overridable with `--config`
+- LLM settings live in `~/.guiclaw/config.yaml`, overridable with `--config`
 - `OPENAI_API_KEY` is the fallback if the config omits `api_key`
 - CLI uses its own OpenAI-compatible `LLMProvider` implementation
 - Memory and skills are optional and only enabled when embedding config is present
-- Run artifacts are written under `./opengui_runs/{timestamp}/`
+- Run artifacts are written under `./guiclaw_runs/{timestamp}/`
 - Adapter documentation lives in a separate repo-root `ADAPTERS.md`
 - Documentation must explain `LLMProvider` / `DeviceBackend` and reference `NanobotLLMAdapter`
 
@@ -27,7 +27,7 @@
 
 - YAML schema details for CLI config
 - Exact default `max_steps`
-- Whether the OpenAI-compatible provider helper lives in `opengui/cli.py` or a small adjacent helper module
+- Whether the OpenAI-compatible provider helper lives in `guiclaw/cli.py` or a small adjacent helper module
 - Exact progress log format
 - Whether to add one short adapter-oriented comment/docstring in code in addition to `ADAPTERS.md`
 
@@ -46,15 +46,15 @@
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| CLI-01 | `python -m opengui.cli` standalone entry point | `GuiAgent`, backends, trajectory recorder, and prompt loop are already production code; only CLI/config/provider wiring is missing |
-| EXT-01 | Document adapter pattern for other claw hosts | `opengui.interfaces` defines the two protocols cleanly and `nanobot/agent/gui_adapter.py` is an existing real adapter reference |
+| CLI-01 | `python -m guiclaw.cli` standalone entry point | `GuiAgent`, backends, trajectory recorder, and prompt loop are already production code; only CLI/config/provider wiring is missing |
+| EXT-01 | Document adapter pattern for other claw hosts | `guiclaw.interfaces` defines the two protocols cleanly and `nanobot/agent/gui_adapter.py` is an existing real adapter reference |
 </phase_requirements>
 
 ---
 
 ## Summary
 
-Phase 5 is mostly orchestration, not new core logic. The key finding is that the `opengui` runtime pieces already exist and are stable:
+Phase 5 is mostly orchestration, not new core logic. The key finding is that the `guiclaw` runtime pieces already exist and are stable:
 
 - `GuiAgent` already exposes the full constructor seam the CLI needs: `llm`, `backend`, `trajectory_recorder`, optional `memory_retriever`, optional `skill_library`, optional `skill_executor`, and `progress_callback`
 - `AdbBackend`, `LocalDesktopBackend`, and `DryRunBackend` are already available and selected entirely in Python
@@ -63,9 +63,9 @@ Phase 5 is mostly orchestration, not new core logic. The key finding is that the
 
 The missing pieces are:
 
-1. A standalone CLI surface in `opengui`
+1. A standalone CLI surface in `guiclaw`
 2. A config loader independent from nanobot
-3. An OpenAI-compatible `LLMProvider` implementation in `opengui`
+3. An OpenAI-compatible `LLMProvider` implementation in `guiclaw`
 4. Optional embedding-backed memory/skill wiring
 5. Adapter documentation that satisfies both the roadmap requirement and the context decision
 
@@ -98,12 +98,12 @@ The cleanest plan split is:
 
 | File | Why it matters |
 |------|----------------|
-| `opengui/agent.py` | Exact constructor and progress-callback contract the CLI must honor |
-| `opengui/interfaces.py` | Source of truth for `LLMProvider`, `DeviceBackend`, `ToolCall`, and `LLMResponse` |
-| `opengui/backends/adb.py` | Factory target for `--backend adb` |
-| `opengui/backends/desktop.py` | Factory target for `--backend local` |
-| `opengui/backends/dry_run.py` | Fast automated CLI integration path |
-| `opengui/trajectory/recorder.py` | Artifact and JSONL recording behavior |
+| `guiclaw/agent.py` | Exact constructor and progress-callback contract the CLI must honor |
+| `guiclaw/interfaces.py` | Source of truth for `LLMProvider`, `DeviceBackend`, `ToolCall`, and `LLMResponse` |
+| `guiclaw/backends/adb.py` | Factory target for `--backend adb` |
+| `guiclaw/backends/desktop.py` | Factory target for `--backend local` |
+| `guiclaw/backends/dry_run.py` | Fast automated CLI integration path |
+| `guiclaw/trajectory/recorder.py` | Artifact and JSONL recording behavior |
 | `nanobot/providers/custom_provider.py` | Best local reference for an OpenAI-compatible provider bridge |
 | `nanobot/agent/gui_adapter.py` | Best local reference for adapter documentation |
 
@@ -111,7 +111,7 @@ The cleanest plan split is:
 
 | Existing code | Why not |
 |---------------|---------|
-| `nanobot.config.*` | Pulls `opengui` back into nanobot conventions; Phase 5 should keep `opengui` usable without nanobot |
+| `nanobot.config.*` | Pulls `guiclaw` back into nanobot conventions; Phase 5 should keep `guiclaw` usable without nanobot |
 | `nanobot.providers.*` | Same dependency-direction problem; use as reference, not as runtime dependency |
 | `typer`-based nanobot CLI patterns | Overkill for the locked minimal CLI surface |
 
@@ -119,13 +119,13 @@ The cleanest plan split is:
 
 ## Architecture Patterns
 
-### Pattern 1: Keep `opengui` Independent
+### Pattern 1: Keep `guiclaw` Independent
 
 The CLI must not import nanobot config or provider classes at runtime. The only acceptable dependency direction is:
 
 ```text
-opengui -> opengui
-nanobot -> opengui
+guiclaw -> guiclaw
+nanobot -> guiclaw
 ```
 
 `nanobot/agent/gui_adapter.py` is documentation input, not an implementation dependency.
@@ -136,7 +136,7 @@ The CLI should assemble components, then hand execution to `GuiAgent.run()`:
 
 ```python
 backend = build_backend(args, config)
-run_root = Path("opengui_runs") / timestamp
+run_root = Path("guiclaw_runs") / timestamp
 recorder = TrajectoryRecorder(output_dir=run_root, task=task, platform=backend.platform)
 agent = GuiAgent(
     llm=provider,
@@ -155,7 +155,7 @@ This is the correct abstraction boundary: the CLI owns configuration and present
 
 ### Pattern 3: Provider Bridge Mirrors `nanobot/providers/custom_provider.py`
 
-`opengui.interfaces.LLMProvider` is smaller than nanobot's provider interface:
+`guiclaw.interfaces.LLMProvider` is smaller than nanobot's provider interface:
 
 - `chat(messages, tools=None, tool_choice=None) -> LLMResponse`
 
@@ -163,9 +163,9 @@ The Phase 5 provider should:
 
 - use `AsyncOpenAI(base_url=..., api_key=...)`
 - pass through tools and `tool_choice`
-- parse provider tool calls into `opengui.interfaces.ToolCall`
+- parse provider tool calls into `guiclaw.interfaces.ToolCall`
 - use `json_repair.loads()` for tool arguments
-- return `opengui.interfaces.LLMResponse`
+- return `guiclaw.interfaces.LLMResponse`
 
 This is a direct parallel to `NanobotLLMAdapter`, except the provider talks to an OpenAI-compatible HTTP endpoint instead of adapting nanobot's provider ABC.
 
@@ -202,7 +202,7 @@ There is a small requirement/context mismatch:
 The safe implementation is:
 
 1. `ADAPTERS.md` contains the real explanation and skeleton example
-2. `opengui/interfaces.py` or `opengui/cli.py` gets a short pointer comment/docstring that references `ADAPTERS.md`
+2. `guiclaw/interfaces.py` or `guiclaw/cli.py` gets a short pointer comment/docstring that references `ADAPTERS.md`
 
 That satisfies both without bloating code comments.
 
@@ -211,20 +211,20 @@ That satisfies both without bloating code comments.
 ## Recommended Project Structure
 
 ```text
-opengui/
+guiclaw/
 ├── __main__.py              # delegates to cli.main()
 ├── cli.py                   # argparse + config + provider/backend assembly
 ├── interfaces.py            # small adapter-pattern note or docstring pointer
 └── ...existing modules...
 ADAPTERS.md                  # new adapter documentation
 tests/
-└── test_opengui_p5_cli.py   # new Phase 5 tests
+└── test_guiclaw_p5_cli.py   # new Phase 5 tests
 ```
 
 Possible helper split if `cli.py` gets too large:
 
 ```text
-opengui/
+guiclaw/
 ├── cli.py
 ├── cli_provider.py          # OpenAI-compatible provider + embedding adapter
 └── cli_config.py            # YAML loader/dataclasses
@@ -248,9 +248,9 @@ This is acceptable if the planner decides the single-file CLI would become too d
 
 ## Common Pitfalls
 
-### Pitfall 1: Pulling Nanobot Runtime Code Into `opengui`
+### Pitfall 1: Pulling Nanobot Runtime Code Into `guiclaw`
 
-This would violate the core architectural boundary that `opengui` is host-agent-independent. Use nanobot files as reference material only.
+This would violate the core architectural boundary that `guiclaw` is host-agent-independent. Use nanobot files as reference material only.
 
 ### Pitfall 2: Forgetting the YAML Dependency
 
@@ -283,7 +283,7 @@ Current build config includes only selected root files. If packaged source distr
 ### `GuiAgent` seam the CLI should target
 
 ```python
-# Source: opengui/agent.py
+# Source: guiclaw/agent.py
 agent = GuiAgent(
     llm=provider,
     backend=backend,
@@ -322,7 +322,7 @@ return LLMResponse(content=response.choices[0].message.content or "", tool_calls
 ### `__main__` delegation pattern
 
 ```python
-from opengui.cli import main
+from guiclaw.cli import main
 
 if __name__ == "__main__":
     main()
@@ -340,9 +340,9 @@ if __name__ == "__main__":
 
 | Old state | Current state | Impact on Phase 5 |
 |-----------|---------------|-------------------|
-| No `opengui` CLI entry point | Only nanobot has a first-class CLI | Phase 5 is the first direct user-facing surface for `opengui` |
-| Host integration via nanobot only | Protocol-first architecture already exists in `opengui.interfaces` | Other claw hosts can be documented without changing core protocols |
-| Config conventions live in nanobot JSON | Phase 5 intentionally chooses `~/.opengui/config.yaml` | `opengui` gets an independent user-facing configuration story |
+| No `guiclaw` CLI entry point | Only nanobot has a first-class CLI | Phase 5 is the first direct user-facing surface for `guiclaw` |
+| Host integration via nanobot only | Protocol-first architecture already exists in `guiclaw.interfaces` | Other claw hosts can be documented without changing core protocols |
+| Config conventions live in nanobot JSON | Phase 5 intentionally chooses `~/.guiclaw/config.yaml` | `guiclaw` gets an independent user-facing configuration story |
 
 ---
 
@@ -350,15 +350,15 @@ if __name__ == "__main__":
 
 1. **Where should optional memory and skill stores live by default?**
    - The context locks artifact output but does not lock memory/skill directories.
-   - Recommendation: either add explicit config keys for those paths or default to `~/.opengui/memory/` and `~/.opengui/skills/`.
+   - Recommendation: either add explicit config keys for those paths or default to `~/.guiclaw/memory/` and `~/.guiclaw/skills/`.
 
 2. **Should `ADAPTERS.md` be shipped in sdists?**
    - If the docs are only for repo contributors, root file is enough.
    - If packaged consumers are in scope, update the hatch sdist include list.
 
 3. **Should Phase 5 add a console script too?**
-   - Not required. `python -m opengui.cli` is sufficient for the roadmap.
-   - `python -m opengui` via `__main__.py` is still worthwhile because the context asked for it and it is nearly free.
+   - Not required. `python -m guiclaw.cli` is sufficient for the roadmap.
+   - `python -m guiclaw` via `__main__.py` is still worthwhile because the context asked for it and it is nearly free.
 
 4. **How much config schema should be exposed now?**
    - Locked flags are minimal, but the YAML can still include optional fields for embeddings, memory path, skills path, and model name.
@@ -374,38 +374,38 @@ if __name__ == "__main__":
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio |
 | Config file | `pyproject.toml` `[tool.pytest.ini_options]` |
-| Quick run command | `pytest tests/test_opengui_p5_cli.py -x -q` |
+| Quick run command | `pytest tests/test_guiclaw_p5_cli.py -x -q` |
 | Full suite command | `pytest tests/ -x -q` |
 
 ### Phase Requirements → Test Map
 
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| CLI-01 | CLI parses `--backend`, `--dry-run`, positional task, and `--task` correctly | unit | `pytest tests/test_opengui_p5_cli.py::test_cli_parses_task_and_backend_flags -x` | ❌ Wave 0 |
-| CLI-01 | config loader reads YAML and falls back to `OPENAI_API_KEY` when `api_key` is omitted | unit | `pytest tests/test_opengui_p5_cli.py::test_load_config_env_fallback -x` | ❌ Wave 0 |
-| CLI-01 | backend factory returns `AdbBackend`, `LocalDesktopBackend`, and `DryRunBackend` for the three modes | unit | `pytest tests/test_opengui_p5_cli.py::test_build_backend_variants -x` | ❌ Wave 0 |
-| CLI-01 | CLI runner instantiates `GuiAgent` and prints human-readable output for a successful dry-run | integration | `pytest tests/test_opengui_p5_cli.py::test_cli_runs_dry_run_agent_loop -x` | ❌ Wave 0 |
-| CLI-01 | `--json` prints machine-readable `AgentResult` fields | integration | `pytest tests/test_opengui_p5_cli.py::test_cli_json_output -x` | ❌ Wave 0 |
-| CLI-01 | `opengui/__main__.py` delegates to CLI main | unit | `pytest tests/test_opengui_p5_cli.py::test_package_main_delegates_to_cli -x` | ❌ Wave 0 |
-| EXT-01 | `ADAPTERS.md` names `LLMProvider`, `DeviceBackend`, includes a skeleton adapter, and references `NanobotLLMAdapter` | docs | `pytest tests/test_opengui_p5_cli.py::test_adapters_doc_contains_required_sections -x` | ❌ Wave 0 |
-| EXT-01 | code comment or docstring points developers from code to the adapter docs | docs | `pytest tests/test_opengui_p5_cli.py::test_adapter_pointer_exists_in_code -x` | ❌ Wave 0 |
+| CLI-01 | CLI parses `--backend`, `--dry-run`, positional task, and `--task` correctly | unit | `pytest tests/test_guiclaw_p5_cli.py::test_cli_parses_task_and_backend_flags -x` | ❌ Wave 0 |
+| CLI-01 | config loader reads YAML and falls back to `OPENAI_API_KEY` when `api_key` is omitted | unit | `pytest tests/test_guiclaw_p5_cli.py::test_load_config_env_fallback -x` | ❌ Wave 0 |
+| CLI-01 | backend factory returns `AdbBackend`, `LocalDesktopBackend`, and `DryRunBackend` for the three modes | unit | `pytest tests/test_guiclaw_p5_cli.py::test_build_backend_variants -x` | ❌ Wave 0 |
+| CLI-01 | CLI runner instantiates `GuiAgent` and prints human-readable output for a successful dry-run | integration | `pytest tests/test_guiclaw_p5_cli.py::test_cli_runs_dry_run_agent_loop -x` | ❌ Wave 0 |
+| CLI-01 | `--json` prints machine-readable `AgentResult` fields | integration | `pytest tests/test_guiclaw_p5_cli.py::test_cli_json_output -x` | ❌ Wave 0 |
+| CLI-01 | `guiclaw/__main__.py` delegates to CLI main | unit | `pytest tests/test_guiclaw_p5_cli.py::test_package_main_delegates_to_cli -x` | ❌ Wave 0 |
+| EXT-01 | `ADAPTERS.md` names `LLMProvider`, `DeviceBackend`, includes a skeleton adapter, and references `NanobotLLMAdapter` | docs | `pytest tests/test_guiclaw_p5_cli.py::test_adapters_doc_contains_required_sections -x` | ❌ Wave 0 |
+| EXT-01 | code comment or docstring points developers from code to the adapter docs | docs | `pytest tests/test_guiclaw_p5_cli.py::test_adapter_pointer_exists_in_code -x` | ❌ Wave 0 |
 
 ### Manual-Only Verifications
 
 | Behavior | Requirement | Why manual | Test instructions |
 |----------|-------------|------------|-------------------|
-| `python -m opengui.cli --backend adb --task "Open Settings"` runs a real agent loop | CLI-01 SC1 | Needs an actual Android device / emulator and configured model endpoint | Configure `~/.opengui/config.yaml`, connect ADB device, run the command, verify non-error result and generated trace directory |
-| `python -m opengui.cli --backend local --task "Open Chrome"` runs on the local desktop | CLI-01 SC2 | Needs a real desktop session and Accessibility permissions | Configure local backend run, execute the command on macOS/Linux/Windows, verify the agent loop completes and artifacts are written |
+| `python -m guiclaw.cli --backend adb --task "Open Settings"` runs a real agent loop | CLI-01 SC1 | Needs an actual Android device / emulator and configured model endpoint | Configure `~/.guiclaw/config.yaml`, connect ADB device, run the command, verify non-error result and generated trace directory |
+| `python -m guiclaw.cli --backend local --task "Open Chrome"` runs on the local desktop | CLI-01 SC2 | Needs a real desktop session and Accessibility permissions | Configure local backend run, execute the command on macOS/Linux/Windows, verify the agent loop completes and artifacts are written |
 
 ### Sampling Rate
 
-- After every task commit: `pytest tests/test_opengui_p5_cli.py -x -q`
+- After every task commit: `pytest tests/test_guiclaw_p5_cli.py -x -q`
 - After every plan wave: `pytest tests/ -x -q`
 - Before verification: full suite must be green
 
 ### Wave 0 Gaps
 
-- [ ] `tests/test_opengui_p5_cli.py` with parsing, config, backend-factory, dry-run integration, JSON output, and docs assertions
+- [ ] `tests/test_guiclaw_p5_cli.py` with parsing, config, backend-factory, dry-run integration, JSON output, and docs assertions
 - [ ] Runtime YAML dependency added to `pyproject.toml`
 - [ ] Clear fake provider / monkeypatch strategy for CLI integration tests
 
@@ -415,28 +415,28 @@ if __name__ == "__main__":
 
 Local codebase sources inspected:
 
-- `opengui/interfaces.py`
-- `opengui/agent.py`
-- `opengui/prompts/system.py`
-- `opengui/backends/adb.py`
-- `opengui/backends/desktop.py`
-- `opengui/backends/dry_run.py`
-- `opengui/memory/store.py`
-- `opengui/memory/retrieval.py`
-- `opengui/skills/library.py`
-- `opengui/skills/executor.py`
-- `opengui/trajectory/recorder.py`
-- `opengui/__init__.py`
+- `guiclaw/interfaces.py`
+- `guiclaw/agent.py`
+- `guiclaw/prompts/system.py`
+- `guiclaw/backends/adb.py`
+- `guiclaw/backends/desktop.py`
+- `guiclaw/backends/dry_run.py`
+- `guiclaw/memory/store.py`
+- `guiclaw/memory/retrieval.py`
+- `guiclaw/skills/library.py`
+- `guiclaw/skills/executor.py`
+- `guiclaw/trajectory/recorder.py`
+- `guiclaw/__init__.py`
 - `nanobot/agent/gui_adapter.py`
 - `nanobot/agent/tools/gui.py`
 - `nanobot/providers/custom_provider.py`
 - `nanobot/config/loader.py`
 - `nanobot/config/schema.py`
 - `pyproject.toml`
-- `tests/test_opengui.py`
-- `tests/test_opengui_p2_memory.py`
-- `tests/test_opengui_p3_nanobot.py`
-- `tests/test_opengui_p4_desktop.py`
+- `tests/test_guiclaw.py`
+- `tests/test_guiclaw_p2_memory.py`
+- `tests/test_guiclaw_p3_nanobot.py`
+- `tests/test_guiclaw_p4_desktop.py`
 
 ---
 

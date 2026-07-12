@@ -41,7 +41,7 @@
 - Turned `tool` and `mcp` planner nodes into real executable routes with fallback behavior.
 - Improved mixed-capability planning so GUI is no longer the only default path.
 
-## v1.5 New OpenGUI Skills Architecture (Shipped: 2026-04-02)
+## v1.5 New GUIClaw Skills Architecture (Shipped: 2026-04-02)
 
 **Phases completed:** 4 phases, 9 plans
 

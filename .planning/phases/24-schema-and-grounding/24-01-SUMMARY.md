@@ -2,29 +2,29 @@
 phase: 24-schema-and-grounding
 plan: "01"
 subsystem: skills
-tags: [opengui, skills, dataclasses, serialization, shortcut-skill]
+tags: [guiclaw, skills, dataclasses, serialization, shortcut-skill]
 requires: []
 provides:
   - shortcut-layer state descriptor schema
   - typed parameter slot contract for runtime grounding
   - ShortcutSkill round-trip serialization and package exports
-affects: [phase-25, phase-26, phase-27, opengui.skills]
+affects: [phase-25, phase-26, phase-27, guiclaw.skills]
 tech-stack:
   added: []
   patterns: [frozen dataclasses, manual to_dict/from_dict, tuple-backed schema fields]
 key-files:
   created:
-    - opengui/skills/shortcut.py
-    - tests/test_opengui_p24_schema_grounding.py
+    - guiclaw/skills/shortcut.py
+    - tests/test_guiclaw_p24_schema_grounding.py
   modified:
-    - opengui/skills/__init__.py
-    - tests/test_opengui_p1_skills.py
+    - guiclaw/skills/__init__.py
+    - tests/test_guiclaw_p1_skills.py
 key-decisions:
   - "ShortcutSkill reuses the legacy SkillStep type so Phase 24 adds schema without disturbing the existing executor path."
   - "StateDescriptor omits negated from serialized output when false to stay compact while preserving round-trip fidelity."
 patterns-established:
-  - "New shortcut-layer contracts follow the same frozen dataclass plus manual serializer style as opengui.skills.data."
-  - "Package-level exports in opengui.skills can expand with new schema types while preserving legacy Skill and SkillStep imports."
+  - "New shortcut-layer contracts follow the same frozen dataclass plus manual serializer style as guiclaw.skills.data."
+  - "Package-level exports in guiclaw.skills can expand with new schema types while preserving legacy Skill and SkillStep imports."
 requirements-completed: [SCHEMA-01, SCHEMA-02]
 duration: 2min
 completed: 2026-04-02
@@ -44,7 +44,7 @@ completed: 2026-04-02
 
 ## Accomplishments
 - Added `StateDescriptor`, `ParameterSlot`, and `ShortcutSkill` as frozen stdlib dataclasses with explicit JSON-friendly serializers.
-- Exported the new shortcut-layer schema from `opengui.skills` without removing the legacy `Skill` and `SkillStep` surface.
+- Exported the new shortcut-layer schema from `guiclaw.skills` without removing the legacy `Skill` and `SkillStep` surface.
 - Added Phase 24 round-trip tests plus a compatibility import assertion in the legacy P1 skill seam.
 
 ## Task Commits
@@ -55,14 +55,14 @@ Each task was committed atomically:
 2. **Task 2: Implement `shortcut.py` and export the new shortcut-layer schema** - `d5982d0` (feat)
 
 ## Files Created/Modified
-- `opengui/skills/shortcut.py` - Shortcut-layer schema primitives and `ShortcutSkill` serializer contract.
-- `opengui/skills/__init__.py` - Public exports for the new shortcut schema alongside legacy types.
-- `tests/test_opengui_p24_schema_grounding.py` - Phase 24 round-trip and export coverage.
-- `tests/test_opengui_p1_skills.py` - Legacy import compatibility assertion for mixed package exports.
+- `guiclaw/skills/shortcut.py` - Shortcut-layer schema primitives and `ShortcutSkill` serializer contract.
+- `guiclaw/skills/__init__.py` - Public exports for the new shortcut schema alongside legacy types.
+- `tests/test_guiclaw_p24_schema_grounding.py` - Phase 24 round-trip and export coverage.
+- `tests/test_guiclaw_p1_skills.py` - Legacy import compatibility assertion for mixed package exports.
 
 ## Decisions Made
 - Reused `SkillStep` inside `ShortcutSkill.steps` so downstream phases can adopt the new schema without forking the existing atomic step contract.
-- Kept tuple-backed fields in memory and converted them to lists only at serialization boundaries to match existing OpenGUI model patterns.
+- Kept tuple-backed fields in memory and converted them to lists only at serialization boundaries to match existing GUIClaw model patterns.
 
 ## Deviations from Plan
 

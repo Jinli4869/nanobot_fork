@@ -33,7 +33,7 @@ The central architectural challenge is instruction-to-parameters translation. Th
 | `nanobot.agent.tools.registry.ToolRegistry` | repo current | Registry for all local and MCP tools | Already in `RouterContext`; `execute(name, params)` is the dispatch surface |
 | `nanobot.agent.planner.PlanNode` | repo current | Carries `route_id`, `capability`, `fallback_route_ids` | Schema established in Phase 21; no schema changes needed in Phase 22 |
 | `nanobot.agent.capabilities.CapabilityCatalog` | repo current | Route ID → capability metadata | Used in Phase 21; Phase 22 uses route_ids as keys for resolver lookup |
-| `pytest` + `pytest-asyncio` | repo current | Test framework | Existing coverage in `test_opengui_p8_planning.py`; Phase 22 adds new file |
+| `pytest` + `pytest-asyncio` | repo current | Test framework | Existing coverage in `test_guiclaw_p8_planning.py`; Phase 22 adds new file |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
@@ -66,8 +66,8 @@ nanobot/agent/
 └── planning_memory.py   # NO CHANGE: hint extraction complete from Phase 21
 
 tests/
-├── test_opengui_p8_planning.py        # MODIFY: assert real dispatch replaces placeholders
-└── test_opengui_p22_route_dispatch.py # NEW: route resolver, tool dispatch, MCP dispatch, fallback, logging
+├── test_guiclaw_p8_planning.py        # MODIFY: assert real dispatch replaces placeholders
+└── test_guiclaw_p22_route_dispatch.py # NEW: route resolver, tool dispatch, MCP dispatch, fallback, logging
 ```
 
 ### Pattern 1: Route ID to Registry Tool Name Resolution
@@ -373,7 +373,7 @@ _INSTRUCTION_FRIENDLY_ROUTES: dict[str, str] = {
 - Update `_dispatch_atom` to pass `node` (not `node.instruction`) to these methods
 - Add structured logging for `planned_route`, `resolved_route`, `fallback_taken`
 - Keep dispatch logic minimal: if route resolves → call registry → return result. No fallback chain yet (that's 22-02).
-- Wave 0 gap: `tests/test_opengui_p22_route_dispatch.py` with failing tests for resolver and basic dispatch
+- Wave 0 gap: `tests/test_guiclaw_p22_route_dispatch.py` with failing tests for resolver and basic dispatch
 
 ### 22-02: Fallback Handling And Observability
 **Scope:**
@@ -408,29 +408,29 @@ _INSTRUCTION_FRIENDLY_ROUTES: dict[str, str] = {
 |----------|-------|
 | Framework | `pytest >=9.0.0,<10.0.0` + `pytest-asyncio >=1.3.0,<2.0.0` |
 | Config file | `pyproject.toml` |
-| Quick run command | `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_opengui_p22_route_dispatch.py` |
+| Quick run command | `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_guiclaw_p22_route_dispatch.py` |
 | Full suite command | `uv run pytest` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| CAP-03 | `_run_tool` no longer returns placeholder; calls `ToolRegistry.execute()` with resolved tool name and instruction param | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "tool_dispatch"` | ❌ Wave 0 |
-| CAP-03 | Route ID `tool.exec_shell` resolves to tool name `exec` and param key `command` | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "route_resolver"` | ❌ Wave 0 |
-| CAP-03 | `tool` atom with `route_id=None` returns structured failure, not placeholder success | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "no_route_id"` | ❌ Wave 0 |
-| CAP-04 | `_run_mcp` resolves `mcp.{server}.{tool}` to registry key `mcp_{server}_{tool}` and calls `execute()` | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "mcp_dispatch"` | ❌ Wave 0 |
-| CAP-04 | When primary MCP route unavailable, `fallback_route_ids` are tried in order | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "fallback"` | ❌ Wave 0 |
-| CAP-04 | `gui.desktop` in `fallback_route_ids` delegates to `_run_gui` when other routes fail | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "gui_fallback"` | ❌ Wave 0 |
-| CAP-03/04 | Logs contain `planned_route=`, `resolved_route=`, and `fallback_taken=` entries | unit | `uv run pytest -q tests/test_opengui_p22_route_dispatch.py -k "logging"` | ❌ Wave 0 |
-| CAP-03 | Existing Phase 8 `_run_tool` placeholder tests updated to assert real dispatch | regression | `uv run pytest -q tests/test_opengui_p8_planning.py` | ✅ (update needed) |
+| CAP-03 | `_run_tool` no longer returns placeholder; calls `ToolRegistry.execute()` with resolved tool name and instruction param | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "tool_dispatch"` | ❌ Wave 0 |
+| CAP-03 | Route ID `tool.exec_shell` resolves to tool name `exec` and param key `command` | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "route_resolver"` | ❌ Wave 0 |
+| CAP-03 | `tool` atom with `route_id=None` returns structured failure, not placeholder success | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "no_route_id"` | ❌ Wave 0 |
+| CAP-04 | `_run_mcp` resolves `mcp.{server}.{tool}` to registry key `mcp_{server}_{tool}` and calls `execute()` | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "mcp_dispatch"` | ❌ Wave 0 |
+| CAP-04 | When primary MCP route unavailable, `fallback_route_ids` are tried in order | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "fallback"` | ❌ Wave 0 |
+| CAP-04 | `gui.desktop` in `fallback_route_ids` delegates to `_run_gui` when other routes fail | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "gui_fallback"` | ❌ Wave 0 |
+| CAP-03/04 | Logs contain `planned_route=`, `resolved_route=`, and `fallback_taken=` entries | unit | `uv run pytest -q tests/test_guiclaw_p22_route_dispatch.py -k "logging"` | ❌ Wave 0 |
+| CAP-03 | Existing Phase 8 `_run_tool` placeholder tests updated to assert real dispatch | regression | `uv run pytest -q tests/test_guiclaw_p8_planning.py` | ✅ (update needed) |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_opengui_p22_route_dispatch.py`
-- **Per wave merge:** `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_opengui_p21_planner_context.py tests/test_opengui_p22_route_dispatch.py`
+- **Per task commit:** `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_guiclaw_p22_route_dispatch.py`
+- **Per wave merge:** `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_guiclaw_p21_planner_context.py tests/test_guiclaw_p22_route_dispatch.py`
 - **Phase gate:** `uv run pytest` (full suite, currently 869 passing)
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p22_route_dispatch.py` — route resolver, tool dispatch, MCP dispatch, fallback chain, GUI fallback, and logging coverage
-- [ ] Update `tests/test_opengui_p8_planning.py` — remove assumptions about placeholder return values in tool/MCP dispatch
+- [ ] `tests/test_guiclaw_p22_route_dispatch.py` — route resolver, tool dispatch, MCP dispatch, fallback chain, GUI fallback, and logging coverage
+- [ ] Update `tests/test_guiclaw_p8_planning.py` — remove assumptions about placeholder return values in tool/MCP dispatch
 
 *(No new framework install needed — existing pytest + pytest-asyncio infrastructure covers all Phase 22 tests.)*
 
@@ -445,7 +445,7 @@ _INSTRUCTION_FRIENDLY_ROUTES: dict[str, str] = {
 - `nanobot/agent/tools/shell.py` — `ExecTool` parameter schema (`command` is primary param)
 - `nanobot/agent/tools/filesystem.py` — filesystem tool schemas (read_file, write_file, etc.)
 - `nanobot/agent/loop.py` — `_plan_and_execute()` shows `mcp_client=self.tools` (same as tool_registry)
-- `tests/test_opengui_p8_planning.py` — existing router/planner test coverage to preserve
+- `tests/test_guiclaw_p8_planning.py` — existing router/planner test coverage to preserve
 - `.planning/ROADMAP.md` — Phase 22 plan descriptions and success criteria
 - `docs/plans/2026-03-22-capability-aware-planner-routing-design.md` — design intent for route-aware dispatch
 - `.planning/REQUIREMENTS.md` — CAP-03 and CAP-04 definitions

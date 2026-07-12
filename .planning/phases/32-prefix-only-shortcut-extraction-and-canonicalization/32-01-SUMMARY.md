@@ -16,7 +16,7 @@ tech-stack:
   patterns: ["canonicalize -> reusable prefix -> extract", "richest-evidence duplicate retention"]
 key-files:
   created: [.planning/phases/32-prefix-only-shortcut-extraction-and-canonicalization/32-01-SUMMARY.md]
-  modified: [opengui/skills/shortcut_promotion.py, tests/test_opengui_p28_shortcut_productionization.py]
+  modified: [guiclaw/skills/shortcut_promotion.py, tests/test_guiclaw_p28_shortcut_productionization.py]
 key-decisions:
   - "Canonicalization stays in ShortcutPromotionPipeline so extraction and store merge receive already-cleaned step rows."
   - "Reusable-prefix truncation now cuts on non-templated payload entry and commit/branch hints instead of broad long-horizon waits."
@@ -54,8 +54,8 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 - `.planning/phases/32-prefix-only-shortcut-extraction-and-canonicalization/32-01-SUMMARY.md` - Execution summary, decisions, and verification record for plan 32-01.
-- `opengui/skills/shortcut_promotion.py` - Canonicalization helpers, duplicate-retention rules, and reusable-boundary detection for promotion traces.
-- `tests/test_opengui_p28_shortcut_productionization.py` - Regression fixtures covering payload boundaries, duplicate waits/taps, and richer-state duplicate collapse.
+- `guiclaw/skills/shortcut_promotion.py` - Canonicalization helpers, duplicate-retention rules, and reusable-boundary detection for promotion traces.
+- `tests/test_guiclaw_p28_shortcut_productionization.py` - Regression fixtures covering payload boundaries, duplicate waits/taps, and richer-state duplicate collapse.
 
 ## Decisions Made
 - Canonicalization happens inside `ShortcutPromotionPipeline` before extraction so store merge/versioning operates on already-cleaned shortcuts.

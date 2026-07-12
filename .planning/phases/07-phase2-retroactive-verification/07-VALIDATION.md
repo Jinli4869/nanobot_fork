@@ -19,7 +19,7 @@ created: 2026-03-19
 |----------|-------|
 | **Framework** | pytest 9.0.2 + pytest-asyncio |
 | **Config file** | `pyproject.toml` `[tool.pytest.ini_options]` |
-| **Quick run command** | `uv run pytest tests/test_opengui_p2_integration.py tests/test_opengui_p2_memory.py tests/test_opengui_p6_wiring.py -q` |
+| **Quick run command** | `uv run pytest tests/test_guiclaw_p2_integration.py tests/test_guiclaw_p2_memory.py tests/test_guiclaw_p6_wiring.py -q` |
 | **Full suite command** | `uv run pytest tests/ -x -q` |
 | **Estimated runtime** | ~5 seconds |
 
@@ -27,8 +27,8 @@ created: 2026-03-19
 
 ## Sampling Rate
 
-- **After every task commit:** Run `uv run pytest tests/test_opengui_p2_integration.py tests/test_opengui_p2_memory.py tests/test_opengui_p6_wiring.py -q`
-- **After every plan wave:** Run `uv run pytest tests/test_opengui_p2_integration.py tests/test_opengui_p2_memory.py tests/test_opengui_p6_wiring.py -q`
+- **After every task commit:** Run `uv run pytest tests/test_guiclaw_p2_integration.py tests/test_guiclaw_p2_memory.py tests/test_guiclaw_p6_wiring.py -q`
+- **After every plan wave:** Run `uv run pytest tests/test_guiclaw_p2_integration.py tests/test_guiclaw_p2_memory.py tests/test_guiclaw_p6_wiring.py -q`
 - **Before `$gsd-verify-work`:** Run `uv run pytest tests/ -x -q`
 - **Max feedback latency:** 20 seconds
 
@@ -38,7 +38,7 @@ created: 2026-03-19
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 07-01-01 | 01 | 1 | AGENT-04, AGENT-05, AGENT-06, MEM-05, SKILL-08, TRAJ-03, TEST-05 | integration | `uv run pytest tests/test_opengui_p2_integration.py tests/test_opengui_p2_memory.py tests/test_opengui_p6_wiring.py -q` | ✅ exists | ⬜ pending |
+| 07-01-01 | 01 | 1 | AGENT-04, AGENT-05, AGENT-06, MEM-05, SKILL-08, TRAJ-03, TEST-05 | integration | `uv run pytest tests/test_guiclaw_p2_integration.py tests/test_guiclaw_p2_memory.py tests/test_guiclaw_p6_wiring.py -q` | ✅ exists | ⬜ pending |
 | 07-01-02 | 01 | 1 | AGENT-04, AGENT-05, AGENT-06, MEM-05, SKILL-08, TRAJ-03, TEST-05 | docs/static | `rg -n "AGENT-04|AGENT-05|AGENT-06|MEM-05|SKILL-08|TRAJ-03|TEST-05" .planning/phases/02-agent-loop-integration/VERIFICATION.md` | ✅ exists | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
@@ -50,7 +50,7 @@ created: 2026-03-19
 - [x] Existing test infrastructure already covers all phase requirements.
 - [x] Existing verification target file already exists at `.planning/phases/02-agent-loop-integration/VERIFICATION.md`.
 - [x] Existing validation contract from Phase 2 (`02-VALIDATION.md`) provides the canonical quick/full commands for the requirement surface.
-- [x] Phase 6 dependency coverage already exists in `tests/test_opengui_p6_wiring.py`.
+- [x] Phase 6 dependency coverage already exists in `tests/test_guiclaw_p6_wiring.py`.
 
 ---
 

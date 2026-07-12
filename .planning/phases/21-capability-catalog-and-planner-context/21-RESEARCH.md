@@ -296,24 +296,24 @@ def serialize_hints(hints: list[PlanningMemoryHint]) -> str:
 |----------|-------|
 | Framework | `pytest >=9.0.0,<10.0.0` + `pytest-asyncio >=1.3.0,<2.0.0` |
 | Config file | `pyproject.toml` |
-| Quick run command | `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py` |
+| Quick run command | `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py` |
 | Full suite command | `uv run pytest` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| CAP-01 | Build a bounded live capability catalog from current runtime state and expose route metadata in plan serialization/logging | unit | `uv run pytest -q tests/test_opengui_p21_planner_context.py -k "catalog or route_metadata"` | ❌ Wave 0 |
-| CAP-01 | Preserve backward-compatible `PlanNode` parsing/logging for old capability-only plans | unit | `uv run pytest -q tests/test_opengui_p8_planning.py -k "plan or route"` | ✅ |
-| CAP-02 | Inject routing-relevant memory hints only, with count/size caps and safe empty-hint behavior | unit | `uv run pytest -q tests/test_opengui_p21_planner_context.py -k "memory_hint or guardrail"` | ❌ Wave 0 |
+| CAP-01 | Build a bounded live capability catalog from current runtime state and expose route metadata in plan serialization/logging | unit | `uv run pytest -q tests/test_guiclaw_p21_planner_context.py -k "catalog or route_metadata"` | ❌ Wave 0 |
+| CAP-01 | Preserve backward-compatible `PlanNode` parsing/logging for old capability-only plans | unit | `uv run pytest -q tests/test_guiclaw_p8_planning.py -k "plan or route"` | ✅ |
+| CAP-02 | Inject routing-relevant memory hints only, with count/size caps and safe empty-hint behavior | unit | `uv run pytest -q tests/test_guiclaw_p21_planner_context.py -k "memory_hint or guardrail"` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py`
-- **Per wave merge:** `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py`
+- **Per task commit:** `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py`
+- **Per wave merge:** `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py`
 - **Phase gate:** `uv run pytest`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p21_planner_context.py` — capability catalog builder, route classification, prompt serialization, and memory-hint guardrails
-- [ ] Update `tests/test_opengui_p8_planning.py` — `PlanNode` route metadata serialization, planner logging with route info, and `_plan_and_execute()` context injection
+- [ ] `tests/test_guiclaw_p21_planner_context.py` — capability catalog builder, route classification, prompt serialization, and memory-hint guardrails
+- [ ] Update `tests/test_guiclaw_p8_planning.py` — `PlanNode` route metadata serialization, planner logging with route info, and `_plan_and_execute()` context injection
 - [ ] Update `tests/test_mcp_tool.py` if MCP wrapper or inventory helpers are added to support planner catalog normalization
 
 ## Sources
@@ -329,7 +329,7 @@ def serialize_hints(hints: list[PlanningMemoryHint]) -> str:
 - `nanobot/agent/tools/mcp.py` - current MCP wrapper naming and registration behavior
 - `nanobot/agent/context.py` - current full-memory prompt path that the planner bypasses
 - `nanobot/agent/memory.py` - current persistent memory model and its lack of route-normalized feedback
-- `tests/test_opengui_p8_planning.py` - current planner/router regression seams
+- `tests/test_guiclaw_p8_planning.py` - current planner/router regression seams
 - `tests/test_mcp_tool.py` - MCP registration coverage and wrapper naming behavior
 - `pyproject.toml` - pytest/async test configuration and runtime versions
 

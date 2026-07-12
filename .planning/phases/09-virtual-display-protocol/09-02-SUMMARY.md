@@ -7,13 +7,13 @@ tags: [xvfb, asyncio, subprocess, virtual-display, linux, pytest, mocking]
 # Dependency graph
 requires:
   - phase: 09-virtual-display-protocol/09-00
-    provides: Wave-0 xfail stubs for xvfb tests (test_opengui_p9_xvfb.py)
+    provides: Wave-0 xfail stubs for xvfb tests (test_guiclaw_p9_xvfb.py)
 provides:
   - Production-ready XvfbDisplayManager with error types, auto-increment, stderr pipe, crash detection
-  - XvfbNotFoundError and XvfbCrashedError exception types in opengui.backends.displays.xvfb
-  - Convenience re-export via opengui.backends.displays.__init__
+  - XvfbNotFoundError and XvfbCrashedError exception types in guiclaw.backends.displays.xvfb
+  - Convenience re-export via guiclaw.backends.displays.__init__
   - 12 unit tests with fully mocked subprocess (no real Xvfb needed in CI)
-affects: [10-background-execution, opengui-backends]
+affects: [10-background-execution, guiclaw-backends]
 
 # Tech tracking
 tech-stack:
@@ -28,10 +28,10 @@ tech-stack:
 
 key-files:
   created:
-    - opengui/backends/displays/xvfb.py
-    - opengui/backends/displays/__init__.py
+    - guiclaw/backends/displays/xvfb.py
+    - guiclaw/backends/displays/__init__.py
   modified:
-    - tests/test_opengui_p9_xvfb.py
+    - tests/test_guiclaw_p9_xvfb.py
 
 key-decisions:
   - "XvfbCrashedError propagates directly (not caught in retry loop); only lock-file presence triggers auto-increment"
@@ -67,7 +67,7 @@ completed: 2026-03-20
 - Added XvfbNotFoundError and XvfbCrashedError exception types to xvfb.py with actionable install hint
 - Refactored start() into retry loop + _try_start() + _poll_socket() with asyncio.wait_for() for timeout
 - Changed stderr from DEVNULL to PIPE; crash detection in poll loop; stderr drain in stop()
-- Added convenience re-export in opengui/backends/displays/__init__.py for Phase 10 consumers
+- Added convenience re-export in guiclaw/backends/displays/__init__.py for Phase 10 consumers
 - Replaced all 12 xfail stubs with full pytest-asyncio tests; full suite 642 tests green
 
 ## Task Commits
@@ -80,9 +80,9 @@ Each task was committed atomically:
 **Plan metadata:** (docs commit below)
 
 ## Files Created/Modified
-- `opengui/backends/displays/xvfb.py` - Production XvfbDisplayManager; XvfbNotFoundError, XvfbCrashedError; auto-increment; stderr=PIPE; crash detection; asyncio.wait_for timeout
-- `opengui/backends/displays/__init__.py` - Convenience re-export of XvfbDisplayManager
-- `tests/test_opengui_p9_xvfb.py` - 12 unit tests covering all VDISP-04 behaviors with mocked subprocess
+- `guiclaw/backends/displays/xvfb.py` - Production XvfbDisplayManager; XvfbNotFoundError, XvfbCrashedError; auto-increment; stderr=PIPE; crash detection; asyncio.wait_for timeout
+- `guiclaw/backends/displays/__init__.py` - Convenience re-export of XvfbDisplayManager
+- `tests/test_guiclaw_p9_xvfb.py` - 12 unit tests covering all VDISP-04 behaviors with mocked subprocess
 
 ## Decisions Made
 - **XvfbCrashedError propagates directly**: The retry loop (auto-increment) only activates on lock file pre-check. If a process actually crashes, the error propagates directly to the caller rather than being swallowed into a RuntimeError wrapper. This keeps error semantics clean: lock collision → retry; crash → propagate.
@@ -97,7 +97,7 @@ Each task was committed atomically:
 - **Found during:** Task 2 (test_xvfb_crash_detection test)
 - **Issue:** Initial implementation caught XvfbCrashedError in the retry loop, then wrapped all retries in RuntimeError. Plan spec requires XvfbCrashedError to propagate directly.
 - **Fix:** Removed try/except XvfbCrashedError from retry loop; _try_start() errors propagate directly. Only lock file presence (continue statement) causes retry iteration.
-- **Files modified:** opengui/backends/displays/xvfb.py
+- **Files modified:** guiclaw/backends/displays/xvfb.py
 - **Verification:** test_xvfb_crash_detection passes; test_xvfb_auto_increment_all_locked still passes
 - **Committed in:** 37c4bfa (Task 2 commit, xvfb.py updated alongside tests)
 
@@ -113,8 +113,8 @@ Each task was committed atomically:
 None - no external service configuration required. All tests mock at the asyncio.create_subprocess_exec boundary; no real Xvfb binary needed.
 
 ## Next Phase Readiness
-- `from opengui.backends.displays.xvfb import XvfbDisplayManager` ready for Phase 10 (BackgroundDesktopBackend)
-- `from opengui.backends.displays import XvfbDisplayManager` convenience import available
+- `from guiclaw.backends.displays.xvfb import XvfbDisplayManager` ready for Phase 10 (BackgroundDesktopBackend)
+- `from guiclaw.backends.displays import XvfbDisplayManager` convenience import available
 - All VDISP-04 behaviors tested and verified
 - isinstance(XvfbDisplayManager(), VirtualDisplayManager) returns True
 

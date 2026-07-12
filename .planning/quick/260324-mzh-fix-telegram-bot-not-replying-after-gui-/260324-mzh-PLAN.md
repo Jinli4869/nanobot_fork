@@ -45,7 +45,7 @@ Output: One-line fix in loop.py + regression test.
 @nanobot/agent/loop.py (lines 567-587: _dispatch method)
 @nanobot/agent/loop.py (lines 732-733: _process_message returning None)
 @nanobot/channels/telegram.py (lines 342-350: send() calls _stop_typing)
-@tests/test_opengui_agent_loop.py (existing test patterns: _make_loop, _inbound helpers)
+@tests/test_guiclaw_agent_loop.py (existing test patterns: _make_loop, _inbound helpers)
 </context>
 
 <interfaces>
@@ -124,7 +124,7 @@ print('FAIL: _dispatch not found'); sys.exit(1)
   </behavior>
   <action>
 Create `tests/test_dispatch_typing_stop.py` following the pattern from
-`tests/test_opengui_agent_loop.py` (_make_loop helper with mocked bus, provider,
+`tests/test_guiclaw_agent_loop.py` (_make_loop helper with mocked bus, provider,
 patched _register_default_tools).
 
 Three test cases:
@@ -142,7 +142,7 @@ Three test cases:
    - Patch `_process_message` to return OutboundMessage(content="hello")
    - Assert `bus.publish_outbound` called with that exact OutboundMessage
 
-Use `@pytest.mark.asyncio` decorator. Import from existing patterns in test_opengui_agent_loop.py.
+Use `@pytest.mark.asyncio` decorator. Import from existing patterns in test_guiclaw_agent_loop.py.
   </action>
   <verify>
     <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_dispatch_typing_stop.py -x -v 2>&1 | tail -20</automated>
@@ -154,7 +154,7 @@ Use `@pytest.mark.asyncio` decorator. Import from existing patterns in test_open
 
 <verification>
 1. `python -m pytest tests/test_dispatch_typing_stop.py -x -v` -- all 3 tests pass
-2. `python -m pytest tests/test_opengui_agent_loop.py -x -v` -- existing tests still pass
+2. `python -m pytest tests/test_guiclaw_agent_loop.py -x -v` -- existing tests still pass
 3. Manual grep confirms no `elif msg.channel == "cli"` remains in _dispatch
 </verification>
 

@@ -16,7 +16,7 @@ tech-stack:
   patterns: ["promotion-to-execution seam regression coverage", "test-only fixture refresh for runtime contract drift"]
 key-files:
   created: [.planning/phases/32-prefix-only-shortcut-extraction-and-canonicalization/32-03-SUMMARY.md]
-  modified: [tests/test_opengui_p28_shortcut_productionization.py, tests/test_opengui_p30_stable_shortcut_execution.py, tests/test_opengui_p31_shortcut_observability.py]
+  modified: [tests/test_guiclaw_p28_shortcut_productionization.py, tests/test_guiclaw_p30_stable_shortcut_execution.py, tests/test_guiclaw_p31_shortcut_observability.py]
 key-decisions:
   - "Canonicalized selector-like fields continue to reuse the existing recipient placeholder slot when the promoted target already encodes recipient intent."
   - "Phase 32 closeout stays test-only; the only blocking fix in the full regression slice was a stale Phase 30 fixture missing the current agent_profile field."
@@ -56,9 +56,9 @@ Each task was committed atomically:
 ## Files Created/Modified
 
 - `.planning/phases/32-prefix-only-shortcut-extraction-and-canonicalization/32-03-SUMMARY.md` - Execution summary, verification record, and plan metadata for 32-03.
-- `tests/test_opengui_p28_shortcut_productionization.py` - Storage regression covering canonicalized prefix retention, duplicate-wait collapse, and retained parameter-slot shape.
-- `tests/test_opengui_p31_shortcut_observability.py` - Android executor seam regression covering grounded live coordinates for canonicalized promoted shortcuts.
-- `tests/test_opengui_p30_stable_shortcut_execution.py` - Fixture refresh so the broader shortcut regression slice matches the current gui config contract.
+- `tests/test_guiclaw_p28_shortcut_productionization.py` - Storage regression covering canonicalized prefix retention, duplicate-wait collapse, and retained parameter-slot shape.
+- `tests/test_guiclaw_p31_shortcut_observability.py` - Android executor seam regression covering grounded live coordinates for canonicalized promoted shortcuts.
+- `tests/test_guiclaw_p30_stable_shortcut_execution.py` - Fixture refresh so the broader shortcut regression slice matches the current gui config contract.
 
 ## Decisions Made
 
@@ -71,10 +71,10 @@ Each task was committed atomically:
 
 **1. [Rule 3 - Blocking] Refreshed a stale Phase 30 gui fixture for the current runtime contract**
 - **Found during:** Task 2 (Finalize deterministic regression coverage and rerun the shortcut extraction/execution slice)
-- **Issue:** The required Phase 26/28/30/31 regression slice failed because `tests/test_opengui_p30_stable_shortcut_execution.py` built `GuiSubagentTool` config without `agent_profile`, but the current runtime now requires that field.
+- **Issue:** The required Phase 26/28/30/31 regression slice failed because `tests/test_guiclaw_p30_stable_shortcut_execution.py` built `GuiSubagentTool` config without `agent_profile`, but the current runtime now requires that field.
 - **Fix:** Added `agent_profile="default"` to the Phase 30 `SimpleNamespace` fixture.
-- **Files modified:** `tests/test_opengui_p30_stable_shortcut_execution.py`
-- **Verification:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p30_stable_shortcut_execution.py tests/test_opengui_p31_shortcut_observability.py -q`
+- **Files modified:** `tests/test_guiclaw_p30_stable_shortcut_execution.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p30_stable_shortcut_execution.py tests/test_guiclaw_p31_shortcut_observability.py -q`
 - **Committed in:** `19ae6f3`
 
 ---

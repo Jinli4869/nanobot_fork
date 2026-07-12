@@ -18,7 +18,7 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p1_memory.py
+    - tests/test_guiclaw_p1_memory.py
   modified:
     - pyproject.toml
 
@@ -52,10 +52,10 @@ completed: 2026-03-17
 
 ## Accomplishments
 
-- Added `faiss-cpu>=1.9.0` and `numpy>=1.26.0` to main project dependencies (not dev-only) since `opengui.memory.retrieval` and `opengui.skills.library` import both at module load time
+- Added `faiss-cpu>=1.9.0` and `numpy>=1.26.0` to main project dependencies (not dev-only) since `guiclaw.memory.retrieval` and `guiclaw.skills.library` import both at module load time
 - Verified both packages are importable via `uv run python -c "import faiss; import numpy"` after `uv sync`
 - All 8 pre-existing P0 tests continue to pass
-- Created `tests/test_opengui_p1_memory.py` with 13 passing tests covering the full memory module API surface
+- Created `tests/test_guiclaw_p1_memory.py` with 13 passing tests covering the full memory module API surface
 
 ## Task Commits
 
@@ -65,7 +65,7 @@ completed: 2026-03-17
 ## Files Created/Modified
 
 - `pyproject.toml` - Added faiss-cpu>=1.9.0 and numpy>=1.26.0 to [project.dependencies]
-- `tests/test_opengui_p1_memory.py` - 13 unit tests: MemoryEntry round-trip, MemoryStore CRUD+persistence, MemoryRetriever hybrid/BM25-only/FAISS-only search, format_context
+- `tests/test_guiclaw_p1_memory.py` - 13 unit tests: MemoryEntry round-trip, MemoryStore CRUD+persistence, MemoryRetriever hybrid/BM25-only/FAISS-only search, format_context
 
 ## Decisions Made
 
@@ -102,7 +102,7 @@ None - no external service configuration required.
 ## Next Phase Readiness
 
 - faiss-cpu and numpy are now in the environment, unblocking all subsequent test plans that import the memory module
-- `tests/test_opengui_p1_memory.py` provides regression coverage for the memory subsystem
+- `tests/test_guiclaw_p1_memory.py` provides regression coverage for the memory subsystem
 - Next plan (01-02) can proceed to skills module tests without re-verifying FAISS availability
 
 ---
@@ -111,7 +111,7 @@ None - no external service configuration required.
 
 ## Self-Check: PASSED
 
-- FOUND: tests/test_opengui_p1_memory.py
+- FOUND: tests/test_guiclaw_p1_memory.py
 - FOUND: .planning/phases/01-p1-unit-tests/01-01-SUMMARY.md
 - FOUND commit d316fdc (chore: faiss-cpu and numpy deps)
 - FOUND commit 46c062d (test: memory module unit tests)

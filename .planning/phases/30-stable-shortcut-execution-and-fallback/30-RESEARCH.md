@@ -32,22 +32,22 @@ The three plans map cleanly to: (1) live binding — wire `ShortcutExecutor` int
 
 | Module | Version | Purpose | Why Standard |
 |--------|---------|---------|--------------|
-| `opengui/skills/multi_layer_executor.py` — `ShortcutExecutor` | workspace current | Step-by-step shortcut execution with pre/post condition checking and grounder-based live binding | Phase 25 shipped this with the exact contract Phase 30 needs; it is NOT the legacy `SkillExecutor` |
-| `opengui/skills/multi_layer_executor.py` — `ContractViolationReport` | workspace current | Structured failure signal when a condition fails; `is_violation=True` discriminator | Already returned by `ShortcutExecutor.execute()` on pre or post condition failure |
-| `opengui/skills/multi_layer_executor.py` — `ShortcutExecutionSuccess` | workspace current | Returned by `ShortcutExecutor.execute()` when all steps complete | `step_results` tuple carries per-step records for telemetry and fallback accounting |
-| `opengui/grounding/llm.py` — `LLMGrounder` | workspace current | Resolves semantic step targets to concrete action parameters using live screenshot + observation | Implements `GrounderProtocol`; used in `ShortcutExecutor._execute_step()` for non-fixed steps |
-| `opengui/grounding/protocol.py` — `GrounderProtocol`, `GroundingContext`, `GroundingResult` | workspace current | Protocol contract for grounding; `GroundingContext` carries screenshot and observation for live binding | Phase 24 defined the contract; `ShortcutExecutor` already consumes it |
-| `opengui/agent.py` — `GuiAgent` | workspace current | Top-level runtime; `run()` is the main change target for Phase 30 wiring | Phase 29 already introduced the `shortcut_candidates` retrieval and `_evaluate_shortcut_applicability` gate |
-| `opengui/skills/shortcut.py` — `ShortcutSkill` | workspace current | The shortcut schema; `steps`, `preconditions`, `postconditions`, `parameter_slots` | Phase 25 executor consumes this directly |
-| `opengui/interfaces.py` — `DeviceBackend` | workspace current | `execute()` and `observe()` called per step inside `ShortcutExecutor` | Already used; settle timing slots in after `execute()` and before the post-step `observe()` |
+| `guiclaw/skills/multi_layer_executor.py` — `ShortcutExecutor` | workspace current | Step-by-step shortcut execution with pre/post condition checking and grounder-based live binding | Phase 25 shipped this with the exact contract Phase 30 needs; it is NOT the legacy `SkillExecutor` |
+| `guiclaw/skills/multi_layer_executor.py` — `ContractViolationReport` | workspace current | Structured failure signal when a condition fails; `is_violation=True` discriminator | Already returned by `ShortcutExecutor.execute()` on pre or post condition failure |
+| `guiclaw/skills/multi_layer_executor.py` — `ShortcutExecutionSuccess` | workspace current | Returned by `ShortcutExecutor.execute()` when all steps complete | `step_results` tuple carries per-step records for telemetry and fallback accounting |
+| `guiclaw/grounding/llm.py` — `LLMGrounder` | workspace current | Resolves semantic step targets to concrete action parameters using live screenshot + observation | Implements `GrounderProtocol`; used in `ShortcutExecutor._execute_step()` for non-fixed steps |
+| `guiclaw/grounding/protocol.py` — `GrounderProtocol`, `GroundingContext`, `GroundingResult` | workspace current | Protocol contract for grounding; `GroundingContext` carries screenshot and observation for live binding | Phase 24 defined the contract; `ShortcutExecutor` already consumes it |
+| `guiclaw/agent.py` — `GuiAgent` | workspace current | Top-level runtime; `run()` is the main change target for Phase 30 wiring | Phase 29 already introduced the `shortcut_candidates` retrieval and `_evaluate_shortcut_applicability` gate |
+| `guiclaw/skills/shortcut.py` — `ShortcutSkill` | workspace current | The shortcut schema; `steps`, `preconditions`, `postconditions`, `parameter_slots` | Phase 25 executor consumes this directly |
+| `guiclaw/interfaces.py` — `DeviceBackend` | workspace current | `execute()` and `observe()` called per step inside `ShortcutExecutor` | Already used; settle timing slots in after `execute()` and before the post-step `observe()` |
 
 ### Supporting
 
 | Module | Version | Purpose | When to Use |
 |--------|---------|---------|-------------|
-| `opengui/skills/executor.py` — `LLMStateValidator` | workspace current | Implements both `StateValidator` (for legacy `SkillExecutor`) and acts as the `ConditionEvaluator` for `ShortcutApplicabilityRouter` | Already wired in nanobot path; Phase 30 passes it as the `ConditionEvaluator` for `ShortcutExecutor` |
-| `opengui/trajectory/recorder.py` — `TrajectoryRecorder.record_event` | workspace current | Emit structured events for shortcut execution outcome, violation, and fallback | Follow `shortcut_retrieval` / `shortcut_applicability` event patterns from Phase 29 |
-| `pytest`, `pytest-asyncio` | workspace locked | Phase 30 regression tests | Existing test infrastructure; new test file `test_opengui_p30_stable_shortcut_execution.py` |
+| `guiclaw/skills/executor.py` — `LLMStateValidator` | workspace current | Implements both `StateValidator` (for legacy `SkillExecutor`) and acts as the `ConditionEvaluator` for `ShortcutApplicabilityRouter` | Already wired in nanobot path; Phase 30 passes it as the `ConditionEvaluator` for `ShortcutExecutor` |
+| `guiclaw/trajectory/recorder.py` — `TrajectoryRecorder.record_event` | workspace current | Emit structured events for shortcut execution outcome, violation, and fallback | Follow `shortcut_retrieval` / `shortcut_applicability` event patterns from Phase 29 |
+| `pytest`, `pytest-asyncio` | workspace locked | Phase 30 regression tests | Existing test infrastructure; new test file `test_guiclaw_p30_stable_shortcut_execution.py` |
 | `asyncio.sleep` | stdlib | Settle wait between `backend.execute()` and post-step `backend.observe()` | Already used in `GuiAgent._run_step()` via `_post_action_settle_seconds()` |
 
 ### Alternatives Considered
@@ -65,7 +65,7 @@ The three plans map cleanly to: (1) live binding — wire `ShortcutExecutor` int
 ### Recommended Project Structure
 
 ```
-opengui/
+guiclaw/
 ├── agent.py                              # extend run() to call ShortcutExecutor for approved shortcuts
 └── skills/
     └── multi_layer_executor.py           # add settle wait in ShortcutExecutor._execute_step() or after execute()
@@ -74,7 +74,7 @@ nanobot/
 └── agent/tools/gui.py                   # wire LLMGrounder + ShortcutExecutor into GuiAgent construction
 
 tests/
-└── test_opengui_p30_stable_shortcut_execution.py   # NEW: Phase 30 focused coverage
+└── test_guiclaw_p30_stable_shortcut_execution.py   # NEW: Phase 30 focused coverage
 ```
 
 ### Pattern 1: ShortcutExecutor Wiring in GuiAgent.run()
@@ -87,7 +87,7 @@ tests/
 
 **Current code (Phase 29 shape):**
 ```python
-# opengui/agent.py GuiAgent.run() — Phase 29 shape (from code inspection)
+# guiclaw/agent.py GuiAgent.run() — Phase 29 shape (from code inspection)
 if approved is not None:
     matched_skill = approved.skill
     ...
@@ -98,7 +98,7 @@ if approved is not None:
 
 **Phase 30 shape:**
 ```python
-# opengui/agent.py GuiAgent.run() — Phase 30 shape
+# guiclaw/agent.py GuiAgent.run() — Phase 30 shape
 if approved is not None:
     matched_skill = approved.skill
     ...
@@ -128,7 +128,7 @@ if approved is not None:
 
 **Important:** `LLMStateValidator.validate(valid_state, screenshot)` takes a `str` + `Path`; `ConditionEvaluator.evaluate(condition: StateDescriptor, screenshot: Path)` takes a `StateDescriptor` + `Path`. These are DIFFERENT protocols. `LLMStateValidator` does NOT implement `ConditionEvaluator` directly — an adapter or a separate `LLMConditionEvaluator` that wraps `LLMStateValidator` is needed, OR the `LLMGrounder`-based vision LLM call is used directly. This is the key architectural decision Phase 30 must make:
 
-- **Option A (Simpler):** Create a thin `LLMConditionEvaluator` adapter in `opengui/skills/` that wraps `LLMStateValidator` and maps `StateDescriptor.value` to the `valid_state` string, implementing `ConditionEvaluator.evaluate()`.
+- **Option A (Simpler):** Create a thin `LLMConditionEvaluator` adapter in `guiclaw/skills/` that wraps `LLMStateValidator` and maps `StateDescriptor.value` to the `valid_state` string, implementing `ConditionEvaluator.evaluate()`.
 - **Option B:** Re-use `LLMStateValidator` directly but add an `evaluate()` method shim.
 
 The codebase uses `state_validator` (an `LLMStateValidator`) as the `ConditionEvaluator` for `ShortcutApplicabilityRouter` in the Phase 29 wiring (see `nanobot/agent/tools/gui.py` line 255-256). This WORKS because `ShortcutApplicabilityRouter.__init__` accepts `object | None` and calls `self._evaluator.evaluate(condition, screenshot)` via duck typing. `LLMStateValidator` does NOT have an `evaluate()` method — it has `validate()`. This means the Phase 29 wiring has a mismatch that is hidden by `_AlwaysPassEvaluator` fallback in tests. **Phase 30 must resolve this gap explicitly.**
@@ -136,7 +136,7 @@ The codebase uses `state_validator` (an `LLMStateValidator`) as the `ConditionEv
 **Resolution:** Create a `LLMConditionEvaluator` adapter class that wraps `LLMStateValidator` and implements the `ConditionEvaluator` protocol with `async def evaluate(self, condition: StateDescriptor, screenshot: Path) -> bool`. This adapter calls `self._validator.validate(condition.value, screenshot)`.
 
 ```python
-# NEW: opengui/skills/shortcut_executor_adapter.py or added to multi_layer_executor.py
+# NEW: guiclaw/skills/shortcut_executor_adapter.py or added to multi_layer_executor.py
 class LLMConditionEvaluator:
     """Adapts LLMStateValidator to the ConditionEvaluator protocol.
 
@@ -152,8 +152,8 @@ class LLMConditionEvaluator:
 **Wiring in nanobot/agent/tools/gui.py:**
 ```python
 # After constructing state_validator...
-from opengui.skills.multi_layer_executor import ShortcutExecutor, LLMConditionEvaluator
-from opengui.grounding.llm import LLMGrounder
+from guiclaw.skills.multi_layer_executor import ShortcutExecutor, LLMConditionEvaluator
+from guiclaw.grounding.llm import LLMGrounder
 
 condition_evaluator = LLMConditionEvaluator(state_validator)
 shortcut_executor = ShortcutExecutor(
@@ -334,7 +334,7 @@ def __init__(
 
 ### Pitfall 4: ShortcutExecutor screenshot_dir Collides with Run Artifacts
 
-**What goes wrong:** `ShortcutExecutor` defaults `screenshot_dir` to `Path(tempfile.gettempdir()) / "opengui-skill-execution"`. In production, multiple concurrent runs or a fast-running test suite can cause screenshot files from different runs to collide in the same temp directory.
+**What goes wrong:** `ShortcutExecutor` defaults `screenshot_dir` to `Path(tempfile.gettempdir()) / "guiclaw-skill-execution"`. In production, multiple concurrent runs or a fast-running test suite can cause screenshot files from different runs to collide in the same temp directory.
 
 **Why it happens:** The default was chosen for simplicity in Phase 25 tests. In the nanobot path, `run_dir` is already created per task attempt and is unique.
 
@@ -363,7 +363,7 @@ Verified patterns from official codebase sources:
 ### ShortcutExecutor.execute() — Current Phase 25 Shape
 
 ```python
-# Source: opengui/skills/multi_layer_executor.py ShortcutExecutor.execute()
+# Source: guiclaw/skills/multi_layer_executor.py ShortcutExecutor.execute()
 async def execute(
     self,
     shortcut: ShortcutSkill,
@@ -405,7 +405,7 @@ Phase 30 inserts `await asyncio.sleep(self._post_action_settle_seconds(action))`
 ### GuiAgent.run() — Phase 29 Shape (Shortcut Execution Block)
 
 ```python
-# Source: opengui/agent.py GuiAgent.run() — Phase 29 shape (lines ~562-607)
+# Source: guiclaw/agent.py GuiAgent.run() — Phase 29 shape (lines ~562-607)
 if applicability_decision.outcome == "run":
     approved = next(
         (r for r in shortcut_candidates if r.skill.skill_id == applicability_decision.shortcut_id),
@@ -432,9 +432,9 @@ Phase 30 replaces `self._skill_executor.execute(matched_skill)` with `self._shor
 ### LLMConditionEvaluator Adapter
 
 ```python
-# NEW class — location: opengui/skills/multi_layer_executor.py (added to existing module)
-# Or: opengui/skills/shortcut_executor_support.py (new module)
-from opengui.skills.shortcut import StateDescriptor
+# NEW class — location: guiclaw/skills/multi_layer_executor.py (added to existing module)
+# Or: guiclaw/skills/shortcut_executor_support.py (new module)
+from guiclaw.skills.shortcut import StateDescriptor
 
 class LLMConditionEvaluator:
     """Adapter that maps ConditionEvaluator protocol to LLMStateValidator.
@@ -453,7 +453,7 @@ class LLMConditionEvaluator:
 ### Settle Timing in ShortcutExecutor
 
 ```python
-# Source: opengui/agent.py — pattern to replicate inside ShortcutExecutor
+# Source: guiclaw/agent.py — pattern to replicate inside ShortcutExecutor
 _POST_ACTION_SETTLE_SECONDS = 0.50  # class attribute on GuiAgent
 _NO_SETTLE_ACTIONS = frozenset({"wait", "done", "request_intervention"})
 
@@ -468,7 +468,7 @@ Phase 30 adds equivalent class attributes and method to `ShortcutExecutor` (or a
 ### ContractViolationReport — Discriminated Union Pattern
 
 ```python
-# Source: opengui/skills/multi_layer_executor.py
+# Source: guiclaw/skills/multi_layer_executor.py
 result = await executor.execute(shortcut)
 if result.is_violation:
     # result is ContractViolationReport
@@ -511,7 +511,7 @@ def _summarize_shortcut_success(result: "ShortcutExecutionSuccess") -> str:
 1. **Where should `LLMConditionEvaluator` live?**
    - What we know: It's a small adapter class (5-10 lines). `multi_layer_executor.py` already defines `ConditionEvaluator` protocol and `_AlwaysPassEvaluator`. Adding it there keeps all condition evaluator implementations together.
    - What's unclear: Whether it belongs in `multi_layer_executor.py` (which would require importing `LLMStateValidator` from `executor.py`, potentially creating a circular dependency) or in a new module.
-   - Recommendation: Add `LLMConditionEvaluator` to `opengui/skills/multi_layer_executor.py` with a `TYPE_CHECKING` import guard for `LLMStateValidator` to avoid runtime circular imports. Alternatively, put it in `opengui/skills/shortcut_executor_support.py` as a thin standalone module. The planner should decide.
+   - Recommendation: Add `LLMConditionEvaluator` to `guiclaw/skills/multi_layer_executor.py` with a `TYPE_CHECKING` import guard for `LLMStateValidator` to avoid runtime circular imports. Alternatively, put it in `guiclaw/skills/shortcut_executor_support.py` as a thin standalone module. The planner should decide.
 
 2. **Should `ShortcutExecutor.post_action_settle_seconds` be configurable per instance or a class constant?**
    - What we know: `GuiAgent._POST_ACTION_SETTLE_SECONDS` is a class constant (0.50). Mobile backends may need longer settle times for animated transitions; desktop backends (local mouse/keyboard) may need shorter.
@@ -534,35 +534,35 @@ def _summarize_shortcut_success(result: "ShortcutExecutionSuccess") -> str:
 |----------|-------|
 | Framework | pytest + pytest-asyncio |
 | Config file | `pyproject.toml` |
-| Quick run command | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py -q` |
-| Full suite command | `uv run pytest tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py tests/test_opengui_p30_stable_shortcut_execution.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py -q` |
+| Full suite command | `uv run pytest tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py tests/test_guiclaw_p30_stable_shortcut_execution.py -q` |
 
 ### Phase Requirements → Test Map
 
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| SUSE-03 | ShortcutExecutor calls grounder for non-fixed steps using live observation | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_non_fixed_step_calls_grounder -x` | ❌ Wave 0 |
-| SUSE-03 | GuiAgent.run() with approved shortcut calls shortcut_executor.execute(), not skill_executor | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_run_uses_shortcut_executor_for_approved -x` | ❌ Wave 0 |
-| SUSE-03 | Nanobot path constructs ShortcutExecutor with LLMGrounder when enable_skill_execution=True | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_nanobot_wires_shortcut_executor -x` | ❌ Wave 0 |
-| SUSE-04 | ContractViolationReport from ShortcutExecutor triggers fallback, not task termination | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_violation_triggers_fallback -x` | ❌ Wave 0 |
-| SUSE-04 | Exception from ShortcutExecutor triggers fallback, task continues normally | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_executor_exception_triggers_fallback -x` | ❌ Wave 0 |
-| SUSE-04 | Task succeeds after shortcut fails (fallback to free exploration) | integration | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_task_succeeds_after_shortcut_fallback -x` | ❌ Wave 0 |
-| SSTA-01 | ShortcutExecutor waits settle time between execute() and post-step observe() | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_settle_wait_between_execute_and_observe -x` | ❌ Wave 0 |
-| SSTA-01 | Settle is skipped for no-settle action types (wait, done, request_intervention) | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_no_settle_for_terminal_actions -x` | ❌ Wave 0 |
-| SSTA-02 | ShortcutExecutor returns ContractViolationReport with boundary="post" when postcondition fails | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_postcondition_failure_returns_violation -x` | ❌ Wave 0 |
-| SSTA-02 | shortcut_execution trajectory event with outcome="violation" emitted on contract breach | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_violation_emits_trajectory_event -x` | ❌ Wave 0 |
-| SSTA-02 | shortcut_execution trajectory event with outcome="success" emitted when all steps complete | unit | `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py::test_success_emits_trajectory_event -x` | ❌ Wave 0 |
+| SUSE-03 | ShortcutExecutor calls grounder for non-fixed steps using live observation | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_non_fixed_step_calls_grounder -x` | ❌ Wave 0 |
+| SUSE-03 | GuiAgent.run() with approved shortcut calls shortcut_executor.execute(), not skill_executor | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_run_uses_shortcut_executor_for_approved -x` | ❌ Wave 0 |
+| SUSE-03 | Nanobot path constructs ShortcutExecutor with LLMGrounder when enable_skill_execution=True | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_nanobot_wires_shortcut_executor -x` | ❌ Wave 0 |
+| SUSE-04 | ContractViolationReport from ShortcutExecutor triggers fallback, not task termination | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_violation_triggers_fallback -x` | ❌ Wave 0 |
+| SUSE-04 | Exception from ShortcutExecutor triggers fallback, task continues normally | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_executor_exception_triggers_fallback -x` | ❌ Wave 0 |
+| SUSE-04 | Task succeeds after shortcut fails (fallback to free exploration) | integration | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_task_succeeds_after_shortcut_fallback -x` | ❌ Wave 0 |
+| SSTA-01 | ShortcutExecutor waits settle time between execute() and post-step observe() | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_settle_wait_between_execute_and_observe -x` | ❌ Wave 0 |
+| SSTA-01 | Settle is skipped for no-settle action types (wait, done, request_intervention) | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_no_settle_for_terminal_actions -x` | ❌ Wave 0 |
+| SSTA-02 | ShortcutExecutor returns ContractViolationReport with boundary="post" when postcondition fails | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_postcondition_failure_returns_violation -x` | ❌ Wave 0 |
+| SSTA-02 | shortcut_execution trajectory event with outcome="violation" emitted on contract breach | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_violation_emits_trajectory_event -x` | ❌ Wave 0 |
+| SSTA-02 | shortcut_execution trajectory event with outcome="success" emitted when all steps complete | unit | `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py::test_success_emits_trajectory_event -x` | ❌ Wave 0 |
 
 ### Sampling Rate
 
-- **Per task commit:** `uv run pytest tests/test_opengui_p30_stable_shortcut_execution.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py tests/test_opengui_p30_stable_shortcut_execution.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p30_stable_shortcut_execution.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py tests/test_guiclaw_p30_stable_shortcut_execution.py -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
 
-- [ ] `tests/test_opengui_p30_stable_shortcut_execution.py` — new test file covering all SUSE-03, SUSE-04, SSTA-01, SSTA-02 behaviors
-- [ ] `LLMConditionEvaluator` adapter class — needed in `opengui/skills/multi_layer_executor.py` or a new support module before the wiring tests can exercise it
+- [ ] `tests/test_guiclaw_p30_stable_shortcut_execution.py` — new test file covering all SUSE-03, SUSE-04, SSTA-01, SSTA-02 behaviors
+- [ ] `LLMConditionEvaluator` adapter class — needed in `guiclaw/skills/multi_layer_executor.py` or a new support module before the wiring tests can exercise it
 - [ ] `post_action_settle_seconds` dataclass field on `ShortcutExecutor` — needed for the settle timing tests
 
 *(Existing `ShortcutExecutor`, `ContractViolationReport`, `LLMGrounder`, `GrounderProtocol`, `TrajectoryRecorder`, and `ShortcutApplicabilityRouter` infrastructure already covers Phase 30 dependencies; only the adapter class, settle field, and test file are gaps.)*
@@ -571,19 +571,19 @@ def _summarize_shortcut_success(result: "ShortcutExecutionSuccess") -> str:
 
 ### Primary (HIGH confidence)
 
-- `opengui/skills/multi_layer_executor.py` — `ShortcutExecutor.execute()`, `ShortcutExecutor._execute_step()`, `ContractViolationReport`, `ShortcutExecutionSuccess`, `ConditionEvaluator` protocol — direct code inspection of the Phase 25 executor contract and gap identification
-- `opengui/agent.py` — `GuiAgent.run()` (lines 541-607), `_run_step()` (lines 936-1101), `_POST_ACTION_SETTLE_SECONDS`, `_post_action_settle_seconds()` — settle timing pattern and Phase 29 shortcut execution block (current wrong executor usage)
-- `opengui/grounding/llm.py` — `LLMGrounder.ground()` — live binding implementation via `GrounderProtocol`
-- `opengui/grounding/protocol.py` — `GrounderProtocol`, `GroundingContext`, `GroundingResult` — grounding contract consumed by `ShortcutExecutor._execute_step()`
-- `opengui/skills/executor.py` — `LLMStateValidator` — protocol mismatch with `ConditionEvaluator` confirmed by inspecting `validate()` vs `evaluate()` signatures
+- `guiclaw/skills/multi_layer_executor.py` — `ShortcutExecutor.execute()`, `ShortcutExecutor._execute_step()`, `ContractViolationReport`, `ShortcutExecutionSuccess`, `ConditionEvaluator` protocol — direct code inspection of the Phase 25 executor contract and gap identification
+- `guiclaw/agent.py` — `GuiAgent.run()` (lines 541-607), `_run_step()` (lines 936-1101), `_POST_ACTION_SETTLE_SECONDS`, `_post_action_settle_seconds()` — settle timing pattern and Phase 29 shortcut execution block (current wrong executor usage)
+- `guiclaw/grounding/llm.py` — `LLMGrounder.ground()` — live binding implementation via `GrounderProtocol`
+- `guiclaw/grounding/protocol.py` — `GrounderProtocol`, `GroundingContext`, `GroundingResult` — grounding contract consumed by `ShortcutExecutor._execute_step()`
+- `guiclaw/skills/executor.py` — `LLMStateValidator` — protocol mismatch with `ConditionEvaluator` confirmed by inspecting `validate()` vs `evaluate()` signatures
 - `nanobot/agent/tools/gui.py` (lines 220-274) — current `ShortcutApplicabilityRouter` wiring that uses `LLMStateValidator` directly (confirmed protocol mismatch)
-- `opengui/skills/shortcut.py` — `ShortcutSkill.steps`, `preconditions`, `postconditions`, `parameter_slots` — schema consumed by executor
-- `opengui/trajectory/recorder.py` — `TrajectoryRecorder.record_event()` — event emission pattern followed by Phase 29
+- `guiclaw/skills/shortcut.py` — `ShortcutSkill.steps`, `preconditions`, `postconditions`, `parameter_slots` — schema consumed by executor
+- `guiclaw/trajectory/recorder.py` — `TrajectoryRecorder.record_event()` — event emission pattern followed by Phase 29
 
 ### Secondary (MEDIUM confidence)
 
-- `tests/test_opengui_p29_retrieval_applicability.py` — test structure and mock patterns for Phase 29; Phase 30 tests follow the same conventions
-- `tests/test_opengui_p28_shortcut_productionization.py` — Phase 28 test patterns for shortcut promotion and store operations
+- `tests/test_guiclaw_p29_retrieval_applicability.py` — test structure and mock patterns for Phase 29; Phase 30 tests follow the same conventions
+- `tests/test_guiclaw_p28_shortcut_productionization.py` — Phase 28 test patterns for shortcut promotion and store operations
 - `.planning/phases/29-shortcut-retrieval-applicability-routing/29-RESEARCH.md` — Phase 29 architectural decisions that Phase 30 builds on
 - `.planning/phases/29-shortcut-retrieval-applicability-routing/29-02-PLAN.md` — Phase 29 execution contract, especially the `_shortcut_attempted` flag pattern for retry clearing
 

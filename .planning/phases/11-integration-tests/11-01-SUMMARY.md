@@ -24,20 +24,20 @@ tech-stack:
   patterns:
     - "Module-level None placeholder (BackgroundDesktopBackend = None) enabling monkeypatching in tests"
     - "sys.platform check for Linux-only feature with graceful warning fallback"
-    - "Lazy import inside conditional block: `from opengui.backends.background import BackgroundDesktopBackend as bg_cls`"
+    - "Lazy import inside conditional block: `from guiclaw.backends.background import BackgroundDesktopBackend as bg_cls`"
     - "TDD: write tests after implementation when implementation already done from plan spec"
 
 key-files:
   created: []
   modified:
-    - opengui/cli.py
-    - tests/test_opengui_p5_cli.py
+    - guiclaw/cli.py
+    - tests/test_guiclaw_p5_cli.py
 
 key-decisions:
   - "--background rejects both --backend adb and --dry-run with parser.error() — two separate validation checks needed because --dry-run is a flag separate from --backend"
   - "sys.platform used directly (already imported at top of cli.py) rather than via local import"
   - "_execute_agent() extracted as a standalone async function to eliminate code duplication between background and non-background paths"
-  - "XvfbDisplayManager patched via opengui.backends.displays.xvfb module attribute so run_cli's local import picks it up"
+  - "XvfbDisplayManager patched via guiclaw.backends.displays.xvfb module attribute so run_cli's local import picks it up"
 
 patterns-established:
   - "Background mode integration test pattern: FakeBackgroundBackend + FakeXvfbDisplayManager + monkeypatch sys.platform to 'linux'"
@@ -52,7 +52,7 @@ completed: 2026-03-20
 
 # Phase 11 Plan 01: CLI Background Flag Integration Summary
 
-**--background flag wired into opengui/cli.py with XvfbDisplayManager wrapping on Linux, graceful fallback on macOS/Windows, and 7 comprehensive tests without a real Xvfb binary**
+**--background flag wired into guiclaw/cli.py with XvfbDisplayManager wrapping on Linux, graceful fallback on macOS/Windows, and 7 comprehensive tests without a real Xvfb binary**
 
 ## Performance
 
@@ -74,20 +74,20 @@ completed: 2026-03-20
 Each task was committed atomically:
 
 1. **Task 1: Add --background CLI flags, CliConfig fields, and wrapping logic** - `28d11f1` (feat)
-2. **Task 2: Add background CLI tests to test_opengui_p5_cli.py** - `1921225` (test)
+2. **Task 2: Add background CLI tests to test_guiclaw_p5_cli.py** - `1921225` (test)
 
 **Plan metadata:** (docs: complete plan — to be committed)
 
 _Note: TDD task 2 went straight to green since Task 1 implementation was complete from plan spec_
 
 ## Files Created/Modified
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/cli.py` - Added BackgroundDesktopBackend placeholder, BackgroundConfig dataclass, 4 CLI flags, post-parse validation, updated resolve_backend_name(), extracted _execute_agent(), added background wrapping in run_cli()
-- `/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p5_cli.py` - Added 7 new tests: test_cli_parses_background_flags, test_cli_background_rejects_adb, test_cli_background_rejects_dry_run, test_cli_background_implies_local, test_run_cli_background_wraps_backend, test_run_cli_background_nonlinux_fallback, test_run_cli_background_uses_cli_args
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/cli.py` - Added BackgroundDesktopBackend placeholder, BackgroundConfig dataclass, 4 CLI flags, post-parse validation, updated resolve_backend_name(), extracted _execute_agent(), added background wrapping in run_cli()
+- `/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p5_cli.py` - Added 7 new tests: test_cli_parses_background_flags, test_cli_background_rejects_adb, test_cli_background_rejects_dry_run, test_cli_background_implies_local, test_run_cli_background_wraps_backend, test_run_cli_background_nonlinux_fallback, test_run_cli_background_uses_cli_args
 
 ## Decisions Made
 - Two separate `parser.error()` calls needed: `args.backend in ("adb", "dry-run")` catches explicit `--backend` values; `args.dry_run` check catches `--dry-run` flag (which doesn't set `args.backend = "dry-run"`)
 - Used `sys.platform` directly (already imported top-level) rather than re-importing as `_sys` inside the function
-- XvfbDisplayManager patched at module attribute level (`opengui.backends.displays.xvfb.XvfbDisplayManager`) so the `from ... import XvfbDisplayManager` inside `run_cli()` picks up the monkeypatched version
+- XvfbDisplayManager patched at module attribute level (`guiclaw.backends.displays.xvfb.XvfbDisplayManager`) so the `from ... import XvfbDisplayManager` inside `run_cli()` picks up the monkeypatched version
 
 ## Deviations from Plan
 
@@ -109,8 +109,8 @@ None - no external service configuration required.
 ---
 ## Self-Check: PASSED
 
-- opengui/cli.py: FOUND
-- tests/test_opengui_p5_cli.py: FOUND
+- guiclaw/cli.py: FOUND
+- tests/test_guiclaw_p5_cli.py: FOUND
 - 11-01-SUMMARY.md: FOUND
 - Commit 28d11f1 (Task 1): FOUND
 - Commit 1921225 (Task 2): FOUND

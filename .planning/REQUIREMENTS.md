@@ -1,4 +1,4 @@
-# Requirements: OpenGUI v1.6
+# Requirements: GUIClaw v1.6
 
 **Defined:** 2026-04-02
 **Core Value:** Any host agent can spawn a GUI subagent to complete device tasks autonomously, while accumulating reusable skills and execution history over time.

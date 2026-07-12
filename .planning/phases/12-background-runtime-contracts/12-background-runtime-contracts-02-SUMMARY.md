@@ -20,8 +20,8 @@ affects:
 key-files:
   created: []
   modified:
-    - opengui/cli.py
-    - tests/test_opengui_p5_cli.py
+    - guiclaw/cli.py
+    - tests/test_guiclaw_p5_cli.py
 
 requirements-completed:
   - BGND-05
@@ -33,11 +33,11 @@ completed: "2026-03-20"
 
 # Phase 12 Plan 02 Summary
 
-`opengui/cli.py` now consumes the shared runtime contract instead of branching on Linux inline. When `--background` is set, the CLI probes support, resolves the run mode, logs a single `background runtime resolved:` line before agent construction, and either blocks, falls back to the raw backend, or wraps the backend in `BackgroundDesktopBackend`.
+`guiclaw/cli.py` now consumes the shared runtime contract instead of branching on Linux inline. When `--background` is set, the CLI probes support, resolves the run mode, logs a single `background runtime resolved:` line before agent construction, and either blocks, falls back to the raw backend, or wraps the backend in `BackgroundDesktopBackend`.
 
 The isolated path no longer uses `async with backend:`. The CLI creates the wrapped backend explicitly and always calls `await wrapped_backend.shutdown()` in `finally`, which matches the new lease-aware wrapper lifecycle.
 
-The promoted CLI tests verify log ordering, remediation-bearing fallback messages, and strict isolation blocking. The targeted CLI Phase 12 tests and the full `tests/test_opengui_p5_cli.py` file both pass.
+The promoted CLI tests verify log ordering, remediation-bearing fallback messages, and strict isolation blocking. The targeted CLI Phase 12 tests and the full `tests/test_guiclaw_p5_cli.py` file both pass.
 
 ## Issues Encountered
 
@@ -45,6 +45,6 @@ None.
 
 ## Self-Check: PASSED
 
-- `opengui/cli.py` - FOUND
-- `tests/test_opengui_p5_cli.py` - FOUND
+- `guiclaw/cli.py` - FOUND
+- `tests/test_guiclaw_p5_cli.py` - FOUND
 

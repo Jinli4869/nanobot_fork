@@ -4,14 +4,14 @@ plan: 02
 subsystem: nanobot-gui-config
 tags: [pydantic, background-mode, gui-tool, integration-tests]
 dependency_graph:
-  requires: [opengui.backends.background.BackgroundDesktopBackend, opengui.backends.displays.xvfb.XvfbDisplayManager]
+  requires: [guiclaw.backends.background.BackgroundDesktopBackend, guiclaw.backends.displays.xvfb.XvfbDisplayManager]
   provides: [GuiConfig background fields, GuiSubagentTool background wrapping, 8 integration tests]
-  affects: [nanobot/config/schema.py, nanobot/agent/tools/gui.py, tests/test_opengui_p11_integration.py]
+  affects: [nanobot/config/schema.py, nanobot/agent/tools/gui.py, tests/test_guiclaw_p11_integration.py]
 tech_stack:
   added: []
   patterns: [pydantic model_validator, async context manager wrapping, lazy platform-conditional imports, _run_task refactor]
 key_files:
-  created: [tests/test_opengui_p11_integration.py]
+  created: [tests/test_guiclaw_p11_integration.py]
   modified: [nanobot/config/schema.py, nanobot/agent/tools/gui.py]
 decisions:
   - "GuiConfig.background=True raises ValidationError for non-local backends at config load time via model_validator"
@@ -35,7 +35,7 @@ Extended `GuiConfig` with 4 background display fields and a `model_validator`, t
 | # | Task | Commit | Files |
 |---|------|--------|-------|
 | 1 | Add background fields and model_validator to GuiConfig + wrapping in execute() | 84cebaf | nanobot/config/schema.py, nanobot/agent/tools/gui.py |
-| 2 | Create test_opengui_p11_integration.py with GuiConfig and execute() tests | 7219505 | tests/test_opengui_p11_integration.py |
+| 2 | Create test_guiclaw_p11_integration.py with GuiConfig and execute() tests | 7219505 | tests/test_guiclaw_p11_integration.py |
 
 ## What Was Built
 
@@ -51,7 +51,7 @@ Extended `GuiConfig` with 4 background display fields and a `model_validator`, t
 - On Linux: imports `BackgroundDesktopBackend` and `XvfbDisplayManager` lazily, constructs `XvfbDisplayManager` with configured `display_num` (default 99), `display_width`, `display_height`, wraps active backend, uses `async with` for clean lifecycle
 - On non-Linux: logs a WARNING containing "Linux-only" and falls through to `_run_task()` without wrapping
 
-**Test file (tests/test_opengui_p11_integration.py):**
+**Test file (tests/test_guiclaw_p11_integration.py):**
 - 5 GuiConfig schema tests: defaults check, `local+background` succeeds, `adb+background` raises ValidationError, `dry-run+background` raises ValidationError, camelCase aliases accepted
 - 3 execute() wrapping tests: Linux wraps backend in BackgroundDesktopBackend, non-Linux logs warning and skips wrapping, background=False calls `_run_task` with raw backend
 - All tests pass without a real Xvfb binary (no subprocess spawning, all display managers mocked)
@@ -63,7 +63,7 @@ None — plan executed exactly as written. All acceptance criteria met on first 
 ## Test Results
 
 ```
-8 passed in 1.50s (tests/test_opengui_p11_integration.py)
+8 passed in 1.50s (tests/test_guiclaw_p11_integration.py)
 670 passed, 1 pre-existing failure in full suite (test_exec_head_tail_truncation unrelated)
 ```
 
@@ -72,7 +72,7 @@ None — plan executed exactly as written. All acceptance criteria met on first 
 Files exist:
 - FOUND: nanobot/config/schema.py (modified)
 - FOUND: nanobot/agent/tools/gui.py (modified)
-- FOUND: tests/test_opengui_p11_integration.py (created)
+- FOUND: tests/test_guiclaw_p11_integration.py (created)
 
 Commits exist:
 - FOUND: 84cebaf (Task 1)

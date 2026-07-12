@@ -1,20 +1,20 @@
 ---
 phase: 31-shortcut-observability-and-regression-hardening
 plan: "01"
-subsystem: opengui-shortcut-telemetry
+subsystem: guiclaw-shortcut-telemetry
 tags: [telemetry, shortcut, trajectory, tdd, observability]
 dependency_graph:
   requires:
-    - opengui/skills/multi_layer_executor.py (ShortcutExecutor)
-    - opengui/agent.py (GuiAgent shortcut dispatch branch)
-    - opengui/trajectory/recorder.py (TrajectoryRecorder.record_event)
+    - guiclaw/skills/multi_layer_executor.py (ShortcutExecutor)
+    - guiclaw/agent.py (GuiAgent shortcut dispatch branch)
+    - guiclaw/trajectory/recorder.py (TrajectoryRecorder.record_event)
   provides:
     - shortcut_grounding and shortcut_settle telemetry events from ShortcutExecutor
     - live recorder injection from GuiAgent into ShortcutExecutor before execute()
     - JSONL trace artifacts containing full shortcut telemetry boundary set
   affects:
-    - tests/test_opengui_p30_stable_shortcut_execution.py (extended with wiring regression)
-    - tests/test_opengui_p31_shortcut_observability.py (new Phase 31 telemetry tests)
+    - tests/test_guiclaw_p30_stable_shortcut_execution.py (extended with wiring regression)
+    - tests/test_guiclaw_p31_shortcut_observability.py (new Phase 31 telemetry tests)
 tech_stack:
   added: []
   patterns:
@@ -24,13 +24,13 @@ tech_stack:
     - TDD (RED-GREEN): tests written first to confirm failure, then implementation
 key_files:
   created:
-    - tests/test_opengui_p31_shortcut_observability.py
+    - tests/test_guiclaw_p31_shortcut_observability.py
   modified:
-    - opengui/skills/multi_layer_executor.py
-    - opengui/agent.py
-    - tests/test_opengui_p30_stable_shortcut_execution.py
+    - guiclaw/skills/multi_layer_executor.py
+    - guiclaw/agent.py
+    - tests/test_guiclaw_p30_stable_shortcut_execution.py
 decisions:
-  - "trajectory_recorder field typed as Any on ShortcutExecutor to avoid circular import with opengui.trajectory.recorder — structural injection is the correct pattern here"
+  - "trajectory_recorder field typed as Any on ShortcutExecutor to avoid circular import with guiclaw.trajectory.recorder — structural injection is the correct pattern here"
   - "shortcut_grounding event emits after backend.execute() but before settle handling so both grounding and action execution are confirmed before the event fires"
   - "shortcut_settle event emits after asyncio.sleep() (inside the if settle > 0 block) so the settle_seconds payload matches what was actually waited"
   - "recorder injection in GuiAgent.run() placed immediately before execute() so it takes effect on each call without creating a second recorder"
@@ -47,7 +47,7 @@ Wired end-to-end shortcut grounding and settle telemetry: `ShortcutExecutor` now
 
 ## What Was Built
 
-### ShortcutExecutor telemetry (opengui/skills/multi_layer_executor.py)
+### ShortcutExecutor telemetry (guiclaw/skills/multi_layer_executor.py)
 
 Added `trajectory_recorder: Any = None` as the last dataclass field on `ShortcutExecutor`.  Callers that do not pass this field continue to work without error.
 
@@ -59,7 +59,7 @@ Two new event emissions inside `execute()`:
 
 Neither event fires when `trajectory_recorder is None`, preserving backward compatibility.
 
-### GuiAgent recorder injection (opengui/agent.py)
+### GuiAgent recorder injection (guiclaw/agent.py)
 
 Inside the `if self._shortcut_executor is not None:` branch of `GuiAgent.run()`, one line was added immediately before `await self._shortcut_executor.execute(matched_skill)`:
 
@@ -69,11 +69,11 @@ self._shortcut_executor.trajectory_recorder = self._trajectory_recorder
 
 This ensures the executor's recorder is always the agent's live recorder for every shortcut dispatch.  No second recorder is created and the existing `shortcut_execution` event in `GuiAgent` is unchanged.
 
-### Phase 30 wiring regression (tests/test_opengui_p30_stable_shortcut_execution.py)
+### Phase 30 wiring regression (tests/test_guiclaw_p30_stable_shortcut_execution.py)
 
 Added `test_gui_agent_injects_live_trajectory_recorder_into_shortcut_executor`.  Uses a custom `_capturing_execute` coroutine that records `shortcut_executor.trajectory_recorder` at the moment `execute()` is called, then asserts it is the same object as the agent's live `TrajectoryRecorder`.
 
-### Phase 31 telemetry tests (tests/test_opengui_p31_shortcut_observability.py)
+### Phase 31 telemetry tests (tests/test_guiclaw_p31_shortcut_observability.py)
 
 New test file with seven tests:
 
@@ -90,7 +90,7 @@ New test file with seven tests:
 ## Verification
 
 ```
-uv run python -m pytest tests/test_opengui_p31_shortcut_observability.py tests/test_opengui_p30_stable_shortcut_execution.py -q --tb=short
+uv run python -m pytest tests/test_guiclaw_p31_shortcut_observability.py tests/test_guiclaw_p30_stable_shortcut_execution.py -q --tb=short
 25 passed in 3.17s
 ```
 
@@ -100,11 +100,11 @@ None — plan executed exactly as written.
 
 ## Self-Check: PASSED
 
-- `opengui/skills/multi_layer_executor.py` contains `trajectory_recorder: Any = None` on ShortcutExecutor
-- `opengui/skills/multi_layer_executor.py` contains `"shortcut_grounding"` event emission inside `execute()`
-- `opengui/skills/multi_layer_executor.py` contains `"shortcut_settle"` event emission inside `if settle > 0:` block
-- `opengui/agent.py` contains `self._shortcut_executor.trajectory_recorder = self._trajectory_recorder`
-- `tests/test_opengui_p30_stable_shortcut_execution.py` contains `test_gui_agent_injects_live_trajectory_recorder_into_shortcut_executor`
-- `tests/test_opengui_p31_shortcut_observability.py` contains `test_full_trace_event_coverage`
+- `guiclaw/skills/multi_layer_executor.py` contains `trajectory_recorder: Any = None` on ShortcutExecutor
+- `guiclaw/skills/multi_layer_executor.py` contains `"shortcut_grounding"` event emission inside `execute()`
+- `guiclaw/skills/multi_layer_executor.py` contains `"shortcut_settle"` event emission inside `if settle > 0:` block
+- `guiclaw/agent.py` contains `self._shortcut_executor.trajectory_recorder = self._trajectory_recorder`
+- `tests/test_guiclaw_p30_stable_shortcut_execution.py` contains `test_gui_agent_injects_live_trajectory_recorder_into_shortcut_executor`
+- `tests/test_guiclaw_p31_shortcut_observability.py` contains `test_full_trace_event_coverage`
 - All 25 tests pass (15 Phase 30 + 10 Phase 31 including new wiring test)
 - Commit: 98d2692

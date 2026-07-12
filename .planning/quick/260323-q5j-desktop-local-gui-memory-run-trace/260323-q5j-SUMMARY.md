@@ -9,7 +9,7 @@
 
 本次 quick task 按 `260323-q5j-PLAN.md` 执行真实 desktop/local GUI 测试，目标是验证：
 
-- OpenGUI 是否会从 `~/.opengui/memory` 检索 OS / APP memory
+- GUIClaw 是否会从 `~/.guiclaw/memory` 检索 OS / APP memory
 - 命中的 memory 是否会进入 prompt
 - attempt trace 是否体现与 memory 一致的高效操作思路
 
@@ -20,8 +20,8 @@
 执行前工作树状态：
 
 ```text
- M opengui/agent.py
- M tests/test_opengui_p2_memory.py
+ M guiclaw/agent.py
+ M tests/test_guiclaw_p2_memory.py
 ?? .planning/quick/260323-q5j-desktop-local-gui-memory-run-trace/
 ?? TEST.ipynb
 ?? scripts/
@@ -40,7 +40,7 @@
 ### Standard CLI command required by the plan
 
 ```bash
-.venv/bin/python -m opengui.cli --backend local --task "切换回浏览器，并重新打开刚刚关闭的标签页。"
+.venv/bin/python -m guiclaw.cli --backend local --task "切换回浏览器，并重新打开刚刚关闭的标签页。"
 ```
 
 ### Standard CLI result
@@ -51,15 +51,15 @@
 Unsupported model 'qwen3-vl-embedding' for OpenAI compatibility mode.
 ```
 
-结论：当前 `~/.opengui/config.yaml` 的 embedding provider 配置阻塞了“完全原样”的 CLI memory 路径。
+结论：当前 `~/.guiclaw/config.yaml` 的 embedding provider 配置阻塞了“完全原样”的 CLI memory 路径。
 
 ### Fallback used to complete the real desktop test
 
 为完成本次真实宿主机测试，我保留以下真实组件：
 
 - `LocalDesktopBackend()` 真实 desktop backend
-- `~/.opengui/memory` 真实 memory 目录
-- 主 LLM 仍来自 `~/.opengui/config.yaml`
+- `~/.guiclaw/memory` 真实 memory 目录
+- 主 LLM 仍来自 `~/.guiclaw/config.yaml`
 
 仅把坏掉的 embedding API 替换为本地 `FakeEmbedder`，以便让 memory retrieval 链路能够实际运行并落 trace。该 fallback 仍然是在宿主机 desktop 上执行真实 GUI 动作，不是 dry-run，也不是伪造 trace。
 
@@ -68,25 +68,25 @@ Unsupported model 'qwen3-vl-embedding' for OpenAI compatibility mode.
 实际观察到的 run 根目录：
 
 ```text
-opengui_runs/20260323_105316_092970/
+guiclaw_runs/20260323_105316_092970/
 ```
 
 实际 trajectory trace：
 
 ```text
-opengui_runs/20260323_105316_092970/trace_20260323_185316.jsonl
+guiclaw_runs/20260323_105316_092970/trace_20260323_185316.jsonl
 ```
 
 实际 attempt traces：
 
 ```text
-opengui_runs/20260323_105316_092970/gui_task_1774263196113_0/trace.jsonl
-opengui_runs/20260323_105316_092970/gui_task_1774263248912_1/trace.jsonl
+guiclaw_runs/20260323_105316_092970/gui_task_1774263196113_0/trace.jsonl
+guiclaw_runs/20260323_105316_092970/gui_task_1774263248912_1/trace.jsonl
 ```
 
 ## Memory Retrieval Evidence
 
-在 trajectory trace `opengui_runs/20260323_105316_092970/trace_20260323_185316.jsonl` 中，起始阶段明确出现 `memory_retrieval` 事件：
+在 trajectory trace `guiclaw_runs/20260323_105316_092970/trace_20260323_185316.jsonl` 中，起始阶段明确出现 `memory_retrieval` 事件：
 
 - `hit_count: 2`
 - `entry_id: os-guide-macos-shortcuts`
@@ -115,7 +115,7 @@ opengui_runs/20260323_105316_092970/gui_task_1774263248912_1/trace.jsonl
 路径：
 
 ```text
-opengui_runs/20260323_105316_092970/gui_task_1774263196113_0/trace.jsonl
+guiclaw_runs/20260323_105316_092970/gui_task_1774263196113_0/trace.jsonl
 ```
 
 观察：
@@ -136,7 +136,7 @@ RuntimeError: Failed to parse action after retries: Action 'tap': 'x' must be nu
 路径：
 
 ```text
-opengui_runs/20260323_105316_092970/gui_task_1774263248912_1/trace.jsonl
+guiclaw_runs/20260323_105316_092970/gui_task_1774263248912_1/trace.jsonl
 ```
 
 观察到的动作序列：
@@ -176,7 +176,7 @@ memory-hit outcome: partial
 
 若要把这个测试提升到 `pass`，建议按以下顺序继续：
 
-1. 修复 `~/.opengui/config.yaml` 中 `qwen3-vl-embedding` 的兼容问题，恢复标准 CLI 路径
+1. 修复 `~/.guiclaw/config.yaml` 中 `qwen3-vl-embedding` 的兼容问题，恢复标准 CLI 路径
 2. 扩充 `app-guide-browser-hotkeys` 的内容，使其显式包含浏览器恢复关闭标签页的快捷键知识
 3. 重新执行同一任务，并确认 attempt trace 中出现浏览器恢复标签页的热键或等价操作
 

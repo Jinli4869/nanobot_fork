@@ -29,12 +29,12 @@ tech-stack:
 
 key-files:
   created:
-    - opengui/backends/displays/cgvirtualdisplay.py
+    - guiclaw/backends/displays/cgvirtualdisplay.py
   modified:
-    - opengui/backends/background_runtime.py
-    - opengui/backends/displays/__init__.py
+    - guiclaw/backends/background_runtime.py
+    - guiclaw/backends/displays/__init__.py
     - pyproject.toml
-    - tests/test_opengui_p13_macos_display.py
+    - tests/test_guiclaw_p13_macos_display.py
 
 key-decisions:
   - "Extended the shared runtime contract with macOS-specific reason codes while preserving the Linux Xvfb branch unchanged."
@@ -78,11 +78,11 @@ Each task was committed atomically:
 2. **Task 2: Implement macOS probe taxonomy, dependency markers, and CGVirtualDisplayManager** - `9fd83cf` (`feat`)
 
 ## Files Created/Modified
-- `opengui/backends/displays/cgvirtualdisplay.py` - new macOS isolated-display manager surface with lazy runtime helpers
-- `opengui/backends/background_runtime.py` - macOS probe dispatch and remediation reason-code support
-- `opengui/backends/displays/__init__.py` - exports `CGVirtualDisplayManager`
+- `guiclaw/backends/displays/cgvirtualdisplay.py` - new macOS isolated-display manager surface with lazy runtime helpers
+- `guiclaw/backends/background_runtime.py` - macOS probe dispatch and remediation reason-code support
+- `guiclaw/backends/displays/__init__.py` - exports `CGVirtualDisplayManager`
 - `pyproject.toml` - adds darwin-gated PyObjC extras for desktop/dev installs
-- `tests/test_opengui_p13_macos_display.py` - green contract coverage for supported, unsupported, remediation, and manager lifecycle behavior
+- `tests/test_guiclaw_p13_macos_display.py` - green contract coverage for supported, unsupported, remediation, and manager lifecycle behavior
 
 ## Decisions Made
 
@@ -108,9 +108,9 @@ Phase 13 now has a real macOS isolated-display contract and test seam. Wave 2 ca
 
 ## Self-Check: PASSED
 
-- `opengui/backends/displays/cgvirtualdisplay.py` - FOUND
-- `opengui/backends/background_runtime.py` - FOUND
-- `tests/test_opengui_p13_macos_display.py` - FOUND
+- `guiclaw/backends/displays/cgvirtualdisplay.py` - FOUND
+- `guiclaw/backends/background_runtime.py` - FOUND
+- `tests/test_guiclaw_p13_macos_display.py` - FOUND
 
 ---
 *Phase: 13-macos-background-execution*

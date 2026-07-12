@@ -1276,7 +1276,7 @@ def test_pyproject_keeps_existing_cli_scripts_when_tui_script_is_added():
 
     assert scripts["nanobot"] == "nanobot.cli.commands:app"
     assert scripts["nanobot-tui"] == "nanobot.tui.__main__:main"
-    assert scripts["opengui"] == "opengui.cli:main"
+    assert scripts["guiclaw"] == "guiclaw.cli:main"
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ tech-stack:
     - a phase-local parity matrix can validate shared host contracts without forcing a new shared helper when behavior is already aligned
 key-files:
   created:
-    - tests/test_opengui_p16_host_integration.py
+    - tests/test_guiclaw_p16_host_integration.py
     - .planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-03-SUMMARY.md
   modified: []
 key-decisions:
@@ -44,7 +44,7 @@ completed: 2026-03-21
 
 ## Accomplishments
 
-- Added `tests/test_opengui_p16_host_integration.py` to compare CLI and nanobot at the shared host-contract seams directly.
+- Added `tests/test_guiclaw_p16_host_integration.py` to compare CLI and nanobot at the shared host-contract seams directly.
 - Proved the full 8-file Phase 16 regression slice passed: 93 tests green across CLI, nanobot, Linux background runtime, macOS isolated display, Windows isolated desktop, and Phase 15 intervention coverage.
 - Confirmed a new shared host helper was optional rather than necessary because the current code already behaved consistently under the new parity matrix.
 
@@ -57,7 +57,7 @@ This inline Codex execution did not create git commits.
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p16_host_integration.py` - New Phase 16 host-parity matrix covering app-class defaulting, remediation semantics, and cleanup/handoff token preservation.
+- `tests/test_guiclaw_p16_host_integration.py` - New Phase 16 host-parity matrix covering app-class defaulting, remediation semantics, and cleanup/handoff token preservation.
 - `.planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-03-SUMMARY.md` - Recorded the shared-regression wave result.
 
 ## Decisions Made
@@ -82,7 +82,7 @@ None - no external service configuration required.
 
 ## Self-Check: PASSED
 
-- Found `tests/test_opengui_p16_host_integration.py`.
+- Found `tests/test_guiclaw_p16_host_integration.py`.
 - Verified the focused Phase 16 regression slice passed with 93 tests green.
 - Found `.planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-03-SUMMARY.md`.
 

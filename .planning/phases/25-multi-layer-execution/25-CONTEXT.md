@@ -42,7 +42,7 @@ Implement `ShortcutExecutor` and `TaskSkillExecutor` — the execution layer for
 ### Claude's Discretion
 - Module placement: new file(s) alongside existing `executor.py` (e.g. `shortcut_executor.py`) vs. extending it — given `executor.py` is already ~570 lines, a new file is reasonable
 - Exact success result payload shape for `ShortcutExecutor.execute()` on happy path (e.g. list of step results, execution summary string)
-- Whether `ConditionEvaluator` lives in `opengui/skills/` alongside `executor.py` or in `opengui/grounding/` alongside other evaluation-related protocols
+- Whether `ConditionEvaluator` lives in `guiclaw/skills/` alongside `executor.py` or in `guiclaw/grounding/` alongside other evaluation-related protocols
 - Naming of the `ContractViolationReport` type and whether it's defined in the same file as the executor
 
 </decisions>
@@ -57,16 +57,16 @@ Implement `ShortcutExecutor` and `TaskSkillExecutor` — the execution layer for
 - `.planning/REQUIREMENTS.md` — Full v1.5 EXEC requirement definitions; EXEC-01 (ShortcutExecutor contract verification), EXEC-02 (TaskSkillExecutor shortcut/ATOM/branch handling), EXEC-03 (GrounderProtocol routing)
 
 ### Phase 24 contracts (build targets for this phase)
-- `opengui/skills/shortcut.py` — `ShortcutSkill`, `StateDescriptor`, `ParameterSlot` — executor input types
-- `opengui/skills/task_skill.py` — `TaskSkill`, `TaskNode`, `ShortcutRefNode`, `BranchNode` — task executor input types
-- `opengui/grounding/protocol.py` — `GrounderProtocol`, `GroundingContext`, `GroundingResult` — grounding interface
-- `opengui/grounding/llm.py` — `LLMGrounder` — reference implementation of GrounderProtocol
+- `guiclaw/skills/shortcut.py` — `ShortcutSkill`, `StateDescriptor`, `ParameterSlot` — executor input types
+- `guiclaw/skills/task_skill.py` — `TaskSkill`, `TaskNode`, `ShortcutRefNode`, `BranchNode` — task executor input types
+- `guiclaw/grounding/protocol.py` — `GrounderProtocol`, `GroundingContext`, `GroundingResult` — grounding interface
+- `guiclaw/grounding/llm.py` — `LLMGrounder` — reference implementation of GrounderProtocol
 - `.planning/phases/24-schema-and-grounding/24-CONTEXT.md` — Phase 24 design decisions (param_bindings schema, TaskNode union, memory_context_id semantics)
 
 ### Existing executor patterns to follow
-- `opengui/skills/executor.py` — `SkillExecutor`, `StateValidator`, `ActionGrounder`, `ScreenshotProvider`, `SkillExecutionResult` — existing Protocol injection patterns and result dataclass shapes that new executors should mirror
-- `opengui/skills/data.py` — `SkillStep` — reused as ATOM fallback node in TaskSkill; ShortcutExecutor executes these directly
-- `opengui/interfaces.py` — `LLMProvider`, `DeviceBackend` — `@runtime_checkable Protocol` pattern the new ConditionEvaluator must follow
+- `guiclaw/skills/executor.py` — `SkillExecutor`, `StateValidator`, `ActionGrounder`, `ScreenshotProvider`, `SkillExecutionResult` — existing Protocol injection patterns and result dataclass shapes that new executors should mirror
+- `guiclaw/skills/data.py` — `SkillStep` — reused as ATOM fallback node in TaskSkill; ShortcutExecutor executes these directly
+- `guiclaw/interfaces.py` — `LLMProvider`, `DeviceBackend` — `@runtime_checkable Protocol` pattern the new ConditionEvaluator must follow
 
 </canonical_refs>
 
@@ -74,18 +74,18 @@ Implement `ShortcutExecutor` and `TaskSkillExecutor` — the execution layer for
 ## Existing Code Insights
 
 ### Reusable Assets
-- `SkillExecutor` (`opengui/skills/executor.py`): Step-by-step executor for old-style `Skill` — review its `execute()` loop, `_resolve_action()`, and `StepResult` shape for structural reference
-- `LLMStateValidator` (`opengui/skills/executor.py`): Existing string-based condition validator — can serve as a real `ConditionEvaluator` implementation if adapted to accept `StateDescriptor`
-- `SkillExecutionResult`, `StepResult`, `SubgoalResult` (`opengui/skills/executor.py`): Frozen dataclass result types — new executors should produce analogous structures
-- `ExecutionState` enum (`opengui/skills/executor.py`): Existing state enum — new executors may define their own or reuse
+- `SkillExecutor` (`guiclaw/skills/executor.py`): Step-by-step executor for old-style `Skill` — review its `execute()` loop, `_resolve_action()`, and `StepResult` shape for structural reference
+- `LLMStateValidator` (`guiclaw/skills/executor.py`): Existing string-based condition validator — can serve as a real `ConditionEvaluator` implementation if adapted to accept `StateDescriptor`
+- `SkillExecutionResult`, `StepResult`, `SubgoalResult` (`guiclaw/skills/executor.py`): Frozen dataclass result types — new executors should produce analogous structures
+- `ExecutionState` enum (`guiclaw/skills/executor.py`): Existing state enum — new executors may define their own or reuse
 
 ### Established Patterns
 - Protocol-based injection via `@runtime_checkable` Protocol: `StateValidator`, `ActionGrounder`, `ScreenshotProvider`, `SubgoalRunner` all injected at `SkillExecutor` construction — `ConditionEvaluator` must follow this pattern
 - Frozen dataclasses with `to_dict()` / `from_dict()` for all result and report types
-- All public exports via `opengui/skills/__init__.py` with an explicit `__all__` — new executor types must be added there
+- All public exports via `guiclaw/skills/__init__.py` with an explicit `__all__` — new executor types must be added there
 
 ### Integration Points
-- `opengui/skills/__init__.py`: Must export `ShortcutExecutor`, `TaskSkillExecutor`, `ContractViolationReport`, and `ConditionEvaluator` (the new protocol)
+- `guiclaw/skills/__init__.py`: Must export `ShortcutExecutor`, `TaskSkillExecutor`, `ContractViolationReport`, and `ConditionEvaluator` (the new protocol)
 - Phase 27 will wire `shortcut_resolver` callable from the ShortcutSkill store's `get_by_id` method
 - Phase 26 (extraction) does not consume executors — it only uses Phase 24 schema types
 - GuiAgent integration in Phase 27 will construct executor instances with real `ConditionEvaluator` and `GrounderProtocol` implementations

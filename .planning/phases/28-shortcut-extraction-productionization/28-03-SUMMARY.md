@@ -22,10 +22,10 @@ key-files:
   created:
     - .planning/phases/28-shortcut-extraction-productionization/28-03-SUMMARY.md
   modified:
-    - tests/test_opengui_p28_shortcut_productionization.py
-    - tests/test_opengui_p27_storage_search_agent.py
-    - tests/test_opengui_p8_trajectory.py
-    - tests/test_opengui_p11_integration.py
+    - tests/test_guiclaw_p28_shortcut_productionization.py
+    - tests/test_guiclaw_p27_storage_search_agent.py
+    - tests/test_guiclaw_p8_trajectory.py
+    - tests/test_guiclaw_p11_integration.py
 key-decisions:
   - "Phase 28 regression coverage now binds GUI postprocessing tests to `_promote_shortcut` rather than the removed legacy extractor seam."
   - "Duplicate-promotion compatibility is locked at both merge and search layers so canonical shortcut ids survive version bumps."
@@ -67,10 +67,10 @@ Each task was committed atomically:
 ## Files Created/Modified
 
 - `.planning/phases/28-shortcut-extraction-productionization/28-03-SUMMARY.md` - Phase 28 Plan 03 execution record
-- `tests/test_opengui_p28_shortcut_productionization.py` - production promotion regression matrix for noise rejection and duplicate handling
-- `tests/test_opengui_p27_storage_search_agent.py` - canonical shortcut-id compatibility coverage after merge/version updates
-- `tests/test_opengui_p8_trajectory.py` - trajectory/postprocessing tests patched onto `_promote_shortcut`
-- `tests/test_opengui_p11_integration.py` - integration coverage for pending/failing background promotion and intervention postprocessing
+- `tests/test_guiclaw_p28_shortcut_productionization.py` - production promotion regression matrix for noise rejection and duplicate handling
+- `tests/test_guiclaw_p27_storage_search_agent.py` - canonical shortcut-id compatibility coverage after merge/version updates
+- `tests/test_guiclaw_p8_trajectory.py` - trajectory/postprocessing tests patched onto `_promote_shortcut`
+- `tests/test_guiclaw_p11_integration.py` - integration coverage for pending/failing background promotion and intervention postprocessing
 
 ## Decisions Made
 
@@ -85,8 +85,8 @@ Each task was committed atomically:
 - **Found during:** Task 2 (Extend adjacent seam coverage and run the full Phase 28 validation slice)
 - **Issue:** The full validation slice failed because two intervention tests referenced `_extract_skill`, which no longer exists after the promotion cutover.
 - **Fix:** Switched those tests to patch `_promote_shortcut` so the intervention flow stays aligned with the production seam.
-- **Files modified:** `tests/test_opengui_p11_integration.py`
-- **Verification:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p8_trajectory.py tests/test_opengui_p11_integration.py tests/test_opengui_p28_shortcut_productionization.py`
+- **Files modified:** `tests/test_guiclaw_p11_integration.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p8_trajectory.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p28_shortcut_productionization.py`
 - **Committed in:** `762a94f` (part of task commit)
 
 ---

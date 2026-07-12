@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from opengui.skills.data import Skill, SkillStep
-from opengui.skills.flat import FlatSkillLibrary
-from opengui.test import general_e2e_compact_skill_smoke as smoke
+from guiclaw.skills.data import Skill, SkillStep
+from guiclaw.skills.flat import FlatSkillLibrary
+from guiclaw.test import general_e2e_compact_skill_smoke as smoke
 
 
 def test_shortcut_skill_catalog_includes_id_transport_and_parameters() -> None:

@@ -2,28 +2,28 @@
 phase: 03-nanobot-subagent
 plan: 01
 subsystem: api
-tags: [pydantic, protocol-adapter, opengui, nanobot, testing]
+tags: [pydantic, protocol-adapter, guiclaw, nanobot, testing]
 requires:
   - phase: 02-agent-loop-integration
     provides: GuiAgent memory/skill/trajectory wiring and phase test scaffolding
 provides:
   - GuiConfig and AdbConfig models on nanobot config schema
-  - NanobotLLMAdapter bridging nanobot LLM responses to opengui protocol types
-  - NanobotEmbeddingAdapter wrapping async embedding callables for opengui retrieval
+  - NanobotLLMAdapter bridging nanobot LLM responses to guiclaw protocol types
+  - NanobotEmbeddingAdapter wrapping async embedding callables for guiclaw retrieval
   - Phase 3 adapter and config tests promoted from xfail stubs to passing coverage
 affects: [03-02-PLAN.md, gui-subagent-tool, nanobot-tool-registration]
 tech-stack:
   added: []
-  patterns: [nested pydantic gui config, nanobot-to-opengui protocol bridge, repo-local .venv verification]
+  patterns: [nested pydantic gui config, nanobot-to-guiclaw protocol bridge, repo-local .venv verification]
 key-files:
   created: [.planning/phases/03-nanobot-subagent/03-01-SUMMARY.md, nanobot/agent/gui_adapter.py]
-  modified: [nanobot/config/schema.py, tests/test_opengui_p3_nanobot.py]
+  modified: [nanobot/config/schema.py, tests/test_guiclaw_p3_nanobot.py]
 key-decisions:
   - "Config.gui remains optional and defaults to None so GUI integration is opt-in."
   - "NanobotLLMAdapter delegates to chat_with_retry instead of re-implementing retry behavior."
   - "Adapter responses preserve the original nanobot LLMResponse in raw for debugging."
 patterns-established:
-  - "Bridge adapters live under nanobot/ so opengui stays free of nanobot dependencies."
+  - "Bridge adapters live under nanobot/ so guiclaw stays free of nanobot dependencies."
   - "Phase test files can promote xfail stubs incrementally into real coverage within the same file."
 requirements-completed: [NANO-02, NANO-03]
 duration: 27 min
@@ -32,7 +32,7 @@ completed: 2026-03-18
 
 # Phase 3 Plan 1: Nanobot Adapter and GUI Config Summary
 
-**Optional GUI config plus nanobot-to-opengui LLM and embedding adapters with passing Phase 3 bridge tests**
+**Optional GUI config plus nanobot-to-guiclaw LLM and embedding adapters with passing Phase 3 bridge tests**
 
 ## Performance
 
@@ -45,8 +45,8 @@ completed: 2026-03-18
 ## Accomplishments
 
 - Added `AdbConfig` and `GuiConfig` to nanobot's Pydantic schema, including camelCase alias support and an optional `Config.gui` field.
-- Added `NanobotLLMAdapter` and `NanobotEmbeddingAdapter` in [`nanobot/agent/gui_adapter.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/gui_adapter.py) to bridge nanobot providers to opengui protocols.
-- Replaced Phase 3 adapter/config xfails with passing tests in [`tests/test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) while keeping the remaining NANO-01/NANO-04/NANO-05 stubs as xfail.
+- Added `NanobotLLMAdapter` and `NanobotEmbeddingAdapter` in [`nanobot/agent/gui_adapter.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/gui_adapter.py) to bridge nanobot providers to guiclaw protocols.
+- Replaced Phase 3 adapter/config xfails with passing tests in [`tests/test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) while keeping the remaining NANO-01/NANO-04/NANO-05 stubs as xfail.
 
 ## Task Commits
 
@@ -65,15 +65,15 @@ _Note: TDD execution still followed RED -> GREEN verification, but Git metadata 
 
 ## Files Created/Modified
 
-- [`nanobot/agent/gui_adapter.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/gui_adapter.py) - Protocol bridge from nanobot LLM/embedding providers to opengui interfaces.
+- [`nanobot/agent/gui_adapter.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/gui_adapter.py) - Protocol bridge from nanobot LLM/embedding providers to guiclaw interfaces.
 - [`nanobot/config/schema.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/config/schema.py) - Added `AdbConfig`, `GuiConfig`, and optional `Config.gui`.
-- [`tests/test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) - Added real config and adapter tests while preserving later-phase xfail stubs.
+- [`tests/test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) - Added real config and adapter tests while preserving later-phase xfail stubs.
 
 ## Decisions Made
 
 - Kept `Config.gui` nullable so missing GUI config does not force tool registration.
-- Preserved nanobot `LLMResponse` objects on `OpenGuiLLMResponse.raw` for later debugging and integration work.
-- Normalized nanobot `tool_calls=[]` to `None` and `content=None` to `""` to satisfy opengui protocol expectations exactly.
+- Preserved nanobot `LLMResponse` objects on `GUIClawLLMResponse.raw` for later debugging and integration work.
+- Normalized nanobot `tool_calls=[]` to `None` and `content=None` to `""` to satisfy guiclaw protocol expectations exactly.
 
 ## Deviations from Plan
 
@@ -126,7 +126,7 @@ None - no external service configuration required.
 
 - [x] [`nanobot/agent/gui_adapter.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/gui_adapter.py) exists
 - [x] [`nanobot/config/schema.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/config/schema.py) contains `AdbConfig`, `GuiConfig`, and optional `Config.gui`
-- [x] [`tests/test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) passes with `11 passed, 4 xfailed`
+- [x] [`tests/test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) passes with `11 passed, 4 xfailed`
 - [x] Full suite passes with repo `.venv/bin` on `PATH`: `513 passed, 4 xfailed`
 
 ---

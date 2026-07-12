@@ -19,7 +19,7 @@ created: 2026-04-02
 |----------|-------|
 | **Framework** | pytest 9.0.2 + pytest-asyncio 1.3.0 |
 | **Config file** | `pyproject.toml` |
-| **Quick run command** | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q` |
+| **Quick run command** | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q` |
 | **Full suite command** | `uv run pytest -q` |
 | **Estimated runtime** | ~20 seconds |
 
@@ -27,8 +27,8 @@ created: 2026-04-02
 
 ## Sampling Rate
 
-- **After every task commit:** Run `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q`
-- **After every plan wave:** Run `uv run pytest tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p1_skills.py tests/test_opengui_p25_multi_layer_execution.py -q`
+- **After every task commit:** Run `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q`
+- **After every plan wave:** Run `uv run pytest tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p25_multi_layer_execution.py -q`
 - **Before `$gsd-verify-work`:** Full suite must be green
 - **Max feedback latency:** 30 seconds
 
@@ -38,10 +38,10 @@ created: 2026-04-02
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 25-01-01 | 01 | 1 | EXEC-01 | unit | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q -k contract` | ❌ W0 | ⬜ pending |
-| 25-01-02 | 01 | 1 | EXEC-03 | unit | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q -k grounder` | ❌ W0 | ⬜ pending |
-| 25-02-01 | 02 | 2 | EXEC-02 | unit | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q -k task_executor` | ❌ W0 | ⬜ pending |
-| 25-02-02 | 02 | 2 | Phase 25 SC-4 | regression | `uv run pytest tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p1_skills.py tests/test_opengui_p25_multi_layer_execution.py -q` | ❌ W0 | ⬜ pending |
+| 25-01-01 | 01 | 1 | EXEC-01 | unit | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q -k contract` | ❌ W0 | ⬜ pending |
+| 25-01-02 | 01 | 1 | EXEC-03 | unit | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q -k grounder` | ❌ W0 | ⬜ pending |
+| 25-02-01 | 02 | 2 | EXEC-02 | unit | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q -k task_executor` | ❌ W0 | ⬜ pending |
+| 25-02-02 | 02 | 2 | Phase 25 SC-4 | regression | `uv run pytest tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p25_multi_layer_execution.py -q` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠ flaky*
 
@@ -49,9 +49,9 @@ created: 2026-04-02
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_opengui_p25_multi_layer_execution.py` — covers EXEC-01, EXEC-02, EXEC-03 with stub backend, grounder, evaluator, and resolver seams
-- [ ] Reuse `tests/test_opengui_p24_schema_grounding.py` — guard Phase 24 schema/grounding contracts while executors are added
-- [ ] Reuse `tests/test_opengui_p1_skills.py` — guard legacy skill exports and executor compatibility while new exports land
+- [ ] `tests/test_guiclaw_p25_multi_layer_execution.py` — covers EXEC-01, EXEC-02, EXEC-03 with stub backend, grounder, evaluator, and resolver seams
+- [ ] Reuse `tests/test_guiclaw_p24_schema_grounding.py` — guard Phase 24 schema/grounding contracts while executors are added
+- [ ] Reuse `tests/test_guiclaw_p1_skills.py` — guard legacy skill exports and executor compatibility while new exports land
 
 ---
 

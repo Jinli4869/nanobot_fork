@@ -43,13 +43,13 @@ Commit: `5d76244`
 
 ### Task 2: Regression test in `tests/test_dispatch_typing_stop.py`
 
-Three `@pytest.mark.asyncio` tests using the `_make_loop` helper pattern from `test_opengui_agent_loop.py`:
+Three `@pytest.mark.asyncio` tests using the `_make_loop` helper pattern from `test_guiclaw_agent_loop.py`:
 
 1. `test_dispatch_publishes_empty_outbound_for_telegram_when_response_none` — non-CLI channel receives empty OutboundMessage
 2. `test_dispatch_publishes_empty_outbound_for_cli_when_response_none` — CLI channel still receives empty OutboundMessage (preserved)
 3. `test_dispatch_publishes_actual_response_when_not_none` — real response is forwarded as-is
 
-All 3 pass. Existing 11 `test_opengui_agent_loop.py` tests remain green.
+All 3 pass. Existing 11 `test_guiclaw_agent_loop.py` tests remain green.
 
 Commit: `5124b0d`
 

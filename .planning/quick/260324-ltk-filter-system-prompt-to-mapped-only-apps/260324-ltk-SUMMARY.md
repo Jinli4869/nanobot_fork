@@ -1,20 +1,20 @@
 ---
 phase: quick
 plan: 260324-ltk
-subsystem: opengui/skills, opengui/prompts
+subsystem: guiclaw/skills, guiclaw/prompts
 tags: [android, system-prompt, normalization, oppo, coloros, filtering]
 dependency_graph:
   requires: []
   provides: [oppo-coloros-mappings, display-name-only-prompt, filtered-annotate]
-  affects: [opengui/skills/normalization.py, opengui/prompts/system.py, tests/test_opengui.py]
+  affects: [guiclaw/skills/normalization.py, guiclaw/prompts/system.py, tests/test_guiclaw.py]
 tech_stack:
   added: []
   patterns: [filter-on-annotation, display-name-extraction, prompt-noise-reduction]
 key_files:
   modified:
-    - opengui/skills/normalization.py
-    - opengui/prompts/system.py
-    - tests/test_opengui.py
+    - guiclaw/skills/normalization.py
+    - guiclaw/prompts/system.py
+    - tests/test_guiclaw.py
 decisions:
   - "annotate_android_apps silently drops unmapped packages so callers never see unknown COM identifiers in the prompt"
   - "Display name extraction uses split(': ', 1)[0] — safe because annotated entries are always 'DisplayName: pkg' format from annotate_android_apps"
@@ -79,8 +79,8 @@ None - plan executed exactly as written.
 
 ## Self-Check: PASSED
 
-- `opengui/skills/normalization.py` — exists and contains `com.coloros.soundrecorder`
-- `opengui/prompts/system.py` — exists and shows display-name-only format
-- `tests/test_opengui.py` — exists with all 3 new tests
+- `guiclaw/skills/normalization.py` — exists and contains `com.coloros.soundrecorder`
+- `guiclaw/prompts/system.py` — exists and shows display-name-only format
+- `tests/test_guiclaw.py` — exists with all 3 new tests
 - Commit 8efbd64 — OPPO mappings + filtered annotate_android_apps
 - Commit b392c90 — display-name-only prompt + regression tests

@@ -117,7 +117,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 19]: RuntimeService normalizes legacy Phase 17 RuntimeInspectionContract payloads to the Phase 19 aggregate DTO shape.
 - [Phase 19]: Phase 19 keeps get_task_launch_contract() read-only while the mutable typed launch contract is injected only through get_task_launch_service().
 - [Phase 19]: Typed nanobot browser launches translate to private GuiSubagentTool task text inside nanobot/tui so no free-form task or prompt API is exposed publicly.
-- [Phase 19]: OpenGUI browser launches run through tui-local local/dry-run backend adapters instead of shelling out through opengui.cli.
+- [Phase 19]: GUIClaw browser launches run through tui-local local/dry-run backend adapters instead of shelling out through guiclaw.cli.
 - [Phase 19]: Public diagnostics stay run_id-addressed only; TraceInspectionService resolves artifact directories internally from the shared registry or artifacts root.
 - [Phase 19]: Trace and log payloads are allowlist-based and sanitize prompt/path leakage by dropping unsafe fields and redacting prompt/path text in summaries or messages.
 - [Phase 20]: The browser workspace lives in a dedicated `nanobot/tui/web` React/Vite app, while session and run identity stay encoded in the URL for cross-view continuity.
@@ -159,7 +159,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 25 P02]: Fallback block measured before shortcut resolution attempt — avoids partial execution ambiguity on resolution edge cases
 - [Phase 25 P02]: BranchNode subtrees recursively processed via _walk_nodes — enables nested branches without special-casing
 - [Phase 26]: ExtractionPipeline rejects trajectories with fewer than two steps before invoking any critic, then short-circuits from step critic to trajectory critic to producer in strict order
-- [Phase 26]: Phase 26 public extraction types are exported from opengui.skills so callers can adopt the pipeline without deep module imports
+- [Phase 26]: Phase 26 public extraction types are exported from guiclaw.skills so callers can adopt the pipeline without deep module imports
 - [Phase 27]: Run BM25 plus optional FAISS search inside each store, then merge via UnifiedSkillSearch with layer weights.
 - [Phase 29]: filter_candidates_by_context falls back to platform-only when app filter yields empty list, preserving recall
 - [Phase 29]: shortcut_candidates stored in run() but not yet used for execution gating — Plan 02 adds applicability evaluation gate
@@ -204,7 +204,7 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260323-p01 | 修复 GUI action 容错与 GUI 成功后 Telegram 完成消息延迟 | 2026-03-23 | b828c5b | [260323-p01-gui-action-gui-telegram](./quick/260323-p01-gui-action-gui-telegram/) |
 | 260323-q1s | 设计 desktop 真实 GUI memory 命中端到端测试并标明应查看的 run trace | 2026-03-23 | 8048c6b | [260323-q1s-desktop-gui-memory-run-trace](./quick/260323-q1s-desktop-gui-memory-run-trace/) |
 | 260323-q5j | 执行 desktop/local 真实 GUI memory 命中测试并分析实际 run trace；确认 memory 命中但执行结果仅 partial | 2026-03-23 | 464fbbc | [260323-q5j-desktop-local-gui-memory-run-trace](./quick/260323-q5j-desktop-local-gui-memory-run-trace/) |
-| 260323-qdw | 审查并提交必要的 memory 可观测性改动，然后修复 `~/.opengui/config.yaml` 的 embedding 兼容问题 | 2026-03-23 | uncommitted | [260323-qdw-memory-opengui-config-yaml-embedding](./quick/260323-qdw-memory-opengui-config-yaml-embedding/) |
+| 260323-qdw | 审查并提交必要的 memory 可观测性改动，然后修复 `~/.guiclaw/config.yaml` 的 embedding 兼容问题 | 2026-03-23 | uncommitted | [260323-qdw-memory-guiclaw-config-yaml-embedding](./quick/260323-qdw-memory-guiclaw-config-yaml-embedding/) |
 | 260323-qm7 | 构建 Android 手机 memory 文件：创建 icon_guide.md 和 policy.md，将 tmp_ 文件转换为可解析格式，并为 os_guide.md 和 app_guide.md 添加 17 条 Android OS 操作和 35 条主流中国 App 使用指南 | 2026-03-23 | 3608ed9 | [260323-qm7-build-android-phone-memory-files-for-ope](./quick/260323-qm7-build-android-phone-memory-files-for-ope/) |
 | 260323-tm8 | 修复 planner 返回大写 `AND/ATOM` 时 router 报 `Unknown node type` 的问题，并补解析与执行层回归测试 | 2026-03-23 | uncommitted | [260323-tm8-planner-and-atom-router-unknown-node-typ](./quick/260323-tm8-planner-and-atom-router-unknown-node-typ/) |
 | 260323-ud4 | 在 planning 分支执行前向当前 channel 发送 plan 预览消息，并补发送行为测试 | 2026-03-23 | uncommitted | [260323-ud4-plan-channel-plan](./quick/260323-ud4-plan-channel-plan/) |
@@ -214,34 +214,34 @@ Decisions are logged in PROJECT.md Key Decisions table.
 | 260324-oks | 简化 gui_skills 目录结构为每个平台单一 skills.json 聚合文件 | 2026-03-24 | uncommitted | [260324-oks-gui-skills-skills-json](./quick/260324-oks-gui-skills-skills-json/) |
 | 260324-p41 | Make GUI trajectory summarization and skill extraction run in background after GUI agent returns | 2026-03-24 | uncommitted | [260324-p41-make-gui-trajectory-summarization-and-sk](./quick/260324-p41-make-gui-trajectory-summarization-and-sk/) |
 | 260402-q5f | 现在执行gui任务，我希望动作执行完成之后再进行截图，而不是动作还没执行结束就截图;另外，eval.py上，/Users/jinli/.nanobot/workspace/gui_runs/2026-04-02_184228_600485/trace_20260402_184228.jsonl和/Users/jinli/.nanobot/workspace/gui_runs/2026-04-02_184228_600485/evaluation.json，应该只读type为step的步骤计入步数 | 2026-04-02 | 1ac5e43 | [260402-q5f-gui-eval-py-users-jinli-nanobot-workspac](./quick/260402-q5f-gui-eval-py-users-jinli-nanobot-workspac/) |
-| 260324-wak | Wire Nanobot GUI tool to use OpenGUI memory retrieval with configured embedding model | 2026-03-24 | uncommitted | [260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem](./quick/260324-wak-wire-nanobot-gui-tool-to-use-opengui-mem/) |
-| 260325-06v | Switch nanobot GUI memory embedding to the same direct OpenAI-compatible path used by OpenGUI CLI and document required config changes | 2026-03-25 | uncommitted | [260325-06v-switch-nanobot-gui-memory-embedding-to-t](./quick/260325-06v-switch-nanobot-gui-memory-embedding-to-t/) |
+| 260324-wak | Wire Nanobot GUI tool to use GUIClaw memory retrieval with configured embedding model | 2026-03-24 | uncommitted | [260324-wak-wire-nanobot-gui-tool-to-use-guiclaw-mem](./quick/260324-wak-wire-nanobot-gui-tool-to-use-guiclaw-mem/) |
+| 260325-06v | Switch nanobot GUI memory embedding to the same direct OpenAI-compatible path used by GUIClaw CLI and document required config changes | 2026-03-25 | uncommitted | [260325-06v-switch-nanobot-gui-memory-embedding-to-t](./quick/260325-06v-switch-nanobot-gui-memory-embedding-to-t/) |
 | 260325-kgy | Split GUI memory by type: os/app/icon guide entries to planner via PlanningContext.gui_memory_context, policy entries directly to GUI agent system prompt | 2026-03-25 | c008d1e | [260325-kgy-gui-memory-os-app-icon-guide-planner-pla](./quick/260325-kgy-gui-memory-os-app-icon-guide-planner-pla/) |
 | 260325-l2b | Fix planner route selection so GUI subtasks use gui.adb vs gui.desktop based on active backend; PlanningContext.active_gui_route, backend-aware catalog, planner directive, router gui.adb sentinel | 2026-03-25 | b2b7daf | [260325-l2b-planner-planningcontext-active-backend-p](./quick/260325-l2b-planner-planningcontext-active-backend-p/) |
 | 260325-sku | Fix ExecTool exit code error detection, AND sequential execution, and GUI-only complexity gate in router.py and loop.py | 2026-03-25 | 56e685b | [260325-sku-and-complexity-tool-gui-plan](./quick/260325-sku-and-complexity-tool-gui-plan/) |
 | 260325-ts0 | Wire SkillExecutor into nanobot GuiSubagentTool via enable_skill_execution config flag; add enable_skill_execution field to GuiConfig | 2026-03-25 | 5f81c1b | [260325-ts0-nanobot](./quick/260325-ts0-nanobot/) |
 | 260326-e16 | 引入jieba进行分词,为稳定的中文检索进行支持,并确认skills的检索也支持中文稳定检索 | 2026-03-26 | 34b41ed | [260326-e16-jieba-skills](./quick/260326-e16-jieba-skills/) |
-| 260330-khq | Add iOS/iPhone WDA backend to OpenGUI: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-opengui-iphone-os](./quick/260330-khq-opengui-iphone-os/) |
-| 260330-l0g | Add HarmonyOS HDC backend to OpenGUI: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-opengui-hdc-harmony-os](./quick/260330-l0g-opengui-hdc-harmony-os/) |
-| 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-opengui-agent-gui-agent-nanobot-/) |
+| 260330-khq | Add iOS/iPhone WDA backend to GUIClaw: WdaBackend, bundle ID normalization, CLI --backend ios, nanobot gui.ios routing | 2026-03-30 | 34adab0 | [260330-khq-guiclaw-iphone-os](./quick/260330-khq-guiclaw-iphone-os/) |
+| 260330-l0g | Add HarmonyOS HDC backend to GUIClaw: HdcBackend with JPEG screenshot, uitest uiInput actions, aa dump foreground detection, CLI --backend hdc, nanobot gui.hdc routing | 2026-03-30 | 767e290 | [260330-l0g-guiclaw-hdc-harmony-os](./quick/260330-l0g-guiclaw-hdc-harmony-os/) |
+| 260402-pb1 | Decouple main-agent vs GUI-agent model/provider selection and add optional GUI post-run evaluation hook wired to shared eval logic | 2026-04-02 | uncommitted | [260402-pb1-nanobot-guiclaw-agent-gui-agent-nanobot-](./quick/260402-pb1-nanobot-guiclaw-agent-gui-agent-nanobot-/) |
 | 260407-s5f | 修复 Android `input_text` 多行输入只落第一行的问题：按行输入并在行间显式发送回车，补回归测试覆盖换行文本 | 2026-04-07 | uncommitted | [260407-s5f-trace-jsonl-input-text](./quick/260407-s5f-trace-jsonl-input-text/) |
 | 260405-knn | 根据 /Users/jinli/.nanobot/workspace/gui_runs/2026-04-05_144819_197174 中出现 exception 的原因进行 debug 并修复 | 2026-04-05 | uncommitted | [260405-knn-users-jinli-nanobot-workspace-gui-runs-2](./quick/260405-knn-users-jinli-nanobot-workspace-gui-runs-2/) |
-| 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 opengui 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
+| 260403-rhj | 根据 /Users/jinli/Documents/Project/MobileWorld/src/mobile_world/agents/implementations 里的 general_e2e、qwen3vl、mai_ui、gelab、seed agent，为 guiclaw 适配不同 agent 的动作空间和 prompt | 2026-04-03 | fe5fa36 | [260403-rhj-users-jinli-documents-project-mobileworl](./quick/260403-rhj-users-jinli-documents-project-mobileworl/) |
 | 260403-s40 | 把 SkillExecutor 这条链补成 profile-aware，把 _AgentActionGrounder 和 _AgentSubgoalRunner 接到同一个 agent_profiles seam 上 | 2026-04-03 | ed0534f | [260403-s40-skillexecutor-profile-aware-agentactiong](./quick/260403-s40-skillexecutor-profile-aware-agentactiong/) |
 | 260403-soi | 把 gui.agent_profile 配置项正式补上 | 2026-04-03 | a322466 | [260403-soi-gui-agent-profile](./quick/260403-soi-gui-agent-profile/) |
-| 260403-u0t | 更新 opengui README 和 README_CN，说明支持的 profile 和如何通过 config.json/CLI 设置 | 2026-04-03 | c7da030 | [260403-u0t-opengui-readme-readme-cn-profile-config-](./quick/260403-u0t-opengui-readme-readme-cn-profile-config-/) |
+| 260403-u0t | 更新 guiclaw README 和 README_CN，说明支持的 profile 和如何通过 config.json/CLI 设置 | 2026-04-03 | c7da030 | [260403-u0t-guiclaw-readme-readme-cn-profile-config-](./quick/260403-u0t-guiclaw-readme-readme-cn-profile-config-/) |
 | 260404-tas | 参考 gelab-zero 的输入链路改进 Android 中文输入：ADBKeyboard 失败后回退到 yadb，并保留 ASCII `input text` 兜底 | 2026-04-04 | uncommitted | [260404-tas-gelab-zero-action-tools-py](./quick/260404-tas-gelab-zero-action-tools-py/) |
 | 260404-te3 | 自动探测并切换 ADBKeyboard IME，使已安装但未激活 ADBKeyboard 的设备也能自动走中文输入广播链路 | 2026-04-04 | uncommitted | [260404-te3-adbkeyboard-ime](./quick/260404-te3-adbkeyboard-ime/) |
-| 260404-tot | 让 OpenGUI 自带并自动下发 yadb，不再依赖另一个本地仓库中的 yadb 资产 | 2026-04-04 | uncommitted | [260404-tot-opengui-yadb-yadb](./quick/260404-tot-opengui-yadb-yadb/) |
+| 260404-tot | 让 GUIClaw 自带并自动下发 yadb，不再依赖另一个本地仓库中的 yadb 资产 | 2026-04-04 | uncommitted | [260404-tot-guiclaw-yadb-yadb](./quick/260404-tot-guiclaw-yadb-yadb/) |
 | 260405-ptg | Create a publishable skill for Android deep link probing that explores adb/dumpsys signals and consolidates findings for the main agent | 2026-04-05 | uncommitted | [260405-ptg-create-a-publishable-skill-for-android-d](./quick/260405-ptg-create-a-publishable-skill-for-android-d/) |
 | 260407-ezs | 允许失败的 GUI 轨迹也参与技能提炼，使用失败 prompt 而不是直接跳过 | 2026-04-07 | uncommitted | [260407-ezs-gui-prompt](./quick/260407-ezs-gui-prompt/) |
 | 260407-glp | 让 evaluation 读取截图字段兼容当前 trace 的 screenshot_path 格式 | 2026-04-07 | uncommitted | [260407-glp-evaluation-trace-screenshot-path](./quick/260407-glp-evaluation-trace-screenshot-path/) |
-| 260407-k7k | 修复 OpenGUI ADB 文本输入在空格处被截断的问题 | 2026-04-07 | uncommitted | [260407-k7k-opengui-adb](./quick/260407-k7k-opengui-adb/) |
+| 260407-k7k | 修复 GUIClaw ADB 文本输入在空格处被截断的问题 | 2026-04-07 | uncommitted | [260407-k7k-guiclaw-adb](./quick/260407-k7k-guiclaw-adb/) |
 | 260407-ku8 | 让 GUI trace 记录 input_text 的真实文本，不再写成 redacted 占位符 | 2026-04-07 | uncommitted | [260407-ku8-gui-trace-input-text-redacted](./quick/260407-ku8-gui-trace-input-text-redacted/) |
 | Phase 29-shortcut-retrieval-applicability-routing P01 | 5 | 2 tasks | 3 files |
 | Phase 29-shortcut-retrieval-applicability-routing P02 | 7 | 2 tasks | 3 files |
 | 260409-lpz | 关闭shortcut功能只保留skill提取和execution | 2026-04-09 | 97f2db6 | [260409-lpz-shortcut-skill-execution](./quick/260409-lpz-shortcut-skill-execution/) |
-| 260415-agents-md | 编写 AGENTS.md，为 AI 编码 agent 提供 nanobot + OpenGUI 项目导航指南 | 2026-04-15 | uncommitted | — |
+| 260415-agents-md | 编写 AGENTS.md，为 AI 编码 agent 提供 nanobot + GUIClaw 项目导航指南 | 2026-04-15 | uncommitted | — |
 
 ## Session Continuity
 

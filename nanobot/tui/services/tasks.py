@@ -16,13 +16,13 @@ from nanobot.tui.schemas import LaunchRunResponse, TaskContractResponse, TaskLau
 from nanobot.tui.schemas.tasks import (
     NanobotOpenSettingsLaunchRequest,
     NanobotOpenUrlLaunchRequest,
-    OpenGuiLaunchAppRequest,
-    OpenGuiOpenSettingsRequest,
+    GUIClawLaunchAppRequest,
+    GUIClawOpenSettingsRequest,
 )
 from nanobot.tui.services.operations_registry import OperationsRegistry
-from opengui.action import Action
-from opengui.backends.desktop import LocalDesktopBackend
-from opengui.backends.dry_run import DryRunBackend
+from guiclaw.action import Action
+from guiclaw.backends.desktop import LocalDesktopBackend
+from guiclaw.backends.dry_run import DryRunBackend
 
 
 @dataclass(slots=True)
@@ -47,7 +47,7 @@ class TaskLaunchService:
         registry: OperationsRegistry | None = None,
         *,
         nanobot_runner: Any = None,
-        opengui_runner: Any = None,
+        guiclaw_runner: Any = None,
         run_id_factory: Any = None,
         now_factory: Any = None,
     ) -> None:
@@ -62,7 +62,7 @@ class TaskLaunchService:
         )
         self._registry = registry
         self._nanobot_runner = nanobot_runner
-        self._opengui_runner = opengui_runner
+        self._guiclaw_runner = guiclaw_runner
         self._run_id_factory = run_id_factory or (lambda: f"run-{uuid4().hex}")
         self._now_factory = now_factory or _utc_now
         self._inflight_tasks: set[asyncio.Task[Any]] = set()
@@ -126,9 +126,9 @@ class TaskLaunchService:
                 raise RuntimeError("Nanobot launch adapter is unavailable")
             return await self._run_adapter(self._nanobot_runner, payload)
 
-        if self._opengui_runner is None:
-            raise RuntimeError("OpenGUI launch adapter is unavailable")
-        return await self._run_adapter(self._opengui_runner, payload)
+        if self._guiclaw_runner is None:
+            raise RuntimeError("GUIClaw launch adapter is unavailable")
+        return await self._run_adapter(self._guiclaw_runner, payload)
 
     @staticmethod
     async def _run_adapter(adapter: Any, payload: TaskLaunchRequest) -> TaskRunResult:
@@ -152,8 +152,8 @@ class TaskLaunchService:
             (
                 NanobotOpenUrlLaunchRequest,
                 NanobotOpenSettingsLaunchRequest,
-                OpenGuiLaunchAppRequest,
-                OpenGuiOpenSettingsRequest,
+                GUIClawLaunchAppRequest,
+                GUIClawOpenSettingsRequest,
             ),
         ):
             return payload
@@ -202,18 +202,18 @@ async def run_nanobot_launch(
     )
 
 
-async def run_opengui_launch(
-    payload: OpenGuiLaunchAppRequest | OpenGuiOpenSettingsRequest,
+async def run_guiclaw_launch(
+    payload: GUIClawLaunchAppRequest | GUIClawOpenSettingsRequest,
 ) -> TaskRunResult:
     backend_name = payload.backend or "local"
-    backend = _build_opengui_backend(backend_name)
+    backend = _build_guiclaw_backend(backend_name)
     if hasattr(backend, "preflight"):
         await backend.preflight()
 
-    target = _resolve_opengui_target(payload)
+    target = _resolve_guiclaw_target(payload)
     action = Action(action_type="open_app", text=target)
     summary = await backend.execute(action)
-    if isinstance(payload, OpenGuiOpenSettingsRequest):
+    if isinstance(payload, GUIClawOpenSettingsRequest):
         summary = f"{summary} ({payload.panel})"
     return TaskRunResult(summary=summary, steps_taken=1)
 
@@ -226,18 +226,18 @@ def _nanobot_task_text(
     return f"Open the {payload.panel} settings panel"
 
 
-def _build_opengui_backend(backend_name: str) -> LocalDesktopBackend | DryRunBackend:
+def _build_guiclaw_backend(backend_name: str) -> LocalDesktopBackend | DryRunBackend:
     if backend_name == "dry-run":
         return DryRunBackend()
     if backend_name == "local":
         return LocalDesktopBackend()
-    raise RuntimeError(f"Unsupported OpenGUI backend: {backend_name}")
+    raise RuntimeError(f"Unsupported GUIClaw backend: {backend_name}")
 
 
-def _resolve_opengui_target(
-    payload: OpenGuiLaunchAppRequest | OpenGuiOpenSettingsRequest,
+def _resolve_guiclaw_target(
+    payload: GUIClawLaunchAppRequest | GUIClawOpenSettingsRequest,
 ) -> str:
-    if isinstance(payload, OpenGuiOpenSettingsRequest):
+    if isinstance(payload, GUIClawOpenSettingsRequest):
         return _platform_settings_target()
     return _platform_app_target(payload.app_id)
 

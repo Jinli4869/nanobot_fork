@@ -18,11 +18,11 @@ tech-stack:
   patterns: [shared runtime backend dispatch, patchable platform support collectors, idempotent display manager teardown]
 key-files:
   created:
-    - opengui/backends/displays/win32desktop.py
-    - tests/test_opengui_p14_windows_desktop.py
+    - guiclaw/backends/displays/win32desktop.py
+    - tests/test_guiclaw_p14_windows_desktop.py
   modified:
-    - opengui/backends/background_runtime.py
-    - opengui/backends/displays/__init__.py
+    - guiclaw/backends/background_runtime.py
+    - guiclaw/backends/displays/__init__.py
 key-decisions:
   - "Windows isolated support resolves through the shared runtime with backend_name=\"windows_isolated_desktop\"."
   - "Win32DesktopManager owns desktop naming and teardown, while later plans can layer real worker launch and Win32 handles behind the same surface."
@@ -59,10 +59,10 @@ Each task was committed atomically:
 2. **Task 2: Implement the Windows probe taxonomy and `Win32DesktopManager`** - `0d3c074` (feat)
 
 ## Files Created/Modified
-- `tests/test_opengui_p14_windows_desktop.py` - New Phase 14 contract coverage for Windows probe taxonomy and manager lifecycle.
-- `opengui/backends/background_runtime.py` - Windows remediation strings, probe dispatch, and shared runtime result mapping.
-- `opengui/backends/displays/win32desktop.py` - Windows support collector, probe helper, and `Win32DesktopManager`.
-- `opengui/backends/displays/__init__.py` - Re-export of `Win32DesktopManager`.
+- `tests/test_guiclaw_p14_windows_desktop.py` - New Phase 14 contract coverage for Windows probe taxonomy and manager lifecycle.
+- `guiclaw/backends/background_runtime.py` - Windows remediation strings, probe dispatch, and shared runtime result mapping.
+- `guiclaw/backends/displays/win32desktop.py` - Windows support collector, probe helper, and `Win32DesktopManager`.
+- `guiclaw/backends/displays/__init__.py` - Re-export of `Win32DesktopManager`.
 
 ## Decisions Made
 - Routed Windows support through the same shared runtime entry point as Linux and macOS so later CLI and nanobot work can dispatch by `backend_name`.

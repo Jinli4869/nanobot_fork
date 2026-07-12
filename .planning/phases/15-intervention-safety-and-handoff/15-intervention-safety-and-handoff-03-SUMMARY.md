@@ -21,15 +21,15 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/cli.py
+    - guiclaw/cli.py
     - nanobot/agent/tools/gui.py
-    - opengui/backends/background.py
-    - opengui/backends/windows_isolated.py
-    - opengui/agent.py
-    - tests/test_opengui_p5_cli.py
-    - tests/test_opengui_p11_integration.py
-    - tests/test_opengui_p10_background.py
-    - tests/test_opengui_p14_windows_desktop.py
+    - guiclaw/backends/background.py
+    - guiclaw/backends/windows_isolated.py
+    - guiclaw/agent.py
+    - tests/test_guiclaw_p5_cli.py
+    - tests/test_guiclaw_p11_integration.py
+    - tests/test_guiclaw_p10_background.py
+    - tests/test_guiclaw_p14_windows_desktop.py
 key-decisions:
   - "CLI now owns explicit local intervention acknowledgement with an exact `resume` prompt instead of auto-resuming."
   - "Backend handoff metadata is limited to safe target-surface keys and filtered before host display."
@@ -67,15 +67,15 @@ Each task was committed atomically:
 2. **Task 2: Implement CLI/nanobot intervention handlers and backend handoff metadata** - `be766a2` (feat)
 
 ## Files Created/Modified
-- `opengui/cli.py` - Adds the CLI intervention handler, safe target filtering, and progress-output scrubbing.
+- `guiclaw/cli.py` - Adds the CLI intervention handler, safe target filtering, and progress-output scrubbing.
 - `nanobot/agent/tools/gui.py` - Wires nanobot into the shared intervention contract and sanitizes cancellation payloads.
-- `opengui/backends/background.py` - Exposes Linux/macOS handoff target metadata.
-- `opengui/backends/windows_isolated.py` - Exposes Windows isolated-desktop handoff target metadata.
-- `opengui/agent.py` - Stops retrying cancelled intervention runs and scrubs sensitive key-value fragments inside trace strings.
-- `tests/test_opengui_p5_cli.py` - Covers CLI intervention resume and scrubbed logging.
-- `tests/test_opengui_p11_integration.py` - Covers nanobot intervention resume/cancel payload handling.
-- `tests/test_opengui_p10_background.py` - Covers safe handoff target metadata on the background wrapper.
-- `tests/test_opengui_p14_windows_desktop.py` - Covers safe handoff target metadata on the Windows isolated backend.
+- `guiclaw/backends/background.py` - Exposes Linux/macOS handoff target metadata.
+- `guiclaw/backends/windows_isolated.py` - Exposes Windows isolated-desktop handoff target metadata.
+- `guiclaw/agent.py` - Stops retrying cancelled intervention runs and scrubs sensitive key-value fragments inside trace strings.
+- `tests/test_guiclaw_p5_cli.py` - Covers CLI intervention resume and scrubbed logging.
+- `tests/test_guiclaw_p11_integration.py` - Covers nanobot intervention resume/cancel payload handling.
+- `tests/test_guiclaw_p10_background.py` - Covers safe handoff target metadata on the background wrapper.
+- `tests/test_guiclaw_p14_windows_desktop.py` - Covers safe handoff target metadata on the Windows isolated backend.
 
 ## Decisions Made
 
@@ -91,16 +91,16 @@ Each task was committed atomically:
 - **Found during:** Task 2 verification
 - **Issue:** `GuiAgent.run()` treated `intervention_cancelled` like a normal failed attempt, which retried the task and broke the explicit handoff contract.
 - **Fix:** Stopped the retry loop when the result error starts with `intervention_cancelled`.
-- **Files modified:** `opengui/agent.py`
-- **Verification:** `uv run pytest tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p10_background.py tests/test_opengui_p14_windows_desktop.py -k "intervention or handoff_target_metadata" -q`
+- **Files modified:** `guiclaw/agent.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p10_background.py tests/test_guiclaw_p14_windows_desktop.py -k "intervention or handoff_target_metadata" -q`
 - **Committed in:** `be766a2`
 
 **2. [Rule 2 - Missing Critical] Scrubbed sensitive key-value fragments embedded inside prompt snapshots**
 - **Found during:** Task 2 verification
 - **Issue:** Observation metadata like `session_token` was redacted in structured dicts but still leaked inside serialized prompt text written to trace artifacts.
 - **Fix:** Extended `GuiAgent` string scrubbing so trace/prompt text redacts sensitive key-value fragments before persistence.
-- **Files modified:** `opengui/agent.py`
-- **Verification:** `uv run pytest tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p10_background.py tests/test_opengui_p14_windows_desktop.py -k "intervention or handoff_target_metadata" -q`
+- **Files modified:** `guiclaw/agent.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p10_background.py tests/test_guiclaw_p14_windows_desktop.py -k "intervention or handoff_target_metadata" -q`
 - **Committed in:** `be766a2`
 
 ---

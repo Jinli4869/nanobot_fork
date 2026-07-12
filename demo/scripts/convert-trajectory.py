@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Convert opengui_runs JSONL trajectories into demo-friendly JSON format.
+"""Convert guiclaw_runs JSONL trajectories into demo-friendly JSON format.
 
 Usage:
-    python convert-trajectory.py [--runs-dir ../opengui_runs] [--out-dir ../data]
+    python convert-trajectory.py [--runs-dir ../guiclaw_runs] [--out-dir ../data]
 
 Reads trace.jsonl files, normalises both old (string action) and new (dict action)
 formats, copies screenshots, and synthesises agent-log.json for each scenario.
@@ -326,8 +326,8 @@ def convert_scenario(runs_dir: Path, out_dir: Path, scenario: dict) -> dict | No
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert opengui_runs to demo data")
-    parser.add_argument("--runs-dir", type=Path, default=Path(__file__).resolve().parent.parent.parent / "opengui_runs")
+    parser = argparse.ArgumentParser(description="Convert guiclaw_runs to demo data")
+    parser.add_argument("--runs-dir", type=Path, default=Path(__file__).resolve().parent.parent.parent / "guiclaw_runs")
     parser.add_argument("--out-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data")
     args = parser.parse_args()
 

@@ -24,24 +24,24 @@
 ## Recommended Command
 
 ```bash
-python -m opengui.cli --backend local --task "切换回浏览器，并重新打开刚刚关闭的标签页。"
+python -m guiclaw.cli --backend local --task "切换回浏览器，并重新打开刚刚关闭的标签页。"
 ```
 
-如果本地 `~/.opengui/config.yaml` 没有可用 embedding provider，这次测试即使运行成功，也不能证明 memory 检索链路成立，因为 `MemoryRetriever` 不会被构建。
+如果本地 `~/.guiclaw/config.yaml` 没有可用 embedding provider，这次测试即使运行成功，也不能证明 memory 检索链路成立，因为 `MemoryRetriever` 不会被构建。
 
 ## Which Run Trace To Inspect
 
 执行后，优先查看最新 run 根目录：
 
-- `opengui_runs/<run_stamp>/`
+- `guiclaw_runs/<run_stamp>/`
 
 重点看两份 trace：
 
 1. trajectory trace
-- `opengui_runs/<run_stamp>/trace_<timestamp>.jsonl`
+- `guiclaw_runs/<run_stamp>/trace_<timestamp>.jsonl`
 
 2. attempt trace
-- `opengui_runs/<run_stamp>/<task_slug>_<epoch_ms>_0/trace.jsonl`
+- `guiclaw_runs/<run_stamp>/<task_slug>_<epoch_ms>_0/trace.jsonl`
 
 如果第一次 attempt 失败，再看 `_1`、`_2`；但 memory 检索主证据优先来自 run 根目录的 trajectory trace。
 

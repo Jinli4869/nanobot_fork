@@ -19,16 +19,16 @@ created: 2026-04-03
 |----------|-------|
 | **Framework** | pytest + pytest-asyncio |
 | **Config file** | `pyproject.toml` |
-| **Quick run command** | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py -q` |
-| **Full suite command** | `uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py -q` |
+| **Quick run command** | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -q` |
+| **Full suite command** | `uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py -q` |
 | **Estimated runtime** | ~8 seconds |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `uv run pytest tests/test_opengui_p29_retrieval_applicability.py -q`
-- **After every plan wave:** Run `uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py -q`
+- **After every task commit:** Run `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -q`
+- **After every plan wave:** Run `uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py -q`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 8 seconds
 
@@ -38,14 +38,14 @@ created: 2026-04-03
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 29-01-01 | 01 | 1 | SUSE-01 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_retrieval_filters_by_platform -x` | ❌ W0 | ⬜ pending |
-| 29-01-02 | 01 | 1 | SUSE-01 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_retrieval_permissive_without_foreground_app -x` | ❌ W0 | ⬜ pending |
-| 29-01-03 | 01 | 1 | SUSE-01 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_retrieval_emits_trajectory_event -x` | ❌ W0 | ⬜ pending |
-| 29-02-01 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_run_when_conditions_pass -x` | ❌ W0 | ⬜ pending |
-| 29-02-02 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_skip_when_condition_fails -x` | ❌ W0 | ⬜ pending |
-| 29-02-03 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_fallback_when_no_candidates -x` | ❌ W0 | ⬜ pending |
-| 29-02-04 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_emits_trajectory_event -x` | ❌ W0 | ⬜ pending |
-| 29-02-05 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_exception_produces_fallback -x` | ❌ W0 | ⬜ pending |
+| 29-01-01 | 01 | 1 | SUSE-01 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_retrieval_filters_by_platform -x` | ❌ W0 | ⬜ pending |
+| 29-01-02 | 01 | 1 | SUSE-01 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_retrieval_permissive_without_foreground_app -x` | ❌ W0 | ⬜ pending |
+| 29-01-03 | 01 | 1 | SUSE-01 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_retrieval_emits_trajectory_event -x` | ❌ W0 | ⬜ pending |
+| 29-02-01 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_run_when_conditions_pass -x` | ❌ W0 | ⬜ pending |
+| 29-02-02 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_skip_when_condition_fails -x` | ❌ W0 | ⬜ pending |
+| 29-02-03 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_fallback_when_no_candidates -x` | ❌ W0 | ⬜ pending |
+| 29-02-04 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_emits_trajectory_event -x` | ❌ W0 | ⬜ pending |
+| 29-02-05 | 02 | 1 | SUSE-02 | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_exception_produces_fallback -x` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -53,8 +53,8 @@ created: 2026-04-03
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_opengui_p29_retrieval_applicability.py` — stubs for all SUSE-01 and SUSE-02 behaviors
-- [ ] `opengui/skills/shortcut_router.py` — new module for `ApplicabilityDecision` and `ShortcutApplicabilityRouter`
+- [ ] `tests/test_guiclaw_p29_retrieval_applicability.py` — stubs for all SUSE-01 and SUSE-02 behaviors
+- [ ] `guiclaw/skills/shortcut_router.py` — new module for `ApplicabilityDecision` and `ShortcutApplicabilityRouter`
 
 *Existing `ShortcutSkillStore`, `UnifiedSkillSearch`, `ConditionEvaluator`, and `TrajectoryRecorder` infrastructure already covers Phase 29's dependencies.*
 

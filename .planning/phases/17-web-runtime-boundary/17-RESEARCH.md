@@ -19,7 +19,7 @@ No `17-CONTEXT.md` exists for this phase. This research therefore treats the fol
 - This phase is a runtime-boundary phase, not a visual design phase. The React/Vite UI itself is not the center of gravity yet.
 - Existing CLI, channel, and background GUI flows must keep working without requiring the web surface.
 - Existing session persistence via `nanobot/session/manager.py` should remain the source of truth for chat history instead of introducing a second storage format.
-- Existing host/runtime semantics for OpenGUI should remain in `opengui` and `nanobot.agent.tools.gui`; the web layer should adapt them rather than fork them.
+- Existing host/runtime semantics for GUIClaw should remain in `guiclaw` and `nanobot.agent.tools.gui`; the web layer should adapt them rather than fork them.
 - The first release is local-first and should default to localhost-safe serving behavior with explicit configuration.
 
 ### Claude's Discretion
@@ -33,7 +33,7 @@ No `17-CONTEXT.md` exists for this phase. This research therefore treats the fol
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| ISO-01 | The web backend lives under `nanobot/tui` and reaches existing nanobot or OpenGUI behavior through thin adapter boundaries instead of broad core-runtime refactors | Define package boundaries, app factory, API routers, and service/adaptor modules that reuse existing runtime objects without rewriting them |
+| ISO-01 | The web backend lives under `nanobot/tui` and reaches existing nanobot or GUIClaw behavior through thin adapter boundaries instead of broad core-runtime refactors | Define package boundaries, app factory, API routers, and service/adaptor modules that reuse existing runtime objects without rewriting them |
 | ISO-02 | The first web release defaults to local-first safe access patterns such as localhost binding and explicit config, without adding mandatory cloud dependencies | Add dedicated `tui/web` config defaults, local bind host/port behavior, and startup seams that do not auto-open network exposure |
 </phase_requirements>
 
@@ -46,10 +46,10 @@ Phase 17 should behave like a foundation phase for a future web product surface,
    - route registration
    - dependency wiring
    - thin service/adaptor modules
-2. Existing nanobot and OpenGUI modules remain the system of record:
+2. Existing nanobot and GUIClaw modules remain the system of record:
    - `nanobot.session.manager.SessionManager` for persisted chat sessions
    - `nanobot.agent.loop.AgentLoop` for core direct-chat execution
-   - `nanobot.agent.tools.gui.GuiSubagentTool` and `opengui/*` for GUI automation semantics
+   - `nanobot.agent.tools.gui.GuiSubagentTool` and `guiclaw/*` for GUI automation semantics
 3. Cross-boundary changes outside `nanobot/tui` should be minimal and explicit:
    - new config schema for web defaults
    - optional dependency group(s)
@@ -122,7 +122,7 @@ What should **not** happen in Phase 17:
 ### Service Boundary Pattern
 
 Prefer:
-- routes -> dependency providers -> service adapters -> existing nanobot/OpenGUI modules
+- routes -> dependency providers -> service adapters -> existing nanobot/GUIClaw modules
 
 Avoid:
 - routes -> direct imports of half the runtime graph
@@ -214,7 +214,7 @@ Design the app factory so serving a built React app can be layered in later, but
 ## Anti-Patterns to Avoid
 
 - **Creating a second nanobot runtime just for web requests:** leads to duplicated config, provider, and session semantics
-- **Putting FastAPI code in `nanobot/cli/` or `opengui/cli.py`:** breaks the isolation goal
+- **Putting FastAPI code in `nanobot/cli/` or `guiclaw/cli.py`:** breaks the isolation goal
 - **Binding to `0.0.0.0` by default:** violates the local-first safety requirement
 - **Committing React/Vite scaffolding before backend seams exist:** risks designing the API from the UI inward
 - **Adding broad global state to route handlers:** makes later streaming/chat work brittle
@@ -225,7 +225,7 @@ Design the app factory so serving a built React app can be layered in later, but
 |---------|-------------|-------------|-----|
 | Chat session persistence | New database or JSON format | `nanobot.session.manager.SessionManager` | Existing persisted format already works |
 | Config loading | Separate web config loader | `nanobot.config.loader.load_config()` plus a narrow web config section | Keeps one source of truth |
-| Runtime task semantics | Web-only GUI orchestration rules | existing nanobot/OpenGUI adapters | Prevents host drift |
+| Runtime task semantics | Web-only GUI orchestration rules | existing nanobot/GUIClaw adapters | Prevents host drift |
 | Dev HTTP serving | Custom socket server | FastAPI + Uvicorn | Standard, testable, low ceremony |
 
 ## Common Pitfalls

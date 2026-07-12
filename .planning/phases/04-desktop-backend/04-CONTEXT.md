@@ -88,14 +88,14 @@ Implement `LocalDesktopBackend` conforming to the `DeviceBackend` protocol so th
 **Downstream agents MUST read these before planning or implementing.**
 
 ### DeviceBackend Protocol
-- `opengui/interfaces.py` — DeviceBackend protocol definition (observe, execute, preflight, platform)
-- `opengui/action.py` — Action dataclass, VALID_ACTION_TYPES, resolve_coordinate(), ActionError
-- `opengui/observation.py` — Observation dataclass (screenshot_path, screen_width/height, foreground_app, platform)
+- `guiclaw/interfaces.py` — DeviceBackend protocol definition (observe, execute, preflight, platform)
+- `guiclaw/action.py` — Action dataclass, VALID_ACTION_TYPES, resolve_coordinate(), ActionError
+- `guiclaw/observation.py` — Observation dataclass (screenshot_path, screen_width/height, foreground_app, platform)
 
 ### Existing Backend Implementations (reference patterns)
-- `opengui/backends/adb.py` — AdbBackend: full reference implementation with observe/execute/preflight (~366 lines)
-- `opengui/backends/dry_run.py` — DryRunBackend: minimal no-op implementation (~48 lines)
-- `opengui/backends/__init__.py` — Backend exports
+- `guiclaw/backends/adb.py` — AdbBackend: full reference implementation with observe/execute/preflight (~366 lines)
+- `guiclaw/backends/dry_run.py` — DryRunBackend: minimal no-op implementation (~48 lines)
+- `guiclaw/backends/__init__.py` — Backend exports
 
 ### Nanobot Integration (backend wiring)
 - `nanobot/agent/tools/gui.py` — GuiSubagentTool with `NotImplementedError` for `backend="local"` that this phase resolves
@@ -107,8 +107,8 @@ Implement `LocalDesktopBackend` conforming to the `DeviceBackend` protocol so th
 ## Existing Code Insights
 
 ### Reusable Assets
-- `resolve_coordinate(value, dimension, relative)` in `opengui/action.py`: maps [0,999] relative coords to device pixels — reuse directly
-- `describe_action(action)` in `opengui/action.py`: returns human-readable action description — return from execute()
+- `resolve_coordinate(value, dimension, relative)` in `guiclaw/action.py`: maps [0,999] relative coords to device pixels — reuse directly
+- `describe_action(action)` in `guiclaw/action.py`: returns human-readable action description — return from execute()
 - `Observation` dataclass: use as-is, populate with platform-specific values
 - `Action` dataclass: frozen, immutable — read action_type, coordinates, text, key fields
 
@@ -120,7 +120,7 @@ Implement `LocalDesktopBackend` conforming to the `DeviceBackend` protocol so th
 - `preflight()` raises on failure, returns None on success
 
 ### Integration Points
-- `opengui/backends/__init__.py` — add `LocalDesktopBackend` export
+- `guiclaw/backends/__init__.py` — add `LocalDesktopBackend` export
 - `nanobot/agent/tools/gui.py` — replace `NotImplementedError` for `backend="local"` with `LocalDesktopBackend` construction
 - Phase 3's GuiSubagentTool already handles backend selection from config
 

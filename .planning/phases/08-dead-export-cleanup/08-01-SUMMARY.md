@@ -1,7 +1,7 @@
 ---
 phase: 08-dead-export-cleanup
 plan: "01"
-subsystem: nanobot.agent / opengui trajectory
+subsystem: nanobot.agent / guiclaw trajectory
 tags: [trajectory, summarizer, planner, router, public-api, tdd]
 dependency_graph:
   requires: []
@@ -14,16 +14,16 @@ dependency_graph:
 tech_stack:
   added: []
   patterns:
-    - lazy import inside method body for optional opengui dependency
+    - lazy import inside method body for optional guiclaw dependency
     - TDD (RED/GREEN) with unittest.mock.patch for async method mocking
 key_files:
   created:
-    - tests/test_opengui_p8_trajectory.py
+    - tests/test_guiclaw_p8_trajectory.py
   modified:
     - nanobot/agent/tools/gui.py
     - nanobot/agent/__init__.py
 decisions:
-  - "_summarize_trajectory uses lazy import so gui.py does not gain a hard module-level opengui.trajectory.summarizer import"
+  - "_summarize_trajectory uses lazy import so gui.py does not gain a hard module-level guiclaw.trajectory.summarizer import"
   - "Summarizer failures are caught at WARNING level — non-fatal, does not affect tool result or _extract_skill"
   - "TrajectorySummarizer is called between trace_path resolution and _extract_skill to maintain logical ordering"
   - "nanobot.agent.__all__ uses alphabetical ordering for all 9 exported names"
@@ -46,7 +46,7 @@ Complete NANO-05 (trajectory summarization for skill extraction) by calling `Tra
 
 | # | Name | Commit | Key Files |
 |---|------|--------|-----------|
-| RED | TDD failing tests | 08c3013 | tests/test_opengui_p8_trajectory.py |
+| RED | TDD failing tests | 08c3013 | tests/test_guiclaw_p8_trajectory.py |
 | 1 | Wire TrajectorySummarizer into GuiSubagentTool | be8c401 | nanobot/agent/tools/gui.py |
 | 2 | Export planner/router types from nanobot.agent | 4ec843b | nanobot/agent/__init__.py |
 
@@ -56,7 +56,7 @@ Complete NANO-05 (trajectory summarization for skill extraction) by calling `Tra
 
 Added `_summarize_trajectory(trace_path: Path | None) -> str` method to `GuiSubagentTool`:
 
-- Lazy-imports `TrajectorySummarizer` from `opengui.trajectory.summarizer` to avoid module-level coupling
+- Lazy-imports `TrajectorySummarizer` from `guiclaw.trajectory.summarizer` to avoid module-level coupling
 - Returns empty string immediately if `trace_path` is `None` or file does not exist (no summarization attempted)
 - Creates `TrajectorySummarizer(llm=self._llm_adapter)` — reuses the existing LLM adapter
 - Catches any `Exception`, logs at `WARNING` with `exc_info=True`, and returns `""` (non-fatal)
@@ -72,14 +72,14 @@ Updated `nanobot/agent/__init__.py`:
 
 ## Test Results
 
-All 4 new tests pass in `tests/test_opengui_p8_trajectory.py`:
+All 4 new tests pass in `tests/test_guiclaw_p8_trajectory.py`:
 
 - `test_summarizer_called_post_run` — `summarize_file` awaited once with a `Path` argument
 - `test_summarizer_failure_non_fatal` — `RuntimeError` in summarizer: `execute()` still returns valid JSON, `_extract_skill` still called
 - `test_summarizer_skipped_when_no_trace` — `trace_path=None`: `summarize_file` never called
 - `test_planner_router_exported_from_agent_package` — all 5 types are importable from `nanobot.agent` as classes
 
-Full suite: 572 passed (baseline 568 + 4 new), 7 warnings. Pre-existing failures (`test_tool_validation.py::test_exec_head_tail_truncation`, `test_opengui_p8_planning.py::test_or_priority_order`) are out of scope.
+Full suite: 572 passed (baseline 568 + 4 new), 7 warnings. Pre-existing failures (`test_tool_validation.py::test_exec_head_tail_truncation`, `test_guiclaw_p8_planning.py::test_or_priority_order`) are out of scope.
 
 ## Deviations from Plan
 

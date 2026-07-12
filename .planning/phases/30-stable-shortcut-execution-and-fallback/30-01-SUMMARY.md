@@ -2,7 +2,7 @@
 phase: 30-stable-shortcut-execution-and-fallback
 plan: "01"
 subsystem: gui
-tags: [opengui, nanobot, shortcut-execution, grounding, pytest]
+tags: [guiclaw, nanobot, shortcut-execution, grounding, pytest]
 requires:
   - phase: 25-multi-layer-execution
     provides: ShortcutExecutor, contract verification, live grounding seam
@@ -21,10 +21,10 @@ key-files:
     - .planning/phases/30-stable-shortcut-execution-and-fallback/30-01-SUMMARY.md
     - .planning/phases/30-stable-shortcut-execution-and-fallback/deferred-items.md
   modified:
-    - opengui/skills/multi_layer_executor.py
-    - opengui/agent.py
+    - guiclaw/skills/multi_layer_executor.py
+    - guiclaw/agent.py
     - nanobot/agent/tools/gui.py
-    - tests/test_opengui_p30_stable_shortcut_execution.py
+    - tests/test_guiclaw_p30_stable_shortcut_execution.py
 key-decisions:
   - "GuiAgent keeps legacy skill_executor and new shortcut_executor as separate constructor seams so approved shortcuts can use ShortcutExecutor without disturbing legacy skill flow."
   - "Nanobot now shares one LLMConditionEvaluator adapter instance between ShortcutApplicabilityRouter and ShortcutExecutor to close the Phase 29 protocol mismatch."
@@ -49,9 +49,9 @@ completed: 2026-04-03
 - **Files modified:** 5
 
 ## Accomplishments
-- Added `LLMConditionEvaluator` plus configurable post-action settle timing inside [multi_layer_executor.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/multi_layer_executor.py).
-- Replaced the applicability-approved shortcut path in [agent.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py) so `GuiAgent.run()` now calls `self._shortcut_executor.execute(...)` and records structured shortcut execution events.
-- Wired the nanobot host in [gui.py](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) to build `LLMConditionEvaluator`, `LLMGrounder`, and `ShortcutExecutor`, and expanded [test_opengui_p30_stable_shortcut_execution.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p30_stable_shortcut_execution.py) to cover the full SUSE-03 path.
+- Added `LLMConditionEvaluator` plus configurable post-action settle timing inside [multi_layer_executor.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/multi_layer_executor.py).
+- Replaced the applicability-approved shortcut path in [agent.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py) so `GuiAgent.run()` now calls `self._shortcut_executor.execute(...)` and records structured shortcut execution events.
+- Wired the nanobot host in [gui.py](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) to build `LLMConditionEvaluator`, `LLMGrounder`, and `ShortcutExecutor`, and expanded [test_guiclaw_p30_stable_shortcut_execution.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p30_stable_shortcut_execution.py) to cover the full SUSE-03 path.
 
 ## Task Commits
 
@@ -66,10 +66,10 @@ Each task was committed atomically through the TDD cycle:
 
 ## Files Created/Modified
 
-- [opengui/skills/multi_layer_executor.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/multi_layer_executor.py) - adds the adapter export plus settle timing in `ShortcutExecutor.execute()`.
-- [opengui/agent.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py) - introduces `shortcut_executor`, shortcut success summarization, and applicability-approved dispatch through `ShortcutExecutor`.
+- [guiclaw/skills/multi_layer_executor.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/multi_layer_executor.py) - adds the adapter export plus settle timing in `ShortcutExecutor.execute()`.
+- [guiclaw/agent.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py) - introduces `shortcut_executor`, shortcut success summarization, and applicability-approved dispatch through `ShortcutExecutor`.
 - [nanobot/agent/tools/gui.py](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) - constructs the adapter, grounder, executor, and per-run shortcut screenshot directory.
-- [tests/test_opengui_p30_stable_shortcut_execution.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p30_stable_shortcut_execution.py) - covers adapter behavior, settle timing, GuiAgent dispatch, and nanobot wiring.
+- [tests/test_guiclaw_p30_stable_shortcut_execution.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p30_stable_shortcut_execution.py) - covers adapter behavior, settle timing, GuiAgent dispatch, and nanobot wiring.
 - [deferred-items.md](/Users/jinli/Documents/Personal/nanobot_fork/.planning/phases/30-stable-shortcut-execution-and-fallback/deferred-items.md) - records the unrelated full-suite Matrix-channel failure encountered during closeout verification.
 
 ## Decisions Made

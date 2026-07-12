@@ -80,9 +80,9 @@ Harden the shared background-execution runtime so it can probe whether isolated 
 - `.planning/phases/11-integration-tests/11-CONTEXT.md` — Current CLI and nanobot Linux-only fallback behavior that Phase 12 will replace with a cross-platform runtime contract
 
 ### Runtime code surfaces
-- `opengui/backends/virtual_display.py` — Current `VirtualDisplayManager` / `DisplayInfo` contract that Phase 12 will extend or wrap
-- `opengui/backends/background.py` — Current background wrapper seam and process-global display assumptions
-- `opengui/cli.py` — Current CLI background-mode fallback and logging behavior
+- `guiclaw/backends/virtual_display.py` — Current `VirtualDisplayManager` / `DisplayInfo` contract that Phase 12 will extend or wrap
+- `guiclaw/backends/background.py` — Current background wrapper seam and process-global display assumptions
+- `guiclaw/cli.py` — Current CLI background-mode fallback and logging behavior
 - `nanobot/agent/tools/gui.py` — Current nanobot background-mode fallback path that must converge on the shared runtime contract
 - `nanobot/config/schema.py` — Existing background-mode config boundary and validation
 
@@ -92,10 +92,10 @@ Harden the shared background-execution runtime so it can probe whether isolated 
 ## Existing Code Insights
 
 ### Reusable Assets
-- `opengui/backends/background.py`: Existing `BackgroundDesktopBackend` already centralizes background lifecycle around a `display_manager.start()` / `stop()` seam and is the natural place to consume a stronger runtime contract.
-- `opengui/backends/virtual_display.py`: `DisplayInfo` already carries cross-platform-friendly fields like `offset_x`, `offset_y`, and `monitor_index`.
-- `opengui/backends/displays/xvfb.py`: Linux Xvfb path is a concrete example of an isolated-capability implementation that currently assumes success/failure directly at startup.
-- `opengui/cli.py`: Current CLI path already gates background behavior in one place inside `run_cli()`.
+- `guiclaw/backends/background.py`: Existing `BackgroundDesktopBackend` already centralizes background lifecycle around a `display_manager.start()` / `stop()` seam and is the natural place to consume a stronger runtime contract.
+- `guiclaw/backends/virtual_display.py`: `DisplayInfo` already carries cross-platform-friendly fields like `offset_x`, `offset_y`, and `monitor_index`.
+- `guiclaw/backends/displays/xvfb.py`: Linux Xvfb path is a concrete example of an isolated-capability implementation that currently assumes success/failure directly at startup.
+- `guiclaw/cli.py`: Current CLI path already gates background behavior in one place inside `run_cli()`.
 - `nanobot/agent/tools/gui.py`: Nanobot path already applies a parallel decision point before wrapping the backend.
 
 ### Established Patterns
@@ -105,8 +105,8 @@ Harden the shared background-execution runtime so it can probe whether isolated 
 - Logging is already the primary user-visible reporting surface for background-mode state changes.
 
 ### Integration Points
-- `opengui/backends/background.py` likely becomes the shared runtime decision consumer or host for any new runtime coordinator.
-- `opengui/cli.py` and `nanobot/agent/tools/gui.py` need to stop making ad hoc Linux-only decisions and instead consume the shared Phase 12 contract.
+- `guiclaw/backends/background.py` likely becomes the shared runtime decision consumer or host for any new runtime coordinator.
+- `guiclaw/cli.py` and `nanobot/agent/tools/gui.py` need to stop making ad hoc Linux-only decisions and instead consume the shared Phase 12 contract.
 - Phase 13 and Phase 14 will need to plug macOS and Windows capability probes into the same shared probe/result shape defined here.
 - Phase 16 will need one consistent mode-reporting surface across CLI and nanobot, so Phase 12 should avoid locking into CLI-only structures.
 

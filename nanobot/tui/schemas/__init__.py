@@ -17,11 +17,11 @@ from nanobot.tui.schemas.runtime import (
 )
 from nanobot.tui.schemas.sessions import SessionListResponse, SessionSummary
 from nanobot.tui.schemas.tasks import (
+    GUIClawLaunchAppRequest,
+    GUIClawOpenSettingsRequest,
     LaunchRunResponse,
     NanobotOpenSettingsLaunchRequest,
     NanobotOpenUrlLaunchRequest,
-    OpenGuiLaunchAppRequest,
-    OpenGuiOpenSettingsRequest,
     TaskContractResponse,
     TaskLaunchRequest,
 )
@@ -49,8 +49,8 @@ __all__ = [
     "LaunchRunResponse",
     "NanobotOpenSettingsLaunchRequest",
     "NanobotOpenUrlLaunchRequest",
-    "OpenGuiLaunchAppRequest",
-    "OpenGuiOpenSettingsRequest",
+    "GUIClawLaunchAppRequest",
+    "GUIClawOpenSettingsRequest",
     "TaskContractResponse",
     "TaskLaunchRequest",
     "LogInspectionResponse",

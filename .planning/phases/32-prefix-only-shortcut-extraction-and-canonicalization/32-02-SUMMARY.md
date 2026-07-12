@@ -16,7 +16,7 @@ tech-stack:
   patterns: ["producer-level placeholder inference", "stable chrome labels stay literal"]
 key-files:
   created: [.planning/phases/32-prefix-only-shortcut-extraction-and-canonicalization/32-02-SUMMARY.md]
-  modified: [opengui/skills/shortcut_extractor.py, tests/test_opengui_p26_quality_gated_extraction.py]
+  modified: [guiclaw/skills/shortcut_extractor.py, tests/test_guiclaw_p26_quality_gated_extraction.py]
 key-decisions:
   - "ShortcutSkillProducer now infers placeholders from target templates and task-varying selector-like parameters instead of templating only input_text.text."
   - "Stable labels such as Send, Back, and Compose remain literal to avoid placeholder explosion in stored shortcuts."
@@ -56,8 +56,8 @@ Each task was committed atomically:
 ## Files Created/Modified
 
 - `.planning/phases/32-prefix-only-shortcut-extraction-and-canonicalization/32-02-SUMMARY.md` - Execution summary, verification record, and plan metadata for 32-02.
-- `opengui/skills/shortcut_extractor.py` - Broadened placeholder inference, slot-name inference, parameter-slot harvesting, and stable-literal guards.
-- `tests/test_opengui_p26_quality_gated_extraction.py` - Producer-level regression coverage for dynamic `resource_id`/message templating and placeholder-explosion prevention.
+- `guiclaw/skills/shortcut_extractor.py` - Broadened placeholder inference, slot-name inference, parameter-slot harvesting, and stable-literal guards.
+- `tests/test_guiclaw_p26_quality_gated_extraction.py` - Producer-level regression coverage for dynamic `resource_id`/message templating and placeholder-explosion prevention.
 
 ## Decisions Made
 

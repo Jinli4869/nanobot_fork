@@ -10,7 +10,7 @@
 | ID | Description | Research Support |
 |----|-------------|-----------------|
 | SSTA-03 | Shortcut runs emit structured telemetry for retrieval, applicability, grounding, settle, validation, fallback, and final outcome so unstable shortcuts can be diagnosed. | The trajectory recorder's `record_event()` API already supports arbitrary named events with key-value payloads and timestamps. Phases 29 and 30 already emit `shortcut_retrieval`, `shortcut_applicability`, and `shortcut_execution` events from `GuiAgent`. The gap is grounding-level events (which grounder resolved what, which step failed, what the live target was) and settle-level events inside `ShortcutExecutor`. Both can be added to existing methods without schema changes. |
-| SSTA-04 | Regression coverage proves shortcut extraction and execution remain stable across representative mobile and desktop execution seams or their CI-safe equivalents. | The Phase 30 test file (`test_opengui_p30_stable_shortcut_execution.py`) already uses an android fake backend (`platform="android"`). The gap is a desktop seam (`platform="macos"`) and a test that exercises the full extraction-to-execution pipeline end-to-end using a JSONL trace fixture. Existing patterns from Phase 28 (JSONL fixture-driven promotion tests) and Phase 30 (fake backend with call_log patterns) directly apply. |
+| SSTA-04 | Regression coverage proves shortcut extraction and execution remain stable across representative mobile and desktop execution seams or their CI-safe equivalents. | The Phase 30 test file (`test_guiclaw_p30_stable_shortcut_execution.py`) already uses an android fake backend (`platform="android"`). The gap is a desktop seam (`platform="macos"`) and a test that exercises the full extraction-to-execution pipeline end-to-end using a JSONL trace fixture. Existing patterns from Phase 28 (JSONL fixture-driven promotion tests) and Phase 30 (fake backend with call_log patterns) directly apply. |
 
 </phase_requirements>
 
@@ -30,24 +30,24 @@ The codebase is in a strong position for this phase. `TrajectoryRecorder` is a s
 
 | Module | Version | Purpose | Why Standard |
 |--------|---------|---------|--------------|
-| `opengui/trajectory/recorder.py` — `TrajectoryRecorder` | workspace current | Append-only JSONL recorder with `record_event(event_type, **payload)` API | Already used for all shortcut observability events in Phase 29/30; no schema changes needed for new event types |
-| `opengui/skills/multi_layer_executor.py` — `ShortcutExecutor` | workspace current | Executes shortcut steps with settle timing and condition evaluation | The primary new telemetry site: grounding result and settle duration should be emitted per step |
-| `opengui/skills/multi_layer_executor.py` — `ShortcutStepResult` | workspace current | Per-step record in `ShortcutExecutionSuccess.step_results` | Already carries `grounding: GroundingResult | None` and `backend_result`; telemetry can read these fields |
-| `opengui/agent.py` — `GuiAgent._retrieve_shortcut_candidates()` | workspace current | Emits `shortcut_retrieval` event; already covers retrieval telemetry | No changes needed; Pattern 29 already complete |
-| `opengui/agent.py` — `GuiAgent._evaluate_shortcut_applicability()` | workspace current | Emits `shortcut_applicability` event on all paths including skip/fallback/run | No changes needed; Pattern 29 already complete |
-| `opengui/skills/shortcut_promotion.py` — `ShortcutPromotionPipeline` | workspace current | Production shortcut promotion pipeline, exercised in regression seam | Used in Phase 28 tests via JSONL fixture + store; reuse same pattern |
-| `opengui/skills/shortcut_store.py` — `ShortcutSkillStore` | workspace current | Stores promoted shortcuts; queryable for post-promotion assertions | Phase 28 tests use `store.list_all(platform=...)` as assertion point |
+| `guiclaw/trajectory/recorder.py` — `TrajectoryRecorder` | workspace current | Append-only JSONL recorder with `record_event(event_type, **payload)` API | Already used for all shortcut observability events in Phase 29/30; no schema changes needed for new event types |
+| `guiclaw/skills/multi_layer_executor.py` — `ShortcutExecutor` | workspace current | Executes shortcut steps with settle timing and condition evaluation | The primary new telemetry site: grounding result and settle duration should be emitted per step |
+| `guiclaw/skills/multi_layer_executor.py` — `ShortcutStepResult` | workspace current | Per-step record in `ShortcutExecutionSuccess.step_results` | Already carries `grounding: GroundingResult | None` and `backend_result`; telemetry can read these fields |
+| `guiclaw/agent.py` — `GuiAgent._retrieve_shortcut_candidates()` | workspace current | Emits `shortcut_retrieval` event; already covers retrieval telemetry | No changes needed; Pattern 29 already complete |
+| `guiclaw/agent.py` — `GuiAgent._evaluate_shortcut_applicability()` | workspace current | Emits `shortcut_applicability` event on all paths including skip/fallback/run | No changes needed; Pattern 29 already complete |
+| `guiclaw/skills/shortcut_promotion.py` — `ShortcutPromotionPipeline` | workspace current | Production shortcut promotion pipeline, exercised in regression seam | Used in Phase 28 tests via JSONL fixture + store; reuse same pattern |
+| `guiclaw/skills/shortcut_store.py` — `ShortcutSkillStore` | workspace current | Stores promoted shortcuts; queryable for post-promotion assertions | Phase 28 tests use `store.list_all(platform=...)` as assertion point |
 | `pytest`, `pytest-asyncio` | workspace locked | Test framework and async support | Established in all prior shortcut phases |
 
 ### Supporting
 
 | Module | Version | Purpose | When to Use |
 |--------|---------|---------|-------------|
-| `opengui/grounding/protocol.py` — `GroundingResult` | workspace current | Returned by `LLMGrounder.ground()`; carried in `ShortcutStepResult.grounding` | Use fields `.resolved_params` and `.target` as telemetry payload when grounding occurs |
-| `opengui/grounding/protocol.py` — `GroundingContext` | workspace current | Input to grounder containing screenshot + observation | Reference only; do not serialize fully — only log resolved target and param names |
+| `guiclaw/grounding/protocol.py` — `GroundingResult` | workspace current | Returned by `LLMGrounder.ground()`; carried in `ShortcutStepResult.grounding` | Use fields `.resolved_params` and `.target` as telemetry payload when grounding occurs |
+| `guiclaw/grounding/protocol.py` — `GroundingContext` | workspace current | Input to grounder containing screenshot + observation | Reference only; do not serialize fully — only log resolved target and param names |
 | `unittest.mock` — `AsyncMock`, `MagicMock`, `patch` | stdlib | Mock injection for fake backends and grounqers in regression tests | Established pattern across Phases 25–30 |
-| `tests/test_opengui_p30_stable_shortcut_execution.py` — `_FakeBackend`, `_CapturingRecorder` | workspace | Reusable test helpers for fake backend (Android platform) and event capture | Reuse directly for Plan 02 regression seams; extend `_FakeBackend` to support `platform="macos"` variant |
-| `tests/test_opengui_p28_shortcut_productionization.py` | workspace | JSONL fixture patterns for promotion pipeline testing | Reference for how to build JSONL trace fixtures and assert `store.list_all()` results |
+| `tests/test_guiclaw_p30_stable_shortcut_execution.py` — `_FakeBackend`, `_CapturingRecorder` | workspace | Reusable test helpers for fake backend (Android platform) and event capture | Reuse directly for Plan 02 regression seams; extend `_FakeBackend` to support `platform="macos"` variant |
+| `tests/test_guiclaw_p28_shortcut_productionization.py` | workspace | JSONL fixture patterns for promotion pipeline testing | Reference for how to build JSONL trace fixtures and assert `store.list_all()` results |
 
 ### Alternatives Considered
 
@@ -64,13 +64,13 @@ The codebase is in a strong position for this phase. `TrajectoryRecorder` is a s
 ### Recommended Project Structure
 
 ```
-opengui/
+guiclaw/
 ├── agent.py                              # No changes — existing events are complete
 └── skills/
     └── multi_layer_executor.py           # Add grounding + settle events inside execute()
 
 tests/
-└── test_opengui_p31_shortcut_observability.py   # NEW: Phase 31 telemetry + regression tests
+└── test_guiclaw_p31_shortcut_observability.py   # NEW: Phase 31 telemetry + regression tests
 ```
 
 ### Pattern 1: Adding Telemetry to ShortcutExecutor
@@ -81,7 +81,7 @@ tests/
 **When to use:** Grounding and settle events that are only meaningful at the executor level (inside the step loop), not at the `GuiAgent` level.
 
 ```python
-# Source: opengui/skills/multi_layer_executor.py — extended ShortcutExecutor
+# Source: guiclaw/skills/multi_layer_executor.py — extended ShortcutExecutor
 @dataclass
 class ShortcutExecutor:
     backend: DeviceBackend
@@ -180,7 +180,7 @@ async def test_android_shortcut_seam(tmp_path):
 Reuse the `_CapturingRecorder` from Phase 30 tests. Inject it into `ShortcutExecutor` to capture step-level events.
 
 ```python
-# Source: tests/test_opengui_p30_stable_shortcut_execution.py — _CapturingRecorder
+# Source: tests/test_guiclaw_p30_stable_shortcut_execution.py — _CapturingRecorder
 class _CapturingRecorder:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
@@ -275,10 +275,10 @@ async def test_grounding_telemetry(tmp_path):
 
 Verified patterns from the existing codebase:
 
-### Existing record_event Call Pattern (from opengui/agent.py)
+### Existing record_event Call Pattern (from guiclaw/agent.py)
 
 ```python
-# Source: opengui/agent.py lines 1719-1733 (_retrieve_shortcut_candidates)
+# Source: guiclaw/agent.py lines 1719-1733 (_retrieve_shortcut_candidates)
 self._trajectory_recorder.record_event(
     "shortcut_retrieval",
     task=task,
@@ -299,7 +299,7 @@ self._trajectory_recorder.record_event(
 ### ShortcutExecutor Step Loop (current state — telemetry gap location)
 
 ```python
-# Source: opengui/skills/multi_layer_executor.py lines 247-310
+# Source: guiclaw/skills/multi_layer_executor.py lines 247-310
 for step_index, step in enumerate(shortcut.steps):
     pre_screenshot_path = self._screenshot_path(shortcut.skill_id, step_index, "pre")
     observation = await self.backend.observe(pre_screenshot_path, timeout=timeout)
@@ -331,7 +331,7 @@ for step_index, step in enumerate(shortcut.steps):
 ### ShortcutSkillStore Assertion Pattern (from Phase 28 tests)
 
 ```python
-# Source: tests/test_opengui_p28_shortcut_productionization.py
+# Source: tests/test_guiclaw_p28_shortcut_productionization.py
 store = ShortcutSkillStore(tmp_path / "store")
 pipeline = ShortcutPromotionPipeline(platform="android")
 skill_id = await pipeline.promote_from_trace(trace_path, is_success=True, store=store)
@@ -344,7 +344,7 @@ assert promoted[0].platform == "android"
 ### _FakeBackend and _CapturingRecorder (from Phase 30 tests — reuse directly)
 
 ```python
-# Source: tests/test_opengui_p30_stable_shortcut_execution.py
+# Source: tests/test_guiclaw_p30_stable_shortcut_execution.py
 class _FakeBackend:
     def __init__(self) -> None:
         self.executed_actions: list[Action] = []
@@ -400,7 +400,7 @@ For the macOS seam, create `_FakeDesktopBackend` with `platform="macos"` and `fo
 |----------|-------|
 | Framework | pytest with pytest-asyncio |
 | Config file | pyproject.toml |
-| Quick run command | `uv run python -m pytest tests/test_opengui_p31_shortcut_observability.py -x -q --tb=short` |
+| Quick run command | `uv run python -m pytest tests/test_guiclaw_p31_shortcut_observability.py -x -q --tb=short` |
 | Full suite command | `uv run python -m pytest tests/ -q --tb=short` |
 
 ### Phase Requirements to Test Map
@@ -412,17 +412,17 @@ For the macOS seam, create `_FakeDesktopBackend` with `platform="macos"` and `fo
 | SSTA-03 | All 6 event types present in a complete trace artifact for a shortcut run (retrieval, applicability, grounding, settle, validation, outcome) | unit | `pytest tests/ -k "test_full_trace_event_coverage" -x -q` | Wave 0 |
 | SSTA-04 | Android seam: promote from JSONL fixture, execute promoted shortcut, all steps succeed | integration-safe | `pytest tests/ -k "test_android_extraction_execution_seam" -x -q` | Wave 0 |
 | SSTA-04 | macOS/desktop seam: promote from JSONL fixture with `platform="macos"`, execute promoted shortcut, all steps succeed | integration-safe | `pytest tests/ -k "test_macos_extraction_execution_seam" -x -q` | Wave 0 |
-| SSTA-04 | Regression: Phase 28/29/30 tests remain green after Phase 31 changes | regression | `pytest tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py tests/test_opengui_p30_stable_shortcut_execution.py -q` | Exists |
+| SSTA-04 | Regression: Phase 28/29/30 tests remain green after Phase 31 changes | regression | `pytest tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py tests/test_guiclaw_p30_stable_shortcut_execution.py -q` | Exists |
 
 ### Sampling Rate
 
-- **Per task commit:** `uv run python -m pytest tests/test_opengui_p31_shortcut_observability.py -x -q --tb=short`
+- **Per task commit:** `uv run python -m pytest tests/test_guiclaw_p31_shortcut_observability.py -x -q --tb=short`
 - **Per wave merge:** `uv run python -m pytest tests/ -q --tb=short`
 - **Phase gate:** Full suite green (except pre-existing deferred failures documented in Phase 30 `deferred-items.md`) before `/gsd:verify-work`
 
 ### Wave 0 Gaps
 
-- [ ] `tests/test_opengui_p31_shortcut_observability.py` — covers SSTA-03 (grounding/settle telemetry) and SSTA-04 (android + desktop seams)
+- [ ] `tests/test_guiclaw_p31_shortcut_observability.py` — covers SSTA-03 (grounding/settle telemetry) and SSTA-04 (android + desktop seams)
 
 *(Existing test infrastructure covers all prior-phase regression checks; only the new Phase 31 file is missing.)*
 
@@ -430,15 +430,15 @@ For the macOS seam, create `_FakeDesktopBackend` with `platform="macos"` and `fo
 
 ### Primary (HIGH confidence)
 
-- Direct code inspection: `opengui/agent.py` lines 560–641, 1692–1858 — existing `shortcut_retrieval`, `shortcut_applicability`, `shortcut_execution` events and their payload shapes
-- Direct code inspection: `opengui/trajectory/recorder.py` — `record_event(event_type, **payload)` API
-- Direct code inspection: `opengui/skills/multi_layer_executor.py` lines 212–330 — `ShortcutExecutor.execute()` step loop showing telemetry gaps
-- Direct code inspection: `tests/test_opengui_p30_stable_shortcut_execution.py` — `_FakeBackend`, `_CapturingRecorder`, `_NeverCalledGrounder` helper patterns
-- Direct code inspection: `tests/test_opengui_p28_shortcut_productionization.py` — JSONL fixture + `ShortcutPromotionPipeline` + `store.list_all()` regression pattern
+- Direct code inspection: `guiclaw/agent.py` lines 560–641, 1692–1858 — existing `shortcut_retrieval`, `shortcut_applicability`, `shortcut_execution` events and their payload shapes
+- Direct code inspection: `guiclaw/trajectory/recorder.py` — `record_event(event_type, **payload)` API
+- Direct code inspection: `guiclaw/skills/multi_layer_executor.py` lines 212–330 — `ShortcutExecutor.execute()` step loop showing telemetry gaps
+- Direct code inspection: `tests/test_guiclaw_p30_stable_shortcut_execution.py` — `_FakeBackend`, `_CapturingRecorder`, `_NeverCalledGrounder` helper patterns
+- Direct code inspection: `tests/test_guiclaw_p28_shortcut_productionization.py` — JSONL fixture + `ShortcutPromotionPipeline` + `store.list_all()` regression pattern
 
 ### Secondary (MEDIUM confidence)
 
-- Test run result: `uv run python -m pytest tests/test_opengui_p30_stable_shortcut_execution.py tests/test_opengui_p29_retrieval_applicability.py -q` → 35 passed, 0 failed (2026-04-03) confirms current test baseline is green
+- Test run result: `uv run python -m pytest tests/test_guiclaw_p30_stable_shortcut_execution.py tests/test_guiclaw_p29_retrieval_applicability.py -q` → 35 passed, 0 failed (2026-04-03) confirms current test baseline is green
 - Phase 30 deferred-items.md: 15 pre-existing failures outside Phase 30 scope remain unresolved; Phase 31 tests should not touch those files
 
 ### Tertiary (LOW confidence)

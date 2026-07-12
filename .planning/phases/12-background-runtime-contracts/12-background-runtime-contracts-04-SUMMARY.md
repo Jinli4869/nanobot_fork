@@ -34,7 +34,7 @@ completed: "2026-03-20"
 
 The full Phase 12 regression command is green:
 
-`uv run pytest tests/test_opengui_p12_runtime_contracts.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -q`
+`uv run pytest tests/test_guiclaw_p12_runtime_contracts.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -q`
 
 That run now reports `30 passed`, which is recorded in both the validation ledger and the verification report. `12-VALIDATION.md` has been advanced to `status: ready`, `nyquist_compliant: true`, and `wave_0_complete: true`.
 

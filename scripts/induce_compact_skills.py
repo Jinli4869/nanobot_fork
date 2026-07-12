@@ -2,7 +2,7 @@
 """Induce compact, parameterized GUI skills from successful MobileWorld traces.
 
 This script no longer reimplements its own extraction prompt/filter.  Instead it
-reuses the mature :class:`opengui.skills.extractor.SkillExtractor` pipeline — the
+reuses the mature :class:`guiclaw.skills.extractor.SkillExtractor` pipeline — the
 same codegen-driven structured evidence, fixed/parameter handling, ``state_contract``
 guards, quality loop, and contract alignment that the online extractor uses — and
 then applies a thin *compact* post-process on top:
@@ -53,13 +53,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from opengui.action import normalize_action_type
-from opengui.interfaces import LLMResponse
-from opengui.skills.data import Skill
-from opengui.skills.extractor import SkillExtractor
-from opengui.skills.flat import compile_flat_skills, export_skills_to_source
-from opengui.skills.state_contract import state_contract_fingerprint
-from opengui.skills.trajectory_codegen import codegen_to_extraction_text, codegen_trajectory
+from guiclaw.action import normalize_action_type
+from guiclaw.interfaces import LLMResponse
+from guiclaw.skills.data import Skill
+from guiclaw.skills.extractor import SkillExtractor
+from guiclaw.skills.flat import compile_flat_skills, export_skills_to_source
+from guiclaw.skills.state_contract import state_contract_fingerprint
+from guiclaw.skills.trajectory_codegen import codegen_to_extraction_text, codegen_trajectory
 
 # Trace discovery / outcome helpers are shared with the gui-memory inducer.
 try:
@@ -185,7 +185,7 @@ def _has_terminal_action(skill: Skill) -> bool:
 
 
 class _OpenAICompatLLM:
-    """Minimal :class:`opengui.interfaces.LLMProvider` over an OpenAI-compatible API.
+    """Minimal :class:`guiclaw.interfaces.LLMProvider` over an OpenAI-compatible API.
 
     The extractor only ever calls ``chat(messages)`` with a single user message
     that already contains the rendered prompt and screenshots, so this adapter

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from opengui.agent import _prompt_skill_entry_allows
-from opengui.skills.data import Skill, SkillStep
-from opengui.skills.executor import (
+from guiclaw.agent import _prompt_skill_entry_allows
+from guiclaw.skills.data import Skill, SkillStep
+from guiclaw.skills.executor import (
     SkillExecutor,
     ValidStateMode,
     _coerce_valid_state_mode,
@@ -203,7 +203,7 @@ class _RaisingBackend:
 
 class TestOffDoesNotMaskExecutionError:
     async def test_deeplink_execution_error_fails_under_off(self):
-        from opengui.skills.executor import ExecutionState
+        from guiclaw.skills.executor import ExecutionState
 
         step = SkillStep(
             action_type="open_deeplink",

@@ -10,7 +10,7 @@
 
 | Technology | Version | Purpose | Why Recommended |
 |------------|---------|---------|-----------------|
-| Existing OpenGUI `ShortcutSkill` / `TaskSkill` schema | current repo | Canonical shortcut and task-skill contracts | The codebase already ships typed shortcut/task contracts, executors, and versioned stores; v1.6 should productionize them rather than invent a third format |
+| Existing GUIClaw `ShortcutSkill` / `TaskSkill` schema | current repo | Canonical shortcut and task-skill contracts | The codebase already ships typed shortcut/task contracts, executors, and versioned stores; v1.6 should productionize them rather than invent a third format |
 | Existing JSON stores + BM25/optional FAISS retrieval | current repo | Persist and retrieve shortcut/task skills | The current store/search path is simple, already integrated, and good enough for stabilizing shortcut behavior before introducing graph storage |
 | Existing trajectory recorder artifacts (`trace.jsonl`, screenshots, evaluation.json) | current repo | Source of truth for extraction, gating, and diagnostics | Shortcut extraction needs provenance and replay evidence; the repo already records these artifacts in a way that can support promotion gates |
 | LLM-based applicability and grounding with explicit contracts | current repo | Decide whether a shortcut is safe to use now and bind live targets | AppAgentX shows value in screen-aware shortcut evaluation, but the repo already has `GrounderProtocol`, structured conditions, and step execution seams to implement this without a new dependency stack |
@@ -38,7 +38,7 @@
 |-------------|-------------|-------------------------|
 | Reuse existing JSON stores and search | Neo4j/Pinecone-style graph + vector stack like AppAgentX | Consider only after shortcut semantics are stable and store/search quality becomes the bottleneck |
 | Reuse existing LLM grounding and contract checks | Full OmniParser-first shortcut runtime | Consider later if grounding quality, not control-flow stability, becomes the dominant blocker |
-| Promote shortcuts from trace artifacts already emitted by OpenGUI | Build a separate shortcut authoring pipeline disconnected from traces | Only useful if manual curation becomes the primary path, which is not the v1.6 goal |
+| Promote shortcuts from trace artifacts already emitted by GUIClaw | Build a separate shortcut authoring pipeline disconnected from traces | Only useful if manual curation becomes the primary path, which is not the v1.6 goal |
 
 ## What NOT to Use
 
@@ -57,7 +57,7 @@
 
 ## Sources
 
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/shortcut_extractor.py` - current shortcut promotion primitives and gaps
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/shortcut_extractor.py` - current shortcut promotion primitives and gaps
 - `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py` - current production postprocessing path still uses legacy extraction
 - `/Users/jinli/Documents/Personal/AppAgentX/README.md` - evolutionary shortcut framing
 - `/Users/jinli/Documents/Personal/AppAgentX/deployment.py` - screen-aware shortcut evaluation and template generation flow

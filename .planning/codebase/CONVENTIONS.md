@@ -6,7 +6,7 @@
 
 **Files:**
 - Lowercase with underscores: `base_channel.py`, `message_bus.py`, `dingtalk.py`
-- Test files prefixed with `test_`: `test_opengui.py`, `test_base_channel.py`
+- Test files prefixed with `test_`: `test_guiclaw.py`, `test_base_channel.py`
 - Internal/private helpers prefixed with underscore: `_DummyChannel`, `_FakeResponse`, `_make_messages()`
 
 **Functions:**

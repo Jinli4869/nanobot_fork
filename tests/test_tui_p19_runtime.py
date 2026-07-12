@@ -65,7 +65,7 @@ def test_runtime_endpoint_reports_sessions_runs_and_recent_failures() -> None:
                 "recent_failures": [
                     {
                         "run_id": "run-failed-001",
-                        "task_kind": "opengui_launch_app",
+                        "task_kind": "guiclaw_launch_app",
                         "status": "failed",
                         "summary": "Calculator did not open",
                         "steps_taken": 2,

@@ -21,7 +21,7 @@ key-files:
   created: []
   modified:
     - nanobot/agent/tools/gui.py
-    - tests/test_opengui_p11_integration.py
+    - tests/test_guiclaw_p11_integration.py
 
 requirements-completed:
   - BGND-06
@@ -46,5 +46,5 @@ None.
 ## Self-Check: PASSED
 
 - `nanobot/agent/tools/gui.py` - FOUND
-- `tests/test_opengui_p11_integration.py` - FOUND
+- `tests/test_guiclaw_p11_integration.py` - FOUND
 

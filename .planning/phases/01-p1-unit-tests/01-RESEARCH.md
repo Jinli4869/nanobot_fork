@@ -20,13 +20,13 @@
 
 ## Summary
 
-Phase 1 must add fast, isolated unit tests for the three opengui sub-packages (`memory/`, `skills/`, `trajectory/`) that were implemented in Phase 0 but left uncovered. The P0 test file (`tests/test_opengui.py`) demonstrates the project's established pattern: synchronous and async tests co-exist, async tests carry `@pytest.mark.asyncio`, dependencies are replaced via `monkeypatch` or manual mock classes (no `unittest.mock.patch` decoration style is used), and the `DryRunBackend` is the canonical no-IO backend.
+Phase 1 must add fast, isolated unit tests for the three guiclaw sub-packages (`memory/`, `skills/`, `trajectory/`) that were implemented in Phase 0 but left uncovered. The P0 test file (`tests/test_guiclaw.py`) demonstrates the project's established pattern: synchronous and async tests co-exist, async tests carry `@pytest.mark.asyncio`, dependencies are replaced via `monkeypatch` or manual mock classes (no `unittest.mock.patch` decoration style is used), and the `DryRunBackend` is the canonical no-IO backend.
 
-A critical infrastructure gap exists: `faiss-cpu` and `numpy` are **not** in `pyproject.toml` dependencies or the dev extras, yet the memory retrieval and skill library modules `import numpy as np` at module load time and call `import faiss` inside methods. The uv venv currently has neither package installed. Writing tests that import `opengui.memory.retrieval` or `opengui.skills.library` without first adding these packages to the dev deps will fail at collection time. This must be resolved in the first task of this phase before any test code is written.
+A critical infrastructure gap exists: `faiss-cpu` and `numpy` are **not** in `pyproject.toml` dependencies or the dev extras, yet the memory retrieval and skill library modules `import numpy as np` at module load time and call `import faiss` inside methods. The uv venv currently has neither package installed. Writing tests that import `guiclaw.memory.retrieval` or `guiclaw.skills.library` without first adding these packages to the dev deps will fail at collection time. This must be resolved in the first task of this phase before any test code is written.
 
-The test infrastructure itself is solid: pytest 9.0.2, pytest-asyncio 1.3.0, `asyncio_mode = "auto"` in `pyproject.toml` (meaning `@pytest.mark.asyncio` is applied automatically and can be omitted), and `testpaths = ["tests"]` already set. All eight P0 tests pass in 0.02 seconds with `uv run pytest`. The target is a single new test file `tests/test_opengui_p1.py` (following P0 naming convention) covering all three modules.
+The test infrastructure itself is solid: pytest 9.0.2, pytest-asyncio 1.3.0, `asyncio_mode = "auto"` in `pyproject.toml` (meaning `@pytest.mark.asyncio` is applied automatically and can be omitted), and `testpaths = ["tests"]` already set. All eight P0 tests pass in 0.02 seconds with `uv run pytest`. The target is a single new test file `tests/test_guiclaw_p1.py` (following P0 naming convention) covering all three modules.
 
-**Primary recommendation:** Add `faiss-cpu` and `numpy` to `[project.optional-dependencies] dev`, then write three test modules (or sections) in `tests/test_opengui_p1.py` — one per sub-package — using fake/stub classes for all external I/O (embeddings, LLM, device backend).
+**Primary recommendation:** Add `faiss-cpu` and `numpy` to `[project.optional-dependencies] dev`, then write three test modules (or sections) in `tests/test_guiclaw_p1.py` — one per sub-package — using fake/stub classes for all external I/O (embeddings, LLM, device backend).
 
 ---
 
@@ -78,7 +78,7 @@ dev = [
 ### Recommended Project Structure
 ```
 tests/
-└── test_opengui_p1.py   # All Phase 1 unit tests (mirrors test_opengui.py pattern)
+└── test_guiclaw_p1.py   # All Phase 1 unit tests (mirrors test_guiclaw.py pattern)
 ```
 
 One file following the existing P0 convention. Sections within the file can be delimited by comments grouping memory / skills / trajectory tests.
@@ -88,7 +88,7 @@ One file following the existing P0 convention. Sections within the file can be d
 **When to use:** MemoryStore, MemoryEntry serialization, SkillStep/Skill serialization, TrajectoryRecorder, SkillLibrary CRUD (non-async paths), helper functions.
 **Example:**
 ```python
-# Mirrors pattern in tests/test_opengui.py
+# Mirrors pattern in tests/test_guiclaw.py
 def test_memory_store_round_trip(tmp_path):
     store = MemoryStore(tmp_path / "mem")
     entry = MemoryEntry(
@@ -145,7 +145,7 @@ class _FakeEmbedder:
 **What:** Scripted synchronous or async `chat()` returning canned `LLMResponse` objects.
 **When to use:** SkillExtractor, TrajectorySummarizer, SkillLibrary (when testing merge_llm path), LLMStateValidator.
 ```python
-from opengui.interfaces import LLMResponse
+from guiclaw.interfaces import LLMResponse
 
 class _ScriptedLLM:
     def __init__(self, *responses: str) -> None:
@@ -168,7 +168,7 @@ class _FakeValidator:
 ```
 
 ### Anti-Patterns to Avoid
-- **Importing opengui.memory.retrieval without faiss-cpu installed:** Causes `ModuleNotFoundError: No module named 'numpy'` at collection time, failing the entire test suite.
+- **Importing guiclaw.memory.retrieval without faiss-cpu installed:** Causes `ModuleNotFoundError: No module named 'numpy'` at collection time, failing the entire test suite.
 - **Using `@pytest.mark.asyncio` decorator:** Not needed when `asyncio_mode = "auto"` is set; adding it causes deprecation warnings in pytest-asyncio 1.3.x.
 - **Network calls in tests:** SkillExtractor and TrajectorySummarizer both call `llm.chat()` — always inject a `_ScriptedLLM` mock. MemoryRetriever calls `embedding_provider.embed()` — always inject `_FakeEmbedder`.
 - **Real file paths in trajectory tests:** Use `tmp_path` fixture for all `TrajectoryRecorder(output_dir=...)` construction to avoid cross-test pollution.
@@ -191,7 +191,7 @@ class _FakeValidator:
 ## Common Pitfalls
 
 ### Pitfall 1: faiss-cpu / numpy Missing from Dev Dependencies
-**What goes wrong:** `import opengui.memory.retrieval` raises `ModuleNotFoundError: No module named 'numpy'` at pytest collection time, blocking all tests in the file.
+**What goes wrong:** `import guiclaw.memory.retrieval` raises `ModuleNotFoundError: No module named 'numpy'` at pytest collection time, blocking all tests in the file.
 **Why it happens:** `retrieval.py` has `import numpy as np` at module top level; `library.py` does the same. Neither `faiss-cpu` nor `numpy` is declared in `pyproject.toml`.
 **How to avoid:** First task in the phase must add both to dev extras in `pyproject.toml` and run `uv sync --extra dev`.
 **Warning signs:** Any attempt to import either module from the test shell will fail immediately.
@@ -224,7 +224,7 @@ Verified patterns from source code:
 
 ### MemoryStore JSON Persistence
 ```python
-# Source: opengui/memory/store.py — MemoryStore.save() atomic write
+# Source: guiclaw/memory/store.py — MemoryStore.save() atomic write
 def test_memory_store_persists_and_reloads(tmp_path):
     store = MemoryStore(tmp_path)
     entry = MemoryEntry(
@@ -243,7 +243,7 @@ def test_memory_store_persists_and_reloads(tmp_path):
 
 ### MemoryRetriever BM25-Only (alpha=0)
 ```python
-# Source: opengui/memory/retrieval.py — alpha blending
+# Source: guiclaw/memory/retrieval.py — alpha blending
 async def test_retriever_bm25_only_ranks_by_term_overlap():
     provider = _FakeEmbedder(dim=8)
     retriever = MemoryRetriever(embedding_provider=provider, alpha=0.0, top_k=3)
@@ -261,7 +261,7 @@ async def test_retriever_bm25_only_ranks_by_term_overlap():
 
 ### SkillLibrary CRUD
 ```python
-# Source: opengui/skills/library.py — add/get/remove/list_all
+# Source: guiclaw/skills/library.py — add/get/remove/list_all
 def test_skill_library_crud(tmp_path):
     lib = SkillLibrary(store_dir=tmp_path)
     skill = Skill(
@@ -278,7 +278,7 @@ def test_skill_library_crud(tmp_path):
 
 ### SkillLibrary Deduplication (heuristic path)
 ```python
-# Source: opengui/skills/library.py — _heuristic_merge_decision, add_or_merge
+# Source: guiclaw/skills/library.py — _heuristic_merge_decision, add_or_merge
 async def test_skill_library_dedup_same_name_merges(tmp_path):
     lib = SkillLibrary(store_dir=tmp_path)  # no merge_llm → heuristic path
     s1 = Skill("s1", "open_wifi_settings", "Open WiFi", "settings", "android",
@@ -293,7 +293,7 @@ async def test_skill_library_dedup_same_name_merges(tmp_path):
 
 ### SkillExecutor valid_state Verification
 ```python
-# Source: opengui/skills/executor.py — _validate_state called before execute
+# Source: guiclaw/skills/executor.py — _validate_state called before execute
 async def test_executor_stops_on_failed_state_check(tmp_path):
     backend = DryRunBackend()
     validator = _FakeValidator(returns=[False])
@@ -309,7 +309,7 @@ async def test_executor_stops_on_failed_state_check(tmp_path):
 
 ### SkillExtractor Parsing
 ```python
-# Source: opengui/skills/extractor.py — _parse_response
+# Source: guiclaw/skills/extractor.py — _parse_response
 async def test_skill_extractor_parses_llm_json():
     canned = json.dumps({
         "name": "open_settings",
@@ -333,7 +333,7 @@ async def test_skill_extractor_parses_llm_json():
 
 ### TrajectoryRecorder Event Sequencing
 ```python
-# Source: opengui/trajectory/recorder.py — start/record_step/finish JSONL ordering
+# Source: guiclaw/trajectory/recorder.py — start/record_step/finish JSONL ordering
 def test_trajectory_recorder_event_order(tmp_path):
     rec = TrajectoryRecorder(output_dir=tmp_path, task="open settings", platform="android")
     path = rec.start()
@@ -353,7 +353,7 @@ def test_trajectory_recorder_event_order(tmp_path):
 
 ### TrajectorySummarizer Output Format
 ```python
-# Source: opengui/trajectory/summarizer.py — summarize_events returns stripped string
+# Source: guiclaw/trajectory/summarizer.py — summarize_events returns stripped string
 async def test_trajectory_summarizer_returns_string():
     llm = _ScriptedLLM("The agent opened settings successfully.")
     summarizer = TrajectorySummarizer(llm)
@@ -407,29 +407,29 @@ async def test_trajectory_summarizer_returns_string():
 |----------|-------|
 | Framework | pytest 9.0.2 + pytest-asyncio 1.3.0 |
 | Config file | `pyproject.toml` — `[tool.pytest.ini_options]` |
-| Quick run command | `uv run pytest tests/test_opengui_p1.py -v` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p1.py -v` |
 | Full suite command | `uv run pytest tests/ -v` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| TEST-02 | MemoryStore JSON persistence + reload | unit | `uv run pytest tests/test_opengui_p1.py -k "memory_store" -x` | Wave 0 |
-| TEST-02 | MemoryRetriever BM25+FAISS hybrid search | unit | `uv run pytest tests/test_opengui_p1.py -k "retriever" -x` | Wave 0 |
-| TEST-03 | SkillLibrary CRUD (add/get/remove/list) | unit | `uv run pytest tests/test_opengui_p1.py -k "skill_library_crud" -x` | Wave 0 |
-| TEST-03 | SkillLibrary hybrid search | unit | `uv run pytest tests/test_opengui_p1.py -k "skill_library_search" -x` | Wave 0 |
-| TEST-03 | SkillLibrary deduplication + merge | unit | `uv run pytest tests/test_opengui_p1.py -k "dedup" -x` | Wave 0 |
-| TEST-03 | SkillExecutor per-step valid_state | unit | `uv run pytest tests/test_opengui_p1.py -k "executor" -x` | Wave 0 |
-| TEST-03 | SkillExtractor JSON parsing | unit | `uv run pytest tests/test_opengui_p1.py -k "extractor" -x` | Wave 0 |
-| TEST-04 | TrajectoryRecorder event sequencing | unit | `uv run pytest tests/test_opengui_p1.py -k "recorder" -x` | Wave 0 |
-| TEST-04 | TrajectorySummarizer output format | unit | `uv run pytest tests/test_opengui_p1.py -k "summarizer" -x` | Wave 0 |
+| TEST-02 | MemoryStore JSON persistence + reload | unit | `uv run pytest tests/test_guiclaw_p1.py -k "memory_store" -x` | Wave 0 |
+| TEST-02 | MemoryRetriever BM25+FAISS hybrid search | unit | `uv run pytest tests/test_guiclaw_p1.py -k "retriever" -x` | Wave 0 |
+| TEST-03 | SkillLibrary CRUD (add/get/remove/list) | unit | `uv run pytest tests/test_guiclaw_p1.py -k "skill_library_crud" -x` | Wave 0 |
+| TEST-03 | SkillLibrary hybrid search | unit | `uv run pytest tests/test_guiclaw_p1.py -k "skill_library_search" -x` | Wave 0 |
+| TEST-03 | SkillLibrary deduplication + merge | unit | `uv run pytest tests/test_guiclaw_p1.py -k "dedup" -x` | Wave 0 |
+| TEST-03 | SkillExecutor per-step valid_state | unit | `uv run pytest tests/test_guiclaw_p1.py -k "executor" -x` | Wave 0 |
+| TEST-03 | SkillExtractor JSON parsing | unit | `uv run pytest tests/test_guiclaw_p1.py -k "extractor" -x` | Wave 0 |
+| TEST-04 | TrajectoryRecorder event sequencing | unit | `uv run pytest tests/test_guiclaw_p1.py -k "recorder" -x` | Wave 0 |
+| TEST-04 | TrajectorySummarizer output format | unit | `uv run pytest tests/test_guiclaw_p1.py -k "summarizer" -x` | Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p1.py -v`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p1.py -v`
 - **Per wave merge:** `uv run pytest tests/ -v`
 - **Phase gate:** Full suite green (`uv run pytest tests/ -v`) before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p1.py` — main deliverable covering TEST-02, TEST-03, TEST-04
+- [ ] `tests/test_guiclaw_p1.py` — main deliverable covering TEST-02, TEST-03, TEST-04
 - [ ] `pyproject.toml` dev extras — add `faiss-cpu>=1.13.0` and `numpy>=1.26.0`
 - [ ] Run `uv sync --extra dev` after adding deps
 
@@ -438,14 +438,14 @@ async def test_trajectory_summarizer_returns_string():
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct source code reading — `opengui/memory/types.py`, `store.py`, `retrieval.py`
-- Direct source code reading — `opengui/skills/data.py`, `library.py`, `executor.py`, `extractor.py`
-- Direct source code reading — `opengui/trajectory/recorder.py`, `summarizer.py`
-- Direct source code reading — `tests/test_opengui.py` (P0 test patterns)
+- Direct source code reading — `guiclaw/memory/types.py`, `store.py`, `retrieval.py`
+- Direct source code reading — `guiclaw/skills/data.py`, `library.py`, `executor.py`, `extractor.py`
+- Direct source code reading — `guiclaw/trajectory/recorder.py`, `summarizer.py`
+- Direct source code reading — `tests/test_guiclaw.py` (P0 test patterns)
 - `pyproject.toml` — pytest config (`asyncio_mode=auto`, `testpaths=["tests"]`), dev deps
 
 ### Secondary (MEDIUM confidence)
-- `uv run pytest tests/test_opengui.py` output — confirmed 8 tests pass in 0.02s, Python 3.12.12
+- `uv run pytest tests/test_guiclaw.py` output — confirmed 8 tests pass in 0.02s, Python 3.12.12
 - `uv pip install faiss-cpu numpy --dry-run` — confirmed both installable, faiss-cpu 1.13.2 + numpy 2.4.3
 - System `python3 -c "import faiss"` confirmed faiss 1.13.0 available system-wide (not in venv)
 

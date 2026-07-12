@@ -42,8 +42,8 @@ human_verification: []
 | Artifact                                        | Expected                                                        | Status     | Details                                                                                    |
 |-------------------------------------------------|-----------------------------------------------------------------|------------|--------------------------------------------------------------------------------------------|
 | `nanobot/agent/router.py`                       | Route resolver tables, updated _run_tool/_run_mcp with real dispatch, fallback chain | ✓ VERIFIED | Contains `_ROUTE_ID_TO_TOOL_NAME` (7 entries), `_INSTRUCTION_PARAM` (5 entries), `_resolve_route`, `_dispatch_with_fallback`, updated `_run_tool`/`_run_mcp` |
-| `tests/test_opengui_p22_route_dispatch.py`      | Route resolver, tool dispatch, MCP dispatch, fallback, and no-route-id tests | ✓ VERIFIED | 32 tests: 11 resolver + 12 dispatch + 9 fallback. All pass.                                |
-| `tests/test_opengui_p8_planning.py`             | Updated regression tests compatible with real dispatch          | ✓ VERIFIED | 17 tests pass; no placeholder string assertions found                                      |
+| `tests/test_guiclaw_p22_route_dispatch.py`      | Route resolver, tool dispatch, MCP dispatch, fallback, and no-route-id tests | ✓ VERIFIED | 32 tests: 11 resolver + 12 dispatch + 9 fallback. All pass.                                |
+| `tests/test_guiclaw_p8_planning.py`             | Updated regression tests compatible with real dispatch          | ✓ VERIFIED | 17 tests pass; no placeholder string assertions found                                      |
 
 ---
 

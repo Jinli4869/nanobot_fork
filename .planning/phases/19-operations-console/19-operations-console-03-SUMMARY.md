@@ -74,7 +74,7 @@ Each task was committed atomically:
 - **Issue:** The local environment still has the same `uv run --extra dev pytest ...` blockage seen earlier in Phase 19, so the default verification command is not reliable here.
 - **Fix:** Used the plan-approved fallback `.venv/bin/python -m pytest ...` for the red trace slice and the final Phase 17-19 closeout suite.
 - **Files modified:** None
-- **Verification:** `.venv/bin/python -m pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py tests/test_opengui_p3_nanobot.py tests/test_opengui_p16_host_integration.py -q`
+- **Verification:** `.venv/bin/python -m pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p16_host_integration.py -q`
 - **Committed in:** `692d13a` (verification path only; no code change)
 
 ---

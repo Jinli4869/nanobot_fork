@@ -1,23 +1,23 @@
 ---
 phase: 29-shortcut-retrieval-applicability-routing
 plan: "01"
-subsystem: opengui/skills
+subsystem: guiclaw/skills
 tags: [shortcut-router, retrieval, filtering, trajectory, tdd]
 dependency_graph:
   requires:
-    - opengui/skills/shortcut.py (ShortcutSkill, StateDescriptor)
-    - opengui/skills/shortcut_store.py (SkillSearchResult, UnifiedSkillSearch)
-    - opengui/skills/normalization.py (normalize_app_identifier)
-    - opengui/skills/multi_layer_executor.py (ConditionEvaluator protocol)
-    - opengui/trajectory/recorder.py (TrajectoryRecorder.record_event)
+    - guiclaw/skills/shortcut.py (ShortcutSkill, StateDescriptor)
+    - guiclaw/skills/shortcut_store.py (SkillSearchResult, UnifiedSkillSearch)
+    - guiclaw/skills/normalization.py (normalize_app_identifier)
+    - guiclaw/skills/multi_layer_executor.py (ConditionEvaluator protocol)
+    - guiclaw/trajectory/recorder.py (TrajectoryRecorder.record_event)
   provides:
-    - opengui/skills/shortcut_router.py (ApplicabilityDecision, ShortcutApplicabilityRouter, filter_candidates_by_context)
-    - opengui/agent.py (_retrieve_shortcut_candidates, shortcut_applicability_router param)
+    - guiclaw/skills/shortcut_router.py (ApplicabilityDecision, ShortcutApplicabilityRouter, filter_candidates_by_context)
+    - guiclaw/agent.py (_retrieve_shortcut_candidates, shortcut_applicability_router param)
   affects:
-    - opengui/agent.py (GuiAgent.run() now calls _retrieve_shortcut_candidates at step 3b)
+    - guiclaw/agent.py (GuiAgent.run() now calls _retrieve_shortcut_candidates at step 3b)
 tech_stack:
   added:
-    - opengui/skills/shortcut_router.py (new module)
+    - guiclaw/skills/shortcut_router.py (new module)
   patterns:
     - frozen dataclass for immutable decision record
     - pluggable evaluator with always-pass default for dry-run safety
@@ -25,10 +25,10 @@ tech_stack:
     - trajectory event emission on every retrieval call
 key_files:
   created:
-    - opengui/skills/shortcut_router.py
-    - tests/test_opengui_p29_retrieval_applicability.py
+    - guiclaw/skills/shortcut_router.py
+    - tests/test_guiclaw_p29_retrieval_applicability.py
   modified:
-    - opengui/agent.py
+    - guiclaw/agent.py
 decisions:
   - "filter_candidates_by_context falls back to platform-only results when normalized app filter is empty, preserving retrieval recall over precision"
   - "shortcut_candidates stored but not yet used for execution gating — Plan 02 adds applicability evaluation gate"
@@ -50,9 +50,9 @@ metrics:
 
 ### Task 1: shortcut_router.py and retrieval regression tests (TDD)
 
-**RED phase** — wrote `tests/test_opengui_p29_retrieval_applicability.py` with 10 test cases that initially failed (module not found).
+**RED phase** — wrote `tests/test_guiclaw_p29_retrieval_applicability.py` with 10 test cases that initially failed (module not found).
 
-**GREEN phase** — created `opengui/skills/shortcut_router.py`:
+**GREEN phase** — created `guiclaw/skills/shortcut_router.py`:
 
 - `ApplicabilityDecision` — frozen dataclass with `outcome: Literal["run","skip","fallback"]`, `shortcut_id`, `reason`, `score`, `failed_condition` fields
 - `_AlwaysPassEvaluator` — private class returning `True` for all conditions; used as default when no real evaluator is injected
@@ -61,7 +61,7 @@ metrics:
 
 ### Task 2: Wire multi-candidate retrieval into GuiAgent.run()
 
-Modified `opengui/agent.py`:
+Modified `guiclaw/agent.py`:
 
 1. Added top-level imports: `ShortcutApplicabilityRouter`, `filter_candidates_by_context`, `normalize_app_identifier`
 2. Added `shortcut_applicability_router: ShortcutApplicabilityRouter | None = None` parameter to `GuiAgent.__init__`, stored as `self._shortcut_applicability_router`
@@ -74,13 +74,13 @@ Implemented `test_retrieval_in_agent_run` — verifies platform filtering (2 and
 ## Verification Results
 
 ```
-uv run pytest tests/test_opengui_p29_retrieval_applicability.py -q
+uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -q
 11 passed in 0.08s
 
-uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py -q
+uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py -q
 27 passed in 10.52s
 
-uv run python -c "from opengui.skills.shortcut_router import ApplicabilityDecision, ShortcutApplicabilityRouter, filter_candidates_by_context; print('OK')"
+uv run python -c "from guiclaw.skills.shortcut_router import ApplicabilityDecision, ShortcutApplicabilityRouter, filter_candidates_by_context; print('OK')"
 OK
 ```
 
@@ -100,7 +100,7 @@ None — plan executed exactly as written.
 
 ## Self-Check: PASSED
 
-- opengui/skills/shortcut_router.py: FOUND
-- tests/test_opengui_p29_retrieval_applicability.py: FOUND
+- guiclaw/skills/shortcut_router.py: FOUND
+- tests/test_guiclaw_p29_retrieval_applicability.py: FOUND
 - .planning/phases/29-shortcut-retrieval-applicability-routing/29-01-SUMMARY.md: FOUND
 - Commits 3762004, beed732, 93a6f92: FOUND

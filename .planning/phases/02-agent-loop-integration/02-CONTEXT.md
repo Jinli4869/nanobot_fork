@@ -9,7 +9,7 @@
 
 Wire memory retrieval, skill search + execute, and trajectory recording into GuiAgent.run(). Additionally, build a main-agent-level TaskPlanner that decomposes tasks into AND/OR/ATOM trees and routes each ATOM to the appropriate executor (GUI subagent, tool/MCP, or API). The GUI agent becomes simpler — it receives a single focused instruction per invocation and does skill matching + execution or free exploration. This phase also migrates MemoryStore from JSON to markdown format and adds skill confidence tracking with lifecycle management.
 
-**Key architectural change (revised from original):** The AND/OR/ATOM planner lives at the main agent level (nanobot), NOT inside opengui. This allows the planner to route subtasks to any capability (GUI, tools, MCP) rather than being limited to GUI-only execution. opengui does NOT have its own planner or tree executor — it receives a single ATOM instruction and executes it.
+**Key architectural change (revised from original):** The AND/OR/ATOM planner lives at the main agent level (nanobot), NOT inside guiclaw. This allows the planner to route subtasks to any capability (GUI, tools, MCP) rather than being limited to GUI-only execution. guiclaw does NOT have its own planner or tree executor — it receives a single ATOM instruction and executes it.
 
 </domain>
 
@@ -18,8 +18,8 @@ Wire memory retrieval, skill search + execute, and trajectory recording into Gui
 
 ### Architecture: Two-Level Execution (REVISED)
 - **Main agent (nanobot)** owns task decomposition: AND/OR/ATOM tree planner + router
-- **GUI subagent (opengui)** receives a single ATOM instruction, does skill match → execute or free explore
-- AND/OR/ATOM tree is built ONCE at the main agent level — NOT duplicated inside opengui
+- **GUI subagent (guiclaw)** receives a single ATOM instruction, does skill match → execute or free explore
+- AND/OR/ATOM tree is built ONCE at the main agent level — NOT duplicated inside guiclaw
 - GuiAgent.run() takes a single instruction string (an ATOM-level subgoal), not a full complex task
 - The existing `_run_once()` step loop remains the execution engine for each ATOM
 
@@ -37,7 +37,7 @@ Wire memory retrieval, skill search + execute, and trajectory recording into Gui
 - Main agent reads SKILL.md files from `nanobot/skills/` to understand available capabilities
 - Each SKILL.md declares: name, description, type (gui/tool/mcp/api), and trigger patterns
 - The planner uses this registry to decide how to decompose and which ATOM type to assign
-- GUI capabilities come from opengui's SkillLibrary (searched at execution time, not planning time)
+- GUI capabilities come from guiclaw's SkillLibrary (searched at execution time, not planning time)
 - Non-GUI capabilities come from nanobot's existing tool registry and MCP servers
 - Portability: other claws (openclaw, nanoclaw, zeroclaw) ship their own SKILL.md files
 
@@ -57,7 +57,7 @@ Wire memory retrieval, skill search + execute, and trajectory recording into Gui
 - If match above threshold → attempt skill execution (with recovery)
 - If no match or below threshold → free exploration via `_run_once()` step loop
 - Returns AgentResult for the single instruction
-- NO internal planner, NO tree executor — these are removed from opengui
+- NO internal planner, NO tree executor — these are removed from guiclaw
 
 ### Skill-vs-Explore Strategy (unchanged, but per single ATOM)
 - Always search skill library first for the received instruction
@@ -133,16 +133,16 @@ Wire memory retrieval, skill search + execute, and trajectory recording into Gui
 - All new components passed as individual constructor params (not config object)
 
 ### Module Organization (REVISED)
-- **NO** new `opengui/planner.py` — planner lives at main agent level
-- **NO** new `opengui/tree_executor.py` — tree walking lives at main agent level
-- `opengui/agent.py`: GuiAgent.run() simplified — receives instruction, does skill match + execute/explore, returns result
+- **NO** new `guiclaw/planner.py` — planner lives at main agent level
+- **NO** new `guiclaw/tree_executor.py` — tree walking lives at main agent level
+- `guiclaw/agent.py`: GuiAgent.run() simplified — receives instruction, does skill match + execute/explore, returns result
 - `_run_once()` remains as the execution engine (not replaced)
 - New `nanobot/agent/planner.py`: TaskPlanner with AND/OR/ATOM tree + capability-type routing
 - New `nanobot/agent/router.py`: TreeRouter that walks the plan tree and dispatches ATOMs to executors
 
 ### Portability
-- opengui maintains strict protocol boundary: LLMProvider + DeviceBackend + EmbeddingProvider only
-- opengui is SIMPLER than before — no planner, no tree executor, just the GUI execution engine
+- guiclaw maintains strict protocol boundary: LLMProvider + DeviceBackend + EmbeddingProvider only
+- guiclaw is SIMPLER than before — no planner, no tree executor, just the GUI execution engine
 - The planner/router pattern is portable via SKILL.md convention: any claw can implement its own planner that reads SKILL.md files
 - Each claw ships its own SKILL.md capability registry
 - Explicit constructor (no factory/builder); each claw creates GuiAgent with its own protocol implementations
@@ -189,7 +189,7 @@ Wire memory retrieval, skill search + execute, and trajectory recording into Gui
 - `SkillLibrary`: already has hybrid search (BM25 + FAISS) and dedup logic
 - `TrajectoryRecorder`: already has `ExecutionPhase` enum (AGENT, SKILL, RETRY, RECOVERY)
 - `MemoryRetriever`: BM25 + FAISS hybrid search, needs markdown chunking layer
-- `build_system_prompt()` in `opengui/prompts/system.py`: add `<memory>` section here
+- `build_system_prompt()` in `guiclaw/prompts/system.py`: add `<memory>` section here
 - `_FakeEmbedder` and `_ScriptedLLM` test patterns from Phase 1
 - `nanobot/agent/tools/`: existing ToolRegistry for dispatching non-GUI ATOMs
 - `nanobot/agent/subagent.py`: SubagentManager for spawning GUI subagent

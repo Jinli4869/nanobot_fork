@@ -16,7 +16,7 @@ key-files:
   created:
     - .planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-01-SUMMARY.md
   modified:
-    - tests/test_opengui_p5_cli.py
+    - tests/test_guiclaw_p5_cli.py
 key-decisions:
   - "Phase 16 Plan 01 closed as test-only work because the CLI already preserved the required reason, cleanup, and redaction semantics."
 patterns-established:
@@ -53,7 +53,7 @@ This inline Codex execution did not create git commits.
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p5_cli.py` - Added Phase 16 CLI parity coverage for decision tokens, cleanup evidence, and scrubbed handoff output.
+- `tests/test_guiclaw_p5_cli.py` - Added Phase 16 CLI parity coverage for decision tokens, cleanup evidence, and scrubbed handoff output.
 - `.planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-01-SUMMARY.md` - Recorded Wave 1 CLI completion details.
 
 ## Decisions Made
@@ -78,6 +78,6 @@ None - no external service configuration required.
 
 ## Self-Check: PASSED
 
-- Found `tests/test_opengui_p5_cli.py`.
+- Found `tests/test_guiclaw_p5_cli.py`.
 - Verified the Phase 16 CLI test slice passed.
 - Found `.planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-01-SUMMARY.md`.

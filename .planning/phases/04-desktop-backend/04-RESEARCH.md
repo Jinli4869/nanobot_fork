@@ -118,7 +118,7 @@ pip install mss pyautogui pyperclip
 
 ### Recommended Project Structure
 ```
-opengui/
+guiclaw/
 ├── backends/
 │   ├── __init__.py          # Add LocalDesktopBackend export
 │   ├── adb.py               # Reference implementation (do not modify)
@@ -127,7 +127,7 @@ opengui/
 nanobot/
 └── agent/tools/gui.py       # Replace NotImplementedError stub (1 line change)
 tests/
-└── test_opengui_p4_desktop.py  # NEW: phase 4 tests
+└── test_guiclaw_p4_desktop.py  # NEW: phase 4 tests
 ```
 
 ### Pattern 1: DeviceBackend Structural Protocol
@@ -135,7 +135,7 @@ tests/
 The backend is a plain class with no base class. Protocol conformance is structural (duck typing). All methods are async. The `platform` property is a synchronous property returning a plain string.
 
 ```python
-# Source: opengui/interfaces.py + opengui/backends/adb.py
+# Source: guiclaw/interfaces.py + guiclaw/backends/adb.py
 class LocalDesktopBackend:
     def __init__(self) -> None:
         self._screen_width: int = 0
@@ -188,7 +188,7 @@ def _capture_primary_logical() -> tuple[Image.Image, int, int]:
 ### Pattern 3: Async Subprocess for Foreground App
 
 ```python
-# Source: opengui/backends/adb.py _run() pattern
+# Source: guiclaw/backends/adb.py _run() pattern
 async def _run_cmd(self, *args: str, timeout: float = 5.0) -> str:
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -341,7 +341,7 @@ async def observe(self, screenshot_path: Path, timeout: float = 5.0) -> Observat
 
 ### execute() — tap / click dispatch
 ```python
-# Source: pyautogui docs (mouse.html) + opengui/backends/adb.py pattern
+# Source: pyautogui docs (mouse.html) + guiclaw/backends/adb.py pattern
 import pyautogui
 
 async def execute(self, action: Action, timeout: float = 5.0) -> str:
@@ -424,7 +424,7 @@ async def preflight(self) -> None:
 #   raise NotImplementedError("LocalDesktopBackend is planned for Phase 4 ...")
 # AFTER:
 if backend_name == "local":
-    from opengui.backends.desktop import LocalDesktopBackend
+    from guiclaw.backends.desktop import LocalDesktopBackend
     return LocalDesktopBackend()
 ```
 
@@ -470,32 +470,32 @@ if backend_name == "local":
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio |
 | Config file | `pyproject.toml` `[tool.pytest.ini_options]` asyncio_mode = "auto" |
-| Quick run command | `pytest tests/test_opengui_p4_desktop.py -x -q` |
+| Quick run command | `pytest tests/test_guiclaw_p4_desktop.py -x -q` |
 | Full suite command | `pytest tests/ -x -q` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| BACK-03 | `observe()` captures screenshot and returns Observation with correct platform string | unit | `pytest tests/test_opengui_p4_desktop.py::test_observe_returns_observation -x` | ❌ Wave 0 |
-| BACK-03 | `observe()` writes a valid PNG file to `screenshot_path` | unit | `pytest tests/test_opengui_p4_desktop.py::test_observe_writes_png -x` | ❌ Wave 0 |
-| BACK-03 | `execute(tap)` dispatches `pyautogui.click(x, y)` with resolved [0,999] coordinates | unit | `pytest tests/test_opengui_p4_desktop.py::test_execute_tap -x` | ❌ Wave 0 |
-| BACK-03 | `execute(scroll)` calls `pyautogui.scroll()` with pixels//120 conversion | unit | `pytest tests/test_opengui_p4_desktop.py::test_execute_scroll -x` | ❌ Wave 0 |
-| BACK-03 | `execute(input_text)` uses pyperclip.copy + hotkey paste (not typewrite) | unit | `pytest tests/test_opengui_p4_desktop.py::test_execute_input_text_uses_clipboard -x` | ❌ Wave 0 |
-| BACK-03 | `execute(swipe)` uses mouseDown/moveTo/mouseUp (not dragTo) | unit | `pytest tests/test_opengui_p4_desktop.py::test_execute_swipe -x` | ❌ Wave 0 |
-| BACK-03 | `preflight()` raises RuntimeError with accessibility message when pyautogui fails | unit | `pytest tests/test_opengui_p4_desktop.py::test_preflight_raises_on_permission_error -x` | ❌ Wave 0 |
-| BACK-03 | `_build_backend("local")` in GuiSubagentTool returns LocalDesktopBackend (not NotImplementedError) | integration | `pytest tests/test_opengui_p4_desktop.py::test_gui_tool_builds_local_backend -x` | ❌ Wave 0 |
+| BACK-03 | `observe()` captures screenshot and returns Observation with correct platform string | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_observe_returns_observation -x` | ❌ Wave 0 |
+| BACK-03 | `observe()` writes a valid PNG file to `screenshot_path` | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_observe_writes_png -x` | ❌ Wave 0 |
+| BACK-03 | `execute(tap)` dispatches `pyautogui.click(x, y)` with resolved [0,999] coordinates | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_execute_tap -x` | ❌ Wave 0 |
+| BACK-03 | `execute(scroll)` calls `pyautogui.scroll()` with pixels//120 conversion | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_execute_scroll -x` | ❌ Wave 0 |
+| BACK-03 | `execute(input_text)` uses pyperclip.copy + hotkey paste (not typewrite) | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_execute_input_text_uses_clipboard -x` | ❌ Wave 0 |
+| BACK-03 | `execute(swipe)` uses mouseDown/moveTo/mouseUp (not dragTo) | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_execute_swipe -x` | ❌ Wave 0 |
+| BACK-03 | `preflight()` raises RuntimeError with accessibility message when pyautogui fails | unit | `pytest tests/test_guiclaw_p4_desktop.py::test_preflight_raises_on_permission_error -x` | ❌ Wave 0 |
+| BACK-03 | `_build_backend("local")` in GuiSubagentTool returns LocalDesktopBackend (not NotImplementedError) | integration | `pytest tests/test_guiclaw_p4_desktop.py::test_gui_tool_builds_local_backend -x` | ❌ Wave 0 |
 
 ### Key Mock Patterns (for unit tests without a real display)
 
-All pyautogui, mss, and pyperclip calls must be mocked in unit tests — CI has no display. Follow the existing `unittest.mock.patch` pattern from test_opengui.py and test_opengui_p3_nanobot.py:
+All pyautogui, mss, and pyperclip calls must be mocked in unit tests — CI has no display. Follow the existing `unittest.mock.patch` pattern from test_guiclaw.py and test_guiclaw_p3_nanobot.py:
 
 ```python
-# Source: test_opengui_p3_nanobot.py pattern
+# Source: test_guiclaw_p3_nanobot.py pattern
 from unittest.mock import AsyncMock, MagicMock, patch
 
 @pytest.mark.asyncio
 async def test_execute_tap(tmp_path):
-    with patch("opengui.backends.desktop.pyautogui") as mock_pag:
+    with patch("guiclaw.backends.desktop.pyautogui") as mock_pag:
         backend = LocalDesktopBackend()
         backend._screen_width = 1000
         backend._screen_height = 1000
@@ -508,13 +508,13 @@ async def test_execute_tap(tmp_path):
 For `observe()`, mock `mss.mss` as a context manager returning a fake screenshot object, and mock PIL.Image operations if needed.
 
 ### Sampling Rate
-- **Per task commit:** `pytest tests/test_opengui_p4_desktop.py -x -q`
+- **Per task commit:** `pytest tests/test_guiclaw_p4_desktop.py -x -q`
 - **Per wave merge:** `pytest tests/ -x -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p4_desktop.py` — all BACK-03 unit + integration tests
-- [ ] `opengui/backends/desktop.py` — LocalDesktopBackend implementation file (Wave 1)
+- [ ] `tests/test_guiclaw_p4_desktop.py` — all BACK-03 unit + integration tests
+- [ ] `guiclaw/backends/desktop.py` — LocalDesktopBackend implementation file (Wave 1)
 
 *(No new framework config needed — pytest + pytest-asyncio already configured in pyproject.toml)*
 
@@ -523,10 +523,10 @@ For `observe()`, mock `mss.mss` as a context manager returning a fake screenshot
 ## Sources
 
 ### Primary (HIGH confidence)
-- `opengui/interfaces.py` — DeviceBackend protocol definition (direct code read)
-- `opengui/backends/adb.py` — AdbBackend reference pattern (direct code read)
-- `opengui/backends/dry_run.py` — DryRunBackend minimal pattern (direct code read)
-- `opengui/action.py` — Action dataclass, resolve_coordinate, describe_action (direct code read)
+- `guiclaw/interfaces.py` — DeviceBackend protocol definition (direct code read)
+- `guiclaw/backends/adb.py` — AdbBackend reference pattern (direct code read)
+- `guiclaw/backends/dry_run.py` — DryRunBackend minimal pattern (direct code read)
+- `guiclaw/action.py` — Action dataclass, resolve_coordinate, describe_action (direct code read)
 - `nanobot/agent/tools/gui.py` — Integration seam at line 132 (direct code read)
 - [mss PyPI](https://pypi.org/project/mss/) — version 10.1.0 confirmed
 - [mss examples](https://python-mss.readthedocs.io/examples.html) — PIL.Image.frombytes("RGB", ..., sct_img.bgra, "raw", "BGRX") pattern

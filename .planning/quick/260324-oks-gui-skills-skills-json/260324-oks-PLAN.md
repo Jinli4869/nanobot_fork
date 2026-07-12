@@ -31,5 +31,5 @@
 
 ## Verification
 
-- `uv run pytest tests/test_opengui_p1_skills.py tests/test_opengui_p3_nanobot.py -q`
-- `uv run python -m py_compile opengui/skills/library.py nanobot/agent/tools/gui.py opengui/skills/extractor.py`
+- `uv run pytest tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p3_nanobot.py -q`
+- `uv run python -m py_compile guiclaw/skills/library.py nanobot/agent/tools/gui.py guiclaw/skills/extractor.py`

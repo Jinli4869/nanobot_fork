@@ -6,12 +6,12 @@ Improved Android text input so Chinese input can succeed on more devices by fall
 
 ## What Changed
 
-- Updated [`opengui/backends/adb.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/backends/adb.py) so `input_text` now tries:
+- Updated [`guiclaw/backends/adb.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/backends/adb.py) so `input_text` now tries:
   - `ADB_INPUT_B64`
   - `ADB_INPUT_TEXT`
   - `app_process -Djava.class.path=/data/local/tmp/yadb /data/local/tmp com.ysbing.yadb.Main -keyboard ...`
   - `adb shell input text ...` for ASCII-only input
-- Added targeted regression tests in [`tests/test_opengui.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui.py) covering:
+- Added targeted regression tests in [`tests/test_guiclaw.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw.py) covering:
   - preferred ADBKeyboard broadcast path
   - Unicode fallback to `yadb`
   - ASCII fallback to `adb shell input text`
@@ -23,8 +23,8 @@ Improved Android text input so Chinese input can succeed on more devices by fall
 
 ## Verification
 
-- `uv run pytest tests/test_opengui.py -k "input_text_prefers_b64_broadcast or falls_back_to_yadb_for_unicode or falls_back_to_shell_input_for_ascii"`
-- `uv run pytest tests/test_opengui.py -k "adb_backend"`
+- `uv run pytest tests/test_guiclaw.py -k "input_text_prefers_b64_broadcast or falls_back_to_yadb_for_unicode or falls_back_to_shell_input_for_ascii"`
+- `uv run pytest tests/test_guiclaw.py -k "adb_backend"`
 
 ## Implementation Commit
 

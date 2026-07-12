@@ -7,7 +7,7 @@ depends_on: []
 files_modified:
   - nanobot/agent/planner.py
   - nanobot/agent/router.py
-  - tests/test_opengui_p22_route_dispatch.py
+  - tests/test_guiclaw_p22_route_dispatch.py
 autonomous: true
 requirements: [OTM-PARAMS]
 must_haves:
@@ -23,7 +23,7 @@ must_haves:
     - path: "nanobot/agent/router.py"
       provides: "params-preferring dispatch in _run_tool, _run_mcp, _dispatch_with_fallback"
       contains: "node.params"
-    - path: "tests/test_opengui_p22_route_dispatch.py"
+    - path: "tests/test_guiclaw_p22_route_dispatch.py"
       provides: "Tests covering params-based dispatch and instruction fallback"
       contains: "params"
   key_links:
@@ -53,7 +53,7 @@ Output: Updated PlanNode with optional `params` dict, updated LLM schema and pro
 <context>
 @nanobot/agent/planner.py
 @nanobot/agent/router.py
-@tests/test_opengui_p22_route_dispatch.py
+@tests/test_guiclaw_p22_route_dispatch.py
 
 <interfaces>
 <!-- PlanNode dataclass (planner.py:26-75) -->
@@ -108,13 +108,13 @@ def _resolve_route(route_id: str, registry: Any) -> tuple[str, str | None] | Non
 
 <task type="auto" tdd="true">
   <name>Task 1: Add params field to PlanNode + update LLM schema and prompt</name>
-  <files>nanobot/agent/planner.py, tests/test_opengui_p8_planning.py</files>
+  <files>nanobot/agent/planner.py, tests/test_guiclaw_p8_planning.py</files>
   <behavior>
     - PlanNode(params={"path": "/tmp"}) stores the dict; PlanNode().params returns None by default
     - PlanNode(params={"path": "/tmp"}).to_dict() includes "params": {"path": "/tmp"}
     - PlanNode.from_dict({"type": "atom", "instruction": "x", "params": {"path": "/tmp"}}).params == {"path": "/tmp"}
     - PlanNode.from_dict({"type": "atom", "instruction": "x"}).params is None (backward compat)
-    - Existing tests in test_opengui_p8_planning.py and test_opengui_p22_route_dispatch.py still pass unchanged
+    - Existing tests in test_guiclaw_p8_planning.py and test_guiclaw_p22_route_dispatch.py still pass unchanged
   </behavior>
   <action>
     1. In PlanNode dataclass, add field: `params: dict[str, Any] | None = None` after `fallback_route_ids`. This is an optional dict of structured tool parameters. Keep the dataclass frozen.
@@ -147,17 +147,17 @@ def _resolve_route(route_id: str, registry: Any) -> tuple[str, str | None] | Non
        "- For gui capability, params is not needed (the GUI subagent interprets instruction directly).",
        ```
 
-    6. Add tests to a new test section in test_opengui_p8_planning.py (or create a small focused test at the bottom of that file) verifying PlanNode params round-trip through to_dict/from_dict, and None default.
+    6. Add tests to a new test section in test_guiclaw_p8_planning.py (or create a small focused test at the bottom of that file) verifying PlanNode params round-trip through to_dict/from_dict, and None default.
   </action>
   <verify>
-    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_opengui_p8_planning.py tests/test_opengui_p22_route_dispatch.py -x -q 2>&1 | tail -20</automated>
+    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_guiclaw_p8_planning.py tests/test_guiclaw_p22_route_dispatch.py -x -q 2>&1 | tail -20</automated>
   </verify>
   <done>PlanNode has params field, LLM tool schema and system prompt guide param generation, to_dict/from_dict round-trip works, all existing tests pass</done>
 </task>
 
 <task type="auto" tdd="true">
   <name>Task 2: Update router dispatch to prefer node.params over instruction fallback</name>
-  <files>nanobot/agent/router.py, tests/test_opengui_p22_route_dispatch.py</files>
+  <files>nanobot/agent/router.py, tests/test_guiclaw_p22_route_dispatch.py</files>
   <behavior>
     - _run_tool with node.params={"command": "ls"} dispatches {"command": "ls"} (not {param_key: instruction})
     - _run_tool with node.params=None falls back to {param_key: node.instruction} (backward compat)
@@ -217,7 +217,7 @@ def _resolve_route(route_id: str, registry: Any) -> tuple[str, str | None] | Non
        ```
        (MCP _resolve_route always returns param_key="input", so the else branch is effectively the same, but the pattern stays consistent.)
 
-    4. **Add tests** to tests/test_opengui_p22_route_dispatch.py:
+    4. **Add tests** to tests/test_guiclaw_p22_route_dispatch.py:
        - `test_run_tool_prefers_node_params`: Create atom with route_id="tool.exec_shell" and params={"command": "echo hi"}, verify registry.execute receives exactly {"command": "echo hi"}.
        - `test_run_tool_falls_back_to_instruction`: Create atom with route_id="tool.exec_shell" and params=None, verify registry.execute receives {"command": node.instruction}.
        - `test_run_tool_multi_param_with_params`: Create atom with route_id="tool.filesystem.write" and params={"path": "out.txt", "content": "hello"}, verify dispatch succeeds (no longer rejected).
@@ -226,7 +226,7 @@ def _resolve_route(route_id: str, registry: Any) -> tuple[str, str | None] | Non
        - `test_dispatch_with_fallback_uses_params`: Atom with fallback_route_ids, params set, verify params used.
   </action>
   <verify>
-    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_opengui_p22_route_dispatch.py tests/test_opengui_p8_planning.py -x -q 2>&1 | tail -20</automated>
+    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_guiclaw_p22_route_dispatch.py tests/test_guiclaw_p8_planning.py -x -q 2>&1 | tail -20</automated>
   </verify>
   <done>Router prefers node.params for dispatch, falls back to instruction-based dispatch when params is None, multi-param routes work with params, all tests pass</done>
 </task>
@@ -236,7 +236,7 @@ def _resolve_route(route_id: str, registry: Any) -> tuple[str, str | None] | Non
 <verification>
 Full test suite for affected modules:
 ```bash
-cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_opengui_p8_planning.py tests/test_opengui_p22_route_dispatch.py tests/test_opengui_p21_planner_context.py -x -q
+cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_guiclaw_p8_planning.py tests/test_guiclaw_p22_route_dispatch.py tests/test_guiclaw_p21_planner_context.py -x -q
 ```
 
 Smoke check PlanNode round-trip:

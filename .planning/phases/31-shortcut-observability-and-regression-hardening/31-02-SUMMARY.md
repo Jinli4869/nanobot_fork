@@ -32,9 +32,9 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p31_shortcut_observability.py (expanded with 3 new tests + 4 helpers)
+    - tests/test_guiclaw_p31_shortcut_observability.py (expanded with 3 new tests + 4 helpers)
   modified:
-    - opengui/skills/multi_layer_executor.py
+    - guiclaw/skills/multi_layer_executor.py
 
 key-decisions:
   - "Three-layer merge order in non-fixed steps: step.parameters (lowest) -> grounding.resolved_params -> caller params (highest). Grounding values override stale recorded trace coords while step.parameters still provide static fields like 'text' and 'key'."
@@ -80,8 +80,8 @@ _Note: TDD task — RED commit first with failing tests, GREEN commit with minim
 
 ## Files Created/Modified
 
-- `opengui/skills/multi_layer_executor.py` - Non-fixed step merge now seeds from `step.parameters` before `grounding.resolved_params`, with explicit 3-layer comment
-- `tests/test_opengui_p31_shortcut_observability.py` - Added `_FakeDesktopBackend`, `_FixtureGrounder`, `_write_jsonl`, JSONL fixture constants, and 3 new seam tests
+- `guiclaw/skills/multi_layer_executor.py` - Non-fixed step merge now seeds from `step.parameters` before `grounding.resolved_params`, with explicit 3-layer comment
+- `tests/test_guiclaw_p31_shortcut_observability.py` - Added `_FakeDesktopBackend`, `_FixtureGrounder`, `_write_jsonl`, JSONL fixture constants, and 3 new seam tests
 
 ## Decisions Made
 

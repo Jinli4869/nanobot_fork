@@ -17,10 +17,10 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/backends/displays/win32desktop.py
-    - opengui/backends/windows_worker.py
-    - opengui/backends/windows_isolated.py
-    - tests/test_opengui_p14_windows_desktop.py
+    - guiclaw/backends/displays/win32desktop.py
+    - guiclaw/backends/windows_worker.py
+    - guiclaw/backends/windows_isolated.py
+    - tests/test_guiclaw_p14_windows_desktop.py
 key-decisions:
   - "Windows isolated desktop runs now treat the child worker as the only desktop IO boundary; the parent backend no longer observes or executes against the host desktop."
   - "Win32 support probing now uses session, input-desktop, and create-desktop API checks instead of hard-coded Windows availability booleans."
@@ -61,10 +61,10 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `opengui/backends/displays/win32desktop.py` - Owns real Win32 desktop handles and probes interactive-session support via Win32 APIs.
-- `opengui/backends/windows_worker.py` - Launches the Windows child with live pipes and services JSON-line observe/execute/list-apps/shutdown commands.
-- `opengui/backends/windows_isolated.py` - Routes isolated desktop IO through worker RPC and enforces worker-stop then desktop-stop cleanup.
-- `tests/test_opengui_p14_windows_desktop.py` - Encodes the real-handle, worker-loop, parent-IO isolation, and cleanup-order regression contracts.
+- `guiclaw/backends/displays/win32desktop.py` - Owns real Win32 desktop handles and probes interactive-session support via Win32 APIs.
+- `guiclaw/backends/windows_worker.py` - Launches the Windows child with live pipes and services JSON-line observe/execute/list-apps/shutdown commands.
+- `guiclaw/backends/windows_isolated.py` - Routes isolated desktop IO through worker RPC and enforces worker-stop then desktop-stop cleanup.
+- `tests/test_guiclaw_p14_windows_desktop.py` - Encodes the real-handle, worker-loop, parent-IO isolation, and cleanup-order regression contracts.
 
 ## Decisions Made
 

@@ -25,7 +25,7 @@ re_verification: false
 | 2 | `LocalDesktopBackend.execute()` dispatches tap/double_tap/long_press/swipe/scroll/input_text/hotkey/wait/done/back/home/open_app/close_app actions via pyautogui | VERIFIED | `desktop.py:179-261` — all 14 action types dispatched with correct pyautogui calls. 13 dedicated execute tests pass. |
 | 3 | `LocalDesktopBackend.execute()` uses pyperclip clipboard-paste for input_text, not per-character typing | VERIFIED | `desktop.py:217-219` — `pyperclip.copy(action.text or "")` followed by `pyautogui.hotkey(paste_key, "v")`. `test_execute_input_text_uses_clipboard_on_macos` and `test_execute_input_text_uses_clipboard_on_linux` pass. |
 | 4 | `LocalDesktopBackend.preflight()` raises RuntimeError with accessibility instructions when pyautogui fails | VERIFIED | `desktop.py:108-115` — `try: pyautogui.position()` with `except Exception` raising `RuntimeError("Enable Accessibility for Terminal/iTerm in System Settings > Privacy & Security > Accessibility...")`. `test_preflight_raises_on_permission_error` passes. |
-| 5 | `GuiSubagentTool._build_backend('local')` returns a LocalDesktopBackend instance instead of raising NotImplementedError | VERIFIED | `nanobot/agent/tools/gui.py:131-134` — `if backend_name == "local": from opengui.backends.desktop import LocalDesktopBackend; return LocalDesktopBackend()`. `NotImplementedError` no longer present for this branch. `test_gui_tool_builds_local_backend` passes. |
+| 5 | `GuiSubagentTool._build_backend('local')` returns a LocalDesktopBackend instance instead of raising NotImplementedError | VERIFIED | `nanobot/agent/tools/gui.py:131-134` — `if backend_name == "local": from guiclaw.backends.desktop import LocalDesktopBackend; return LocalDesktopBackend()`. `NotImplementedError` no longer present for this branch. `test_gui_tool_builds_local_backend` passes. |
 
 **Score:** 5/5 truths verified
 
@@ -35,10 +35,10 @@ re_verification: false
 
 | Artifact | Expected | Min Lines | Status | Actual Lines | Details |
 |----------|----------|-----------|--------|--------------|---------|
-| `opengui/backends/desktop.py` | LocalDesktopBackend class | 150 | VERIFIED | 387 | Full implementation: `observe`, `execute`, `preflight`, `platform` property, all helpers |
-| `tests/test_opengui_p4_desktop.py` | Unit tests for all BACK-03 behaviors | 100 | VERIFIED | 530 | 28 test functions, all passing |
-| `opengui/backends/__init__.py` | LocalDesktopBackend docstring reference | — | VERIFIED | Contains `from opengui.backends.desktop import LocalDesktopBackend` in module docstring |
-| `nanobot/agent/tools/gui.py` | local backend wiring | — | VERIFIED | Contains `from opengui.backends.desktop import LocalDesktopBackend` inside `if backend_name == "local":` branch |
+| `guiclaw/backends/desktop.py` | LocalDesktopBackend class | 150 | VERIFIED | 387 | Full implementation: `observe`, `execute`, `preflight`, `platform` property, all helpers |
+| `tests/test_guiclaw_p4_desktop.py` | Unit tests for all BACK-03 behaviors | 100 | VERIFIED | 530 | 28 test functions, all passing |
+| `guiclaw/backends/__init__.py` | LocalDesktopBackend docstring reference | — | VERIFIED | Contains `from guiclaw.backends.desktop import LocalDesktopBackend` in module docstring |
+| `nanobot/agent/tools/gui.py` | local backend wiring | — | VERIFIED | Contains `from guiclaw.backends.desktop import LocalDesktopBackend` inside `if backend_name == "local":` branch |
 
 ---
 
@@ -46,9 +46,9 @@ re_verification: false
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `opengui/backends/desktop.py` | `opengui/action.py` | `from opengui.action import resolve_coordinate, describe_action` | WIRED | Line 28: `from opengui.action import Action, describe_action, resolve_coordinate` — both functions actively used at lines 261, 268, 271 |
-| `opengui/backends/desktop.py` | `opengui/observation.py` | `from opengui.observation import Observation` | WIRED | Line 29: import present; `Observation(...)` constructed at line 156 |
-| `nanobot/agent/tools/gui.py` | `opengui/backends/desktop.py` | lazy import of LocalDesktopBackend | WIRED | Lines 132-134: `from opengui.backends.desktop import LocalDesktopBackend; return LocalDesktopBackend()` — pattern matches plan exactly |
+| `guiclaw/backends/desktop.py` | `guiclaw/action.py` | `from guiclaw.action import resolve_coordinate, describe_action` | WIRED | Line 28: `from guiclaw.action import Action, describe_action, resolve_coordinate` — both functions actively used at lines 261, 268, 271 |
+| `guiclaw/backends/desktop.py` | `guiclaw/observation.py` | `from guiclaw.observation import Observation` | WIRED | Line 29: import present; `Observation(...)` constructed at line 156 |
+| `nanobot/agent/tools/gui.py` | `guiclaw/backends/desktop.py` | lazy import of LocalDesktopBackend | WIRED | Lines 132-134: `from guiclaw.backends.desktop import LocalDesktopBackend; return LocalDesktopBackend()` — pattern matches plan exactly |
 
 ---
 
@@ -66,7 +66,7 @@ No orphaned requirements — BACK-03 is the only requirement assigned to Phase 4
 
 | File | Line | Pattern | Severity | Impact |
 |------|------|---------|----------|--------|
-| `tests/test_opengui_p4_desktop.py` | — | `RuntimeWarning: coroutine ... was never awaited` on `test_gui_tool_builds_local_backend` | Info | Test passes; warning is a mock library edge case with `AsyncMockMixin`, not a code defect. No functional impact. |
+| `tests/test_guiclaw_p4_desktop.py` | — | `RuntimeWarning: coroutine ... was never awaited` on `test_gui_tool_builds_local_backend` | Info | Test passes; warning is a mock library edge case with `AsyncMockMixin`, not a code defect. No functional impact. |
 
 No blocker anti-patterns found. No TODO/FIXME/placeholder comments in implementation code. No stub returns (return null / return {}).
 
@@ -110,7 +110,7 @@ Both commits documented in SUMMARY.md exist in the repository:
 ## Test Run Results
 
 ```
-tests/test_opengui_p4_desktop.py: 28 passed in 6.21s
+tests/test_guiclaw_p4_desktop.py: 28 passed in 6.21s
 Full suite: 576 passed, 7 warnings in 11.97s
 ```
 

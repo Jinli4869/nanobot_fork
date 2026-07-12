@@ -12,9 +12,9 @@
 ### Locked Decisions
 
 #### Protocol location
-- VirtualDisplayManager protocol and DisplayInfo dataclass live in `opengui.backends.virtual_display`
-- Re-export both from `opengui.interfaces` so `from opengui.interfaces import VirtualDisplayManager, DisplayInfo` works (satisfies ROADMAP SC-1)
-- NoOpDisplayManager stays in `opengui.backends.virtual_display` alongside the protocol
+- VirtualDisplayManager protocol and DisplayInfo dataclass live in `guiclaw.backends.virtual_display`
+- Re-export both from `guiclaw.interfaces` so `from guiclaw.interfaces import VirtualDisplayManager, DisplayInfo` works (satisfies ROADMAP SC-1)
+- NoOpDisplayManager stays in `guiclaw.backends.virtual_display` alongside the protocol
 
 #### DisplayInfo fields
 - Field naming: `offset_x` / `offset_y` (not `x_offset` / `y_offset` from ROADMAP — update ROADMAP to match)
@@ -64,7 +64,7 @@ None — discussion stayed within phase scope
 
 ## Summary
 
-Phase 9 delivers the complete virtual display abstraction layer. Three of the four deliverables are already nearly correct in untracked draft files; the primary work is in `XvfbDisplayManager`, which needs four additions over the draft: (1) `FileNotFoundError` catch wrapped as `XvfbNotFoundError`, (2) display number auto-increment with up to 5 retries using `/tmp/.X{N}-lock` pre-check and exit-code detection, (3) stderr piped (not DEVNULL) with a background reader task for crash detection, and (4) a `XvfbCrashedError` raised when `process.returncode` is non-None before the socket appears. The `opengui/interfaces.py` re-export is a trivial two-line addition. The draft `virtual_display.py` already matches all locked decisions (offset_x/offset_y naming, frozen dataclass, monitor_index field, NoOpDisplayManager) and needs no substantive changes.
+Phase 9 delivers the complete virtual display abstraction layer. Three of the four deliverables are already nearly correct in untracked draft files; the primary work is in `XvfbDisplayManager`, which needs four additions over the draft: (1) `FileNotFoundError` catch wrapped as `XvfbNotFoundError`, (2) display number auto-increment with up to 5 retries using `/tmp/.X{N}-lock` pre-check and exit-code detection, (3) stderr piped (not DEVNULL) with a background reader task for crash detection, and (4) a `XvfbCrashedError` raised when `process.returncode` is non-None before the socket appears. The `guiclaw/interfaces.py` re-export is a trivial two-line addition. The draft `virtual_display.py` already matches all locked decisions (offset_x/offset_y naming, frozen dataclass, monitor_index field, NoOpDisplayManager) and needs no substantive changes.
 
 **Primary recommendation:** Refine the existing drafts rather than rewrite — `virtual_display.py` is production-ready; `displays/xvfb.py` needs four targeted additions documented below.
 
@@ -101,7 +101,7 @@ No third-party libraries are needed for this phase. Xvfb itself must be installe
 
 ### Recommended Project Structure
 ```
-opengui/
+guiclaw/
 ├── backends/
 │   ├── virtual_display.py        # Protocol + DisplayInfo + NoOpDisplayManager (refine draft)
 │   ├── displays/
@@ -116,7 +116,7 @@ opengui/
 **When to use:** Every protocol in this codebase — matches `DeviceBackend` and `LLMProvider` exactly.
 **Example:**
 ```python
-# Source: opengui/interfaces.py (existing codebase pattern)
+# Source: guiclaw/interfaces.py (existing codebase pattern)
 @typing.runtime_checkable
 class VirtualDisplayManager(typing.Protocol):
     async def start(self) -> DisplayInfo: ...
@@ -128,7 +128,7 @@ class VirtualDisplayManager(typing.Protocol):
 **When to use:** `DisplayInfo` — passed from `start()` to callers who should not mutate it.
 **Example:**
 ```python
-# Source: opengui/interfaces.py (ToolCall pattern)
+# Source: guiclaw/interfaces.py (ToolCall pattern)
 @dataclasses.dataclass(frozen=True)
 class DisplayInfo:
     display_id: str
@@ -179,14 +179,14 @@ await proc.wait()  # process is now dead
 stderr_output = await proc.stderr.read()  # safe, process already exited, pipe will drain
 ```
 
-### Pattern 5: Re-export from opengui.interfaces
+### Pattern 5: Re-export from guiclaw.interfaces
 **What:** Import the types at module level in `interfaces.py` so they appear as if defined there.
 **When to use:** Any type that downstream consumers should access via the stable public API path.
 **Example:**
 ```python
-# Add to bottom of opengui/interfaces.py
-from opengui.backends.virtual_display import DisplayInfo as DisplayInfo  # noqa: F401
-from opengui.backends.virtual_display import VirtualDisplayManager as VirtualDisplayManager  # noqa: F401
+# Add to bottom of guiclaw/interfaces.py
+from guiclaw.backends.virtual_display import DisplayInfo as DisplayInfo  # noqa: F401
+from guiclaw.backends.virtual_display import VirtualDisplayManager as VirtualDisplayManager  # noqa: F401
 ```
 The `as Name` form plus `# noqa: F401` is the standard re-export pattern (PEP 484 compliant; explicit `__all__` is an alternative).
 
@@ -293,16 +293,16 @@ return raw.decode(errors="replace")
 
 ### Runtime Checkable Protocol Verification
 ```python
-# Source: opengui/interfaces.py existing pattern
+# Source: guiclaw/interfaces.py existing pattern
 assert isinstance(NoOpDisplayManager(), VirtualDisplayManager)   # True at runtime
 assert isinstance(XvfbDisplayManager(), VirtualDisplayManager)  # True at runtime
 ```
 
 ### Re-export in interfaces.py
 ```python
-# Add to opengui/interfaces.py — two lines at the bottom
-from opengui.backends.virtual_display import DisplayInfo as DisplayInfo  # noqa: F401
-from opengui.backends.virtual_display import VirtualDisplayManager as VirtualDisplayManager  # noqa: F401
+# Add to guiclaw/interfaces.py — two lines at the bottom
+from guiclaw.backends.virtual_display import DisplayInfo as DisplayInfo  # noqa: F401
+from guiclaw.backends.virtual_display import VirtualDisplayManager as VirtualDisplayManager  # noqa: F401
 ```
 
 ---
@@ -329,7 +329,7 @@ from opengui.backends.virtual_display import VirtualDisplayManager as VirtualDis
 | `XvfbCrashedError` | `displays/xvfb.py` | Check `proc.returncode is not None` in socket poll loop | ~10 lines |
 | stderr pipe | `displays/xvfb.py` | Change `DEVNULL` to `PIPE`; add stderr drain in `stop()` and crash path | ~5 lines |
 | Auto-increment | `displays/xvfb.py` | Lock file pre-check + retry loop wrapping `_try_start()` | ~25 lines |
-| Re-exports | `opengui/interfaces.py` | Two import lines at bottom | 2 lines |
+| Re-exports | `guiclaw/interfaces.py` | Two import lines at bottom | 2 lines |
 | ROADMAP field name fix | `.planning/ROADMAP.md` | SC-2: `x_offset/y_offset` → `offset_x/offset_y` | 1 line |
 
 `virtual_display.py` (protocol + DisplayInfo + NoOpDisplayManager) already matches all locked decisions. No changes needed beyond confirming the draft is the final version.
@@ -357,33 +357,33 @@ from opengui.backends.virtual_display import VirtualDisplayManager as VirtualDis
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio |
 | Config file | `pyproject.toml` — `[tool.pytest.ini_options]` with `asyncio_mode = "auto"` |
-| Quick run command | `pytest tests/test_opengui_p9_virtual_display.py -x` |
+| Quick run command | `pytest tests/test_guiclaw_p9_virtual_display.py -x` |
 | Full suite command | `pytest tests/ -x` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| VDISP-01 | `VirtualDisplayManager` importable from `opengui.interfaces`; `isinstance()` checks pass | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_protocol_importable -x` | ❌ Wave 0 |
-| VDISP-01 | `start()` and `stop()` are async methods in protocol | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_protocol_methods_are_async -x` | ❌ Wave 0 |
-| VDISP-02 | `DisplayInfo` is a frozen dataclass with all 6 fields | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_display_info_frozen -x` | ❌ Wave 0 |
-| VDISP-02 | `DisplayInfo` uses `offset_x`/`offset_y` field names | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_display_info_field_names -x` | ❌ Wave 0 |
-| VDISP-03 | `NoOpDisplayManager.start()` returns `DisplayInfo` without subprocess | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_noop_start_returns_display_info -x` | ❌ Wave 0 |
-| VDISP-03 | `NoOpDisplayManager.stop()` is idempotent (no-op) | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_noop_stop_is_idempotent -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager.start()` launches Xvfb, waits for socket, returns `DisplayInfo` | unit (mocked subprocess) | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_start_returns_display_info -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager.start()` raises `XvfbNotFoundError` when binary missing | unit (mock FileNotFoundError) | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_not_found_error -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager.start()` raises `TimeoutError` when socket never appears | unit (mock socket absent) | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_start_timeout -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager.start()` auto-increments display number on lock-file collision | unit (mock lock exists) | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_auto_increment -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager.stop()` on never-started manager does not raise | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_stop_never_started -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager.stop()` is idempotent (double-call safe) | unit | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_stop_idempotent -x` | ❌ Wave 0 |
-| VDISP-04 | `XvfbDisplayManager` raises `XvfbCrashedError` when process exits before socket | unit (mock early exit) | `pytest tests/test_opengui_p9_virtual_display.py::test_xvfb_crashed_error -x` | ❌ Wave 0 |
+| VDISP-01 | `VirtualDisplayManager` importable from `guiclaw.interfaces`; `isinstance()` checks pass | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_protocol_importable -x` | ❌ Wave 0 |
+| VDISP-01 | `start()` and `stop()` are async methods in protocol | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_protocol_methods_are_async -x` | ❌ Wave 0 |
+| VDISP-02 | `DisplayInfo` is a frozen dataclass with all 6 fields | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_display_info_frozen -x` | ❌ Wave 0 |
+| VDISP-02 | `DisplayInfo` uses `offset_x`/`offset_y` field names | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_display_info_field_names -x` | ❌ Wave 0 |
+| VDISP-03 | `NoOpDisplayManager.start()` returns `DisplayInfo` without subprocess | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_noop_start_returns_display_info -x` | ❌ Wave 0 |
+| VDISP-03 | `NoOpDisplayManager.stop()` is idempotent (no-op) | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_noop_stop_is_idempotent -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager.start()` launches Xvfb, waits for socket, returns `DisplayInfo` | unit (mocked subprocess) | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_start_returns_display_info -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager.start()` raises `XvfbNotFoundError` when binary missing | unit (mock FileNotFoundError) | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_not_found_error -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager.start()` raises `TimeoutError` when socket never appears | unit (mock socket absent) | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_start_timeout -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager.start()` auto-increments display number on lock-file collision | unit (mock lock exists) | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_auto_increment -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager.stop()` on never-started manager does not raise | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_stop_never_started -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager.stop()` is idempotent (double-call safe) | unit | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_stop_idempotent -x` | ❌ Wave 0 |
+| VDISP-04 | `XvfbDisplayManager` raises `XvfbCrashedError` when process exits before socket | unit (mock early exit) | `pytest tests/test_guiclaw_p9_virtual_display.py::test_xvfb_crashed_error -x` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `pytest tests/test_opengui_p9_virtual_display.py -x`
+- **Per task commit:** `pytest tests/test_guiclaw_p9_virtual_display.py -x`
 - **Per wave merge:** `pytest tests/ -x`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p9_virtual_display.py` — all 13 tests above (covers VDISP-01 through VDISP-04)
+- [ ] `tests/test_guiclaw_p9_virtual_display.py` — all 13 tests above (covers VDISP-01 through VDISP-04)
 - [ ] No framework install needed — pytest + pytest-asyncio already in `dev` extras
 
 *(All subprocess calls in tests must be mocked at `asyncio.create_subprocess_exec` boundary — no real Xvfb needed in CI. Use `unittest.mock.patch("asyncio.create_subprocess_exec")` with an `AsyncMock` that sets `returncode=None` initially and creates a fake socket path.)*
@@ -393,10 +393,10 @@ from opengui.backends.virtual_display import VirtualDisplayManager as VirtualDis
 ## Sources
 
 ### Primary (HIGH confidence)
-- `opengui/backends/virtual_display.py` — Draft code inspected directly; all field names and structure verified
-- `opengui/backends/displays/xvfb.py` — Draft code inspected directly; gaps identified against locked decisions
-- `opengui/interfaces.py` — Existing protocol pattern (DeviceBackend, LLMProvider) confirmed
-- `opengui/backends/dry_run.py` — NoOp backend pattern confirmed
+- `guiclaw/backends/virtual_display.py` — Draft code inspected directly; all field names and structure verified
+- `guiclaw/backends/displays/xvfb.py` — Draft code inspected directly; gaps identified against locked decisions
+- `guiclaw/interfaces.py` — Existing protocol pattern (DeviceBackend, LLMProvider) confirmed
+- `guiclaw/backends/dry_run.py` — NoOp backend pattern confirmed
 - `pyproject.toml` — Test framework (pytest 9.x, asyncio_mode=auto) and no-extra-dep requirement confirmed
 - [Python asyncio subprocess official docs](https://docs.python.org/3/library/asyncio-subprocess.html) — Subprocess patterns, returncode semantics, communicate() deadlock warning
 

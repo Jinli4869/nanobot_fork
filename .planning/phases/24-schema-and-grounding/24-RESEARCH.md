@@ -1,7 +1,7 @@
 # Phase 24: Schema and Grounding - Research
 
 **Researched:** 2026-04-02
-**Domain:** Two-layer OpenGUI skill contracts, recursive task-skill serialization, and pluggable grounding protocol boundaries
+**Domain:** Two-layer GUIClaw skill contracts, recursive task-skill serialization, and pluggable grounding protocol boundaries
 **Confidence:** HIGH
 
 <user_constraints>
@@ -9,8 +9,8 @@
 
 - Use `.planning/phases/24-schema-and-grounding/24-CONTEXT.md` as the source of truth for locked Phase 24 decisions.
 - Keep Phase 24 scoped to schema and protocol contracts only. Executors, critics, storage, and agent integration stay in Phases 25-27.
-- Preserve the existing OpenGUI style: stdlib-first models, `typing.Protocol` interfaces, frozen dataclasses with explicit `to_dict()` / `from_dict()` helpers, and minimal third-party dependencies in core `opengui` contracts.
-- Avoid circular imports with the existing `opengui` module tree.
+- Preserve the existing GUIClaw style: stdlib-first models, `typing.Protocol` interfaces, frozen dataclasses with explicit `to_dict()` / `from_dict()` helpers, and minimal third-party dependencies in core `guiclaw` contracts.
+- Avoid circular imports with the existing `guiclaw` module tree.
 
 ### Locked Decisions Inherited From Prior Phases
 - Existing `Skill` and `SkillStep` remain in place during Phase 24; this phase adds new types rather than replacing the current executor path immediately.
@@ -20,7 +20,7 @@
 
 ### Claude's Discretion
 - Exact starter vocabulary shipped for `StateDescriptor.kind` beyond the locked examples.
-- Whether the new grounding package re-exports all types from `opengui/grounding/__init__.py` or only the main protocol/result surface.
+- Whether the new grounding package re-exports all types from `guiclaw/grounding/__init__.py` or only the main protocol/result surface.
 - Exact optional metadata mirrored from the legacy `Skill` model onto `ShortcutSkill` and `TaskSkill`, provided round-trip serialization remains stable and downstream phases get the required fields.
 </user_constraints>
 
@@ -32,10 +32,10 @@
 | SCHEMA-01 | Shortcut skill defines pre/post conditions as structured, checkable state descriptors | Introduce a reusable `StateDescriptor` dataclass and use tuples of descriptors on `ShortcutSkill` instead of free-form strings. |
 | SCHEMA-02 | Shortcut skill declares typed parameter slots for runtime grounding | Introduce a `ParameterSlot` dataclass with string-serializable type tags and descriptions; keep it detached from execution logic. |
 | SCHEMA-03 | Task-level skill references shortcut skills by ID with parameter binding declarations | Add `ShortcutRefNode` with stable `shortcut_id` and explicit `param_bindings` dict. |
-| SCHEMA-04 | Task-level skill supports inline ATOM fallback steps | Reuse `SkillStep` from `opengui/skills/data.py` as the inline ATOM node so later executors can share existing action semantics. |
+| SCHEMA-04 | Task-level skill supports inline ATOM fallback steps | Reuse `SkillStep` from `guiclaw/skills/data.py` as the inline ATOM node so later executors can share existing action semantics. |
 | SCHEMA-05 | Task-level skill supports conditional branch nodes with checkable condition expressions | Add `BranchNode` whose `condition` is a structured `StateDescriptor`, not a free-form expression string. |
 | SCHEMA-06 | Task-level skill carries an optional pointer to an app memory context entry | Keep `memory_context_id: str | None` as an opaque ID that points into the existing memory store without importing storage behavior into the schema. |
-| GRND-01 | GrounderProtocol defines a common async interface for resolving semantic step targets to concrete action parameters | Add a dedicated `opengui/grounding` package with `GrounderProtocol`, `GroundingContext`, and `GroundingResult`. |
+| GRND-01 | GrounderProtocol defines a common async interface for resolving semantic step targets to concrete action parameters | Add a dedicated `guiclaw/grounding` package with `GrounderProtocol`, `GroundingContext`, and `GroundingResult`. |
 | GRND-02 | LLMGrounder implements GrounderProtocol wrapping the existing vision-LLM grounding path | Make `LLMGrounder` a thin adapter around the current agent-side grounding style instead of embedding executor logic in the protocol layer. |
 | GRND-03 | Grounding results expose grounder used, confidence score, and fallback metadata | `GroundingResult` should include `grounder_id`, `confidence`, `resolved_params`, and nullable `fallback_metadata`. |
 </phase_requirements>
@@ -43,9 +43,9 @@
 ## Summary
 
 Phase 24 should be planned as a contract-foundation phase, not an execution phase. The current codebase already gives strong signals about how these contracts should look:
-- `opengui/skills/data.py` uses frozen dataclasses plus explicit serialization helpers.
-- `opengui/interfaces.py` uses stdlib-only `Protocol` interfaces to avoid heavyweight dependencies in core contracts.
-- `opengui/agent.py` already contains a concrete LLM-driven grounding path, but it is embedded inside agent wiring instead of exposed as a reusable protocol/result surface.
+- `guiclaw/skills/data.py` uses frozen dataclasses plus explicit serialization helpers.
+- `guiclaw/interfaces.py` uses stdlib-only `Protocol` interfaces to avoid heavyweight dependencies in core contracts.
+- `guiclaw/agent.py` already contains a concrete LLM-driven grounding path, but it is embedded inside agent wiring instead of exposed as a reusable protocol/result surface.
 
 The safest planning direction is to keep all new Phase 24 contracts in that same style: frozen dataclasses for persisted models and context/result payloads, `typing.Protocol` for pluggable interfaces, and explicit discriminators for any recursive union that must round-trip through JSON.
 
@@ -61,19 +61,19 @@ The second important design choice is to keep grounding contracts narrow. `Groun
 ## Recommended Phase Split
 
 ### 24-01: Shared Skill Schema Primitives And ShortcutSkill
-- Add `StateDescriptor` and `ParameterSlot` under `opengui/skills/shortcut.py`
+- Add `StateDescriptor` and `ParameterSlot` under `guiclaw/skills/shortcut.py`
 - Add `ShortcutSkill` with explicit `to_dict()` / `from_dict()` and tuple-based descriptor/slot fields
 - Keep optional metadata close to the legacy `Skill` shape where that reduces downstream friction
-- Update `opengui/skills/__init__.py` exports
+- Update `guiclaw/skills/__init__.py` exports
 
 ### 24-02: TaskSkill Recursive Node Model
-- Add `ShortcutRefNode`, `BranchNode`, `TaskNode`, and `TaskSkill` under `opengui/skills/task_skill.py`
+- Add `ShortcutRefNode`, `BranchNode`, `TaskNode`, and `TaskSkill` under `guiclaw/skills/task_skill.py`
 - Reuse `SkillStep` for inline ATOM fallback nodes
 - Implement explicit node discriminator serialization for the union, with backwards-safe parsing only for Phase 24 shapes
 - Add tests proving nested branch structures serialize and round-trip cleanly
 
 ### 24-03: Grounding Protocol Package And Safety Coverage
-- Add `opengui/grounding/` with `GrounderProtocol`, `GroundingContext`, `GroundingResult`, and `LLMGrounder`
+- Add `guiclaw/grounding/` with `GrounderProtocol`, `GroundingContext`, `GroundingResult`, and `LLMGrounder`
 - Keep `GroundingContext` executor-agnostic: screenshot reference, `Observation`, `ParameterSlot`s, optional `task_hint`
 - Ensure imports do not pull in executor or host-specific modules
 - Add regression coverage for protocol conformance, result shape, exports, and type-check / import-compile safety
@@ -88,22 +88,22 @@ The second important design choice is to keep grounding contracts narrow. `Groun
 ### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| Python stdlib dataclasses / typing / pathlib | Python 3.11+ | Schema objects, recursive type aliases, protocol definitions | Matches existing `opengui` model style and keeps core contracts dependency-light |
-| `opengui/skills/data.py` | repo current | Existing `SkillStep` fallback node and serialization pattern | Phase 24 should extend this seam, not replace it |
-| `opengui/interfaces.py` | repo current | `@runtime_checkable Protocol` reference pattern | Defines the style `GrounderProtocol` should match |
-| `opengui/observation.py` | repo current | Existing observation payload consumed by grounding context | Already the canonical screen-state data carrier |
+| Python stdlib dataclasses / typing / pathlib | Python 3.11+ | Schema objects, recursive type aliases, protocol definitions | Matches existing `guiclaw` model style and keeps core contracts dependency-light |
+| `guiclaw/skills/data.py` | repo current | Existing `SkillStep` fallback node and serialization pattern | Phase 24 should extend this seam, not replace it |
+| `guiclaw/interfaces.py` | repo current | `@runtime_checkable Protocol` reference pattern | Defines the style `GrounderProtocol` should match |
+| `guiclaw/observation.py` | repo current | Existing observation payload consumed by grounding context | Already the canonical screen-state data carrier |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
-| `pytest` | `>=9.0.0,<10.0.0` | Schema and round-trip regression tests | Default unit-test framework already used across OpenGUI |
+| `pytest` | `>=9.0.0,<10.0.0` | Schema and round-trip regression tests | Default unit-test framework already used across GUIClaw |
 | `pytest-asyncio` | `>=1.3.0,<2.0.0` | Async `LLMGrounder` interface tests | Needed once protocol calls are async |
 | `uv run python -m py_compile` | repo current | Fast import/compile sanity gate for new modules | Good lightweight proxy for the roadmap’s type/import safety criterion |
 
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| Frozen dataclasses with explicit serializers | Pydantic models in core `opengui` modules | Easier discriminated unions, but introduces a heavier dependency style than the current core contracts use |
+| Frozen dataclasses with explicit serializers | Pydantic models in core `guiclaw` modules | Easier discriminated unions, but introduces a heavier dependency style than the current core contracts use |
 | Structured `StateDescriptor` condition objects | Raw string expressions for branch conditions | Faster to write, but weakens checkability and drifts from SCHEMA-01 / SCHEMA-05 |
 | `GroundingResult` returning resolved params | Protocol returns full `Action` objects | Couples grounding to executor semantics too early and makes Phase 25 less modular |
 | Explicit `kind` tags for task-node serialization | Heuristic deserialization by field presence | Brittle for nested unions and risky for storage/search phases later |
@@ -112,7 +112,7 @@ The second important design choice is to keep grounding contracts narrow. `Groun
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── skills/
 │   ├── data.py                 # existing Skill / SkillStep
 │   ├── shortcut.py             # NEW: StateDescriptor, ParameterSlot, ShortcutSkill
@@ -123,8 +123,8 @@ opengui/
 │   ├── protocol.py             # NEW: GrounderProtocol, GroundingContext, GroundingResult
 │   └── llm.py                  # NEW: LLMGrounder implementation
 tests/
-├── test_opengui_p1_skills.py   # extend existing skill serialization coverage
-└── test_opengui_p24_schema_grounding.py  # NEW: Phase 24 schema / grounding contract tests
+├── test_guiclaw_p1_skills.py   # extend existing skill serialization coverage
+└── test_guiclaw_p24_schema_grounding.py  # NEW: Phase 24 schema / grounding contract tests
 ```
 
 ### Pattern 1: Use Explicit Serialization Tags For Recursive Task Nodes
@@ -143,9 +143,9 @@ tests/
 **When to use:** Module layout and constructor design for all new Phase 24 types.
 **Why:** The roadmap explicitly requires import safety and no circular imports before execution work begins.
 
-### Pattern 3: Match Existing OpenGUI Contract Style
+### Pattern 3: Match Existing GUIClaw Contract Style
 **What:** Prefer frozen dataclasses plus small manual serializers and `Protocol` interfaces.
-**When to use:** All new persisted or shared contract objects in `opengui`.
+**When to use:** All new persisted or shared contract objects in `guiclaw`.
 **Why:** This keeps Phase 24 aligned with `Skill`, `SkillStep`, `LLMProvider`, `DeviceBackend`, and other already-shipped code.
 
 ### Pattern 4: Treat `memory_context_id` As An Opaque Link
@@ -188,7 +188,7 @@ tests/
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
 | Recursive union persistence | Ad hoc field-presence guessing | Explicit `kind`-tagged node serialization | Deterministic and future-proof for storage/search |
-| Grounding interface reuse | Executor-specific `ActionGrounder` in `skills/executor.py` | Dedicated `GrounderProtocol` in `opengui/grounding` | Keeps the new contract reusable outside the current executor |
+| Grounding interface reuse | Executor-specific `ActionGrounder` in `skills/executor.py` | Dedicated `GrounderProtocol` in `guiclaw/grounding` | Keeps the new contract reusable outside the current executor |
 | Type/import safety | Assuming tests alone catch import cycles | Targeted compile/import checks plus schema unit tests | Matches the roadmap’s explicit import/type-check goal |
 | Memory linkage | Inline memory payloads inside `TaskSkill` | Opaque `memory_context_id` string pointer | Keeps schema clean and Phase 27-friendly |
 
@@ -221,26 +221,26 @@ tests/
 |----------|-------|
 | Framework | `pytest >=9.0.0,<10.0.0` + `pytest-asyncio >=1.3.0,<2.0.0` |
 | Config file | `pyproject.toml` |
-| Quick run command | `uv run pytest -q tests/test_opengui_p1_skills.py tests/test_opengui_p1_memory.py tests/test_opengui_p24_schema_grounding.py` |
+| Quick run command | `uv run pytest -q tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p1_memory.py tests/test_guiclaw_p24_schema_grounding.py` |
 | Full suite command | `uv run pytest` |
 
 ### Phase Requirements -> Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| SCHEMA-01, SCHEMA-02 | `ShortcutSkill`, `StateDescriptor`, and `ParameterSlot` serialize and round-trip cleanly | unit | `uv run pytest -q tests/test_opengui_p24_schema_grounding.py -k "shortcut or parameter_slot or state_descriptor"` | ❌ Wave 0 |
-| SCHEMA-03, SCHEMA-04, SCHEMA-05, SCHEMA-06 | `TaskSkill` supports shortcut refs, inline `SkillStep` fallbacks, nested branches, and optional `memory_context_id` | unit | `uv run pytest -q tests/test_opengui_p24_schema_grounding.py -k "task_skill or branch or memory_context"` | ❌ Wave 0 |
-| GRND-01, GRND-02, GRND-03 | `GrounderProtocol` and `LLMGrounder` expose async protocol-conformant results with `grounder_id`, `confidence`, and `fallback_metadata` | unit | `uv run pytest -q tests/test_opengui_p24_schema_grounding.py -k "grounder or grounding_result or protocol"` | ❌ Wave 0 |
-| Phase 24 SC-4 | New schema and grounding modules import and compile without circular import failures | smoke | `uv run python -m py_compile opengui/skills/data.py opengui/skills/shortcut.py opengui/skills/task_skill.py opengui/grounding/__init__.py opengui/grounding/protocol.py opengui/grounding/llm.py` | ❌ Wave 0 |
+| SCHEMA-01, SCHEMA-02 | `ShortcutSkill`, `StateDescriptor`, and `ParameterSlot` serialize and round-trip cleanly | unit | `uv run pytest -q tests/test_guiclaw_p24_schema_grounding.py -k "shortcut or parameter_slot or state_descriptor"` | ❌ Wave 0 |
+| SCHEMA-03, SCHEMA-04, SCHEMA-05, SCHEMA-06 | `TaskSkill` supports shortcut refs, inline `SkillStep` fallbacks, nested branches, and optional `memory_context_id` | unit | `uv run pytest -q tests/test_guiclaw_p24_schema_grounding.py -k "task_skill or branch or memory_context"` | ❌ Wave 0 |
+| GRND-01, GRND-02, GRND-03 | `GrounderProtocol` and `LLMGrounder` expose async protocol-conformant results with `grounder_id`, `confidence`, and `fallback_metadata` | unit | `uv run pytest -q tests/test_guiclaw_p24_schema_grounding.py -k "grounder or grounding_result or protocol"` | ❌ Wave 0 |
+| Phase 24 SC-4 | New schema and grounding modules import and compile without circular import failures | smoke | `uv run python -m py_compile guiclaw/skills/data.py guiclaw/skills/shortcut.py guiclaw/skills/task_skill.py guiclaw/grounding/__init__.py guiclaw/grounding/protocol.py guiclaw/grounding/llm.py` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest -q tests/test_opengui_p1_skills.py tests/test_opengui_p1_memory.py tests/test_opengui_p24_schema_grounding.py`
-- **Per wave merge:** `uv run pytest -q tests/test_opengui_p1_skills.py tests/test_opengui_p1_memory.py tests/test_opengui_p24_schema_grounding.py`
+- **Per task commit:** `uv run pytest -q tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p1_memory.py tests/test_guiclaw_p24_schema_grounding.py`
+- **Per wave merge:** `uv run pytest -q tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p1_memory.py tests/test_guiclaw_p24_schema_grounding.py`
 - **Phase gate:** `uv run pytest`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p24_schema_grounding.py` — new Phase 24 coverage for schema round-trip, recursive task nodes, grounding protocol/result shape, and import safety
-- [ ] Update `tests/test_opengui_p1_skills.py` — export visibility and compatibility checks where legacy `SkillStep` coexists with the new task node model
-- [ ] Add compile/import verification command for the new `opengui/grounding` and `opengui/skills` modules
+- [ ] `tests/test_guiclaw_p24_schema_grounding.py` — new Phase 24 coverage for schema round-trip, recursive task nodes, grounding protocol/result shape, and import safety
+- [ ] Update `tests/test_guiclaw_p1_skills.py` — export visibility and compatibility checks where legacy `SkillStep` coexists with the new task node model
+- [ ] Add compile/import verification command for the new `guiclaw/grounding` and `guiclaw/skills` modules
 
 ## Sources
 
@@ -250,15 +250,15 @@ tests/
 - `.planning/phases/24-schema-and-grounding/24-CONTEXT.md` - locked design decisions for this phase
 - `.planning/PROJECT.md` - milestone-level design direction and constraints
 - `.planning/STATE.md` - current milestone state and prior-phase decisions
-- `opengui/skills/data.py` - existing dataclass serialization pattern and `SkillStep` reuse seam
-- `opengui/skills/__init__.py` - existing export pattern
-- `opengui/skills/executor.py` - current grounding/executor split and existing `ActionGrounder` surface
-- `opengui/agent.py` - current LLM-driven grounding implementation style
-- `opengui/interfaces.py` - `Protocol` style and import-light contract boundary
-- `opengui/observation.py` - grounding-context observation payload
-- `opengui/memory/types.py` - current memory entry identity model
-- `tests/test_opengui_p1_skills.py` - existing skill serialization / execution regression seam
-- `tests/test_opengui_p1_memory.py` - memory entry round-trip seam relevant to `memory_context_id`
+- `guiclaw/skills/data.py` - existing dataclass serialization pattern and `SkillStep` reuse seam
+- `guiclaw/skills/__init__.py` - existing export pattern
+- `guiclaw/skills/executor.py` - current grounding/executor split and existing `ActionGrounder` surface
+- `guiclaw/agent.py` - current LLM-driven grounding implementation style
+- `guiclaw/interfaces.py` - `Protocol` style and import-light contract boundary
+- `guiclaw/observation.py` - grounding-context observation payload
+- `guiclaw/memory/types.py` - current memory entry identity model
+- `tests/test_guiclaw_p1_skills.py` - existing skill serialization / execution regression seam
+- `tests/test_guiclaw_p1_memory.py` - memory entry round-trip seam relevant to `memory_context_id`
 - `pyproject.toml` - runtime and test stack
 
 ### Secondary (MEDIUM confidence)
@@ -271,7 +271,7 @@ tests/
 
 **Confidence breakdown:**
 - Standard stack: HIGH - based on local repo code and `pyproject.toml`
-- Architecture: HIGH - directly grounded in current `opengui` model, protocol, and agent code
+- Architecture: HIGH - directly grounded in current `guiclaw` model, protocol, and agent code
 - Pitfalls: MEDIUM - strongly suggested by current recursive-serialization and import-boundary risks, but final execution/storage interactions land in later phases
 
 **Research date:** 2026-04-02

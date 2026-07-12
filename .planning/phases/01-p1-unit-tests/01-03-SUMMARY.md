@@ -20,7 +20,7 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p1_trajectory.py
+    - tests/test_guiclaw_p1_trajectory.py
   modified: []
 
 key-decisions:
@@ -48,7 +48,7 @@ completed: 2026-03-17
 
 ## Accomplishments
 
-- Created `tests/test_opengui_p1_trajectory.py` with 8 tests covering all TEST-04 requirements
+- Created `tests/test_guiclaw_p1_trajectory.py` with 8 tests covering all TEST-04 requirements
 - Verified `TrajectoryRecorder.start()` returns an existing `.jsonl` Path
 - Verified JSONL event ordering: metadata first, result last, step events in between
 - Verified `set_phase()` changes subsequent step event `phase` field from `"agent"` to `"skill"`
@@ -65,7 +65,7 @@ completed: 2026-03-17
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p1_trajectory.py` - 8 unit tests: 6 for TrajectoryRecorder, 2 for TrajectorySummarizer
+- `tests/test_guiclaw_p1_trajectory.py` - 8 unit tests: 6 for TrajectoryRecorder, 2 for TrajectorySummarizer
 
 ## Decisions Made
 
@@ -82,14 +82,14 @@ completed: 2026-03-17
 - **Found during:** Task 1 implementation
 - **Issue:** Plan specified 5 recorder tests; the metadata event's field structure (task, platform, initial_phase, timestamp) was asserted in test_trajectory_recorder_event_order only partially
 - **Fix:** Added a dedicated test that explicitly asserts all key metadata fields
-- **Files modified:** tests/test_opengui_p1_trajectory.py
+- **Files modified:** tests/test_guiclaw_p1_trajectory.py
 - **Commit:** 6196bd2
 
 **2. [Rule 2 - Completeness] Added test_trajectory_summarizer_empty_events_returns_empty_string**
 - **Found during:** Task 2 implementation
 - **Issue:** The early-return guard `if not events: return ""` in summarize_events() was untested
 - **Fix:** Added edge-case test verifying empty list returns "" without calling LLM
-- **Files modified:** tests/test_opengui_p1_trajectory.py
+- **Files modified:** tests/test_guiclaw_p1_trajectory.py
 - **Commit:** 6196bd2
 
 Total deviations: 2 auto-added tests (completeness, no architectural impact)
@@ -115,11 +115,11 @@ None - no external service configuration required.
 
 ## Self-Check: PASSED
 
-- FOUND: tests/test_opengui_p1_trajectory.py
+- FOUND: tests/test_guiclaw_p1_trajectory.py
 - FOUND: .planning/phases/01-p1-unit-tests/01-03-SUMMARY.md
 - FOUND commit 6196bd2 (test: trajectory recorder and summarizer tests)
 - 8 trajectory tests pass (6 recorder + 2 summarizer)
-- 29 combined opengui tests pass (P0 + P1 memory + P1 trajectory)
+- 29 combined guiclaw tests pass (P0 + P1 memory + P1 trajectory)
 - STATE.md updated (plan 3/3 complete, decisions recorded, blockers cleared)
 - ROADMAP.md updated (Phase 1: 3/3 complete, status=Complete, date=2026-03-17)
 - REQUIREMENTS.md: TEST-04 marked complete

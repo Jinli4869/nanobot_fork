@@ -15,7 +15,7 @@ provides:
   - ShortcutStepResult per-step execution record with grounding metadata
   - ShortcutExecutionSuccess result dataclass with discriminator field
   - ShortcutExecutor dataclass executing ShortcutSkill with pluggable grounding and condition evaluation
-  - opengui.skills __all__ extended with all Phase 25 shortcut executor types
+  - guiclaw.skills __all__ extended with all Phase 25 shortcut executor types
 
 affects:
   - 25-02 (Phase 25 Plan 02 - TaskSkillExecutor will inject ShortcutExecutor)
@@ -32,11 +32,11 @@ tech-stack:
 
 key-files:
   created:
-    - opengui/skills/multi_layer_executor.py
-    - tests/test_opengui_p25_multi_layer_execution.py
+    - guiclaw/skills/multi_layer_executor.py
+    - tests/test_guiclaw_p25_multi_layer_execution.py
   modified:
-    - opengui/skills/__init__.py
-    - tests/test_opengui_p1_skills.py
+    - guiclaw/skills/__init__.py
+    - tests/test_guiclaw_p1_skills.py
 
 key-decisions:
   - "ShortcutExecutor is a new module (multi_layer_executor.py), NOT an extension of legacy executor.py — incompatible fail-open and template fallback semantics"
@@ -71,11 +71,11 @@ completed: 2026-04-02
 
 ## Accomplishments
 
-- New `opengui/skills/multi_layer_executor.py` module with ConditionEvaluator protocol, ContractViolationReport/ShortcutExecutionSuccess discriminated union, and ShortcutExecutor
+- New `guiclaw/skills/multi_layer_executor.py` module with ConditionEvaluator protocol, ContractViolationReport/ShortcutExecutionSuccess discriminated union, and ShortcutExecutor
 - ShortcutExecutor checks preconditions before each step and postconditions after each step; aborts immediately with typed ContractViolationReport on first failure
 - Grounding seam: non-fixed steps route through GrounderProtocol.ground() and normalize through parse_action(); stub grounder swaps behavior without touching executor code
 - Fixed steps bypass grounder entirely, still normalize through parse_action() for centralized action validation
-- Phase 25 types added to opengui.skills.__all__ alongside all legacy exports
+- Phase 25 types added to guiclaw.skills.__all__ alongside all legacy exports
 
 ## Task Commits
 
@@ -90,10 +90,10 @@ _Note: TDD tasks have two commits — test (RED) then feat (GREEN)_
 
 ## Files Created/Modified
 
-- `opengui/skills/multi_layer_executor.py` — ConditionEvaluator protocol, ContractViolationReport/ShortcutStepResult/ShortcutExecutionSuccess dataclasses, ShortcutExecutor with shared step runner
-- `opengui/skills/__init__.py` — Phase 25 exports added to __all__ (ConditionEvaluator, ContractViolationReport, ShortcutExecutionSuccess, ShortcutExecutor, ShortcutStepResult)
-- `tests/test_opengui_p25_multi_layer_execution.py` — 5 contract tests covering pre/post violations, grounder seam, fixed-value bypass, and package exports
-- `tests/test_opengui_p1_skills.py` — Extended package export compatibility assertion to include Phase 25 types
+- `guiclaw/skills/multi_layer_executor.py` — ConditionEvaluator protocol, ContractViolationReport/ShortcutStepResult/ShortcutExecutionSuccess dataclasses, ShortcutExecutor with shared step runner
+- `guiclaw/skills/__init__.py` — Phase 25 exports added to __all__ (ConditionEvaluator, ContractViolationReport, ShortcutExecutionSuccess, ShortcutExecutor, ShortcutStepResult)
+- `tests/test_guiclaw_p25_multi_layer_execution.py` — 5 contract tests covering pre/post violations, grounder seam, fixed-value bypass, and package exports
+- `tests/test_guiclaw_p1_skills.py` — Extended package export compatibility assertion to include Phase 25 types
 
 ## Decisions Made
 

@@ -38,10 +38,10 @@ human_verification: []
 
 | Artifact                                          | Expected                                                                | Status     | Details                                                                                     |
 |---------------------------------------------------|-------------------------------------------------------------------------|------------|---------------------------------------------------------------------------------------------|
-| `opengui/skills/multi_layer_executor.py`          | ConditionEvaluator, ContractViolationReport, ShortcutExecutor; TaskSkillExecutor, MissingShortcutReport, TaskExecutionSuccess | VERIFIED | 674 lines; all 8 public classes present; no TODO/FIXME/placeholder patterns |
-| `opengui/skills/__init__.py`                       | Exports all Phase 25 types without removing legacy exports              | VERIFIED   | Imports and exports all 8 new types; legacy exports (Skill, SkillStep, SkillExecutor, etc.) intact |
-| `tests/test_opengui_p25_multi_layer_execution.py` | 11 tests covering pre/post violations, grounding seam, fallback rules, branch routing, exports | VERIFIED | 727 lines; all 11 exact test names present; 3 helper fakes present; 46 tests pass with `uv run pytest` |
-| `tests/test_opengui_p1_skills.py`                 | Extended export compatibility assertion to include Phase 25 types       | VERIFIED   | Contains `ConditionEvaluator` and `ShortcutExecutor` references                             |
+| `guiclaw/skills/multi_layer_executor.py`          | ConditionEvaluator, ContractViolationReport, ShortcutExecutor; TaskSkillExecutor, MissingShortcutReport, TaskExecutionSuccess | VERIFIED | 674 lines; all 8 public classes present; no TODO/FIXME/placeholder patterns |
+| `guiclaw/skills/__init__.py`                       | Exports all Phase 25 types without removing legacy exports              | VERIFIED   | Imports and exports all 8 new types; legacy exports (Skill, SkillStep, SkillExecutor, etc.) intact |
+| `tests/test_guiclaw_p25_multi_layer_execution.py` | 11 tests covering pre/post violations, grounding seam, fallback rules, branch routing, exports | VERIFIED | 727 lines; all 11 exact test names present; 3 helper fakes present; 46 tests pass with `uv run pytest` |
+| `tests/test_guiclaw_p1_skills.py`                 | Extended export compatibility assertion to include Phase 25 types       | VERIFIED   | Contains `ConditionEvaluator` and `ShortcutExecutor` references                             |
 
 ---
 
@@ -49,12 +49,12 @@ human_verification: []
 
 | From                                              | To                                      | Via                                                          | Status   | Details                                                                    |
 |---------------------------------------------------|-----------------------------------------|--------------------------------------------------------------|----------|----------------------------------------------------------------------------|
-| `opengui/skills/multi_layer_executor.py`          | `opengui/grounding/protocol.py`         | `GroundingContext` import and construction in `_execute_step` | WIRED    | Line 55: import; line 326: instantiation with `parameter_slots` and `task_hint` |
-| `opengui/skills/multi_layer_executor.py`          | `opengui/action.py`                     | `parse_action()` called for both fixed and non-fixed steps   | WIRED    | Line 54: import; lines 322, 339: called in both code paths                 |
-| `opengui/skills/__init__.py`                      | `opengui/skills/multi_layer_executor.py` | Package re-exports via explicit import block                 | WIRED    | Lines 14-23: imports; lines 29-52: `__all__` entries for all 8 new types   |
-| `opengui/skills/multi_layer_executor.py`          | `opengui/skills/task_skill.py`          | `ShortcutRefNode`, `BranchNode`, `TaskNode`, `TaskSkill` imported and used in `_walk_nodes` | WIRED | Line 59: import; lines 515, 526, 562, 572: `isinstance` checks in traversal loop |
+| `guiclaw/skills/multi_layer_executor.py`          | `guiclaw/grounding/protocol.py`         | `GroundingContext` import and construction in `_execute_step` | WIRED    | Line 55: import; line 326: instantiation with `parameter_slots` and `task_hint` |
+| `guiclaw/skills/multi_layer_executor.py`          | `guiclaw/action.py`                     | `parse_action()` called for both fixed and non-fixed steps   | WIRED    | Line 54: import; lines 322, 339: called in both code paths                 |
+| `guiclaw/skills/__init__.py`                      | `guiclaw/skills/multi_layer_executor.py` | Package re-exports via explicit import block                 | WIRED    | Lines 14-23: imports; lines 29-52: `__all__` entries for all 8 new types   |
+| `guiclaw/skills/multi_layer_executor.py`          | `guiclaw/skills/task_skill.py`          | `ShortcutRefNode`, `BranchNode`, `TaskNode`, `TaskSkill` imported and used in `_walk_nodes` | WIRED | Line 59: import; lines 515, 526, 562, 572: `isinstance` checks in traversal loop |
 | `TaskSkillExecutor` (self)                        | `ShortcutExecutor` (injected)           | `shortcut_executor` field; `_execute_step` and `execute` delegated | WIRED | Lines 441, 530, 644: field declaration and delegation calls                |
-| `tests/test_opengui_p25_multi_layer_execution.py` | `opengui/skills/multi_layer_executor.py` | Explicit `MissingShortcutReport` assertions in fallback tests | WIRED   | Lines 411, 484, 542, 571: import and assert `isinstance(result, MissingShortcutReport)` |
+| `tests/test_guiclaw_p25_multi_layer_execution.py` | `guiclaw/skills/multi_layer_executor.py` | Explicit `MissingShortcutReport` assertions in fallback tests | WIRED   | Lines 411, 484, 542, 571: import and assert `isinstance(result, MissingShortcutReport)` |
 
 ---
 
@@ -72,7 +72,7 @@ All 3 phase 25 requirements (EXEC-01, EXEC-02, EXEC-03) are satisfied. No orphan
 
 ### Anti-Patterns Found
 
-None. Scanned `opengui/skills/multi_layer_executor.py` for TODO/FIXME/XXX/HACK/placeholder, empty returns (`return null`, `return {}`, `return []`), and stub implementations. No issues found.
+None. Scanned `guiclaw/skills/multi_layer_executor.py` for TODO/FIXME/XXX/HACK/placeholder, empty returns (`return null`, `return {}`, `return []`), and stub implementations. No issues found.
 
 ---
 
@@ -84,7 +84,7 @@ None. All observable behaviors are testable programmatically via the injected fa
 
 ### Gaps Summary
 
-No gaps. All 6 observable truths verified, all artifacts substantive and wired, all key links confirmed, all 3 requirements satisfied. The full 46-test suite passes cleanly with `uv run pytest tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p1_skills.py tests/test_opengui_p25_multi_layer_execution.py -q`.
+No gaps. All 6 observable truths verified, all artifacts substantive and wired, all key links confirmed, all 3 requirements satisfied. The full 46-test suite passes cleanly with `uv run pytest tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p25_multi_layer_execution.py -q`.
 
 ---
 

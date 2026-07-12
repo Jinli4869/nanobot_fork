@@ -15,7 +15,7 @@ key_files:
   modified:
     - nanobot/agent/router.py
     - nanobot/agent/loop.py
-    - tests/test_opengui_p22_route_dispatch.py
+    - tests/test_guiclaw_p22_route_dispatch.py
 decisions:
   - _is_error_output() uses re.search for Exit code: N detection — regex handles whitespace variation; non-"0" string check covers 1–255
   - AND sequential execution uses index-aware for loop; child sees merged context.completed from all previous siblings immediately
@@ -74,7 +74,7 @@ The outer `if self._gui_config is not None` guard remains unchanged — it corre
 
 ## Verification
 
-All existing 40 tests in `tests/test_opengui_p22_route_dispatch.py` continue to pass.
+All existing 40 tests in `tests/test_guiclaw_p22_route_dispatch.py` continue to pass.
 4 new regression tests added and passing.
 `_COMPLEXITY_TOOL` description verified to contain "GUI" keyword.
 
@@ -85,9 +85,9 @@ All existing 40 tests in `tests/test_opengui_p22_route_dispatch.py` continue to 
 **1. [Rule 1 - Bug] Missing asyncio import in test file**
 
 - **Found during:** Task 1 (GREEN phase — `asyncio.sleep` used in `test_execute_and_runs_sequentially`)
-- **Issue:** `tests/test_opengui_p22_route_dispatch.py` had no `import asyncio` at module level; the sequential test's `dispatch_side_effect` called `asyncio.sleep()` which raised `NameError`
+- **Issue:** `tests/test_guiclaw_p22_route_dispatch.py` had no `import asyncio` at module level; the sequential test's `dispatch_side_effect` called `asyncio.sleep()` which raised `NameError`
 - **Fix:** Added `import asyncio` to the test file imports
-- **Files modified:** `tests/test_opengui_p22_route_dispatch.py`
+- **Files modified:** `tests/test_guiclaw_p22_route_dispatch.py`
 - **Commit:** 604aeaf
 
 ## Self-Check: PASSED

@@ -1,13 +1,13 @@
 # Project Research Summary
 
-**Project:** OpenGUI
+**Project:** GUIClaw
 **Domain:** GUI-agent shortcut extraction and stable shortcut execution
 **Researched:** 2026-04-02
 **Confidence:** MEDIUM
 
 ## Executive Summary
 
-OpenGUI already shipped the schema, execution contracts, and storage/search pieces for a two-layer shortcut architecture in v1.5, but the production GUI path still extracts legacy skills and does not yet treat shortcuts as a stable, screen-aware optimization. That makes v1.6 a brownfield finishing milestone, not a greenfield invention milestone.
+GUIClaw already shipped the schema, execution contracts, and storage/search pieces for a two-layer shortcut architecture in v1.5, but the production GUI path still extracts legacy skills and does not yet treat shortcuts as a stable, screen-aware optimization. That makes v1.6 a brownfield finishing milestone, not a greenfield invention milestone.
 
 The strongest pattern from AppAgentX is not its storage choices but its runtime discipline: retrieve associated shortcuts, evaluate whether they fit the current screen and task, then generate an execution plan from live context. The strongest pattern from Mobile-Agent-v3.5/mobile_use is its strict action/observation rhythm: actions need time to land, screenshots must reflect the resulting state, and history should stay concise and actionable. Together, they imply that v1.6 should focus on three things: trustworthy shortcut promotion, safe shortcut selection, and stable shortcut execution.
 
@@ -15,7 +15,7 @@ The strongest pattern from AppAgentX is not its storage choices but its runtime 
 
 ### Recommended Stack
 
-Reuse the existing OpenGUI shortcut/task contracts, JSON stores, unified search, trajectory artifacts, and grounding protocol. The codebase already has the right seams; the current gap is that the shipped production path still routes post-run extraction through the legacy `SkillExtractor` and `SkillLibrary` path.
+Reuse the existing GUIClaw shortcut/task contracts, JSON stores, unified search, trajectory artifacts, and grounding protocol. The codebase already has the right seams; the current gap is that the shipped production path still routes post-run extraction through the legacy `SkillExtractor` and `SkillLibrary` path.
 
 **Core technologies:**
 - Existing `ShortcutSkill` / `TaskSkill` contracts: canonical reusable skill format
@@ -97,8 +97,8 @@ V1.6 should insert one explicit decision layer between retrieval and execution: 
 ## Sources
 
 - `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/shortcut_extractor.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/shortcut_extractor.py`
 - `/Users/jinli/Documents/Personal/AppAgentX/README.md`
 - `/Users/jinli/Documents/Personal/AppAgentX/deployment.py`
 - `/Users/jinli/Documents/Personal/MobileAgent/Mobile-Agent-v3.5/mobile_use/utils.py`

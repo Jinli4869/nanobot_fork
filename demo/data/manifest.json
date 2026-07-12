@@ -29,9 +29,9 @@
       "deviceType": "tablet",
       "scenarios": [
         {
-          "id": "erase-gui-claw-windows",
-          "title": "Erase GUI-CLAW and Windows",
-          "description": "Use the eraser tool in Goodnotes on iPad to remove the texts \"GUI-CLAW\" and \"Windows\" from the current page.",
+          "id": "erase-guiclaw-windows",
+          "title": "Erase GUIClaw and Windows",
+          "description": "Use the eraser tool in Goodnotes on iPad to remove the texts \"GUIClaw\" and \"Windows\" from the current page.",
           "stepCount": 4,
           "success": true,
           "duration_s": 40.19

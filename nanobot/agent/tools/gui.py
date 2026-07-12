@@ -1,4 +1,4 @@
-"""GuiSubagentTool: exposes opengui's GuiAgent as a nanobot tool."""
+"""GuiSubagentTool: exposes guiclaw's GuiAgent as a nanobot tool."""
 
 from __future__ import annotations
 
@@ -19,16 +19,16 @@ import numpy as np
 
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
-from opengui.agent import GuiAgent
-from opengui.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
-from opengui.postprocessing import EvaluationConfig, PostRunProcessor
-from opengui.skills.normalization import (
+from guiclaw.agent import GuiAgent
+from guiclaw.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
+from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
+from guiclaw.skills.normalization import (
     annotate_android_apps,
     find_android_apps_in_text,
     get_gui_skill_store_root,
     normalize_app_identifier,
 )
-from opengui.trajectory.recorder import TrajectoryRecorder
+from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 if TYPE_CHECKING:
     from nanobot.config.schema import GuiConfig
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
+DEFAULT_GUICLAW_MEMORY_DIR = Path.home() / ".guiclaw" / "memory"
 _EMBEDDING_BATCH_SIZE = 10
 
 #: Process-wide cache of the embedded GUI-memory index, keyed on
@@ -159,7 +159,7 @@ class GuiRouterMemoryRetriever:
     _MAX_EXCERPT_CHARS = 650
     _MIN_EVIDENCE_SCORE_WITHOUT_APP = 2
     _MIN_POLICY_SCORE_WITHOUT_APP = 4
-    _POLICY_SOURCE_PREFIXES = ("opengui/policy",)
+    _POLICY_SOURCE_PREFIXES = ("guiclaw/policy",)
     _POLICY_QUERY_TERMS = {
         "adb",
         "am",
@@ -337,7 +337,7 @@ class GuiRouterMemoryRetriever:
         for source, text in self._iter_chunks():
             # When GUI-memory items are served by embedding search instead, drop them
             # from the keyword pass so the same item is not surfaced twice.
-            if not include_gui_memory and source.startswith("opengui/gui_memory"):
+            if not include_gui_memory and source.startswith("guiclaw/gui_memory"):
                 continue
             score = self._score(text, query_terms=query_terms, app_candidates=app_candidates)
             if score <= 0:
@@ -369,17 +369,17 @@ class GuiRouterMemoryRetriever:
         chunks: list[tuple[str, str]] = []
         chunks.extend(self._iter_markdown_chunks(self._workspace / "memory" / "MEMORY.md", "memory/MEMORY.md"))
         chunks.extend(self._iter_history_chunks(self._workspace / "memory" / "history.jsonl"))
-        chunks.extend(self._iter_opengui_memory_chunks())
+        chunks.extend(self._iter_guiclaw_memory_chunks())
         return chunks
 
     @staticmethod
-    def _iter_opengui_memory_chunks() -> list[tuple[str, str]]:
+    def _iter_guiclaw_memory_chunks() -> list[tuple[str, str]]:
         """Read GuiMemoryItem entries from the JSONL memory bank.
 
         Each chunk is a (source_label, searchable_text) pair consumed by
         the keyword-based ``_score`` / ``_retrieve_evidence`` pipeline.
         """
-        bank_path = DEFAULT_OPENGUI_MEMORY_DIR / "gui_memory_bank.jsonl"
+        bank_path = DEFAULT_GUICLAW_MEMORY_DIR / "gui_memory_bank.jsonl"
         try:
             raw = bank_path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -407,7 +407,7 @@ class GuiRouterMemoryRetriever:
 
             # Build a keyword-rich text blob for scoring.
             searchable = f"{title} {description} {content}"
-            source = f"opengui/gui_memory:{app}:{status}" if app else f"opengui/gui_memory:{status}"
+            source = f"guiclaw/gui_memory:{app}:{status}" if app else f"guiclaw/gui_memory:{status}"
             chunks.append((source, searchable))
         return chunks
 
@@ -415,14 +415,14 @@ class GuiRouterMemoryRetriever:
     def _load_gui_memory_entries(cls) -> list[tuple[Any, str]]:
         """Load the GUI memory bank as ``(MemoryEntry, source_label)`` pairs.
 
-        Reuses :meth:`_iter_opengui_memory_chunks` so the searchable text and the
-        ``opengui/gui_memory:{app}:{status}`` source label stay identical to the
+        Reuses :meth:`_iter_guiclaw_memory_chunks` so the searchable text and the
+        ``guiclaw/gui_memory:{app}:{status}`` source label stay identical to the
         keyword path; only the ranking changes.
         """
-        from opengui.memory.types import MemoryEntry, MemoryType
+        from guiclaw.memory.types import MemoryEntry, MemoryType
 
         entries: list[tuple[Any, str]] = []
-        for idx, (source, searchable) in enumerate(cls._iter_opengui_memory_chunks()):
+        for idx, (source, searchable) in enumerate(cls._iter_guiclaw_memory_chunks()):
             # The MemoryType is irrelevant: this retriever instance only ever holds
             # GUI-memory entries and is never type-filtered, and the entry never
             # surfaces to the agent (evidence is re-labelled with ``source`` below).
@@ -470,7 +470,7 @@ class GuiRouterMemoryRetriever:
         for entry, _score in results:
             evidence.append(
                 GuiRouterMemoryEvidence(
-                    source=source_by_id.get(entry.entry_id, "opengui/gui_memory"),
+                    source=source_by_id.get(entry.entry_id, "guiclaw/gui_memory"),
                     text=self._excerpt(entry.content),
                 )
             )
@@ -481,14 +481,14 @@ class GuiRouterMemoryRetriever:
 
         Uses a two-level cache:
         1. In-process dict — zero-cost hit within the same ``mw eval`` run.
-        2. Disk cache under ``~/.opengui/memory/.embed_cache/`` — survives process
+        2. Disk cache under ``~/.guiclaw/memory/.embed_cache/`` — survives process
            restarts so a re-run of ``mw eval`` does not re-call the embedding API
            unless ``gui_memory_bank.jsonl`` has actually changed (mtime / size).
 
         Cache key: SHA-256 of ``"{bank_path}|{mtime_ns}|{size}|{embedding_signature}"``.
         Only the current bank version is kept (old files are cleaned up on write).
         """
-        bank_path = DEFAULT_OPENGUI_MEMORY_DIR / "gui_memory_bank.jsonl"
+        bank_path = DEFAULT_GUICLAW_MEMORY_DIR / "gui_memory_bank.jsonl"
         try:
             stat = bank_path.stat()
         except OSError:
@@ -505,7 +505,7 @@ class GuiRouterMemoryRetriever:
         if not entries_with_source:
             return None
 
-        from opengui.memory.retrieval import MemoryRetriever
+        from guiclaw.memory.retrieval import MemoryRetriever
 
         retriever = MemoryRetriever(
             embedding_provider=self._embedding_provider,
@@ -516,7 +516,7 @@ class GuiRouterMemoryRetriever:
         # --- Disk cache lookup ---
         disk_key_str = f"{bank_path}|{stat.st_mtime_ns}|{stat.st_size}|{embed_sig}"
         cache_hex = hashlib.sha256(disk_key_str.encode()).hexdigest()[:24]
-        cache_dir = DEFAULT_OPENGUI_MEMORY_DIR / ".embed_cache"
+        cache_dir = DEFAULT_GUICLAW_MEMORY_DIR / ".embed_cache"
         cache_file = cache_dir / f"gui_mem_{cache_hex}.npz"
 
         loaded_from_disk = False
@@ -1217,7 +1217,7 @@ class GuiWorkflowRunner:
 
 
 class GuiSubagentTool(Tool):
-    """Run a GUI automation task through opengui."""
+    """Run a GUI automation task through guiclaw."""
 
     def __init__(
         self,
@@ -1339,19 +1339,19 @@ class GuiSubagentTool(Tool):
                 resolve_fn = resolve_run_mode
                 log_fn = log_mode_resolution
                 if probe_fn is None:
-                    from opengui.backends.background_runtime import (
+                    from guiclaw.backends.background_runtime import (
                         probe_isolated_background_support as runtime_probe_isolated_background_support,
                     )
 
                     probe_fn = runtime_probe_isolated_background_support
                 if resolve_fn is None:
-                    from opengui.backends.background_runtime import (
+                    from guiclaw.backends.background_runtime import (
                         resolve_run_mode as runtime_resolve_run_mode,
                     )
 
                     resolve_fn = runtime_resolve_run_mode
                 if log_fn is None:
-                    from opengui.backends.background_runtime import (
+                    from guiclaw.backends.background_runtime import (
                         log_mode_resolution as runtime_log_mode_resolution,
                     )
 
@@ -1391,7 +1391,7 @@ class GuiSubagentTool(Tool):
                         try:
                             backend_cls = WindowsIsolatedBackend
                             if backend_cls is None:
-                                from opengui.backends.windows_isolated import (
+                                from guiclaw.backends.windows_isolated import (
                                     WindowsIsolatedBackend as ImportedWindowsIsolatedBackend,
                                 )
 
@@ -1408,7 +1408,7 @@ class GuiSubagentTool(Tool):
                             if wrapped_backend is not None:
                                 await wrapped_backend.shutdown()
                     else:
-                        from opengui.backends.background import BackgroundDesktopBackend
+                        from guiclaw.backends.background import BackgroundDesktopBackend
 
                         wrapped_backend = BackgroundDesktopBackend(
                             active_backend,
@@ -1481,12 +1481,12 @@ class GuiSubagentTool(Tool):
 
         skill_executor = None
         if skill_runtime_enabled:
-            from opengui.agent import (
+            from guiclaw.agent import (
                 _AgentActionGrounder,
                 _AgentScreenshotProvider,
                 _AgentSubgoalRunner,
             )
-            from opengui.skills.executor import LLMStateValidator, SkillExecutor
+            from guiclaw.skills.executor import LLMStateValidator, SkillExecutor
 
             validator_llm = (
                 NanobotLLMAdapter(self._provider, self._gui_config.validator_model)
@@ -1614,7 +1614,7 @@ class GuiSubagentTool(Tool):
         if not hasattr(active_backend, "_run"):
             return None
         module_name = str(getattr(type(active_backend), "__module__", "") or "")
-        if module_name == "opengui.backends.mobileworld":
+        if module_name == "guiclaw.backends.mobileworld":
             return None
         return active_backend
 
@@ -1759,12 +1759,12 @@ class GuiSubagentTool(Tool):
         if self._embedding_adapter is None:
             return None
 
-        from opengui.memory.retrieval import MemoryRetriever
-        from opengui.memory.store import MemoryStore
-        from opengui.memory.types import MemoryType
+        from guiclaw.memory.retrieval import MemoryRetriever
+        from guiclaw.memory.store import MemoryStore
+        from guiclaw.memory.types import MemoryType
 
         try:
-            memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            memory_store = MemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
             policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
             if not policy_entries:
                 return None
@@ -1774,7 +1774,7 @@ class GuiSubagentTool(Tool):
         except Exception:
             logger.warning(
                 "GUI memory retriever initialization failed for %s",
-                DEFAULT_OPENGUI_MEMORY_DIR,
+                DEFAULT_GUICLAW_MEMORY_DIR,
                 exc_info=True,
             )
             return None
@@ -1789,11 +1789,11 @@ class GuiSubagentTool(Tool):
         Policies must always be present regardless of task relevance, so they are loaded
         in full without embedding-based search filtering.
         """
-        from opengui.memory.store import MemoryStore
-        from opengui.memory.types import MemoryType
+        from guiclaw.memory.store import MemoryStore
+        from guiclaw.memory.types import MemoryType
 
         try:
-            memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            memory_store = MemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
             policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
             if not policy_entries:
                 return None, memory_store
@@ -1963,7 +1963,7 @@ class GuiSubagentTool(Tool):
 
     def _build_backend(self, backend_name: str) -> Any:
         if backend_name == "adb":
-            from opengui.backends.adb import AdbBackend
+            from guiclaw.backends.adb import AdbBackend
 
             return AdbBackend(
                 serial=self._gui_config.adb.serial,
@@ -1977,17 +1977,17 @@ class GuiSubagentTool(Tool):
             )
 
         if backend_name == "ios":
-            from opengui.backends.ios_wda import WdaBackend
+            from guiclaw.backends.ios_wda import WdaBackend
 
             return WdaBackend(wda_url=self._gui_config.ios.wda_url)
 
         if backend_name == "hdc":
-            from opengui.backends.hdc import HdcBackend
+            from guiclaw.backends.hdc import HdcBackend
 
             return HdcBackend(serial=self._gui_config.hdc.serial)
 
         if backend_name == "mobileworld":
-            from opengui.backends.mobileworld import MobileWorldBackend
+            from guiclaw.backends.mobileworld import MobileWorldBackend
 
             mobileworld_cfg = self._gui_config.mobileworld
             return MobileWorldBackend(
@@ -2000,12 +2000,12 @@ class GuiSubagentTool(Tool):
             )
 
         if backend_name == "dry-run":
-            from opengui.backends.dry_run import DryRunBackend
+            from guiclaw.backends.dry_run import DryRunBackend
 
             return DryRunBackend()
 
         if backend_name == "local":
-            from opengui.backends.desktop import LocalDesktopBackend
+            from guiclaw.backends.desktop import LocalDesktopBackend
 
             return LocalDesktopBackend()
 
@@ -2013,7 +2013,7 @@ class GuiSubagentTool(Tool):
 
     def _build_isolated_display_manager(self, probe: Any) -> Any:
         if probe.backend_name == "xvfb":
-            from opengui.backends.displays.xvfb import XvfbDisplayManager
+            from guiclaw.backends.displays.xvfb import XvfbDisplayManager
 
             display_num = self._gui_config.display_num if self._gui_config.display_num is not None else 99
             return XvfbDisplayManager(
@@ -2023,7 +2023,7 @@ class GuiSubagentTool(Tool):
             )
 
         if probe.backend_name == "cgvirtualdisplay":
-            from opengui.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
+            from guiclaw.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
 
             return CGVirtualDisplayManager(
                 width=self._gui_config.display_width,
@@ -2031,7 +2031,7 @@ class GuiSubagentTool(Tool):
             )
 
         if probe.backend_name == "windows_isolated_desktop":
-            from opengui.backends.displays.win32desktop import Win32DesktopManager
+            from guiclaw.backends.displays.win32desktop import Win32DesktopManager
 
             return Win32DesktopManager(
                 width=self._gui_config.display_width,
@@ -2062,7 +2062,7 @@ class GuiSubagentTool(Tool):
         embedding_signature: str | None = None,
     ) -> Any:
         if platform not in self._skill_libraries:
-            from opengui.skills.flat import FlatSkillLibrary
+            from guiclaw.skills.flat import FlatSkillLibrary
 
             self._skill_libraries[platform] = FlatSkillLibrary(
                 store_dir=get_gui_skill_store_root(self._workspace),

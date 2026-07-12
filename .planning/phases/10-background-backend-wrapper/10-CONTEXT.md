@@ -31,7 +31,7 @@ BackgroundDesktopBackend decorator that wraps any DeviceBackend to run GUI actio
 
 ### Type safety & protocol conformance
 - BackgroundDesktopBackend satisfies the `DeviceBackend` protocol — implements `observe()`, `execute()`, `preflight()`, `list_apps()` with correct signatures
-- Inner backend typed as `DeviceBackend` (not `object`) using `TYPE_CHECKING` import from `opengui.interfaces`
+- Inner backend typed as `DeviceBackend` (not `object`) using `TYPE_CHECKING` import from `guiclaw.interfaces`
 - Expose `platform` property delegating to `inner.platform` — GuiAgent and prompts read this for OS identification
 - No explicit `class BackgroundDesktopBackend(DeviceBackend)` subclassing — structural conformance via duck typing (consistent with other backends)
 
@@ -58,11 +58,11 @@ BackgroundDesktopBackend decorator that wraps any DeviceBackend to run GUI actio
 - `.planning/phases/09-virtual-display-protocol/09-CONTEXT.md` — VirtualDisplayManager protocol decisions, DisplayInfo fields, error handling patterns
 
 ### Existing code
-- `opengui/backends/background.py` — Draft BackgroundDesktopBackend implementation (untracked, needs refinement per decisions above)
-- `opengui/backends/virtual_display.py` — VirtualDisplayManager protocol, DisplayInfo dataclass, NoOpDisplayManager
-- `opengui/interfaces.py` — DeviceBackend protocol definition (the protocol BackgroundDesktopBackend must satisfy)
-- `opengui/backends/desktop.py` — LocalDesktopBackend (the primary inner backend this wrapper will wrap)
-- `opengui/action.py` — Action dataclass with x/y/x2/y2 coordinate fields used by `_apply_offset()`
+- `guiclaw/backends/background.py` — Draft BackgroundDesktopBackend implementation (untracked, needs refinement per decisions above)
+- `guiclaw/backends/virtual_display.py` — VirtualDisplayManager protocol, DisplayInfo dataclass, NoOpDisplayManager
+- `guiclaw/interfaces.py` — DeviceBackend protocol definition (the protocol BackgroundDesktopBackend must satisfy)
+- `guiclaw/backends/desktop.py` — LocalDesktopBackend (the primary inner backend this wrapper will wrap)
+- `guiclaw/action.py` — Action dataclass with x/y/x2/y2 coordinate fields used by `_apply_offset()`
 
 </canonical_refs>
 
@@ -70,9 +70,9 @@ BackgroundDesktopBackend decorator that wraps any DeviceBackend to run GUI actio
 ## Existing Code Insights
 
 ### Reusable Assets
-- `opengui/backends/background.py` (draft): Already implements DISPLAY injection, coordinate offset logic, and basic delegation. Needs lifecycle guards, context manager, idempotent shutdown, and type fixes.
-- `opengui/backends/virtual_display.py`: Stable `VirtualDisplayManager` protocol and `DisplayInfo` dataclass — direct dependency
-- `opengui/interfaces.py`: `DeviceBackend` protocol with `@runtime_checkable` — BackgroundDesktopBackend must structurally match this
+- `guiclaw/backends/background.py` (draft): Already implements DISPLAY injection, coordinate offset logic, and basic delegation. Needs lifecycle guards, context manager, idempotent shutdown, and type fixes.
+- `guiclaw/backends/virtual_display.py`: Stable `VirtualDisplayManager` protocol and `DisplayInfo` dataclass — direct dependency
+- `guiclaw/interfaces.py`: `DeviceBackend` protocol with `@runtime_checkable` — BackgroundDesktopBackend must structurally match this
 
 ### Established Patterns
 - Protocols use `@typing.runtime_checkable` + `typing.Protocol` (never subclassed by implementations)

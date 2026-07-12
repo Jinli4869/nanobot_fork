@@ -1,11 +1,11 @@
-"""Unit tests for opengui.skills._merger pure functions."""
+"""Unit tests for guiclaw.skills._merger pure functions."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from opengui.skills._merger import (
+from guiclaw.skills._merger import (
     SkillConflict,
     action_signature,
     action_similarity,
@@ -26,7 +26,7 @@ from opengui.skills._merger import (
     tuple_jaccard,
     weighted_tuple_jaccard,
 )
-from opengui.skills.data import Skill, SkillStep
+from guiclaw.skills.data import Skill, SkillStep
 
 
 # -- helpers ----------------------------------------------------------------

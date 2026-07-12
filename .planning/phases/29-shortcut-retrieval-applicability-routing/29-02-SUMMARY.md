@@ -1,15 +1,15 @@
 ---
 phase: 29-shortcut-retrieval-applicability-routing
 plan: "02"
-subsystem: opengui/agent
+subsystem: guiclaw/agent
 tags: [shortcut-router, applicability, trajectory, tdd, nanobot-wiring]
 dependency_graph:
   requires:
     - phase: 29-01
       provides: ShortcutApplicabilityRouter, ApplicabilityDecision, filter_candidates_by_context, shortcut_candidates in run()
-    - opengui/skills/executor.py (LLMStateValidator as ConditionEvaluator)
+    - guiclaw/skills/executor.py (LLMStateValidator as ConditionEvaluator)
   provides:
-    - opengui/agent.py (_evaluate_shortcut_applicability, applicability gate in run(), retry clearing)
+    - guiclaw/agent.py (_evaluate_shortcut_applicability, applicability gate in run(), retry clearing)
     - nanobot/agent/tools/gui.py (ShortcutApplicabilityRouter wired with LLMStateValidator)
   affects:
     - Phase 30 (any future phases that extend shortcut execution or evaluation)
@@ -23,9 +23,9 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/agent.py
+    - guiclaw/agent.py
     - nanobot/agent/tools/gui.py
-    - tests/test_opengui_p29_retrieval_applicability.py
+    - tests/test_guiclaw_p29_retrieval_applicability.py
 key-decisions:
   - "Applicability evaluation takes a pre-loop observation inside the retry loop at attempt==0 so the screenshot is as close to execution time as possible"
   - "All four code paths (no_candidates, no_router, run, all_candidates_failed) emit shortcut_applicability trajectory event for full traceability"
@@ -71,9 +71,9 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py` — Added `_evaluate_shortcut_applicability()` method; modified `run()` to call it inside the retry loop at attempt==0 with live screenshot; added `_shortcut_attempted` flag and retry clearing logic
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py` — Added `_evaluate_shortcut_applicability()` method; modified `run()` to call it inside the retry loop at attempt==0 with live screenshot; added `_shortcut_attempted` flag and retry clearing logic
 - `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py` — Added `ShortcutApplicabilityRouter` construction in `_run_task()` when `enable_skill_execution=True`; passed as `shortcut_applicability_router` to `GuiAgent` constructor
-- `/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p29_retrieval_applicability.py` — Added 9 new test cases: `test_applicability_run_when_conditions_pass`, `test_applicability_skip_when_condition_fails`, `test_applicability_exception_produces_fallback`, `test_fallback_when_no_candidates`, `test_applicability_emits_trajectory_event`, `test_applicability_selects_first_passing_candidate`, `test_failed_shortcut_clears_for_retry`, `test_normal_path_unchanged_when_no_shortcut`, `test_nanobot_wires_applicability_router`
+- `/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p29_retrieval_applicability.py` — Added 9 new test cases: `test_applicability_run_when_conditions_pass`, `test_applicability_skip_when_condition_fails`, `test_applicability_exception_produces_fallback`, `test_fallback_when_no_candidates`, `test_applicability_emits_trajectory_event`, `test_applicability_selects_first_passing_candidate`, `test_failed_shortcut_clears_for_retry`, `test_normal_path_unchanged_when_no_shortcut`, `test_nanobot_wires_applicability_router`
 
 ## Decisions Made
 
@@ -95,14 +95,14 @@ None — all tests passed on first run after implementation.
 
 ## Self-Check
 
-- opengui/agent.py contains `async def _evaluate_shortcut_applicability`: FOUND (line 1711)
-- opengui/agent.py contains `record_event.*shortcut_applicability`: FOUND (lines 1739, 1756, 1783, 1807)
-- opengui/agent.py run() contains `applicability_decision`: FOUND (line 557)
-- opengui/agent.py contains logic to clear matched_skill on retry: FOUND (line 612)
+- guiclaw/agent.py contains `async def _evaluate_shortcut_applicability`: FOUND (line 1711)
+- guiclaw/agent.py contains `record_event.*shortcut_applicability`: FOUND (lines 1739, 1756, 1783, 1807)
+- guiclaw/agent.py run() contains `applicability_decision`: FOUND (line 557)
+- guiclaw/agent.py contains logic to clear matched_skill on retry: FOUND (line 612)
 - nanobot/agent/tools/gui.py contains `ShortcutApplicabilityRouter`: FOUND (line 229, 255)
 - tests: all 9 new test functions present and passing
-- `uv run pytest tests/test_opengui_p29_retrieval_applicability.py -x -q`: 20 passed
-- `uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py -x -q`: 47 passed
+- `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -x -q`: 20 passed
+- `uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py -x -q`: 47 passed
 
 ## Self-Check: PASSED
 

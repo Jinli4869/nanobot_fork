@@ -110,8 +110,8 @@ async def _extract_skills_from_phase_a(
 ) -> None:
     """Run skill extraction over Phase A successful traces."""
     from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
-    from opengui.postprocessing import EvaluationConfig, PostRunProcessor
-    from opengui.skills.normalization import get_gui_skill_store_root
+    from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
+    from guiclaw.skills.normalization import get_gui_skill_store_root
 
     llm = NanobotLLMAdapter(provider, model)
     processor = PostRunProcessor(
@@ -176,7 +176,7 @@ async def run_batch(
     judge_api_base: str | None = None,
 ) -> Path:
     """Drive the full A → extract → B pipeline. Returns the output_dir."""
-    from opengui.evaluation import DEFAULT_API_BASE, DEFAULT_JUDGE_MODEL
+    from guiclaw.evaluation import DEFAULT_API_BASE, DEFAULT_JUDGE_MODEL
 
     tasks = load_tasks(dataset_csv)
     if max_tasks is not None:

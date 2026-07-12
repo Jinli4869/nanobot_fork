@@ -19,7 +19,7 @@ created: 2026-03-22
 |----------|-------|
 | **Framework** | pytest + pytest-asyncio |
 | **Config file** | `pyproject.toml` |
-| **Quick run command** | `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py` |
+| **Quick run command** | `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py` |
 | **Full suite command** | `uv run pytest` |
 | **Estimated runtime** | ~15 seconds |
 
@@ -27,8 +27,8 @@ created: 2026-03-22
 
 ## Sampling Rate
 
-- **After every task commit:** Run `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py`
-- **After every plan wave:** Run `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py`
+- **After every task commit:** Run `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py`
+- **After every plan wave:** Run `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py`
 - **Before `$gsd-verify-work`:** Full suite must be green
 - **Max feedback latency:** 30 seconds
 
@@ -38,10 +38,10 @@ created: 2026-03-22
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 21-01-01 | 01 | 1 | CAP-01 | unit | `uv run pytest -q tests/test_opengui_p21_planner_context.py -k "catalog or route_metadata"` | ❌ W0 | ⬜ pending |
-| 21-01-02 | 01 | 1 | CAP-01 | unit | `uv run pytest -q tests/test_opengui_p8_planning.py -k "plan or route"` | ✅ | ⬜ pending |
-| 21-02-01 | 02 | 2 | CAP-02 | unit | `uv run pytest -q tests/test_opengui_p21_planner_context.py -k "memory_hint or guardrail"` | ❌ W0 | ⬜ pending |
-| 21-02-02 | 02 | 2 | CAP-01, CAP-02 | regression | `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py` | ❌ W0 | ⬜ pending |
+| 21-01-01 | 01 | 1 | CAP-01 | unit | `uv run pytest -q tests/test_guiclaw_p21_planner_context.py -k "catalog or route_metadata"` | ❌ W0 | ⬜ pending |
+| 21-01-02 | 01 | 1 | CAP-01 | unit | `uv run pytest -q tests/test_guiclaw_p8_planning.py -k "plan or route"` | ✅ | ⬜ pending |
+| 21-02-01 | 02 | 2 | CAP-02 | unit | `uv run pytest -q tests/test_guiclaw_p21_planner_context.py -k "memory_hint or guardrail"` | ❌ W0 | ⬜ pending |
+| 21-02-02 | 02 | 2 | CAP-01, CAP-02 | regression | `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠ flaky*
 
@@ -49,8 +49,8 @@ created: 2026-03-22
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_opengui_p21_planner_context.py` — capability catalog builder, route classification, prompt serialization, and memory-hint guardrails
-- [ ] Update `tests/test_opengui_p8_planning.py` — `PlanNode` route metadata serialization, planner logging with route info, and `_plan_and_execute()` context injection
+- [ ] `tests/test_guiclaw_p21_planner_context.py` — capability catalog builder, route classification, prompt serialization, and memory-hint guardrails
+- [ ] Update `tests/test_guiclaw_p8_planning.py` — `PlanNode` route metadata serialization, planner logging with route info, and `_plan_and_execute()` context injection
 - [ ] Update `tests/test_mcp_tool.py` if MCP wrapper or inventory helpers are added to support planner catalog normalization
 
 ---

@@ -9,15 +9,15 @@
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| SXTR-05 | Long-horizon GUI traces promote only the concise reusable prefix of a task instead of persisting the full downstream task chain as one shortcut. | The current promotion pipeline already truncates with `_truncate_to_reusable_prefix()` in `opengui/skills/shortcut_promotion.py`, but it only stops on crude “long horizon” hints. Phase 32 should replace that with explicit stable-boundary detection that preserves reusable setup/opening steps and cuts at the first task-specific commit/fill/submit boundary. |
+| SXTR-05 | Long-horizon GUI traces promote only the concise reusable prefix of a task instead of persisting the full downstream task chain as one shortcut. | The current promotion pipeline already truncates with `_truncate_to_reusable_prefix()` in `guiclaw/skills/shortcut_promotion.py`, but it only stops on crude “long horizon” hints. Phase 32 should replace that with explicit stable-boundary detection that preserves reusable setup/opening steps and cuts at the first task-specific commit/fill/submit boundary. |
 | SXTR-06 | Promoted shortcuts are canonicalized to remove redundant waits, repeated unchanged-UI actions, and other replay-like path noise before storage. | No canonicalization pass exists today. `ShortcutPromotionPipeline` filters rows and forwards them directly into `ExtractionPipeline.run()`. Phase 32 should add a deterministic canonicalizer before extraction so the stored shortcut is shorter than the raw replay trace. |
-| SXTR-07 | Dynamic action arguments that can be grounded at runtime are emitted as placeholders/parameter slots rather than frozen recorded literals when that improves reuse stability. | `ShortcutSkillProducer` in `opengui/skills/shortcut_extractor.py` only generalizes `input_text.text` today. Pointer coordinates are dropped for some actions, but other dynamic fields still survive as literals. Phase 32 should widen placeholder inference for text/selectors/coordinates while preserving executor compatibility with Phase 30/31 grounding behavior. |
+| SXTR-07 | Dynamic action arguments that can be grounded at runtime are emitted as placeholders/parameter slots rather than frozen recorded literals when that improves reuse stability. | `ShortcutSkillProducer` in `guiclaw/skills/shortcut_extractor.py` only generalizes `input_text.text` today. Pointer coordinates are dropped for some actions, but other dynamic fields still survive as literals. Phase 32 should widen placeholder inference for text/selectors/coordinates while preserving executor compatibility with Phase 30/31 grounding behavior. |
 
 </phase_requirements>
 
 ## Summary
 
-Phase 32 is not a new subsystem. The correct seam is the existing promotion path in `opengui/skills/shortcut_promotion.py` plus the generalization logic in `opengui/skills/shortcut_extractor.py`. Today the pipeline already filters to `type == "step"` rows, selects the final successful attempt, and applies a simple prefix rule, but it still has three concrete gaps: prefix cutting is heuristic and shallow, replay noise is preserved, and placeholder emission is mostly limited to `input_text`.
+Phase 32 is not a new subsystem. The correct seam is the existing promotion path in `guiclaw/skills/shortcut_promotion.py` plus the generalization logic in `guiclaw/skills/shortcut_extractor.py`. Today the pipeline already filters to `type == "step"` rows, selects the final successful attempt, and applies a simple prefix rule, but it still has three concrete gaps: prefix cutting is heuristic and shallow, replay noise is preserved, and placeholder emission is mostly limited to `input_text`.
 
 The safest design is a three-stage promotion flow: `trace rows -> promotable step rows -> canonicalized step rows -> reusable prefix -> ExtractionPipeline.run() -> ShortcutSkillStore.add_or_merge()`. Keep all Phase 32 policy inside the promotion/extractor seam. Do not spread canonicalization into `ShortcutExecutor`, `GuiAgent`, or store merge logic.
 
@@ -29,17 +29,17 @@ The safest design is a three-stage promotion flow: `trace rows -> promotable ste
 | Library / Module | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
 | Python | `>=3.11` | Runtime baseline | Locked by workspace `pyproject.toml` |
-| `opengui/skills/shortcut_promotion.py` | workspace current | Promotion orchestration | Already owns trace filtering, prefix truncation, and store write |
-| `opengui/skills/shortcut_extractor.py` | workspace current | Step-to-shortcut conversion and placeholder inference | Already owns `SkillStep`, `ParameterSlot`, and condition extraction |
-| `opengui/skills/shortcut_store.py` | workspace current | Canonical shortcut persistence and merge/versioning | Already handles dedup/version at the shortcut layer |
-| `opengui/skills/shortcut.py` | workspace current | Stored shortcut schema | Existing additive schema is already backward-compatible |
+| `guiclaw/skills/shortcut_promotion.py` | workspace current | Promotion orchestration | Already owns trace filtering, prefix truncation, and store write |
+| `guiclaw/skills/shortcut_extractor.py` | workspace current | Step-to-shortcut conversion and placeholder inference | Already owns `SkillStep`, `ParameterSlot`, and condition extraction |
+| `guiclaw/skills/shortcut_store.py` | workspace current | Canonical shortcut persistence and merge/versioning | Already handles dedup/version at the shortcut layer |
+| `guiclaw/skills/shortcut.py` | workspace current | Stored shortcut schema | Existing additive schema is already backward-compatible |
 
 ### Supporting
 | Library / Module | Version | Purpose | When to Use |
 |---------|---------|---------|-------------|
 | `pytest` | `>=9.0.0,<10.0.0` | Test runner | Phase validation and regression slices |
 | `pytest-asyncio` | `>=1.3.0,<2.0.0` | Async test support | Promotion and execution seam tests |
-| `opengui/skills/multi_layer_executor.py` | workspace current | Runtime grounding/execution contract | Reference target when deciding which fields should remain placeholders |
+| `guiclaw/skills/multi_layer_executor.py` | workspace current | Runtime grounding/execution contract | Reference target when deciding which fields should remain placeholders |
 
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
@@ -57,16 +57,16 @@ uv sync --extra dev
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 └── skills/
     ├── shortcut_promotion.py      # add canonicalize -> prefix-boundary flow
     ├── shortcut_extractor.py      # extend placeholder/dynamic field generalization
     └── shortcut.py                # only if additive metadata is needed for emitted slots/boundaries
 
 tests/
-├── test_opengui_p26_quality_gated_extraction.py
-├── test_opengui_p28_shortcut_productionization.py
-└── test_opengui_p31_shortcut_observability.py
+├── test_guiclaw_p26_quality_gated_extraction.py
+├── test_guiclaw_p28_shortcut_productionization.py
+└── test_guiclaw_p31_shortcut_observability.py
 ```
 
 ### Pattern 1: Canonicalize Before Prefix Detection
@@ -74,7 +74,7 @@ tests/
 **When to use:** Always, for successful promotion traces.
 **Example:**
 ```python
-# Source: workspace pattern derived from opengui/skills/shortcut_promotion.py
+# Source: workspace pattern derived from guiclaw/skills/shortcut_promotion.py
 steps = self._filter_promotable_steps(attempt_rows)
 steps = self._canonicalize_steps(steps)
 steps = self._truncate_to_reusable_prefix(steps)
@@ -140,7 +140,7 @@ Verified workspace patterns:
 
 ### Existing Runtime Merge Contract
 ```python
-# Source: opengui/skills/multi_layer_executor.py
+# Source: guiclaw/skills/multi_layer_executor.py
 merged = {"action_type": step.action_type, **rendered_parameters}
 for key, value in grounding.resolved_params.items():
     merged[key] = value
@@ -150,14 +150,14 @@ for key, value in params.items():
 
 ### Existing Text Placeholder Generalization
 ```python
-# Source: opengui/skills/shortcut_extractor.py
+# Source: guiclaw/skills/shortcut_extractor.py
 if action_type in _TEXTUAL_ACTIONS and key == "text":
     parameters[key] = f"{{{{{placeholder_name}}}}}"
 ```
 
 ### Recommended Canonicalization Hook
 ```python
-# Source: recommended extension of opengui/skills/shortcut_promotion.py
+# Source: recommended extension of guiclaw/skills/shortcut_promotion.py
 steps = self._filter_promotable_steps(attempt_rows)
 steps = self._canonicalize_steps(steps)
 steps = self._truncate_to_reusable_prefix(steps)
@@ -196,34 +196,34 @@ if not steps:
 |----------|-------|
 | Framework | `pytest >=9.0.0,<10.0.0` + `pytest-asyncio >=1.3.0,<2.0.0` |
 | Config file | `pyproject.toml` |
-| Quick run command | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p31_shortcut_observability.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p31_shortcut_observability.py -q` |
 | Full suite command | `uv run pytest` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| SXTR-05 | Long traces truncate at deterministic reusable boundary | unit | `uv run pytest tests/test_opengui_p28_shortcut_productionization.py -k reusable_prefix -q` | ✅ |
-| SXTR-06 | Redundant waits/duplicate unchanged-UI actions are removed before storage | unit | `uv run pytest tests/test_opengui_p28_shortcut_productionization.py -k canonical -q` | ❌ Wave 0 |
-| SXTR-07 | Dynamic fields emit placeholders/slots and executor still consumes them | unit | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p31_shortcut_observability.py -k 'placeholder or param or render' -q` | ✅ |
+| SXTR-05 | Long traces truncate at deterministic reusable boundary | unit | `uv run pytest tests/test_guiclaw_p28_shortcut_productionization.py -k reusable_prefix -q` | ✅ |
+| SXTR-06 | Redundant waits/duplicate unchanged-UI actions are removed before storage | unit | `uv run pytest tests/test_guiclaw_p28_shortcut_productionization.py -k canonical -q` | ❌ Wave 0 |
+| SXTR-07 | Dynamic fields emit placeholders/slots and executor still consumes them | unit | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p31_shortcut_observability.py -k 'placeholder or param or render' -q` | ✅ |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p31_shortcut_observability.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p31_shortcut_observability.py tests/test_opengui_p30_stable_shortcut_execution.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p31_shortcut_observability.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p31_shortcut_observability.py tests/test_guiclaw_p30_stable_shortcut_execution.py -q`
 - **Phase gate:** `uv run pytest` before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p28_shortcut_productionization.py` needs new canonicalization-specific cases for duplicate waits, repeated unchanged-UI taps, and richer prefix-boundary decisions.
-- [ ] `tests/test_opengui_p26_quality_gated_extraction.py` needs broader placeholder inference cases beyond `input_text.text`.
-- [ ] `tests/test_opengui_p31_shortcut_observability.py` needs an end-to-end seam asserting canonicalized promoted steps still execute with grounding.
+- [ ] `tests/test_guiclaw_p28_shortcut_productionization.py` needs new canonicalization-specific cases for duplicate waits, repeated unchanged-UI taps, and richer prefix-boundary decisions.
+- [ ] `tests/test_guiclaw_p26_quality_gated_extraction.py` needs broader placeholder inference cases beyond `input_text.text`.
+- [ ] `tests/test_guiclaw_p31_shortcut_observability.py` needs an end-to-end seam asserting canonicalized promoted steps still execute with grounding.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Workspace source: `opengui/skills/shortcut_promotion.py` - current promotion flow, attempt selection, prefix truncation, enrichment
-- Workspace source: `opengui/skills/shortcut_extractor.py` - placeholder inference, condition extraction, `ShortcutSkillProducer`
-- Workspace source: `opengui/skills/shortcut_store.py` - merge/version semantics and provenance overlap behavior
-- Workspace source: `opengui/skills/multi_layer_executor.py` - runtime merge and grounding contract
-- Workspace tests: `tests/test_opengui_p26_quality_gated_extraction.py`, `tests/test_opengui_p28_shortcut_productionization.py`, `tests/test_opengui_p31_shortcut_observability.py`
+- Workspace source: `guiclaw/skills/shortcut_promotion.py` - current promotion flow, attempt selection, prefix truncation, enrichment
+- Workspace source: `guiclaw/skills/shortcut_extractor.py` - placeholder inference, condition extraction, `ShortcutSkillProducer`
+- Workspace source: `guiclaw/skills/shortcut_store.py` - merge/version semantics and provenance overlap behavior
+- Workspace source: `guiclaw/skills/multi_layer_executor.py` - runtime merge and grounding contract
+- Workspace tests: `tests/test_guiclaw_p26_quality_gated_extraction.py`, `tests/test_guiclaw_p28_shortcut_productionization.py`, `tests/test_guiclaw_p31_shortcut_observability.py`
 - Workspace docs: `.planning/REQUIREMENTS.md`, `.planning/ROADMAP.md`, `.planning/STATE.md`, `.planning/config.json`
 
 ## Metadata

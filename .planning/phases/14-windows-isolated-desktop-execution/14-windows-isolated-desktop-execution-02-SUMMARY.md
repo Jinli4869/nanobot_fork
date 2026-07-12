@@ -16,10 +16,10 @@ tech-stack:
   patterns: [dedicated Windows isolated backend, worker launch seam, explicit cleanup reasons]
 key-files:
   created:
-    - opengui/backends/windows_isolated.py
-    - opengui/backends/windows_worker.py
+    - guiclaw/backends/windows_isolated.py
+    - guiclaw/backends/windows_worker.py
   modified:
-    - tests/test_opengui_p14_windows_desktop.py
+    - tests/test_guiclaw_p14_windows_desktop.py
 key-decisions:
   - "Windows isolated runs use a dedicated backend instead of BackgroundDesktopBackend so worker launch, routing, and cleanup stay desktop-aware."
   - "The worker launch seam is import-safe on non-Windows hosts but still encodes STARTUPINFO.lpDesktop for Windows process creation."
@@ -56,9 +56,9 @@ Each task was committed atomically:
 2. **Task 2: Implement `WindowsIsolatedBackend` with explicit cleanup reasons and target-surface logging** - `720fe38` (`feat`)
 
 ## Files Created/Modified
-- `opengui/backends/windows_isolated.py` - Dedicated Windows isolated backend with worker/session lifecycle ownership.
-- `opengui/backends/windows_worker.py` - Worker launch helper that binds child creation to `lpDesktop`.
-- `tests/test_opengui_p14_windows_desktop.py` - Phase 14 lifecycle coverage for launch routing and cleanup behavior.
+- `guiclaw/backends/windows_isolated.py` - Dedicated Windows isolated backend with worker/session lifecycle ownership.
+- `guiclaw/backends/windows_worker.py` - Worker launch helper that binds child creation to `lpDesktop`.
+- `tests/test_guiclaw_p14_windows_desktop.py` - Phase 14 lifecycle coverage for launch routing and cleanup behavior.
 
 ## Decisions Made
 - Used a Windows-only backend instead of extending `BackgroundDesktopBackend`, because alternate-desktop ownership and worker launch are not process-global display concerns.

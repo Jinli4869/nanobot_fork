@@ -16,7 +16,7 @@ Always prefer the lightest approach that can complete the task. Try each priorit
 2. **Voice assistant shortcut** — delegate natural-language tasks (set alarm, make call, send message) to the phone's built-in voice assistant via ADB. Cheap, avoids GUI agent entirely. See [voice assistant reference](references/voice-assistant.md).
 3. **Deeplink probing** — reach a specific app screen via intent URIs. Use when you need to navigate inside an app. See [deeplink method](references/deeplink-method.md) and the [probe script](#deeplink-probing).
 4. **`gui_task` tool** — if the claw provides a native `gui_task` tool, use it for visual automation. Pass a natural-language task description.
-5. **`opengui` CLI** — when no native GUI tool is available, invoke the CLI directly from shell. See [opengui CLI fallback](#opengui-cli-fallback).
+5. **`guiclaw` CLI** — when no native GUI tool is available, invoke the CLI directly from shell. See [guiclaw CLI fallback](#guiclaw-cli-fallback).
 
 ## Decision flow
 
@@ -30,7 +30,7 @@ Always prefer the lightest approach that can complete the task. Try each priorit
   **Yes** → try deeplink probing first (Priority 3). If the app has no viable deep links, escalate.
 
 - Does the task require reading screen content, identifying visual elements, or multi-step UI interaction?
-  **Yes** → use `gui_task` if available (Priority 4), otherwise `opengui` CLI (Priority 5).
+  **Yes** → use `gui_task` if available (Priority 4), otherwise `guiclaw` CLI (Priority 5).
 
 - For compound tasks, decompose into sub-steps and apply the decision flow to each step independently. For example: "Turn off WiFi and set an alarm for 7 AM" → sub-step 1 (adb WiFi off) + sub-step 2 (voice assistant for alarm).
 
@@ -150,32 +150,32 @@ If the claw provides a native `gui_task` tool (e.g., nanobot's built-in GUI suba
 
 Usage: pass a natural-language task description as the `task` parameter. Optional `backend` parameter overrides the configured backend (`adb`, `ios`, `hdc`, `local`, `dry-run`).
 
-## opengui CLI fallback
+## guiclaw CLI fallback
 
-When no native GUI tool is available, invoke the opengui CLI directly:
+When no native GUI tool is available, invoke the guiclaw CLI directly:
 
 ```bash
 # Basic task on Android
-python -m opengui.cli "tap the Settings icon" --backend adb --json
+python -m guiclaw.cli "tap the Settings icon" --backend adb --json
 
 # With explicit task flag
-python -m opengui.cli --task "scroll down and tap Wi-Fi" --backend adb
+python -m guiclaw.cli --task "scroll down and tap Wi-Fi" --backend adb
 
 # iOS device
-python -m opengui.cli "open Safari" --backend ios
+python -m guiclaw.cli "open Safari" --backend ios
 
 # Dry run (no device needed)
-python -m opengui.cli "tap the search bar" --dry-run --json
+python -m guiclaw.cli "tap the search bar" --dry-run --json
 ```
 
 Key flags:
 - `--backend adb|ios|hdc|local|dry-run` — target platform (default: `local`)
 - `--json` — structured JSON output
-- `--config <path>` — config file (default: `~/.opengui/config.yaml`)
+- `--config <path>` — config file (default: `~/.guiclaw/config.yaml`)
 - `--agent-profile <name>` — prompt/action profile override
 - `--dry-run` — plan actions without executing
 
-Requires `~/.opengui/config.yaml` with an LLM provider configured. See opengui documentation for setup.
+Requires `~/.guiclaw/config.yaml` with an LLM provider configured. See guiclaw documentation for setup.
 
 ## Agent hygiene
 

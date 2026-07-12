@@ -1,7 +1,7 @@
 # Phase 25: Multi-layer Execution - Research
 
 **Researched:** 2026-04-02
-**Domain:** OpenGUI multi-layer skill execution
+**Domain:** GUIClaw multi-layer skill execution
 **Confidence:** HIGH
 
 <user_constraints>
@@ -37,7 +37,7 @@
 ### Claude's Discretion
 - Module placement: new file(s) alongside existing `executor.py` (e.g. `shortcut_executor.py`) vs. extending it — given `executor.py` is already ~570 lines, a new file is reasonable
 - Exact success result payload shape for `ShortcutExecutor.execute()` on happy path (e.g. list of step results, execution summary string)
-- Whether `ConditionEvaluator` lives in `opengui/skills/` alongside `executor.py` or in `opengui/grounding/` alongside other evaluation-related protocols
+- Whether `ConditionEvaluator` lives in `guiclaw/skills/` alongside `executor.py` or in `guiclaw/grounding/` alongside other evaluation-related protocols
 - Naming of the `ContractViolationReport` type and whether it's defined in the same file as the executor
 
 ### Deferred Ideas (OUT OF SCOPE)
@@ -57,11 +57,11 @@ None — discussion stayed within phase scope.
 
 ## Summary
 
-Phase 25 is the first runtime consumer of the Phase 24 contracts, so the main planning constraint is consistency with the existing OpenGUI execution style. The current [opengui/skills/executor.py](../../../../opengui/skills/executor.py) already establishes the repo's preferred patterns: protocol-based dependency injection, dataclass result objects, and isolated tests with fake backends. Phase 25 should reuse those patterns, but it must not inherit two legacy behaviors from `SkillExecutor`: fail-open validation and template-based grounding fallback.
+Phase 25 is the first runtime consumer of the Phase 24 contracts, so the main planning constraint is consistency with the existing GUIClaw execution style. The current [guiclaw/skills/executor.py](../../../../guiclaw/skills/executor.py) already establishes the repo's preferred patterns: protocol-based dependency injection, dataclass result objects, and isolated tests with fake backends. Phase 25 should reuse those patterns, but it must not inherit two legacy behaviors from `SkillExecutor`: fail-open validation and template-based grounding fallback.
 
-The clean implementation boundary is a new phase-specific executor module under `opengui/skills/` that owns both `ShortcutExecutor` and `TaskSkillExecutor`, plus the new report/protocol types. `ShortcutExecutor` should be the only component that knows how to execute a `SkillStep` under Phase 25 semantics. `TaskSkillExecutor` should stay thin and recursive: resolve a `ShortcutRefNode`, delegate to the injected `ShortcutExecutor`, evaluate `BranchNode` via `ConditionEvaluator`, or run an inline `SkillStep` through the same shared step runner.
+The clean implementation boundary is a new phase-specific executor module under `guiclaw/skills/` that owns both `ShortcutExecutor` and `TaskSkillExecutor`, plus the new report/protocol types. `ShortcutExecutor` should be the only component that knows how to execute a `SkillStep` under Phase 25 semantics. `TaskSkillExecutor` should stay thin and recursive: resolve a `ShortcutRefNode`, delegate to the injected `ShortcutExecutor`, evaluate `BranchNode` via `ConditionEvaluator`, or run an inline `SkillStep` through the same shared step runner.
 
-Grounding must be explicit and uniform. For any step that is not already concrete through `fixed_values`, the executor should capture an `Observation` with `backend.observe()`, build a `GroundingContext`, call the injected `GrounderProtocol`, and turn the returned `resolved_params` into an `Action` with `opengui.action.parse_action()`. That keeps executor logic independent of `LLMGrounder`, satisfies `EXEC-03`, and makes stub-grounder tests straightforward.
+Grounding must be explicit and uniform. For any step that is not already concrete through `fixed_values`, the executor should capture an `Observation` with `backend.observe()`, build a `GroundingContext`, call the injected `GrounderProtocol`, and turn the returned `resolved_params` into an `Action` with `guiclaw.action.parse_action()`. That keeps executor logic independent of `LLMGrounder`, satisfies `EXEC-03`, and makes stub-grounder tests straightforward.
 
 **Primary recommendation:** Implement a new multi-layer executor module that shares one `SkillStep` execution helper across both executors and treats `GrounderProtocol` + `ConditionEvaluator` as the only injected decision points.
 
@@ -71,9 +71,9 @@ Grounding must be explicit and uniform. For any step that is not already concret
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
 | Python | `>=3.11` | Async execution, dataclasses, protocols, pathlib | Repo baseline from `pyproject.toml`; all Phase 25 types fit naturally in stdlib async/dataclass patterns |
-| `opengui.grounding.GrounderProtocol` | workspace current | Semantic target resolution | Phase 24 made this the stable contract for grounding; Phase 25 should not invent a parallel interface |
-| `opengui.action.parse_action` | workspace current | Validate and normalize grounded params into `Action` | Prevents duplicate action-shape logic and reuses the canonical validation boundary |
-| `opengui.interfaces.DeviceBackend` | workspace current | Observation + execution boundary | Already standard across all backends; Phase 25 should observe and execute only through this protocol |
+| `guiclaw.grounding.GrounderProtocol` | workspace current | Semantic target resolution | Phase 24 made this the stable contract for grounding; Phase 25 should not invent a parallel interface |
+| `guiclaw.action.parse_action` | workspace current | Validate and normalize grounded params into `Action` | Prevents duplicate action-shape logic and reuses the canonical validation boundary |
+| `guiclaw.interfaces.DeviceBackend` | workspace current | Observation + execution boundary | Already standard across all backends; Phase 25 should observe and execute only through this protocol |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
@@ -86,7 +86,7 @@ Grounding must be explicit and uniform. For any step that is not already concret
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| New multi-layer executor module | Extend legacy `opengui/skills/executor.py` | Avoids a new file, but it mixes incompatible semantics into an already large module and makes Phase 25 harder to test and evolve |
+| New multi-layer executor module | Extend legacy `guiclaw/skills/executor.py` | Avoids a new file, but it mixes incompatible semantics into an already large module and makes Phase 25 harder to test and evolve |
 | `parse_action()` from grounded payloads | Hand-build `Action(...)` objects | Slightly shorter code, but duplicates validation and increases drift from the agent/backend action path |
 | `ConditionEvaluator` over `StateDescriptor` | Custom branch-expression parser | More flexible on paper, but unnecessary for the locked Phase 24 schema and adds avoidable parsing complexity |
 
@@ -101,7 +101,7 @@ uv sync --extra dev
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── grounding/
 │   ├── protocol.py              # existing GrounderProtocol + GroundingContext
 │   └── llm.py                   # existing LLMGrounder
@@ -111,7 +111,7 @@ opengui/
     └── __init__.py              # export new executors/protocols/reports
 
 tests/
-└── test_opengui_p25_multi_layer_execution.py
+└── test_guiclaw_p25_multi_layer_execution.py
 ```
 
 ### Pattern 1: Shared Step Runner for Both Executors
@@ -119,7 +119,7 @@ tests/
 **When to use:** Every time a `SkillStep` needs observation, grounding, action construction, and backend execution.
 **Example:**
 ```python
-# Source: repo pattern adapted from opengui/skills/executor.py and opengui/grounding/protocol.py
+# Source: repo pattern adapted from guiclaw/skills/executor.py and guiclaw/grounding/protocol.py
 async def _execute_step(
     step: SkillStep,
     *,
@@ -175,7 +175,7 @@ for step_index, step in enumerate(shortcut.steps):
 **When to use:** For the top-level `TaskSkill.steps` tuple and branch subtrees.
 **Example:**
 ```python
-# Source: repo schema from opengui/skills/task_skill.py
+# Source: repo schema from guiclaw/skills/task_skill.py
 async def _run_node(node: TaskNode) -> TaskNodeOutcome:
     if isinstance(node, ShortcutRefNode):
         shortcut = shortcut_resolver(node.shortcut_id)
@@ -203,7 +203,7 @@ async def _run_node(node: TaskNode) -> TaskNodeOutcome:
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| Action validation | Custom `dict -> Action` mapper inside each executor | `opengui.action.parse_action()` | Centralizes aliases, coordinate validation, and required-field checks |
+| Action validation | Custom `dict -> Action` mapper inside each executor | `guiclaw.action.parse_action()` | Centralizes aliases, coordinate validation, and required-field checks |
 | Screenshot capture state | Ad hoc screenshot provider stack | `DeviceBackend.observe()` + `Observation` | Grounding already depends on `Observation`; use one backend truth source |
 | Branch/contract expression engine | New mini DSL or string parser | `StateDescriptor` + `ConditionEvaluator` | Phase 24 already fixed the condition schema; new syntax adds complexity without requirement coverage |
 | Shortcut lookup ownership | Embedded store/index inside executor | Injected `shortcut_resolver` callable | Keeps Phase 25 storage-free and testable with dict/lambda fakes |
@@ -249,7 +249,7 @@ Verified patterns from repo sources:
 
 ### Runtime-Checkable Protocol
 ```python
-# Source: opengui/interfaces.py and opengui/grounding/protocol.py
+# Source: guiclaw/interfaces.py and guiclaw/grounding/protocol.py
 @runtime_checkable
 class ConditionEvaluator(Protocol):
     async def evaluate(self, condition: StateDescriptor, screenshot: Path) -> bool: ...
@@ -257,7 +257,7 @@ class ConditionEvaluator(Protocol):
 
 ### Grounding Context Assembly
 ```python
-# Source: opengui/grounding/protocol.py
+# Source: guiclaw/grounding/protocol.py
 context = GroundingContext(
     screenshot_path=screenshot_path,
     observation=observation,
@@ -269,7 +269,7 @@ grounding = await grounder.ground(step.target, context)
 
 ### Stub-Grounder Test Pattern
 ```python
-# Source: test style adapted from tests/test_opengui_p24_schema_grounding.py
+# Source: test style adapted from tests/test_guiclaw_p24_schema_grounding.py
 class FakeGrounder:
     async def ground(self, target: str, context: GroundingContext) -> GroundingResult:
         return GroundingResult(
@@ -317,23 +317,23 @@ class FakeGrounder:
 |----------|-------|
 | Framework | `pytest 9.0.2` + `pytest-asyncio 1.3.0` |
 | Config file | `pyproject.toml` (`[tool.pytest.ini_options]`) |
-| Quick run command | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q` |
 | Full suite command | `uv run pytest -q` |
 
 ### Phase Requirements -> Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| EXEC-01 | Pre/post contract failure returns `ContractViolationReport` with boundary + failed descriptor and aborts immediately | unit | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q -k contract` | ❌ Wave 0 |
-| EXEC-02 | Task executor resolves shortcut refs, evaluates branches, and uses inline ATOM fallback or missing-shortcut report | unit | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q -k task_executor` | ❌ Wave 0 |
-| EXEC-03 | Swapping stub grounders changes resolved action parameters without touching executor logic | unit | `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q -k grounder` | ❌ Wave 0 |
+| EXEC-01 | Pre/post contract failure returns `ContractViolationReport` with boundary + failed descriptor and aborts immediately | unit | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q -k contract` | ❌ Wave 0 |
+| EXEC-02 | Task executor resolves shortcut refs, evaluates branches, and uses inline ATOM fallback or missing-shortcut report | unit | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q -k task_executor` | ❌ Wave 0 |
+| EXEC-03 | Swapping stub grounders changes resolved action parameters without touching executor logic | unit | `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q -k grounder` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p25_multi_layer_execution.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p1_skills.py tests/test_opengui_p25_multi_layer_execution.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p25_multi_layer_execution.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p25_multi_layer_execution.py -q`
 - **Phase gate:** `uv run pytest -q`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p25_multi_layer_execution.py` — covers EXEC-01, EXEC-02, EXEC-03
+- [ ] `tests/test_guiclaw_p25_multi_layer_execution.py` — covers EXEC-01, EXEC-02, EXEC-03
 - [ ] Stub helpers inside the new Phase 25 test file for backend, grounder, evaluator, and resolver seams
 
 ## Sources
@@ -342,16 +342,16 @@ class FakeGrounder:
 - `.planning/phases/25-multi-layer-execution/25-CONTEXT.md` - locked decisions, phase boundary, and required semantics
 - `.planning/REQUIREMENTS.md` - authoritative EXEC-01 through EXEC-03 requirement text
 - `.planning/ROADMAP.md` - Phase 25 success criteria and dependency boundary
-- `opengui/skills/executor.py` - existing executor patterns, protocol injection style, and legacy behaviors to avoid
-- `opengui/skills/shortcut.py` - `ShortcutSkill`, `ParameterSlot`, and `StateDescriptor` runtime inputs
-- `opengui/skills/task_skill.py` - `TaskNode` union and task-level node shapes
-- `opengui/grounding/protocol.py` - `GrounderProtocol`, `GroundingContext`, and `GroundingResult`
-- `opengui/grounding/llm.py` - production `GrounderProtocol` implementation contract
-- `opengui/action.py` - canonical action validation and normalization boundary
-- `opengui/interfaces.py` - `@runtime_checkable Protocol` style and backend contract
+- `guiclaw/skills/executor.py` - existing executor patterns, protocol injection style, and legacy behaviors to avoid
+- `guiclaw/skills/shortcut.py` - `ShortcutSkill`, `ParameterSlot`, and `StateDescriptor` runtime inputs
+- `guiclaw/skills/task_skill.py` - `TaskNode` union and task-level node shapes
+- `guiclaw/grounding/protocol.py` - `GrounderProtocol`, `GroundingContext`, and `GroundingResult`
+- `guiclaw/grounding/llm.py` - production `GrounderProtocol` implementation contract
+- `guiclaw/action.py` - canonical action validation and normalization boundary
+- `guiclaw/interfaces.py` - `@runtime_checkable Protocol` style and backend contract
 - `pyproject.toml` and `uv.lock` - Python/runtime/test stack versions
-- `tests/test_opengui_p1_skills.py` - existing executor test style
-- `tests/test_opengui_p24_schema_grounding.py` - existing grounding/schema protocol test style
+- `tests/test_guiclaw_p1_skills.py` - existing executor test style
+- `tests/test_guiclaw_p24_schema_grounding.py` - existing grounding/schema protocol test style
 
 ### Secondary (MEDIUM confidence)
 - None

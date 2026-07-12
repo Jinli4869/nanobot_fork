@@ -10,21 +10,21 @@
 
 ## Implementation
 
-- [`library.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/library.py)
+- [`library.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/library.py)
   - 将持久化模型改为平台级聚合文件
   - 新增旧版 nested bucket 兼容读取逻辑
   - 新写入后会清理同平台残留的旧版 `*/skills.json`
-- [`test_opengui_p1_skills.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p1_skills.py)
+- [`test_guiclaw_p1_skills.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p1_skills.py)
   - 更新平台级存储断言
   - 新增 legacy nested bucket 读取回归测试
-- [`test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py)
+- [`test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py)
   - 更新 GUI 自动提取后的落盘路径断言
 
 ## Verification
 
-- `uv run pytest tests/test_opengui_p1_skills.py tests/test_opengui_p3_nanobot.py -q`
+- `uv run pytest tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p3_nanobot.py -q`
   - 结果：`42 passed`
-- `uv run python -m py_compile opengui/skills/library.py nanobot/agent/tools/gui.py opengui/skills/extractor.py`
+- `uv run python -m py_compile guiclaw/skills/library.py nanobot/agent/tools/gui.py guiclaw/skills/extractor.py`
   - 结果：通过
 
 ## Notes

@@ -38,7 +38,7 @@ Remove orphaned exports by wiring them into production code. Three components �
 - How the LLM complexity assessment prompt is structured
 - Exact concurrency limit default and configuration mechanism
 - Whether PlanNode/NodeResult/RouterContext are exported from nanobot.agent.__init__ alongside main classes
-- Whether TrajectorySummarizer gets a top-level opengui re-export or stays in opengui.trajectory
+- Whether TrajectorySummarizer gets a top-level guiclaw re-export or stays in guiclaw.trajectory
 
 </decisions>
 
@@ -53,20 +53,20 @@ Remove orphaned exports by wiring them into production code. Three components �
 - `.planning/phases/02-agent-loop-integration/02-03-PLAN.md` — Original plan that created TaskPlanner + TreeRouter
 
 ### TrajectorySummarizer
-- `opengui/trajectory/summarizer.py` — TrajectorySummarizer class, LLM-based trajectory summarization
-- `opengui/trajectory/__init__.py` — Current export surface
+- `guiclaw/trajectory/summarizer.py` — TrajectorySummarizer class, LLM-based trajectory summarization
+- `guiclaw/trajectory/__init__.py` — Current export surface
 
 ### Phase 3 Remaining Work
 - `.planning/phases/03-nanobot-subagent/03-02-PLAN.md` — Pending plan for NANO-01, NANO-04, NANO-05 (superseded by Phase 8)
 - `.planning/phases/03-nanobot-subagent/03-CONTEXT.md` — Phase 3 context with GuiSubagentTool decisions
 
 ### Existing Tests
-- `tests/test_opengui_p2_integration.py` — Integration tests importing TaskPlanner, TreeRouter
-- `tests/test_opengui_p1_trajectory.py` — TrajectorySummarizer unit tests
+- `tests/test_guiclaw_p2_integration.py` — Integration tests importing TaskPlanner, TreeRouter
+- `tests/test_guiclaw_p1_trajectory.py` — TrajectorySummarizer unit tests
 
 ### Agent Loop (Integration Target)
 - `nanobot/agent/` — Agent loop where planner/router will be wired
-- `opengui/agent.py` — GuiAgent.run() where trajectory summarizer post-run hook connects
+- `guiclaw/agent.py` — GuiAgent.run() where trajectory summarizer post-run hook connects
 
 </canonical_refs>
 
@@ -76,14 +76,14 @@ Remove orphaned exports by wiring them into production code. Three components �
 ### Reusable Assets
 - `TaskPlanner` (nanobot/agent/planner.py): Fully implemented AND/OR/ATOM decomposition via single LLM call
 - `TreeRouter` (nanobot/agent/router.py): Fully implemented tree walker with capability dispatch stubs
-- `TrajectorySummarizer` (opengui/trajectory/summarizer.py): Fully implemented LLM-based summarization
+- `TrajectorySummarizer` (guiclaw/trajectory/summarizer.py): Fully implemented LLM-based summarization
 - `GuiSubagentTool`: Already partially wired (Phase 3 Plan 01 complete) — the `gui` capability executor
-- `SkillExtractor` (opengui/skills/extractor.py): Extracts skills from trajectories — downstream of summarizer
+- `SkillExtractor` (guiclaw/skills/extractor.py): Extracts skills from trajectories — downstream of summarizer
 
 ### Established Patterns
-- Protocol-based architecture (LLMProvider + DeviceBackend) — opengui must not import nanobot code
-- NanobotLLMAdapter bridges nanobot → opengui LLMProvider protocol
-- NanobotEmbeddingAdapter bridges nanobot → opengui EmbeddingProvider protocol
+- Protocol-based architecture (LLMProvider + DeviceBackend) — guiclaw must not import nanobot code
+- NanobotLLMAdapter bridges nanobot → guiclaw LLMProvider protocol
+- NanobotEmbeddingAdapter bridges nanobot → guiclaw EmbeddingProvider protocol
 - Existing tool registry pattern in nanobot for registering callable tools
 
 ### Integration Points
@@ -99,7 +99,7 @@ Remove orphaned exports by wiring them into production code. Three components �
 
 - OR nodes prioritize non-GUI capabilities (mcp > tool > gui) — GUI automation is the most expensive/fragile option and should be last resort
 - Plan tree should be logged/printed before execution for transparency
-- Real-LLM integration tests live in `opengui/test/` directory, using `~/.opengui/config.yaml` for provider credentials (base-url, api-key), not included in CI
+- Real-LLM integration tests live in `guiclaw/test/` directory, using `~/.guiclaw/config.yaml` for provider credentials (base-url, api-key), not included in CI
 - Skills extracted from failed trajectories teach what NOT to do — both success and failure extraction is valuable
 
 </specifics>

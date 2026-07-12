@@ -41,7 +41,7 @@ No `13-CONTEXT.md` exists for this phase. This research therefore treats the fol
 Phase 13 should stay inside the architecture established by Phases 9-12. The strongest planning path is not "build a brand-new macOS backend hierarchy"; it is "add a macOS virtual-display implementation plus one explicit target-surface routing seam." The current code already has the right high-level contracts: `VirtualDisplayManager`, `DisplayInfo`, `BackgroundDesktopBackend`, and Phase 12's shared runtime probe/result vocabulary. The gap is that `LocalDesktopBackend` still assumes the primary monitor (`mss.monitors[1]`) and has no way to be told which target surface it is supposed to observe.
 
 The concrete implementation path for planning is:
-1. Add a macOS `CGVirtualDisplay` manager under `opengui/backends/displays/`.
+1. Add a macOS `CGVirtualDisplay` manager under `guiclaw/backends/displays/`.
 2. Extend `background_runtime.py` so macOS capability probing returns stable reason codes and remediation before any background run starts.
 3. Add a small target-surface configuration seam from `BackgroundDesktopBackend` into `LocalDesktopBackend` so observation and input target the same macOS display.
 4. Wire CLI and nanobot isolated-mode startup to instantiate the macOS manager when the shared runtime probe resolves to an isolated macOS backend.
@@ -56,7 +56,7 @@ The most important planning decision is to avoid a shallow "just add `CGVirtualD
 ### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| Existing Python stdlib (`dataclasses`, `logging`, `platform`, `typing`, `pathlib`) | project target `>=3.11` | Lifecycle, capability mapping, stable contracts | Already used across OpenGUI background/runtime code |
+| Existing Python stdlib (`dataclasses`, `logging`, `platform`, `typing`, `pathlib`) | project target `>=3.11` | Lifecycle, capability mapping, stable contracts | Already used across GUIClaw background/runtime code |
 | Existing desktop stack (`mss`, `pyautogui`, `pyperclip`, `Pillow`) | project `desktop` extra | Screenshot/input path reused for macOS after target-surface routing is fixed | Preserves the shipped desktop backend rather than replacing it wholesale |
 | `pyobjc-core`, `pyobjc-framework-Quartz`, `pyobjc-framework-ApplicationServices` | `12.1` from project research | Bridge into CoreGraphics / Quartz / Accessibility APIs and runtime lookup of `CGVirtualDisplay*` classes | Best fit for a Python-first implementation; avoids introducing a Swift helper in Phase 13 |
 
@@ -88,7 +88,7 @@ uv pip install "pyobjc-core==12.1; sys_platform == 'darwin'" \
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── backends/
 │   ├── background.py                   # existing wrapper; inject target display info into inner backend
 │   ├── background_runtime.py           # extend macOS capability probing + remediation
@@ -99,10 +99,10 @@ opengui/
 │       ├── xvfb.py
 │       └── cgvirtualdisplay.py         # new: macOS isolated display manager
 tests/
-├── test_opengui_p13_macos_display.py   # new: manager probe/lifecycle/routing contract tests
-├── test_opengui_p4_desktop.py          # extend: non-primary monitor observe path
-├── test_opengui_p5_cli.py              # extend: macOS resolved-mode and manager selection
-└── test_opengui_p11_integration.py     # extend: nanobot resolved-mode and acknowledgement paths
+├── test_guiclaw_p13_macos_display.py   # new: manager probe/lifecycle/routing contract tests
+├── test_guiclaw_p4_desktop.py          # extend: non-primary monitor observe path
+├── test_guiclaw_p5_cli.py              # extend: macOS resolved-mode and manager selection
+└── test_guiclaw_p11_integration.py     # extend: nanobot resolved-mode and acknowledgement paths
 ```
 
 ### Pattern 1: Keep the Shared Runtime Contract, Expand the Probe Taxonomy
@@ -135,7 +135,7 @@ This preserves the Phase 12 contract and lets CLI/nanobot stay policy consumers 
 **What:** Implement `CGVirtualDisplayManager` returning `DisplayInfo(display_id=..., width=..., height=..., offset_x=..., offset_y=..., monitor_index=...)`.
 **When to use:** Isolated background runs on supported macOS hosts.
 **Concrete recommendation:**
-- File: `opengui/backends/displays/cgvirtualdisplay.py`
+- File: `guiclaw/backends/displays/cgvirtualdisplay.py`
 - Expose `CGVirtualDisplayManager`
 - Add a narrow helper such as `probe_macos_virtual_display_support()` there if `background_runtime.py` needs one shared probe surface
 - Keep lifecycle inside `start()` / `stop()` only; do not let CLI/nanobot manage Quartz display objects directly
@@ -176,7 +176,7 @@ This is the smallest change that directly addresses MAC-03 without changing the 
 
 ### Pattern 5: Entry Points Choose the Manager by Resolved Backend Name
 **What:** After `decision.mode == "isolated"`, CLI and nanobot should switch on `probe.backend_name`.
-**When to use:** Shared isolated-mode wiring in `opengui/cli.py` and `nanobot/agent/tools/gui.py`.
+**When to use:** Shared isolated-mode wiring in `guiclaw/cli.py` and `nanobot/agent/tools/gui.py`.
 **Concrete recommendation:**
 - Linux `backend_name="xvfb"` -> instantiate `XvfbDisplayManager`
 - macOS `backend_name="cgvirtualdisplay"` -> instantiate `CGVirtualDisplayManager`
@@ -264,40 +264,40 @@ monitor = sct.monitors[monitor_index]
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio 1.3.x |
 | Config file | `pyproject.toml` — `[tool.pytest.ini_options]` with `asyncio_mode = "auto"` |
-| Quick run command | `uv run pytest tests/test_opengui_p13_macos_display.py tests/test_opengui_p4_desktop.py -q` |
-| Full suite command | `uv run pytest tests/test_opengui_p13_macos_display.py tests/test_opengui_p4_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p13_macos_display.py tests/test_guiclaw_p4_desktop.py -q` |
+| Full suite command | `uv run pytest tests/test_guiclaw_p13_macos_display.py tests/test_guiclaw_p4_desktop.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p12_runtime_contracts.py -q` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| MAC-01 | macOS probe returns `supported=True`, `backend_name="cgvirtualdisplay"`, and `reason_code="macos_virtual_display_available"` when OS/runtime/permissions are satisfied | unit | `uv run pytest tests/test_opengui_p13_macos_display.py::test_probe_macos_virtual_display_available -q` | ❌ Wave 0 |
-| MAC-01 | `CGVirtualDisplayManager.start()` returns `DisplayInfo` with non-default `monitor_index`/offset metadata and `stop()` tears down cleanly | unit | `uv run pytest tests/test_opengui_p13_macos_display.py::test_cgvirtualdisplay_manager_returns_display_info -q` | ❌ Wave 0 |
-| MAC-02 | unsupported macOS version resolves to blocked/fallback with `macos_version_unsupported` remediation | unit | `uv run pytest tests/test_opengui_p13_macos_display.py::test_probe_reports_macos_version_unsupported -q` | ❌ Wave 0 |
-| MAC-02 | denied Screen Recording / Accessibility / event-post permissions map to stable reason codes and actionable remediation | unit | `uv run pytest tests/test_opengui_p13_macos_display.py::test_probe_reports_actionable_permission_remediation -q` | ❌ Wave 0 |
-| MAC-03 | `LocalDesktopBackend.observe()` uses configured `monitor_index` instead of hard-coded primary monitor | unit | `uv run pytest tests/test_opengui_p4_desktop.py::test_observe_uses_configured_monitor_index -q` | ❌ Wave 0 |
-| MAC-03 | wrapper injects `DisplayInfo` into the inner desktop backend before `inner.preflight()` | unit | `uv run pytest tests/test_opengui_p13_macos_display.py::test_background_wrapper_configures_target_display_before_preflight -q` | ❌ Wave 0 |
-| MAC-03 | absolute actions use existing wrapper offset translation while monitor selection stays aligned with the same target display | unit | `uv run pytest tests/test_opengui_p13_macos_display.py::test_macos_target_surface_routing_keeps_observe_and_execute_aligned -q` | ❌ Wave 0 |
-| MAC-01, MAC-02 | CLI isolated path picks `CGVirtualDisplayManager` from the resolved backend name and logs mode before agent start | integration | `uv run pytest tests/test_opengui_p5_cli.py::test_run_cli_uses_cgvirtualdisplay_manager_for_macos_isolated_mode -q` | ❌ Wave 0 |
-| MAC-01, MAC-02 | nanobot path uses the same shared macOS runtime decision contract | integration | `uv run pytest tests/test_opengui_p11_integration.py::test_gui_tool_uses_cgvirtualdisplay_manager_for_macos_isolated_mode -q` | ❌ Wave 0 |
+| MAC-01 | macOS probe returns `supported=True`, `backend_name="cgvirtualdisplay"`, and `reason_code="macos_virtual_display_available"` when OS/runtime/permissions are satisfied | unit | `uv run pytest tests/test_guiclaw_p13_macos_display.py::test_probe_macos_virtual_display_available -q` | ❌ Wave 0 |
+| MAC-01 | `CGVirtualDisplayManager.start()` returns `DisplayInfo` with non-default `monitor_index`/offset metadata and `stop()` tears down cleanly | unit | `uv run pytest tests/test_guiclaw_p13_macos_display.py::test_cgvirtualdisplay_manager_returns_display_info -q` | ❌ Wave 0 |
+| MAC-02 | unsupported macOS version resolves to blocked/fallback with `macos_version_unsupported` remediation | unit | `uv run pytest tests/test_guiclaw_p13_macos_display.py::test_probe_reports_macos_version_unsupported -q` | ❌ Wave 0 |
+| MAC-02 | denied Screen Recording / Accessibility / event-post permissions map to stable reason codes and actionable remediation | unit | `uv run pytest tests/test_guiclaw_p13_macos_display.py::test_probe_reports_actionable_permission_remediation -q` | ❌ Wave 0 |
+| MAC-03 | `LocalDesktopBackend.observe()` uses configured `monitor_index` instead of hard-coded primary monitor | unit | `uv run pytest tests/test_guiclaw_p4_desktop.py::test_observe_uses_configured_monitor_index -q` | ❌ Wave 0 |
+| MAC-03 | wrapper injects `DisplayInfo` into the inner desktop backend before `inner.preflight()` | unit | `uv run pytest tests/test_guiclaw_p13_macos_display.py::test_background_wrapper_configures_target_display_before_preflight -q` | ❌ Wave 0 |
+| MAC-03 | absolute actions use existing wrapper offset translation while monitor selection stays aligned with the same target display | unit | `uv run pytest tests/test_guiclaw_p13_macos_display.py::test_macos_target_surface_routing_keeps_observe_and_execute_aligned -q` | ❌ Wave 0 |
+| MAC-01, MAC-02 | CLI isolated path picks `CGVirtualDisplayManager` from the resolved backend name and logs mode before agent start | integration | `uv run pytest tests/test_guiclaw_p5_cli.py::test_run_cli_uses_cgvirtualdisplay_manager_for_macos_isolated_mode -q` | ❌ Wave 0 |
+| MAC-01, MAC-02 | nanobot path uses the same shared macOS runtime decision contract | integration | `uv run pytest tests/test_guiclaw_p11_integration.py::test_gui_tool_uses_cgvirtualdisplay_manager_for_macos_isolated_mode -q` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p13_macos_display.py tests/test_opengui_p4_desktop.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p13_macos_display.py tests/test_opengui_p4_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p13_macos_display.py tests/test_guiclaw_p4_desktop.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p13_macos_display.py tests/test_guiclaw_p4_desktop.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p12_runtime_contracts.py -q`
 - **Phase gate:** the full Phase 13 suite above must be green before verification
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p13_macos_display.py` — new contract and lifecycle coverage for manager, probe taxonomy, and wrapper routing
-- [ ] `tests/test_opengui_p4_desktop.py` additions — monitor-index selection coverage for observe path
-- [ ] `tests/test_opengui_p5_cli.py` additions — macOS isolated manager selection and mode logging order
-- [ ] `tests/test_opengui_p11_integration.py` additions — nanobot macOS isolated manager selection and remediation behavior
+- [ ] `tests/test_guiclaw_p13_macos_display.py` — new contract and lifecycle coverage for manager, probe taxonomy, and wrapper routing
+- [ ] `tests/test_guiclaw_p4_desktop.py` additions — monitor-index selection coverage for observe path
+- [ ] `tests/test_guiclaw_p5_cli.py` additions — macOS isolated manager selection and mode logging order
+- [ ] `tests/test_guiclaw_p11_integration.py` additions — nanobot macOS isolated manager selection and remediation behavior
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `opengui/backends/background_runtime.py` — current shared probe/result/resolution contract
-- `opengui/backends/background.py` — current wrapper lifecycle and offset-translation seam
-- `opengui/backends/desktop.py` — current monitor-selection limitation and screenshot/input behavior
-- `opengui/backends/virtual_display.py` — `DisplayInfo` and `VirtualDisplayManager` contract
+- `guiclaw/backends/background_runtime.py` — current shared probe/result/resolution contract
+- `guiclaw/backends/background.py` — current wrapper lifecycle and offset-translation seam
+- `guiclaw/backends/desktop.py` — current monitor-selection limitation and screenshot/input behavior
+- `guiclaw/backends/virtual_display.py` — `DisplayInfo` and `VirtualDisplayManager` contract
 - `.planning/ROADMAP.md` — Phase 13 goal, requirements, and success criteria
 - `.planning/REQUIREMENTS.md` — `MAC-01`, `MAC-02`, `MAC-03`
 - `.planning/STATE.md` and `.planning/PROJECT.md` — inherited v1.2 decisions and current milestone context
@@ -307,7 +307,7 @@ monitor = sct.monitors[monitor_index]
 - `.planning/research/SUMMARY.md` — roadmap-level recommendation to keep the wrapper model but fix target-surface routing
 - `.planning/research/STACK.md` — PyObjC recommendation, packaging guidance, and explicit note that `LocalDesktopBackend.observe()` must stop hard-coding monitor 1
 - `.planning/research/PITFALLS.md` — detailed failure modes around macOS permissions, topology fragility, and wrong-surface routing
-- `tests/test_opengui_p4_desktop.py`, `tests/test_opengui_p10_background.py`, `tests/test_opengui_p12_runtime_contracts.py` — current test style and reusable patterns
+- `tests/test_guiclaw_p4_desktop.py`, `tests/test_guiclaw_p10_background.py`, `tests/test_guiclaw_p12_runtime_contracts.py` — current test style and reusable patterns
 
 ### Tertiary (LOW confidence)
 - Reverse-engineered / ecosystem knowledge around `CGVirtualDisplay` viability as already summarized in the project research; useful for planning defensively, but not strong enough to over-promise platform certainty.

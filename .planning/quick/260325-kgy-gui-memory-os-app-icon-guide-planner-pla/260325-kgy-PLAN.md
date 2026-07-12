@@ -9,7 +9,7 @@ files_modified:
   - nanobot/agent/loop.py
   - nanobot/agent/planner.py
   - nanobot/agent/capabilities.py
-  - opengui/agent.py
+  - guiclaw/agent.py
   - tests/test_gui_memory_split.py
 autonomous: true
 requirements: [gui-memory-split]
@@ -25,10 +25,10 @@ must_haves:
     - path: "nanobot/agent/planner.py"
       provides: "Planner system prompt injects gui memory context for task rewriting"
     - path: "nanobot/agent/loop.py"
-      provides: "Agent loop loads opengui memory and passes guide entries to planner"
+      provides: "Agent loop loads guiclaw memory and passes guide entries to planner"
     - path: "nanobot/agent/tools/gui.py"
       provides: "GuiSubagentTool loads policy entries directly and passes to GuiAgent"
-    - path: "opengui/agent.py"
+    - path: "guiclaw/agent.py"
       provides: "GuiAgent accepts policy_context parameter and injects into system prompt"
   key_links:
     - from: "nanobot/agent/loop.py"
@@ -36,7 +36,7 @@ must_haves:
       via: "PlanningContext.gui_memory_context"
       pattern: "gui_memory_context"
     - from: "nanobot/agent/tools/gui.py"
-      to: "opengui/agent.py"
+      to: "guiclaw/agent.py"
       via: "policy_context parameter on GuiAgent"
       pattern: "policy_context"
 ---
@@ -59,17 +59,17 @@ Output: Modified planner, agent loop, gui tool, and gui agent with split memory 
 @nanobot/agent/loop.py
 @nanobot/agent/planner.py
 @nanobot/agent/capabilities.py
-@opengui/agent.py
-@opengui/prompts/system.py
-@opengui/memory/store.py
-@opengui/memory/types.py
-@opengui/memory/retrieval.py
+@guiclaw/agent.py
+@guiclaw/prompts/system.py
+@guiclaw/memory/store.py
+@guiclaw/memory/types.py
+@guiclaw/memory/retrieval.py
 @nanobot/agent/planning_memory.py
 
 <interfaces>
 <!-- Key types and contracts the executor needs -->
 
-From opengui/memory/types.py:
+From guiclaw/memory/types.py:
 ```python
 class MemoryType(Enum):
     OS_GUIDE = "os"
@@ -89,7 +89,7 @@ class MemoryEntry:
     access_count: int = 0
 ```
 
-From opengui/memory/store.py:
+From guiclaw/memory/store.py:
 ```python
 class MemoryStore:
     def __init__(self, store_dir: Path | str) -> None: ...
@@ -104,7 +104,7 @@ class PlanningContext:
     memory_hints: tuple["PlanningMemoryHint", ...] = ()
 ```
 
-From opengui/prompts/system.py:
+From guiclaw/prompts/system.py:
 ```python
 def build_system_prompt(
     *, platform: str = "unknown", coordinate_mode: str = "absolute",
@@ -116,7 +116,7 @@ def build_system_prompt(
 
 From nanobot/agent/tools/gui.py:
 ```python
-DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
+DEFAULT_GUICLAW_MEMORY_DIR = Path.home() / ".guiclaw" / "memory"
 
 class GuiSubagentTool(Tool):
     async def _build_memory_retriever(self) -> Any | None: ...
@@ -130,7 +130,7 @@ class TaskPlanner:
     def _build_system_prompt(self, *, planning_context: PlanningContext | None = None) -> str: ...
 ```
 
-From opengui/agent.py (GuiAgent constructor, lines 140-171):
+From guiclaw/agent.py (GuiAgent constructor, lines 140-171):
 ```python
 class GuiAgent:
     def __init__(self, *, llm, backend, trajectory_recorder, model, artifacts_root,
@@ -161,8 +161,8 @@ tree = await planner.plan(task, planning_context=planning_context)
     nanobot/agent/planner.py
     nanobot/agent/loop.py
     nanobot/agent/tools/gui.py
-    opengui/agent.py
-    opengui/prompts/system.py
+    guiclaw/agent.py
+    guiclaw/prompts/system.py
   </files>
   <action>
 This task implements the full memory split in one coherent pass across all 6 files. The changes are tightly coupled (planner needs the context, loop builds it, gui tool changes what it passes to the agent), so they must land together.
@@ -194,18 +194,18 @@ if planning_context is not None and planning_context.gui_memory_context:
 
 This goes BEFORE the "Call the create_plan tool" closing lines. The planner will see os/app/icon guide knowledge and can use it to write more specific ATOM instructions for gui tasks (e.g., knowing exact swipe gestures for a specific OS, or knowing how to navigate a specific Chinese app).
 
-**3. nanobot/agent/loop.py — Build gui_memory_context from opengui MemoryStore:**
+**3. nanobot/agent/loop.py — Build gui_memory_context from guiclaw MemoryStore:**
 
-In the planning dispatch block (around line 455-470), after building `catalog` and `memory_hints`, add logic to load opengui guide memory:
+In the planning dispatch block (around line 455-470), after building `catalog` and `memory_hints`, add logic to load guiclaw guide memory:
 
 ```python
-from opengui.memory.store import MemoryStore as GuiMemoryStore
-from opengui.memory.types import MemoryType
-from nanobot.agent.tools.gui import DEFAULT_OPENGUI_MEMORY_DIR
+from guiclaw.memory.store import MemoryStore as GuiMemoryStore
+from guiclaw.memory.types import MemoryType
+from nanobot.agent.tools.gui import DEFAULT_GUICLAW_MEMORY_DIR
 
 gui_memory_context = ""
 try:
-    gui_store = GuiMemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+    gui_store = GuiMemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
     guide_entries = []
     for mt in (MemoryType.OS_GUIDE, MemoryType.APP_GUIDE, MemoryType.ICON_GUIDE):
         guide_entries.extend(gui_store.list_all(memory_type=mt))
@@ -232,7 +232,7 @@ planning_context = PlanningContext(
 )
 ```
 
-IMPORTANT: Guard the import and store construction in try/except so that systems without opengui memory configured still work. Also guard with a check that DEFAULT_OPENGUI_MEMORY_DIR exists before constructing the store.
+IMPORTANT: Guard the import and store construction in try/except so that systems without guiclaw memory configured still work. Also guard with a check that DEFAULT_GUICLAW_MEMORY_DIR exists before constructing the store.
 
 **4. nanobot/agent/tools/gui.py — Split memory: load policy separately, remove guide entries from retriever:**
 
@@ -248,12 +248,12 @@ async def _build_memory_retriever(self) -> Any | None:
     """
     if self._embedding_adapter is None:
         return None
-    from opengui.memory.retrieval import MemoryRetriever
-    from opengui.memory.store import MemoryStore
-    from opengui.memory.types import MemoryType
+    from guiclaw.memory.retrieval import MemoryRetriever
+    from guiclaw.memory.store import MemoryStore
+    from guiclaw.memory.types import MemoryType
 
     try:
-        memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+        memory_store = MemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
         policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
         if not policy_entries:
             return None
@@ -263,7 +263,7 @@ async def _build_memory_retriever(self) -> Any | None:
     except Exception:
         logger.warning(
             "GUI memory retriever initialization failed for %s",
-            DEFAULT_OPENGUI_MEMORY_DIR,
+            DEFAULT_GUICLAW_MEMORY_DIR,
             exc_info=True,
         )
         return None
@@ -274,11 +274,11 @@ Additionally, add a new method `_load_policy_context()` that loads ALL policy en
 ```python
 def _load_policy_context(self) -> str | None:
     """Load all policy entries as raw text for direct system prompt injection."""
-    from opengui.memory.store import MemoryStore
-    from opengui.memory.types import MemoryType
+    from guiclaw.memory.store import MemoryStore
+    from guiclaw.memory.types import MemoryType
 
     try:
-        memory_store = MemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+        memory_store = MemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
         policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
         if not policy_entries:
             return None
@@ -295,8 +295,8 @@ In `_run_task()`, change how memory is passed to GuiAgent. Instead of passing `m
 
 ```python
 async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
-    from opengui.agent import GuiAgent
-    from opengui.trajectory.recorder import TrajectoryRecorder
+    from guiclaw.agent import GuiAgent
+    from guiclaw.trajectory.recorder import TrajectoryRecorder
 
     policy_context = self._load_policy_context()
     skill_library = self._get_skill_library(active_backend.platform)
@@ -323,7 +323,7 @@ async def _run_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
 
 Remove `memory_retriever=memory_retriever` from GuiAgent constructor call. The `_build_memory_retriever()` method can be kept but is no longer called from `_run_task()`. If you want to be clean, remove the call entirely.
 
-**5. opengui/agent.py — Accept policy_context and inject into system prompt:**
+**5. guiclaw/agent.py — Accept policy_context and inject into system prompt:**
 
 Add `policy_context: str | None = None` parameter to `GuiAgent.__init__()`. Store as `self._policy_context`.
 
@@ -335,7 +335,7 @@ async def _retrieve_memory(self, task: str) -> str | None:
     if self._policy_context is not None:
         self._log_policy_injection(self._policy_context)
         return self._policy_context
-    # Existing retriever-based logic for backward compatibility (e.g., opengui CLI)
+    # Existing retriever-based logic for backward compatibility (e.g., guiclaw CLI)
     if self._memory_retriever is None:
         return None
     # ... existing search code unchanged ...
@@ -355,10 +355,10 @@ def _log_policy_injection(self, context: str) -> None:
     )
 ```
 
-**6. opengui/prompts/system.py — No changes needed.** The `memory_context` parameter already handles the injection. Policy text flows through the existing `memory_context` pathway into `# Relevant Knowledge`.
+**6. guiclaw/prompts/system.py — No changes needed.** The `memory_context` parameter already handles the injection. Policy text flows through the existing `memory_context` pathway into `# Relevant Knowledge`.
 
 **Key design decisions:**
-- The opengui CLI (`opengui/cli.py`) path is NOT changed. It still uses `memory_retriever` with full search. This change only affects the nanobot pathway.
+- The guiclaw CLI (`guiclaw/cli.py`) path is NOT changed. It still uses `memory_retriever` with full search. This change only affects the nanobot pathway.
 - `_build_memory_retriever()` is no longer called in `_run_task()`. The method is kept for potential future use or can be removed.
 - Policy entries are loaded synchronously (no embedding needed), so no async overhead.
 - Guide entry formatting for the planner uses the same `[TAG] (app) content` format as `MemoryRetriever.format_context()` for consistency.
@@ -375,10 +375,10 @@ print('PlanningContext: OK')
   <done>
     - PlanningContext has gui_memory_context field
     - Planner system prompt includes guide memory when gui_memory_context is non-empty
-    - Agent loop loads os/app/icon guide entries from opengui MemoryStore and passes to PlanningContext
+    - Agent loop loads os/app/icon guide entries from guiclaw MemoryStore and passes to PlanningContext
     - GuiSubagentTool loads policy entries directly (not search-based) and passes to GuiAgent via policy_context
     - GuiAgent injects policy_context into system prompt without embedding search
-    - opengui CLI backward compatibility preserved (memory_retriever path unchanged)
+    - guiclaw CLI backward compatibility preserved (memory_retriever path unchanged)
   </done>
 </task>
 
@@ -386,7 +386,7 @@ print('PlanningContext: OK')
   <name>Task 2: Add regression tests for the memory split</name>
   <files>tests/test_gui_memory_split.py</files>
   <action>
-Create `tests/test_gui_memory_split.py` with focused tests verifying the memory split behavior. Use the existing test patterns from `tests/test_opengui_p2_memory.py` and `tests/test_opengui_p21_planner_context.py`.
+Create `tests/test_gui_memory_split.py` with focused tests verifying the memory split behavior. Use the existing test patterns from `tests/test_guiclaw_p2_memory.py` and `tests/test_guiclaw_p21_planner_context.py`.
 
 **Tests to write:**
 
@@ -396,11 +396,11 @@ Create `tests/test_gui_memory_split.py` with focused tests verifying the memory 
 
 3. `test_planner_system_prompt_omits_gui_memory_when_empty()` — Same as above but with empty `gui_memory_context`. Assert "Device and app knowledge" is NOT in the prompt.
 
-4. `test_gui_tool_load_policy_context()` — Test `_load_policy_context()` method on `GuiSubagentTool`. This requires creating a tmp dir with a policy.md file containing known entries, then monkeypatching `DEFAULT_OPENGUI_MEMORY_DIR` to point there. Verify the method returns formatted policy text.
+4. `test_gui_tool_load_policy_context()` — Test `_load_policy_context()` method on `GuiSubagentTool`. This requires creating a tmp dir with a policy.md file containing known entries, then monkeypatching `DEFAULT_GUICLAW_MEMORY_DIR` to point there. Verify the method returns formatted policy text.
 
 5. `test_gui_agent_uses_policy_context_directly()` — Construct a `GuiAgent` with `policy_context="test policy"` and `memory_retriever=None`. Call `_retrieve_memory("any task")` and verify it returns `"test policy"` without any embedding call.
 
-6. `test_gui_agent_falls_back_to_retriever_when_no_policy_context()` — Construct a `GuiAgent` with `policy_context=None` and a mock `memory_retriever`. Verify `_retrieve_memory()` calls the retriever's search method (backward compat for opengui CLI).
+6. `test_gui_agent_falls_back_to_retriever_when_no_policy_context()` — Construct a `GuiAgent` with `policy_context=None` and a mock `memory_retriever`. Verify `_retrieve_memory()` calls the retriever's search method (backward compat for guiclaw CLI).
 
 Use `pytest` with `tmp_path` fixture for file-based tests. Use `unittest.mock.AsyncMock` for async mocks. Keep tests focused and fast (no real embedding calls).
   </action>
@@ -419,15 +419,15 @@ Use `pytest` with `tmp_path` fixture for file-based tests. Use `unittest.mock.As
 <verification>
 1. `python -c "from nanobot.agent.capabilities import PlanningContext; pc = PlanningContext(catalog=__import__('nanobot.agent.capabilities', fromlist=['CapabilityCatalog']).CapabilityCatalog(), gui_memory_context='x'); assert pc.gui_memory_context == 'x'"` passes
 2. `python -m pytest tests/test_gui_memory_split.py -x -v` all pass
-3. `python -m pytest tests/test_opengui_p21_planner_context.py -x -v` existing tests still pass (backward compat)
-4. `python -m pytest tests/test_opengui_p2_memory.py -x -v` existing memory tests still pass
+3. `python -m pytest tests/test_guiclaw_p21_planner_context.py -x -v` existing tests still pass (backward compat)
+4. `python -m pytest tests/test_guiclaw_p2_memory.py -x -v` existing memory tests still pass
 </verification>
 
 <success_criteria>
 - Planner receives os_guide, app_guide, icon_guide content and can use it to refine GUI task instructions
 - GUI agent receives ALL policy entries directly in system prompt (no search-based filtering)
 - GUI agent no longer receives os/app/icon guide entries (those go to planner only)
-- opengui CLI path (direct GuiAgent usage without nanobot) continues to work via existing memory_retriever fallback
+- guiclaw CLI path (direct GuiAgent usage without nanobot) continues to work via existing memory_retriever fallback
 - All new and existing tests pass
 </success_criteria>
 

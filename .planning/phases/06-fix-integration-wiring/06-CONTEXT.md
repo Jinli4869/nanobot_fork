@@ -6,7 +6,7 @@
 <domain>
 ## Phase Boundary
 
-Close 3 broken cross-phase wiring issues identified in the milestone audit: instantiate NanobotEmbeddingAdapter so FAISS skill search works, declare missing Pillow dependency in desktop extras, and add opengui CLI console script entry point to pyproject.toml.
+Close 3 broken cross-phase wiring issues identified in the milestone audit: instantiate NanobotEmbeddingAdapter so FAISS skill search works, declare missing Pillow dependency in desktop extras, and add guiclaw CLI console script entry point to pyproject.toml.
 
 **Not in scope:** New agent capabilities, skill_context in system prompt (discussed and dropped — LLM only needs per-step valid_state checks and parameter grounding, not a global skills overview), agent loop changes.
 
@@ -31,11 +31,11 @@ Close 3 broken cross-phase wiring issues identified in the milestone audit: inst
 ### Pillow dependency
 - Add `"Pillow>=10.0"` to `[project.optional-dependencies] desktop` in pyproject.toml
 - Also add to the `dev` extras so CI tests can import PIL
-- Desktop backend (`opengui/backends/desktop.py`) uses PIL for screenshot processing via mss
+- Desktop backend (`guiclaw/backends/desktop.py`) uses PIL for screenshot processing via mss
 
 ### CLI console script entry point
-- Add `opengui = "opengui.cli:main"` to `[project.scripts]` in pyproject.toml
-- Enables `opengui "Open Settings"` after `pip install` instead of `python -m opengui.cli`
+- Add `guiclaw = "guiclaw.cli:main"` to `[project.scripts]` in pyproject.toml
+- Enables `guiclaw "Open Settings"` after `pip install` instead of `python -m guiclaw.cli`
 
 ### Claude's Discretion
 - Exact `litellm.aembedding()` wrapper implementation details (error handling, dimension validation)
@@ -54,16 +54,16 @@ Close 3 broken cross-phase wiring issues identified in the milestone audit: inst
 - `nanobot/agent/gui_adapter.py` — NanobotEmbeddingAdapter class (takes `embed_fn: Callable[[list[str]], Awaitable[np.ndarray]]`)
 - `nanobot/agent/tools/gui.py` — GuiSubagentTool with `self._embedding_adapter = None` at line 41 (the fix target)
 - `nanobot/config/schema.py` — GuiConfig Pydantic model (add embedding_model field here)
-- `opengui/interfaces.py` — EmbeddingProvider protocol definition
+- `guiclaw/interfaces.py` — EmbeddingProvider protocol definition
 
 ### Skill library wiring
-- `opengui/skills/library.py` — SkillLibrary constructor takes `embedding_provider` param
-- `opengui/memory/retriever.py` — MemoryRetriever also takes embedding_provider (same pattern)
+- `guiclaw/skills/library.py` — SkillLibrary constructor takes `embedding_provider` param
+- `guiclaw/memory/retriever.py` — MemoryRetriever also takes embedding_provider (same pattern)
 
 ### Dependencies and entry point
 - `pyproject.toml` — `[project.optional-dependencies] desktop` (line 67-71) and `[project.scripts]` (line 84-85)
-- `opengui/cli.py` — CLI module with `main()` function
-- `opengui/backends/desktop.py` — Uses `from PIL import Image` for screenshots
+- `guiclaw/cli.py` — CLI module with `main()` function
+- `guiclaw/backends/desktop.py` — Uses `from PIL import Image` for screenshots
 
 </canonical_refs>
 
@@ -92,7 +92,7 @@ Close 3 broken cross-phase wiring issues identified in the milestone audit: inst
 ## Specific Ideas
 
 - The embed_fn wrapper should normalize litellm's response format to a plain np.ndarray since different embedding APIs return different shapes
-- Graceful fallback matches the project philosophy: "opengui as zero-dependency GUI engine" — embedding is a power feature, not a requirement
+- Graceful fallback matches the project philosophy: "guiclaw as zero-dependency GUI engine" — embedding is a power feature, not a requirement
 
 </specifics>
 

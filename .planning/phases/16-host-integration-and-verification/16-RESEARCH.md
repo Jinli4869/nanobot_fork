@@ -15,8 +15,8 @@ No `16-CONTEXT.md` exists for this phase. This research therefore treats the fol
 - `.planning/phases/15-intervention-safety-and-handoff/15-VERIFICATION.md`
 
 ### Locked Decisions Inherited From Prior Phases
-- Keep `opengui/backends/background_runtime.py` as the single source of truth for capability probing, reason codes, remediation copy, mode resolution, and background-run serialization.
-- Keep host entry points dispatching from `probe.backend_name` rather than reintroducing raw platform branching in `opengui/cli.py` or `nanobot/agent/tools/gui.py`.
+- Keep `guiclaw/backends/background_runtime.py` as the single source of truth for capability probing, reason codes, remediation copy, mode resolution, and background-run serialization.
+- Keep host entry points dispatching from `probe.backend_name` rather than reintroducing raw platform branching in `guiclaw/cli.py` or `nanobot/agent/tools/gui.py`.
 - Preserve the Phase 13 decision that nanobot reuses the same runtime contract and remediation semantics as CLI while keeping nanobot's JSON result shape stable.
 - Preserve the Phase 14 decision that Windows background-local runs default an omitted app-class hint to `classic-win32` before probing isolated support.
 - Preserve the Phase 15 decision that intervention and handoff metadata are filtered to safe target-surface keys, CLI resume requires exact `resume`, and trace/log output must redact sensitive reason text.
@@ -24,7 +24,7 @@ No `16-CONTEXT.md` exists for this phase. This research therefore treats the fol
 
 ### Claude's Discretion
 - Whether to introduce a small shared helper or phase-local assertion layer to compare CLI and nanobot parity, as long as host-specific transport shapes remain intact.
-- Whether Phase 16 parity coverage lives entirely in existing `p5`/`p11` test files or also adds a new `tests/test_opengui_p16_host_integration.py` matrix.
+- Whether Phase 16 parity coverage lives entirely in existing `p5`/`p11` test files or also adds a new `tests/test_guiclaw_p16_host_integration.py` matrix.
 - How much of the milestone closeout evidence lives in tests versus `.planning/phases/16-host-integration-and-verification/16-MANUAL-SMOKE.md`, as long as the phase ends with both automated and manual validation paths.
 </user_constraints>
 
@@ -70,8 +70,8 @@ That means the phase should not try to make CLI and nanobot print identical text
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
 | Python stdlib (`asyncio`, `json`, `logging`, `dataclasses`, `pathlib`) | Project target `>=3.11` | Host integration, structured payloads, and regression assertions | Existing CLI, nanobot, and runtime code already use these primitives |
-| `opengui/backends/background_runtime.py` | repo-local | Shared probe, mode resolution, remediation, and busy-run serialization | Phase 16 should deepen this contract, not duplicate it |
-| `opengui/cli.py` | repo-local | Human-facing CLI host path for background mode, intervention, and results | Primary entry point for `INTG-05` |
+| `guiclaw/backends/background_runtime.py` | repo-local | Shared probe, mode resolution, remediation, and busy-run serialization | Phase 16 should deepen this contract, not duplicate it |
+| `guiclaw/cli.py` | repo-local | Human-facing CLI host path for background mode, intervention, and results | Primary entry point for `INTG-05` |
 | `nanobot/agent/tools/gui.py` | repo-local | Structured nanobot host path for background mode and intervention | Primary entry point for `INTG-06` |
 
 ### Supporting
@@ -93,7 +93,7 @@ That means the phase should not try to make CLI and nanobot print identical text
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── backends/background_runtime.py      # shared reason-code and remediation source of truth
 ├── cli.py                              # CLI host path and interactive intervention UX
 └── backends/
@@ -102,18 +102,18 @@ opengui/
 nanobot/
 └── agent/tools/gui.py                  # structured nanobot host path
 tests/
-├── test_opengui_p5_cli.py              # CLI host-entry coverage
-├── test_opengui_p11_integration.py     # nanobot host-entry coverage
-├── test_opengui_p10_background.py      # Linux/macOS background metadata and cleanup
-├── test_opengui_p12_runtime_contracts.py
-├── test_opengui_p13_macos_display.py
-├── test_opengui_p14_windows_desktop.py
-├── test_opengui_p15_intervention.py
-└── test_opengui_p16_host_integration.py # new Phase 16 parity matrix
+├── test_guiclaw_p5_cli.py              # CLI host-entry coverage
+├── test_guiclaw_p11_integration.py     # nanobot host-entry coverage
+├── test_guiclaw_p10_background.py      # Linux/macOS background metadata and cleanup
+├── test_guiclaw_p12_runtime_contracts.py
+├── test_guiclaw_p13_macos_display.py
+├── test_guiclaw_p14_windows_desktop.py
+├── test_guiclaw_p15_intervention.py
+└── test_guiclaw_p16_host_integration.py # new Phase 16 parity matrix
 ```
 
 ### Pattern 1: Treat `background_runtime` as the Canonical Vocabulary
-**What:** Keep all reason codes, remediation copy, host-platform normalization, and mode resolution in `opengui/backends/background_runtime.py`.
+**What:** Keep all reason codes, remediation copy, host-platform normalization, and mode resolution in `guiclaw/backends/background_runtime.py`.
 **When to use:** Any time CLI or nanobot needs to report supportability, fallback, blocked behavior, or cleanup context.
 **Concrete recommendation:**
 - Do not add new host-local reason strings in CLI or nanobot when shared runtime already has the canonical value.
@@ -137,7 +137,7 @@ tests/
 **Why:** The roadmap asks for the same behavior and capability messaging, not a forced identical UX.
 
 ### Pattern 3: Add a Phase-Local Host Parity Matrix
-**What:** Introduce `tests/test_opengui_p16_host_integration.py` to compare the shared semantics of CLI and nanobot directly.
+**What:** Introduce `tests/test_guiclaw_p16_host_integration.py` to compare the shared semantics of CLI and nanobot directly.
 **When to use:** Shared decisions that should never drift again.
 **Concrete recommendation:**
 - Lock these exact parity seams:
@@ -163,14 +163,14 @@ tests/
 **When to use:** Final wave of Phase 16.
 **Concrete recommendation:**
 - The focused automated slice should cover:
-  - `tests/test_opengui_p16_host_integration.py`
-  - `tests/test_opengui_p5_cli.py`
-  - `tests/test_opengui_p11_integration.py`
-  - `tests/test_opengui_p10_background.py`
-  - `tests/test_opengui_p12_runtime_contracts.py`
-  - `tests/test_opengui_p13_macos_display.py`
-  - `tests/test_opengui_p14_windows_desktop.py`
-  - `tests/test_opengui_p15_intervention.py`
+  - `tests/test_guiclaw_p16_host_integration.py`
+  - `tests/test_guiclaw_p5_cli.py`
+  - `tests/test_guiclaw_p11_integration.py`
+  - `tests/test_guiclaw_p10_background.py`
+  - `tests/test_guiclaw_p12_runtime_contracts.py`
+  - `tests/test_guiclaw_p13_macos_display.py`
+  - `tests/test_guiclaw_p14_windows_desktop.py`
+  - `tests/test_guiclaw_p15_intervention.py`
 - After the slice is green, write a phase-local `16-MANUAL-SMOKE.md` that compares CLI and nanobot on real hosts.
 
 **Why:** Manual smoke should validate the real host surfaces automation cannot honestly prove, not compensate for missing automated regression coverage.
@@ -196,7 +196,7 @@ tests/
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| Shared reason strings | New host-local message tables | `opengui/backends/background_runtime.py` | Keeps CLI and nanobot aligned |
+| Shared reason strings | New host-local message tables | `guiclaw/backends/background_runtime.py` | Keeps CLI and nanobot aligned |
 | Host parity proof | Only manual QA notes | A dedicated Phase 16 parity test file plus existing host suites | Gives durable regression coverage |
 | Intervention evidence | Raw free-text reasons in logs or payloads | Existing scrubbed logging plus safe target metadata | Preserves Phase 15 privacy rules |
 | Windows defaulting | Ad-hoc host branching that bypasses helper functions | Existing `resolve_target_app_class()` and `_resolve_probe_target_app_class()` seams | Locks Phase 14 behavior in one place per host |
@@ -217,12 +217,12 @@ tests/
 ### Pitfall 3: Adding Cross-Host Tests Without a Shared Assertion Layer
 **What goes wrong:** CLI and nanobot each get stronger tests, but nothing directly proves they still share the same contract.
 **Why it happens:** Existing phase tests are organized by subsystem, not by parity.
-**How to avoid:** Add `tests/test_opengui_p16_host_integration.py` as the contract-matrix layer.
+**How to avoid:** Add `tests/test_guiclaw_p16_host_integration.py` as the contract-matrix layer.
 
 ### Pitfall 4: Regressing Linux While Chasing macOS/Windows Parity
 **What goes wrong:** A late host-integration cleanup subtly changes Xvfb fallback or serialization behavior.
 **Why it happens:** Phase 16 work naturally focuses on macOS and Windows.
-**How to avoid:** Keep `tests/test_opengui_p12_runtime_contracts.py` and `tests/test_opengui_p10_background.py` in the required regression slice.
+**How to avoid:** Keep `tests/test_guiclaw_p12_runtime_contracts.py` and `tests/test_guiclaw_p10_background.py` in the required regression slice.
 
 ### Pitfall 5: Treating Manual Smoke as Optional Nice-to-Have
 **What goes wrong:** The phase ships "green" but never validates real macOS permission flows, Windows isolated cleanup, or CLI/nanobot parity on actual hosts.
@@ -240,15 +240,15 @@ The phase is best executed as a four-plan sequence with two parallel host-entry 
 
 ### Recommended Automated Coverage
 - New phase test file:
-  - `tests/test_opengui_p16_host_integration.py`
+  - `tests/test_guiclaw_p16_host_integration.py`
 - Likely extensions to existing tests:
-  - `tests/test_opengui_p5_cli.py`
-  - `tests/test_opengui_p11_integration.py`
-  - `tests/test_opengui_p10_background.py`
-  - `tests/test_opengui_p12_runtime_contracts.py`
-  - `tests/test_opengui_p13_macos_display.py`
-  - `tests/test_opengui_p14_windows_desktop.py`
-  - `tests/test_opengui_p15_intervention.py`
+  - `tests/test_guiclaw_p5_cli.py`
+  - `tests/test_guiclaw_p11_integration.py`
+  - `tests/test_guiclaw_p10_background.py`
+  - `tests/test_guiclaw_p12_runtime_contracts.py`
+  - `tests/test_guiclaw_p13_macos_display.py`
+  - `tests/test_guiclaw_p14_windows_desktop.py`
+  - `tests/test_guiclaw_p15_intervention.py`
 
 ### Minimum Behaviors to Lock in Before Closeout
 - CLI and nanobot default Windows background-local probes to `classic-win32` when no explicit app class is provided.

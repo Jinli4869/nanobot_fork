@@ -1,7 +1,7 @@
 ---
 phase: 26-quality-gated-extraction
 plan: "01"
-subsystem: opengui/skills
+subsystem: guiclaw/skills
 tags: [extraction, critics, shortcut-skill, tdd, testing]
 dependency_graph:
   requires: [phase-24, phase-25]
@@ -13,7 +13,7 @@ dependency_graph:
     - ExtractionSuccess
     - ExtractionRejected
     - ShortcutSkillProducer
-  affects: [opengui/skills, phase-26-plan-02]
+  affects: [guiclaw/skills, phase-26-plan-02]
 tech_stack:
   added: []
   patterns:
@@ -22,8 +22,8 @@ tech_stack:
     - Trajectory step-event to ShortcutSkill transformation with state and parameter inference
 key_files:
   created:
-    - opengui/skills/shortcut_extractor.py
-    - tests/test_opengui_p26_quality_gated_extraction.py
+    - guiclaw/skills/shortcut_extractor.py
+    - tests/test_guiclaw_p26_quality_gated_extraction.py
   modified: []
 decisions:
   - "ShortcutSkillProducer reads valid_state and expected_state from either top-level step keys or observation payloads so recorder-shaped step events stay usable without preprocessing."
@@ -51,7 +51,7 @@ requirements_completed: [EXTR-01, EXTR-02, EXTR-04]
 
 ## Accomplishments
 
-- Added `opengui/skills/shortcut_extractor.py` with the Phase 26 verdict dataclasses, result dataclasses, and runtime-checkable critic protocols.
+- Added `guiclaw/skills/shortcut_extractor.py` with the Phase 26 verdict dataclasses, result dataclasses, and runtime-checkable critic protocols.
 - Implemented `ShortcutSkillProducer.produce()` to map recorder-style step events into `SkillStep`, infer `ParameterSlot` values, map state descriptors, and normalize app identifiers.
 - Added Phase 26 TDD coverage for protocol conformance, verdict/result contracts, producer behavior, and module compilation.
 
@@ -64,8 +64,8 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `opengui/skills/shortcut_extractor.py` - Phase 26 extraction primitives and `ShortcutSkillProducer`.
-- `tests/test_opengui_p26_quality_gated_extraction.py` - TDD contract tests and compile smoke coverage.
+- `guiclaw/skills/shortcut_extractor.py` - Phase 26 extraction primitives and `ShortcutSkillProducer`.
+- `tests/test_guiclaw_p26_quality_gated_extraction.py` - TDD contract tests and compile smoke coverage.
 
 ## Decisions Made
 
@@ -91,7 +91,7 @@ Plan 26-02 can now compose these building blocks into the extraction pipeline or
 
 ## Self-Check: PASSED
 
-- `opengui/skills/shortcut_extractor.py` exists
-- `tests/test_opengui_p26_quality_gated_extraction.py` exists
+- `guiclaw/skills/shortcut_extractor.py` exists
+- `tests/test_guiclaw_p26_quality_gated_extraction.py` exists
 - `.planning/phases/26-quality-gated-extraction/26-01-SUMMARY.md` exists
 - Commits `14e4f7f` and `4e48cd7` exist in git history

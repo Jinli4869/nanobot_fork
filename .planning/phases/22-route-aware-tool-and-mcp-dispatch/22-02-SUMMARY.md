@@ -11,12 +11,12 @@ tech_stack:
   added: []
   patterns: [fallback-chain, sentinel-route-id, tdd-red-green]
 key_files:
-  created: [tests/test_opengui_p22_route_dispatch.py (extended)]
+  created: [tests/test_guiclaw_p22_route_dispatch.py (extended)]
   modified:
     - nanobot/agent/router.py
-    - tests/test_opengui_p22_route_dispatch.py
-    - tests/test_opengui_agent_loop.py
-    - tests/test_opengui_p2_integration.py
+    - tests/test_guiclaw_p22_route_dispatch.py
+    - tests/test_guiclaw_agent_loop.py
+    - tests/test_guiclaw_p2_integration.py
 decisions:
   - "_dispatch_with_fallback is shared between _run_tool and _run_mcp: once fallbacks are declared, the capability boundary is advisory and the best available route wins"
   - "gui.desktop is a sentinel route_id that delegates to _run_gui, not a registry entry; skipped with diagnostic when gui_agent is None"
@@ -37,8 +37,8 @@ metrics:
 
 | # | Task | Commit | Key Files |
 |---|------|--------|-----------|
-| 1 | Implement `_dispatch_with_fallback` and wire into `_run_tool`/`_run_mcp` (TDD) | `3d3fed1`, `9fdabcf` | `nanobot/agent/router.py`, `tests/test_opengui_p22_route_dispatch.py` |
-| 2 | Update Phase 8 regression tests and run full suite | `8e2134c` | `tests/test_opengui_agent_loop.py`, `tests/test_opengui_p2_integration.py` |
+| 1 | Implement `_dispatch_with_fallback` and wire into `_run_tool`/`_run_mcp` (TDD) | `3d3fed1`, `9fdabcf` | `nanobot/agent/router.py`, `tests/test_guiclaw_p22_route_dispatch.py` |
+| 2 | Update Phase 8 regression tests and run full suite | `8e2134c` | `tests/test_guiclaw_agent_loop.py`, `tests/test_guiclaw_p2_integration.py` |
 
 ## What Was Built
 
@@ -71,20 +71,20 @@ Every dispatch now logs:
 **1. [Rule 1 - Bug] Fixed stale `_run_tool`/`_run_mcp` signature in regression tests**
 
 - **Found during:** Task 2 full suite run
-- **Issue:** Phase 22-01 changed `_run_tool`/`_run_mcp` from `(instruction: str, context)` to `(node: Any, context)`, but two pre-existing tests had stale fake functions still using the old `instruction: str` parameter. The test in `test_opengui_agent_loop.py` was already broken by 22-01 and was a latent regression.
+- **Issue:** Phase 22-01 changed `_run_tool`/`_run_mcp` from `(instruction: str, context)` to `(node: Any, context)`, but two pre-existing tests had stale fake functions still using the old `instruction: str` parameter. The test in `test_guiclaw_agent_loop.py` was already broken by 22-01 and was a latent regression.
 - **Fix:**
-  - `test_opengui_agent_loop.py::test_router_dispatches_planner_atoms_by_capability`: Updated `fake_tool` and `fake_mcp` to accept `node: Any` and use `node.instruction`
-  - `test_opengui_p2_integration.py::test_router_dispatches_gui_and_tool_atoms`: Patched `_run_tool` at method level since the test is about AND-node routing behavior, not dispatch internals
-- **Files modified:** `tests/test_opengui_agent_loop.py`, `tests/test_opengui_p2_integration.py`
+  - `test_guiclaw_agent_loop.py::test_router_dispatches_planner_atoms_by_capability`: Updated `fake_tool` and `fake_mcp` to accept `node: Any` and use `node.instruction`
+  - `test_guiclaw_p2_integration.py::test_router_dispatches_gui_and_tool_atoms`: Patched `_run_tool` at method level since the test is about AND-node routing behavior, not dispatch internals
+- **Files modified:** `tests/test_guiclaw_agent_loop.py`, `tests/test_guiclaw_p2_integration.py`
 - **Commits:** `8e2134c`
 
 ## Test Results
 
 | Suite | Tests | Status |
 |-------|-------|--------|
-| `test_opengui_p22_route_dispatch.py` | 32 | PASS |
-| `test_opengui_p8_planning.py` | 17 | PASS |
-| `test_opengui_p21_planner_context.py` | 7 | PASS |
+| `test_guiclaw_p22_route_dispatch.py` | 32 | PASS |
+| `test_guiclaw_p8_planning.py` | 17 | PASS |
+| `test_guiclaw_p21_planner_context.py` | 7 | PASS |
 | Full project suite | 901 | PASS |
 
 ## Self-Check: PASSED

@@ -1,12 +1,12 @@
 ---
 phase: 25-multi-layer-execution
 plan: "02"
-subsystem: opengui/skills
+subsystem: guiclaw/skills
 tags: [execution, task-layer, tdd, grounding, fallback, branching]
 dependency_graph:
   requires: [25-01, phase-24]
   provides: [TaskSkillExecutor, MissingShortcutReport, TaskExecutionSuccess, same-node-fallback-rule]
-  affects: [opengui/skills/__init__.py]
+  affects: [guiclaw/skills/__init__.py]
 tech_stack:
   added: []
   patterns:
@@ -17,9 +17,9 @@ tech_stack:
 key_files:
   created: []
   modified:
-    - tests/test_opengui_p25_multi_layer_execution.py
-    - opengui/skills/multi_layer_executor.py
-    - opengui/skills/__init__.py
+    - tests/test_guiclaw_p25_multi_layer_execution.py
+    - guiclaw/skills/multi_layer_executor.py
+    - guiclaw/skills/__init__.py
 decisions:
   - "TaskSkillExecutor delegates inline SkillStep execution to ShortcutExecutor._execute_step — ensures EXEC-03 grounding seam is truly shared, not duplicated"
   - "Fallback block measured BEFORE shortcut resolution attempt — avoids partial execution ambiguity on resolution edge cases"
@@ -67,12 +67,12 @@ The `ShortcutRefNode` in Phase 24 has no `fallback_steps` field. The fallback bl
 | `test_task_skill_executor_returns_missing_shortcut_report_without_contiguous_atom_fallback` | Missing shortcut + BranchNode next: returns MissingShortcutReport(fallback_block_length=0) |
 | `test_task_skill_executor_evaluates_branch_condition` | True path → then_steps; False path → else_steps; branch_trace recorded |
 | `test_task_skill_executor_routes_top_level_atom_through_grounder` | Top-level SkillStep calls grounder exactly once (EXEC-03) |
-| `test_opengui_skills_exports_phase_25_task_executor_types` | MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor in __all__ |
+| `test_guiclaw_skills_exports_phase_25_task_executor_types` | MissingShortcutReport, TaskExecutionSuccess, TaskSkillExecutor in __all__ |
 
 ## Verification Results
 
 ```
-uv run pytest tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p1_skills.py tests/test_opengui_p25_multi_layer_execution.py -q
+uv run pytest tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p25_multi_layer_execution.py -q
 46 passed, 3 warnings in 0.35s
 ```
 
@@ -82,10 +82,10 @@ None — plan executed exactly as written.
 
 ## Self-Check: PASSED
 
-- [x] `opengui/skills/multi_layer_executor.py` contains `class TaskSkillExecutor`, `class MissingShortcutReport`, `class TaskExecutionSuccess`
-- [x] `opengui/skills/multi_layer_executor.py` contains `fallback_block_length: int` and `is_missing_shortcut: Literal[True] = True`
-- [x] `opengui/skills/multi_layer_executor.py` contains `shortcut_resolver: Callable[[str], ShortcutSkill | None]`
-- [x] `opengui/skills/multi_layer_executor.py` references `ShortcutRefNode`, `BranchNode`, and `SkillStep`
-- [x] `opengui/skills/__init__.py` contains `"MissingShortcutReport"`, `"TaskExecutionSuccess"`, `"TaskSkillExecutor"` in `__all__`
+- [x] `guiclaw/skills/multi_layer_executor.py` contains `class TaskSkillExecutor`, `class MissingShortcutReport`, `class TaskExecutionSuccess`
+- [x] `guiclaw/skills/multi_layer_executor.py` contains `fallback_block_length: int` and `is_missing_shortcut: Literal[True] = True`
+- [x] `guiclaw/skills/multi_layer_executor.py` contains `shortcut_resolver: Callable[[str], ShortcutSkill | None]`
+- [x] `guiclaw/skills/multi_layer_executor.py` references `ShortcutRefNode`, `BranchNode`, and `SkillStep`
+- [x] `guiclaw/skills/__init__.py` contains `"MissingShortcutReport"`, `"TaskExecutionSuccess"`, `"TaskSkillExecutor"` in `__all__`
 - [x] All 46 tests pass across p1, p24, p25 suites
 - [x] Commits `6de2277` (TDD RED) and `bdcce79` (implementation) exist in git history

@@ -34,10 +34,10 @@ re_verification: false
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `opengui/skills/shortcut_router.py` | ApplicabilityDecision dataclass and ShortcutApplicabilityRouter class | VERIFIED | 203 lines; contains `ApplicabilityDecision` (frozen dataclass, Literal["run","skip","fallback"]), `ShortcutApplicabilityRouter`, `_AlwaysPassEvaluator`, `filter_candidates_by_context` |
-| `opengui/agent.py` | Multi-candidate retrieval and applicability evaluation methods | VERIFIED | Contains `_retrieve_shortcut_candidates` (line 1658), `_evaluate_shortcut_applicability` (line 1711), `shortcut_applicability_router` init param (line 436), `shortcut_candidates = await self._retrieve_shortcut_candidates` (line 497), `applicability_decision` (line 557) |
+| `guiclaw/skills/shortcut_router.py` | ApplicabilityDecision dataclass and ShortcutApplicabilityRouter class | VERIFIED | 203 lines; contains `ApplicabilityDecision` (frozen dataclass, Literal["run","skip","fallback"]), `ShortcutApplicabilityRouter`, `_AlwaysPassEvaluator`, `filter_candidates_by_context` |
+| `guiclaw/agent.py` | Multi-candidate retrieval and applicability evaluation methods | VERIFIED | Contains `_retrieve_shortcut_candidates` (line 1658), `_evaluate_shortcut_applicability` (line 1711), `shortcut_applicability_router` init param (line 436), `shortcut_candidates = await self._retrieve_shortcut_candidates` (line 497), `applicability_decision` (line 557) |
 | `nanobot/agent/tools/gui.py` | Wiring of ShortcutApplicabilityRouter with real ConditionEvaluator | VERIFIED | ShortcutApplicabilityRouter constructed at line 255 with `condition_evaluator=state_validator` inside `enable_skill_execution` guard; passed as `shortcut_applicability_router=shortcut_applicability_router` at line 273 |
-| `tests/test_opengui_p29_retrieval_applicability.py` | Phase 29 regression coverage for SUSE-01 and SUSE-02 | VERIFIED | 718 lines (exceeds min_lines=120); 20 test functions present and all passing |
+| `tests/test_guiclaw_p29_retrieval_applicability.py` | Phase 29 regression coverage for SUSE-01 and SUSE-02 | VERIFIED | 718 lines (exceeds min_lines=120); 20 test functions present and all passing |
 
 ---
 
@@ -47,18 +47,18 @@ re_verification: false
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `opengui/agent.py` | `opengui/skills/shortcut_store.py` | `UnifiedSkillSearch.search(task, top_k=5)` | VERIFIED | Pattern `_unified_skill_search\.search.*top_k=` matches at agent.py:1679 with `top_k=5` |
-| `opengui/agent.py` | `opengui/skills/normalization.py` | `normalize_app_identifier` for post-retrieval app filter | VERIFIED | `normalize_app_identifier` imported at agent.py:39; `filter_candidates_by_context` (which internally calls `normalize_app_identifier`) called at agent.py:1681 |
-| `opengui/agent.py` | `opengui/trajectory/recorder.py` | `record_event("shortcut_retrieval", ...)` | VERIFIED | `record_event("shortcut_retrieval", ...)` at agent.py:1685-1699 with candidate_count, task, platform, app_hint, and candidates list |
+| `guiclaw/agent.py` | `guiclaw/skills/shortcut_store.py` | `UnifiedSkillSearch.search(task, top_k=5)` | VERIFIED | Pattern `_unified_skill_search\.search.*top_k=` matches at agent.py:1679 with `top_k=5` |
+| `guiclaw/agent.py` | `guiclaw/skills/normalization.py` | `normalize_app_identifier` for post-retrieval app filter | VERIFIED | `normalize_app_identifier` imported at agent.py:39; `filter_candidates_by_context` (which internally calls `normalize_app_identifier`) called at agent.py:1681 |
+| `guiclaw/agent.py` | `guiclaw/trajectory/recorder.py` | `record_event("shortcut_retrieval", ...)` | VERIFIED | `record_event("shortcut_retrieval", ...)` at agent.py:1685-1699 with candidate_count, task, platform, app_hint, and candidates list |
 
 ### Plan 02 Key Links
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `opengui/agent.py` | `opengui/skills/shortcut_router.py` | `ShortcutApplicabilityRouter.evaluate()` called in run() | VERIFIED | `self._shortcut_applicability_router.evaluate(result.skill, Path(screenshot_path))` at agent.py:1772 |
-| `opengui/agent.py` | `opengui/trajectory/recorder.py` | `record_event("shortcut_applicability", ...)` with outcome/reason | VERIFIED | Emitted at lines 1738, 1755, 1782, 1806 — covering all 4 code paths |
-| `nanobot/agent/tools/gui.py` | `opengui/skills/shortcut_router.py` | `ShortcutApplicabilityRouter` construction with LLMStateValidator | VERIFIED | `from opengui.skills.shortcut_router import ShortcutApplicabilityRouter` at gui.py:229; `ShortcutApplicabilityRouter(condition_evaluator=state_validator)` at gui.py:255 |
-| `opengui/agent.py` | `opengui/agent.py` | Failed shortcut clears `matched_skill` before retry loop re-enters | VERIFIED | `matched_skill = None` and `skill_context = None` at agent.py:612-613 inside `if attempt > 0 and _shortcut_attempted:` guard |
+| `guiclaw/agent.py` | `guiclaw/skills/shortcut_router.py` | `ShortcutApplicabilityRouter.evaluate()` called in run() | VERIFIED | `self._shortcut_applicability_router.evaluate(result.skill, Path(screenshot_path))` at agent.py:1772 |
+| `guiclaw/agent.py` | `guiclaw/trajectory/recorder.py` | `record_event("shortcut_applicability", ...)` with outcome/reason | VERIFIED | Emitted at lines 1738, 1755, 1782, 1806 — covering all 4 code paths |
+| `nanobot/agent/tools/gui.py` | `guiclaw/skills/shortcut_router.py` | `ShortcutApplicabilityRouter` construction with LLMStateValidator | VERIFIED | `from guiclaw.skills.shortcut_router import ShortcutApplicabilityRouter` at gui.py:229; `ShortcutApplicabilityRouter(condition_evaluator=state_validator)` at gui.py:255 |
+| `guiclaw/agent.py` | `guiclaw/agent.py` | Failed shortcut clears `matched_skill` before retry loop re-enters | VERIFIED | `matched_skill = None` and `skill_context = None` at agent.py:612-613 inside `if attempt > 0 and _shortcut_attempted:` guard |
 
 ---
 
@@ -102,13 +102,13 @@ No TODO, FIXME, placeholder, or stub anti-patterns were detected in any of the f
 ## Test Suite Results
 
 ```
-uv run pytest tests/test_opengui_p29_retrieval_applicability.py -q
+uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -q
 20 passed in 3.98s
 
-uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py -q
+uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py -q
 47 passed in 2.84s
 
-uv run python -c "from opengui.skills.shortcut_router import ApplicabilityDecision, ShortcutApplicabilityRouter, filter_candidates_by_context; print('OK')"
+uv run python -c "from guiclaw.skills.shortcut_router import ApplicabilityDecision, ShortcutApplicabilityRouter, filter_candidates_by_context; print('OK')"
 OK
 ```
 

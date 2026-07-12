@@ -2,7 +2,7 @@
 phase: 24-schema-and-grounding
 plan: "03"
 subsystem: grounding
-tags: [opengui, grounding, protocol, llm, import-safety]
+tags: [guiclaw, grounding, protocol, llm, import-safety]
 requires:
   - phase: 24-schema-and-grounding
     provides: parameter slot and state descriptor schema primitives from 24-01
@@ -16,17 +16,17 @@ tech-stack:
   patterns: [protocol-based grounding, structured DTO returns, compile-gate verification]
 key-files:
   created:
-    - opengui/grounding/__init__.py
-    - opengui/grounding/protocol.py
-    - opengui/grounding/llm.py
+    - guiclaw/grounding/__init__.py
+    - guiclaw/grounding/protocol.py
+    - guiclaw/grounding/llm.py
   modified:
-    - tests/test_opengui_p24_schema_grounding.py
+    - tests/test_guiclaw_p24_schema_grounding.py
 key-decisions:
   - "GrounderProtocol resolves semantic targets into `GroundingResult` metadata instead of constructing executable actions directly."
   - "GroundingContext carries `Observation`, screenshot path, parameter slots, and optional task hint so later executors receive grounding inputs without importing agent runtime code."
   - "LLMGrounder accepts the existing `LLMProvider` contract and parses either JSON content or tool-call argument payloads into `resolved_params`."
 patterns-established:
-  - "Keep grounding import-safe by isolating public contracts in `opengui/grounding/protocol.py` and re-exporting them through `opengui/grounding/__init__.py`."
+  - "Keep grounding import-safe by isolating public contracts in `guiclaw/grounding/protocol.py` and re-exporting them through `guiclaw/grounding/__init__.py`."
   - "Use compile-gate verification alongside unit tests whenever a phase's success criteria include import and type-safety seams."
 requirements-completed: [GRND-01, GRND-02, GRND-03]
 duration: 1min
@@ -35,7 +35,7 @@ completed: 2026-04-02
 
 # Phase 24 Plan 03: Grounding Protocol Package Summary
 
-**OpenGUI now exposes a reusable grounding package with protocol/result DTOs and an LLM-backed grounder that returns structured parameter-resolution metadata**
+**GUIClaw now exposes a reusable grounding package with protocol/result DTOs and an LLM-backed grounder that returns structured parameter-resolution metadata**
 
 ## Performance
 
@@ -46,9 +46,9 @@ completed: 2026-04-02
 - **Files modified:** 4
 
 ## Accomplishments
-- Added `GrounderProtocol`, `GroundingContext`, and `GroundingResult` in a dedicated `opengui/grounding/protocol.py` module.
+- Added `GrounderProtocol`, `GroundingContext`, and `GroundingResult` in a dedicated `guiclaw/grounding/protocol.py` module.
 - Implemented `LLMGrounder` as a thin `LLMProvider`-backed adapter that returns `GroundingResult` instead of action objects.
-- Added grounding regression tests plus a compile/import gate covering the new `opengui/grounding` package and its schema dependencies.
+- Added grounding regression tests plus a compile/import gate covering the new `guiclaw/grounding` package and its schema dependencies.
 
 ## Task Commits
 
@@ -58,10 +58,10 @@ Each task was committed atomically:
 2. **Task 2: Implement the grounding package and compile/import sanity gate** - `8dce304` (feat)
 
 ## Files Created/Modified
-- `opengui/grounding/protocol.py` - grounding protocol plus context/result dataclasses with explicit serializers
-- `opengui/grounding/llm.py` - `LLMGrounder` adapter that parses LLM output into structured parameter metadata
-- `opengui/grounding/__init__.py` - public package exports for the grounding contract surface
-- `tests/test_opengui_p24_schema_grounding.py` - grounding DTO, protocol conformance, and import-safety coverage
+- `guiclaw/grounding/protocol.py` - grounding protocol plus context/result dataclasses with explicit serializers
+- `guiclaw/grounding/llm.py` - `LLMGrounder` adapter that parses LLM output into structured parameter metadata
+- `guiclaw/grounding/__init__.py` - public package exports for the grounding contract surface
+- `tests/test_guiclaw_p24_schema_grounding.py` - grounding DTO, protocol conformance, and import-safety coverage
 
 ## Decisions Made
 - Kept grounding contracts executor-agnostic by returning `resolved_params` instead of `Action` instances.
@@ -88,8 +88,8 @@ None - no external service configuration required.
 ## Self-Check: PASSED
 - Found summary file on disk.
 - Verified task commits `d606758` and `8dce304` in git history.
-- Verified `uv run pytest -q tests/test_opengui_p1_skills.py tests/test_opengui_p1_memory.py tests/test_opengui_p24_schema_grounding.py` exits 0.
-- Verified `uv run python -m py_compile opengui/skills/data.py opengui/skills/shortcut.py opengui/skills/task_skill.py opengui/grounding/__init__.py opengui/grounding/protocol.py opengui/grounding/llm.py` exits 0.
+- Verified `uv run pytest -q tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p1_memory.py tests/test_guiclaw_p24_schema_grounding.py` exits 0.
+- Verified `uv run python -m py_compile guiclaw/skills/data.py guiclaw/skills/shortcut.py guiclaw/skills/task_skill.py guiclaw/grounding/__init__.py guiclaw/grounding/protocol.py guiclaw/grounding/llm.py` exits 0.
 
 ---
 *Phase: 24-schema-and-grounding*

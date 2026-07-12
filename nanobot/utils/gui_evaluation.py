@@ -1,6 +1,6 @@
-"""Backward-compatible shim — canonical implementation moved to opengui.evaluation."""
+"""Backward-compatible shim — canonical implementation moved to guiclaw.evaluation."""
 
-from opengui.evaluation import (  # noqa: F401
+from guiclaw.evaluation import (  # noqa: F401
     DEFAULT_API_BASE,
     DEFAULT_JUDGE_MODEL,
     evaluate_gui_trajectory,

@@ -15,12 +15,12 @@
 - [`gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py)
   - `GuiSubagentTool` 不再预先把 `platform` 拼进 `store_dir`
   - 改为复用统一的 `gui_skills` 根目录 helper
-- [`normalization.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/normalization.py)
+- [`normalization.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/normalization.py)
   - 新增共享 app normalization 逻辑
   - 覆盖空白、大小写、slug 化，以及 Android 常见别名到包名的稳定映射
-- [`extractor.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/extractor.py)
+- [`extractor.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/extractor.py)
   - LLM 提取后的 `skill.app` 在返回前先规范化
-- [`library.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/library.py)
+- [`library.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/library.py)
   - `add` / `add_or_merge` / `update` / `load_all` / `list_all` / `search` 全部走统一 app normalization
   - 冲突检测、持久化分桶、reload 后过滤都基于规范化后的 app 标识
 
@@ -28,19 +28,19 @@
 
 新增和更新的回归测试位于：
 
-- [`test_opengui_p1_skills.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p1_skills.py)
+- [`test_guiclaw_p1_skills.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p1_skills.py)
   - app alias 过滤命中同一 bucket
   - 同 app 的自然语言名和包名会在 `add_or_merge()` 后落到同一规范化 bucket
   - reload 后 `list_all()` 仍能按规范化 app 返回同一组技能
-- [`test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py)
+- [`test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py)
   - GUI 自动提取后的 skill 会落到统一 `gui_skills/<platform>/<normalized-app>/skills.json`
   - 修正了现有 result payload 断言以匹配 `model_summary` 字段
 
 验证命令：
 
 ```bash
-uv run pytest tests/test_opengui_p1_skills.py tests/test_opengui_p3_nanobot.py -q
-uv run python -m py_compile opengui/skills/library.py opengui/skills/extractor.py nanobot/agent/tools/gui.py
+uv run pytest tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p3_nanobot.py -q
+uv run python -m py_compile guiclaw/skills/library.py guiclaw/skills/extractor.py nanobot/agent/tools/gui.py
 ```
 
 验证结果：
@@ -59,7 +59,7 @@ uv run python -m py_compile opengui/skills/library.py opengui/skills/extractor.p
 ### [Rule 3 - Blocking] 更新过期的 GUI tool result 断言
 
 - **Found during:** Task 3 verification
-- **Issue:** `tests/test_opengui_p3_nanobot.py` 仍断言旧的 result key 集合，遗漏现有的 `model_summary`
+- **Issue:** `tests/test_guiclaw_p3_nanobot.py` 仍断言旧的 result key 集合，遗漏现有的 `model_summary`
 - **Fix:** 将断言调整为当前返回结构，避免计划要求的整文件验证被无关旧断言阻塞
 
 ## Outcome

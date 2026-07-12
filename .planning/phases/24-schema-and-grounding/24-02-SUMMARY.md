@@ -2,7 +2,7 @@
 phase: 24-schema-and-grounding
 plan: "02"
 subsystem: skills
-tags: [opengui, skills, task-skill, serialization, branching]
+tags: [guiclaw, skills, task-skill, serialization, branching]
 requires:
   - phase: 24-schema-and-grounding
     provides: shortcut-layer schema primitives and package exports from 24-01
@@ -16,10 +16,10 @@ tech-stack:
   patterns: [tagged recursive serialization, frozen dataclasses, tuple-backed task nodes]
 key-files:
   created:
-    - opengui/skills/task_skill.py
+    - guiclaw/skills/task_skill.py
   modified:
-    - opengui/skills/__init__.py
-    - tests/test_opengui_p24_schema_grounding.py
+    - guiclaw/skills/__init__.py
+    - tests/test_guiclaw_p24_schema_grounding.py
 key-decisions:
   - "TaskSkill persists mixed task nodes with explicit `kind` discriminators (`shortcut_ref`, `atom_step`, `branch`) instead of inferring types from field shape."
   - "Inline ATOM fallback steps continue to reuse the legacy `SkillStep` contract so Phase 25 executors can bridge old and new skill layers cleanly."
@@ -45,7 +45,7 @@ completed: 2026-04-02
 - **Files modified:** 3
 
 ## Accomplishments
-- Added `ShortcutRefNode`, `BranchNode`, `TaskNode`, and `TaskSkill` as frozen task-layer contracts in `opengui/skills/task_skill.py`.
+- Added `ShortcutRefNode`, `BranchNode`, `TaskNode`, and `TaskSkill` as frozen task-layer contracts in `guiclaw/skills/task_skill.py`.
 - Implemented explicit tagged serialization helpers so recursive task nodes round-trip predictably with the exact `shortcut_ref`, `atom_step`, and `branch` discriminator values.
 - Extended the Phase 24 schema test file to cover recursive branch round-trips, mixed task-node payloads, and failure on unknown node kinds.
 
@@ -57,9 +57,9 @@ Each task was committed atomically:
 2. **Task 2: Implement `task_skill.py` with recursive node serializers and public exports** - `a825b18` (feat)
 
 ## Files Created/Modified
-- `opengui/skills/task_skill.py` - task-layer schema dataclasses and centralized tagged node serialization helpers
-- `opengui/skills/__init__.py` - package exports for `ShortcutRefNode`, `BranchNode`, `TaskNode`, and `TaskSkill`
-- `tests/test_opengui_p24_schema_grounding.py` - recursive task-node round-trip and unknown-kind regression coverage
+- `guiclaw/skills/task_skill.py` - task-layer schema dataclasses and centralized tagged node serialization helpers
+- `guiclaw/skills/__init__.py` - package exports for `ShortcutRefNode`, `BranchNode`, `TaskNode`, and `TaskSkill`
+- `tests/test_guiclaw_p24_schema_grounding.py` - recursive task-node round-trip and unknown-kind regression coverage
 
 ## Decisions Made
 - Chose explicit tagged serialization over field-shape inference so recursive unions remain stable for later storage and search phases.
@@ -86,7 +86,7 @@ None - no external service configuration required.
 ## Self-Check: PASSED
 - Found summary file on disk.
 - Verified task commits `e6d4d78` and `a825b18` in git history.
-- Verified `uv run pytest -q tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p1_skills.py` exits 0.
+- Verified `uv run pytest -q tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p1_skills.py` exits 0.
 
 ---
 *Phase: 24-schema-and-grounding*

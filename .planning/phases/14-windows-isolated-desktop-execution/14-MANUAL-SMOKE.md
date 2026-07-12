@@ -37,6 +37,6 @@ Use this checklist on a real Windows host after the automated Phase 14 regressio
 - Expected cleanup evidence includes `cleanup_reason=normal`.
 - Expected cleanup evidence includes `cleanup_reason=startup_failed`.
 - Expected cleanup evidence includes `cleanup_reason=cancelled`.
-- Confirm no stale OpenGUI desktop handles remain after each path.
+- Confirm no stale GUIClaw desktop handles remain after each path.
 - Confirm no orphaned child processes remain after each path.
 - Record the cleanup evidence, any remaining handles/processes, and the remediation taken if cleanup was incomplete.

@@ -19,7 +19,7 @@ created: 2026-04-03
 |----------|-------|
 | **Framework** | pytest with pytest-asyncio |
 | **Config file** | pyproject.toml |
-| **Quick run command** | `uv run python -m pytest tests/test_opengui_p31_shortcut_observability.py -x -q --tb=short` |
+| **Quick run command** | `uv run python -m pytest tests/test_guiclaw_p31_shortcut_observability.py -x -q --tb=short` |
 | **Full suite command** | `uv run python -m pytest tests/ -q --tb=short` |
 | **Estimated runtime** | ~15 seconds |
 
@@ -27,7 +27,7 @@ created: 2026-04-03
 
 ## Sampling Rate
 
-- **After every task commit:** Run `uv run python -m pytest tests/test_opengui_p31_shortcut_observability.py -x -q --tb=short`
+- **After every task commit:** Run `uv run python -m pytest tests/test_guiclaw_p31_shortcut_observability.py -x -q --tb=short`
 - **After every plan wave:** Run `uv run python -m pytest tests/ -q --tb=short`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 15 seconds
@@ -43,7 +43,7 @@ created: 2026-04-03
 | 31-01-03 | 01 | 1 | SSTA-03 | unit | `pytest tests/ -k "test_full_trace_event_coverage" -x -q` | ❌ W0 | ⬜ pending |
 | 31-02-01 | 02 | 2 | SSTA-04 | integration-safe | `pytest tests/ -k "test_android_extraction_execution_seam" -x -q` | ❌ W0 | ⬜ pending |
 | 31-02-02 | 02 | 2 | SSTA-04 | integration-safe | `pytest tests/ -k "test_macos_extraction_execution_seam" -x -q` | ❌ W0 | ⬜ pending |
-| 31-02-03 | 02 | 2 | SSTA-04 | regression | `pytest tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py tests/test_opengui_p30_stable_shortcut_execution.py -q` | ✅ | ⬜ pending |
+| 31-02-03 | 02 | 2 | SSTA-04 | regression | `pytest tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py tests/test_guiclaw_p30_stable_shortcut_execution.py -q` | ✅ | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -51,7 +51,7 @@ created: 2026-04-03
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_opengui_p31_shortcut_observability.py` — stubs for SSTA-03 (grounding/settle telemetry) and SSTA-04 (android + desktop seams)
+- [ ] `tests/test_guiclaw_p31_shortcut_observability.py` — stubs for SSTA-03 (grounding/settle telemetry) and SSTA-04 (android + desktop seams)
 
 *Existing test infrastructure covers all prior-phase regression checks; only the new Phase 31 file is missing.*
 *Plan 02 verification is Wave 2 because it appends seam coverage to the shared Phase 31 test module created/populated by Plan 01.*

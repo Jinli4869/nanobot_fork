@@ -17,14 +17,14 @@ tech-stack:
   added: []
   patterns: [trace-backed promotion seam, final-success attempt windowing, sibling async postprocessing tasks]
 key-files:
-  created: [opengui/skills/shortcut_promotion.py]
+  created: [guiclaw/skills/shortcut_promotion.py]
   modified:
     [
       nanobot/agent/tools/gui.py,
-      opengui/skills/__init__.py,
-      tests/test_opengui_p8_trajectory.py,
-      tests/test_opengui_p28_shortcut_productionization.py,
-      tests/test_opengui_p11_integration.py,
+      guiclaw/skills/__init__.py,
+      tests/test_guiclaw_p8_trajectory.py,
+      tests/test_guiclaw_p28_shortcut_productionization.py,
+      tests/test_guiclaw_p11_integration.py,
     ]
 key-decisions:
   - "GuiSubagentTool now passes the active backend platform directly into background shortcut promotion instead of relying on hidden backend state."
@@ -65,12 +65,12 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `opengui/skills/shortcut_promotion.py` - Production promotion seam that loads recorder rows, windows to the final successful attempt, filters promotable steps, and stores successful candidates.
+- `guiclaw/skills/shortcut_promotion.py` - Production promotion seam that loads recorder rows, windows to the final successful attempt, filters promotable steps, and stores successful candidates.
 - `nanobot/agent/tools/gui.py` - GUI postprocessing cutover from legacy extraction to explicit platform-aware shortcut promotion with sibling background tasks.
-- `opengui/skills/__init__.py` - Public export for `ShortcutPromotionPipeline`.
-- `tests/test_opengui_p28_shortcut_productionization.py` - Phase 28 cutover and trace-filter regression coverage.
-- `tests/test_opengui_p8_trajectory.py` - Background postprocessing seam test pinned to the new `platform`-aware signature.
-- `tests/test_opengui_p11_integration.py` - Direct regression update for the changed postprocessing seam signature.
+- `guiclaw/skills/__init__.py` - Public export for `ShortcutPromotionPipeline`.
+- `tests/test_guiclaw_p28_shortcut_productionization.py` - Phase 28 cutover and trace-filter regression coverage.
+- `tests/test_guiclaw_p8_trajectory.py` - Background postprocessing seam test pinned to the new `platform`-aware signature.
+- `tests/test_guiclaw_p11_integration.py` - Direct regression update for the changed postprocessing seam signature.
 
 ## Decisions Made
 
@@ -84,10 +84,10 @@ Each task was committed atomically:
 
 **1. [Rule 1 - Regression] Updated the existing p11 seam test to the new postprocessing signature**
 - **Found during:** Task 2 (Implement the production shortcut promotion seam and wire GuiSubagentTool to it)
-- **Issue:** `tests/test_opengui_p11_integration.py` still patched `_run_trajectory_postprocessing(trace_path, is_success, skill_library)` and would fail after the new `platform`-aware cutover.
+- **Issue:** `tests/test_guiclaw_p11_integration.py` still patched `_run_trajectory_postprocessing(trace_path, is_success, skill_library)` and would fail after the new `platform`-aware cutover.
 - **Fix:** Updated the patched test helper to accept `(trace_path, is_success, platform, task)`.
-- **Files modified:** `tests/test_opengui_p11_integration.py`
-- **Verification:** `uv run pytest tests/test_opengui_p11_integration.py -k "returns_before_background_postprocessing_finishes"`
+- **Files modified:** `tests/test_guiclaw_p11_integration.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p11_integration.py -k "returns_before_background_postprocessing_finishes"`
 - **Committed in:** `6c8695a` (part of Task 2 commit)
 
 ---

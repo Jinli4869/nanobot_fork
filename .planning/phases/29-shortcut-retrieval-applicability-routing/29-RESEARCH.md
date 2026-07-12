@@ -24,7 +24,7 @@ Phase 29 extends the `GuiAgent` run path — already capable of searching the sh
 
 The cleanest implementation keeps both behaviors as collaborating pieces inside `GuiAgent.run()` without requiring changes to the existing `ShortcutExecutor`, `UnifiedSkillSearch`, or `ShortcutSkillStore`. The only new module required is a thin `ShortcutApplicabilityRouter` that encapsulates the evaluation and decision logic, keeping `agent.py` as the caller.
 
-**Primary recommendation:** Add `_retrieve_shortcut_candidates()` and `_evaluate_shortcut_applicability()` helpers to `GuiAgent`, backed by a new `opengui/skills/shortcut_router.py` module that owns the `ApplicabilityDecision` type and the evaluation/logging contract.
+**Primary recommendation:** Add `_retrieve_shortcut_candidates()` and `_evaluate_shortcut_applicability()` helpers to `GuiAgent`, backed by a new `guiclaw/skills/shortcut_router.py` module that owns the `ApplicabilityDecision` type and the evaluation/logging contract.
 
 ## Standard Stack
 
@@ -32,21 +32,21 @@ The cleanest implementation keeps both behaviors as collaborating pieces inside 
 
 | Module | Version | Purpose | Why Standard |
 |--------|---------|---------|--------------|
-| `opengui/agent.py` — `GuiAgent` | workspace current | Top-level change target; run loop, skill search, initial obs | Existing seam; all retrieval/applicability logic plugs in here |
-| `opengui/skills/shortcut_store.py` — `ShortcutSkillStore`, `UnifiedSkillSearch` | workspace current | Search shortcut candidates before the loop | Already called by `_search_skill()`; Phase 29 extends the call to multi-candidate + app/platform filter |
-| `opengui/skills/shortcut.py` — `ShortcutSkill`, `StateDescriptor` | workspace current | Applicability input: `preconditions` carry conditions to check | Already produced by Phase 28 promotions |
-| `opengui/skills/multi_layer_executor.py` — `ConditionEvaluator` | workspace current | Protocol for evaluating one `StateDescriptor` against a screenshot | Phase 25 already defined this; Phase 29 uses it at the pre-execution boundary |
-| `opengui/observation.py` — `Observation` | workspace current | Carries `foreground_app` and `platform` for context filtering | Already captured in `_run_once()` initial observation |
-| `opengui/trajectory/recorder.py` — `TrajectoryRecorder.record_event` | workspace current | Emit structured retrieval and applicability events | Same event recording pattern used by `memory_retrieval` and `phase_change` |
+| `guiclaw/agent.py` — `GuiAgent` | workspace current | Top-level change target; run loop, skill search, initial obs | Existing seam; all retrieval/applicability logic plugs in here |
+| `guiclaw/skills/shortcut_store.py` — `ShortcutSkillStore`, `UnifiedSkillSearch` | workspace current | Search shortcut candidates before the loop | Already called by `_search_skill()`; Phase 29 extends the call to multi-candidate + app/platform filter |
+| `guiclaw/skills/shortcut.py` — `ShortcutSkill`, `StateDescriptor` | workspace current | Applicability input: `preconditions` carry conditions to check | Already produced by Phase 28 promotions |
+| `guiclaw/skills/multi_layer_executor.py` — `ConditionEvaluator` | workspace current | Protocol for evaluating one `StateDescriptor` against a screenshot | Phase 25 already defined this; Phase 29 uses it at the pre-execution boundary |
+| `guiclaw/observation.py` — `Observation` | workspace current | Carries `foreground_app` and `platform` for context filtering | Already captured in `_run_once()` initial observation |
+| `guiclaw/trajectory/recorder.py` — `TrajectoryRecorder.record_event` | workspace current | Emit structured retrieval and applicability events | Same event recording pattern used by `memory_retrieval` and `phase_change` |
 | `nanobot/agent/tools/gui.py` — `GuiSubagentTool._run_task()` | workspace current | Wires `UnifiedSkillSearch` and `ConditionEvaluator` into `GuiAgent` | Already passes `unified_skill_search`; Phase 29 adds the applicability evaluator wiring |
 
 ### Supporting
 
 | Module | Version | Purpose | When to Use |
 |--------|---------|---------|-------------|
-| `opengui/skills/normalization.py` — `normalize_app_identifier` | workspace current | Normalize foreground app text to canonical form for store filtering | Use when deriving the app filter key from `Observation.foreground_app` |
-| `opengui/grounding/llm.py` — `LLMGrounder` | workspace current | LLM-backed vision evaluation | Could back the `ConditionEvaluator` implementation for applicability checks; already structured for screenshot-based decisions |
-| `pytest`, `pytest-asyncio` | workspace locked | Phase 29 regression tests | Existing test infrastructure; new test file `test_opengui_p29_retrieval_applicability.py` |
+| `guiclaw/skills/normalization.py` — `normalize_app_identifier` | workspace current | Normalize foreground app text to canonical form for store filtering | Use when deriving the app filter key from `Observation.foreground_app` |
+| `guiclaw/grounding/llm.py` — `LLMGrounder` | workspace current | LLM-backed vision evaluation | Could back the `ConditionEvaluator` implementation for applicability checks; already structured for screenshot-based decisions |
+| `pytest`, `pytest-asyncio` | workspace locked | Phase 29 regression tests | Existing test infrastructure; new test file `test_guiclaw_p29_retrieval_applicability.py` |
 
 ### Alternatives Considered
 
@@ -63,7 +63,7 @@ The cleanest implementation keeps both behaviors as collaborating pieces inside 
 ### Recommended Project Structure
 
 ```
-opengui/
+guiclaw/
 ├── agent.py                         # extend run() with multi-candidate retrieval + applicability gate
 └── skills/
     └── shortcut_router.py           # NEW: ApplicabilityDecision, ShortcutApplicabilityRouter
@@ -72,7 +72,7 @@ nanobot/
 └── agent/tools/gui.py               # wire LLMConditionEvaluator into GuiAgent construction
 
 tests/
-└── test_opengui_p29_retrieval_applicability.py   # NEW: Phase 29 focused coverage
+└── test_guiclaw_p29_retrieval_applicability.py   # NEW: Phase 29 focused coverage
 ```
 
 ### Pattern 1: Multi-Candidate Retrieval with App/Platform Filter
@@ -116,7 +116,7 @@ selected_shortcut, applicability_decision = await self._evaluate_applicability(
 **Example:**
 
 ```python
-# Source: opengui/skills/shortcut_router.py — new module
+# Source: guiclaw/skills/shortcut_router.py — new module
 @dataclass(frozen=True)
 class ApplicabilityDecision:
     outcome: Literal["run", "skip", "fallback"]
@@ -137,7 +137,7 @@ class ApplicabilityDecision:
 **Example:**
 
 ```python
-# Source: opengui/skills/shortcut_router.py
+# Source: guiclaw/skills/shortcut_router.py
 class ShortcutApplicabilityRouter:
     def __init__(
         self,
@@ -283,7 +283,7 @@ Verified patterns from official codebase sources:
 ### Current _search_skill Pattern (Phase 28 baseline)
 
 ```python
-# Source: opengui/agent.py _search_skill()
+# Source: guiclaw/agent.py _search_skill()
 async def _search_skill(self, task: str) -> Any | None:
     if self._unified_skill_search is not None:
         search_results = await self._unified_skill_search.search(task, top_k=1)
@@ -320,7 +320,7 @@ async def _retrieve_shortcut_candidates(
 ### ConditionEvaluator Protocol (Phase 25 baseline)
 
 ```python
-# Source: opengui/skills/multi_layer_executor.py
+# Source: guiclaw/skills/multi_layer_executor.py
 @runtime_checkable
 class ConditionEvaluator(Protocol):
     async def evaluate(self, condition: StateDescriptor, screenshot: Path) -> bool: ...
@@ -331,7 +331,7 @@ Phase 29 reuses this protocol unchanged as the applicability gate.
 ### TrajectoryRecorder.record_event Pattern (memory_retrieval precedent)
 
 ```python
-# Source: opengui/agent.py _log_memory_retrieval()
+# Source: guiclaw/agent.py _log_memory_retrieval()
 self._trajectory_recorder.record_event(
     "memory_retrieval",
     task=task,
@@ -346,7 +346,7 @@ Phase 29 adds two analogous event types: `shortcut_retrieval` and `shortcut_appl
 ### Observation foreground_app Access
 
 ```python
-# Source: opengui/observation.py
+# Source: guiclaw/observation.py
 @dataclasses.dataclass
 class Observation:
     screenshot_path: str | None
@@ -393,32 +393,32 @@ Phase 29 uses `obs.foreground_app` and `obs.platform` from the initial observati
 |----------|-------|
 | Framework | pytest + pytest-asyncio |
 | Config file | `pyproject.toml` |
-| Quick run command | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py -q` |
-| Full suite command | `uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -q` |
+| Full suite command | `uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py -q` |
 
 ### Phase Requirements → Test Map
 
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| SUSE-01 | GuiAgent retrieves top-N shortcut candidates filtered by platform before the step loop | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_retrieval_filters_by_platform -x` | ❌ Wave 0 |
-| SUSE-01 | App filter is permissive when foreground_app is absent | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_retrieval_permissive_without_foreground_app -x` | ❌ Wave 0 |
-| SUSE-01 | Retrieval emits shortcut_retrieval trajectory event | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_retrieval_emits_trajectory_event -x` | ❌ Wave 0 |
-| SUSE-02 | Applicability router returns `run` when all preconditions pass | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_run_when_conditions_pass -x` | ❌ Wave 0 |
-| SUSE-02 | Applicability router returns `skip` when a precondition fails | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_skip_when_condition_fails -x` | ❌ Wave 0 |
-| SUSE-02 | No shortcut candidates produces `fallback` decision and normal agent run | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_fallback_when_no_candidates -x` | ❌ Wave 0 |
-| SUSE-02 | Applicability emits structured shortcut_applicability trajectory event | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_emits_trajectory_event -x` | ❌ Wave 0 |
-| SUSE-02 | ConditionEvaluator exception produces fallback, does not abort run | unit | `uv run pytest tests/test_opengui_p29_retrieval_applicability.py::test_applicability_exception_produces_fallback -x` | ❌ Wave 0 |
+| SUSE-01 | GuiAgent retrieves top-N shortcut candidates filtered by platform before the step loop | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_retrieval_filters_by_platform -x` | ❌ Wave 0 |
+| SUSE-01 | App filter is permissive when foreground_app is absent | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_retrieval_permissive_without_foreground_app -x` | ❌ Wave 0 |
+| SUSE-01 | Retrieval emits shortcut_retrieval trajectory event | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_retrieval_emits_trajectory_event -x` | ❌ Wave 0 |
+| SUSE-02 | Applicability router returns `run` when all preconditions pass | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_run_when_conditions_pass -x` | ❌ Wave 0 |
+| SUSE-02 | Applicability router returns `skip` when a precondition fails | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_skip_when_condition_fails -x` | ❌ Wave 0 |
+| SUSE-02 | No shortcut candidates produces `fallback` decision and normal agent run | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_fallback_when_no_candidates -x` | ❌ Wave 0 |
+| SUSE-02 | Applicability emits structured shortcut_applicability trajectory event | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_emits_trajectory_event -x` | ❌ Wave 0 |
+| SUSE-02 | ConditionEvaluator exception produces fallback, does not abort run | unit | `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py::test_applicability_exception_produces_fallback -x` | ❌ Wave 0 |
 
 ### Sampling Rate
 
-- **Per task commit:** `uv run pytest tests/test_opengui_p29_retrieval_applicability.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py tests/test_opengui_p29_retrieval_applicability.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p29_retrieval_applicability.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py tests/test_guiclaw_p29_retrieval_applicability.py -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
 
-- [ ] `tests/test_opengui_p29_retrieval_applicability.py` — new test file covering all SUSE-01 and SUSE-02 behaviors
-- [ ] `opengui/skills/shortcut_router.py` — new module for `ApplicabilityDecision` and `ShortcutApplicabilityRouter`
+- [ ] `tests/test_guiclaw_p29_retrieval_applicability.py` — new test file covering all SUSE-01 and SUSE-02 behaviors
+- [ ] `guiclaw/skills/shortcut_router.py` — new module for `ApplicabilityDecision` and `ShortcutApplicabilityRouter`
 
 *(Existing `ShortcutSkillStore`, `UnifiedSkillSearch`, `ConditionEvaluator`, and `TrajectoryRecorder` infrastructure already covers Phase 29's dependencies; only the new module and test file are gaps.)*
 
@@ -426,20 +426,20 @@ Phase 29 uses `obs.foreground_app` and `obs.platform` from the initial observati
 
 ### Primary (HIGH confidence)
 
-- `opengui/agent.py` — `GuiAgent.run()`, `_search_skill()`, `_run_once()`, `_retrieve_memory()` — direct inspection of current skill search and execution path
-- `opengui/skills/shortcut_store.py` — `UnifiedSkillSearch.search()`, `ShortcutSkillStore.search()` — current search contract
-- `opengui/skills/shortcut.py` — `ShortcutSkill.preconditions`, `StateDescriptor` — applicability condition schema
-- `opengui/skills/multi_layer_executor.py` — `ConditionEvaluator` Protocol, `_AlwaysPassEvaluator`, `ContractViolationReport` — existing evaluator contract
-- `opengui/observation.py` — `Observation.foreground_app`, `Observation.platform` — live screen context
-- `opengui/trajectory/recorder.py` — `TrajectoryRecorder.record_event()` — event recording pattern
+- `guiclaw/agent.py` — `GuiAgent.run()`, `_search_skill()`, `_run_once()`, `_retrieve_memory()` — direct inspection of current skill search and execution path
+- `guiclaw/skills/shortcut_store.py` — `UnifiedSkillSearch.search()`, `ShortcutSkillStore.search()` — current search contract
+- `guiclaw/skills/shortcut.py` — `ShortcutSkill.preconditions`, `StateDescriptor` — applicability condition schema
+- `guiclaw/skills/multi_layer_executor.py` — `ConditionEvaluator` Protocol, `_AlwaysPassEvaluator`, `ContractViolationReport` — existing evaluator contract
+- `guiclaw/observation.py` — `Observation.foreground_app`, `Observation.platform` — live screen context
+- `guiclaw/trajectory/recorder.py` — `TrajectoryRecorder.record_event()` — event recording pattern
 - `nanobot/agent/tools/gui.py` — `_run_task()`, `_get_unified_skill_search()` — current wiring of UnifiedSkillSearch into GuiAgent
 - `.planning/phases/28-shortcut-extraction-productionization/28-RESEARCH.md` — Phase 28 design rationale and contract decisions
-- `opengui/skills/normalization.py` — `normalize_app_identifier()` — app identity normalization used for filter
+- `guiclaw/skills/normalization.py` — `normalize_app_identifier()` — app identity normalization used for filter
 
 ### Secondary (MEDIUM confidence)
 
-- `tests/test_opengui_p27_storage_search_agent.py` — `test_agent_skill_lookup`, `test_agent_skill_lookup_logs_layer` — current test patterns for skill search in agent
-- `tests/test_opengui_p28_shortcut_productionization.py` — covers `_promote_shortcut` seam; establishes pattern for Phase 29 tests
+- `tests/test_guiclaw_p27_storage_search_agent.py` — `test_agent_skill_lookup`, `test_agent_skill_lookup_logs_layer` — current test patterns for skill search in agent
+- `tests/test_guiclaw_p28_shortcut_productionization.py` — covers `_promote_shortcut` seam; establishes pattern for Phase 29 tests
 - `.planning/phases/27-storage-search-agent-integration/deferred-items.md` — pre-existing test failures that are out of scope for Phase 29
 
 ## Metadata

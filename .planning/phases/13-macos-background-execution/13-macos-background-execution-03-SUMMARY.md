@@ -28,10 +28,10 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/cli.py
+    - guiclaw/cli.py
     - nanobot/agent/tools/gui.py
-    - tests/test_opengui_p5_cli.py
-    - tests/test_opengui_p11_integration.py
+    - tests/test_guiclaw_p5_cli.py
+    - tests/test_guiclaw_p11_integration.py
 
 key-decisions:
   - "Both CLI and nanobot now choose isolated display managers from probe.backend_name so future platform additions only extend the shared runtime contract."
@@ -76,10 +76,10 @@ Each task was committed atomically:
 2. **Task 2: Update nanobot GUI execution to use the same macOS isolated path** - `38fb615` (`feat`)
 
 ## Files Created/Modified
-- `opengui/cli.py` - dispatches isolated display manager construction from `probe.backend_name`
-- `tests/test_opengui_p5_cli.py` - covers macOS isolated manager selection and remediation logging before agent start
+- `guiclaw/cli.py` - dispatches isolated display manager construction from `probe.backend_name`
+- `tests/test_guiclaw_p5_cli.py` - covers macOS isolated manager selection and remediation logging before agent start
 - `nanobot/agent/tools/gui.py` - dispatches nanobot isolated manager construction from `probe.backend_name` and preserves JSON failure semantics
-- `tests/test_opengui_p11_integration.py` - covers macOS isolated manager selection and fallback remediation text in nanobot responses
+- `tests/test_guiclaw_p11_integration.py` - covers macOS isolated manager selection and fallback remediation text in nanobot responses
 
 ## Decisions Made
 
@@ -93,7 +93,7 @@ None - plan executed exactly as written.
 
 ## Issues Encountered
 
-My first file reads used stale phase-era filenames rather than the actual `opengui/cli.py` and `nanobot/agent/tools/gui.py` paths from the plan. I corrected that before editing, and no code changes were made against the wrong files.
+My first file reads used stale phase-era filenames rather than the actual `guiclaw/cli.py` and `nanobot/agent/tools/gui.py` paths from the plan. I corrected that before editing, and no code changes were made against the wrong files.
 
 ## User Setup Required
 
@@ -105,10 +105,10 @@ Phase 13 host integration is now in place for macOS isolated mode. Wave 4 can fo
 
 ## Self-Check: PASSED
 
-- `opengui/cli.py` - FOUND
+- `guiclaw/cli.py` - FOUND
 - `nanobot/agent/tools/gui.py` - FOUND
-- `tests/test_opengui_p5_cli.py` - FOUND
-- `tests/test_opengui_p11_integration.py` - FOUND
+- `tests/test_guiclaw_p5_cli.py` - FOUND
+- `tests/test_guiclaw_p11_integration.py` - FOUND
 
 ---
 *Phase: 13-macos-background-execution*

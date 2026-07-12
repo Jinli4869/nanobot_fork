@@ -14,7 +14,7 @@ key_files:
   created: []
   modified:
     - nanobot/agent/loop.py
-    - tests/test_opengui_p8_planning.py
+    - tests/test_guiclaw_p8_planning.py
 decisions:
   - "Lazy import of TaskPlanner and TreeRouter inside _plan_and_execute keeps loop.py import overhead minimal"
   - "_GuiDispatchAdapter bridges GuiSubagentTool.execute() (returns JSON string) to TreeRouter._run_gui interface (needs .run() returning object with .success/.summary/.error/.trace_path)"
@@ -45,7 +45,7 @@ metrics:
 - **`_GuiDispatchAdapter`** — Local class inside `_plan_and_execute` that wraps `GuiSubagentTool` to present the `.run(instruction)` interface `TreeRouter._run_gui` expects.
 - **Complexity gate in `_process_message`** — Inserted between `initial_messages` construction and `_run_agent_loop` call; exceptions caught silently and fall back to direct agent loop.
 
-### Tests Added (tests/test_opengui_p8_planning.py)
+### Tests Added (tests/test_guiclaw_p8_planning.py)
 
 6 new tests (Plan 03) + existing 8 (Plan 02) = 14 total, all green:
 
@@ -66,14 +66,14 @@ metrics:
 - **Found during:** TDD RED phase
 - **Issue:** `_make_agent_loop` tried to patch `nanobot.agent.loop.GuiSubagentTool` but the import is conditional inside `_register_default_tools`, so the name doesn't exist at module level.
 - **Fix:** Patched `nanobot.agent.tools.gui.GuiSubagentTool` at its definition site instead.
-- **Files modified:** tests/test_opengui_p8_planning.py
+- **Files modified:** tests/test_guiclaw_p8_planning.py
 - **Commit:** 90ead93
 
 **2. [Rule 1 - Bug] test_plan_and_execute_logs_tree patch paths were wrong**
 - **Found during:** TDD GREEN phase (1 failing after 5 passing)
 - **Issue:** Test tried to patch `nanobot.agent.loop.TaskPlanner` and `nanobot.agent.loop.TreeRouter` but both are lazy-imported inside `_plan_and_execute`, so they don't exist as module-level names in `loop`.
 - **Fix:** Patched `nanobot.agent.planner.TaskPlanner` and `nanobot.agent.router.TreeRouter` at their definition sites.
-- **Files modified:** tests/test_opengui_p8_planning.py
+- **Files modified:** tests/test_guiclaw_p8_planning.py
 - **Commit:** 90ead93
 
 ### Pre-existing Failures (Out of Scope)
@@ -84,9 +84,9 @@ metrics:
 
 Files exist:
 - `nanobot/agent/loop.py` contains `_COMPLEXITY_TOOL`, `_needs_planning`, `_plan_and_execute`, `_GuiDispatchAdapter`, `Decomposed plan:`
-- `tests/test_opengui_p8_planning.py` contains all 6 new test functions
+- `tests/test_guiclaw_p8_planning.py` contains all 6 new test functions
 
 Commits exist:
 - `90ead93` — feat(08-03): add complexity gate and plan-and-execute path to AgentLoop
 
-Test results: `pytest tests/test_opengui_p8_planning.py` — 14 passed, 0 failed
+Test results: `pytest tests/test_guiclaw_p8_planning.py` — 14 passed, 0 failed

@@ -16,7 +16,7 @@ key_files:
 decisions:
   - "GuiAgent and TrajectoryRecorder promoted to module-level imports in gui.py so unittest.mock.patch can resolve them by dotted name"
   - "SkillExecutor instantiated inside _run_task (not __init__) to capture the active_backend which may vary per call via backend override"
-  - "LLMStateValidator constructed with self._llm_adapter (NanobotLLMAdapter) mirroring opengui CLI reference pattern"
+  - "LLMStateValidator constructed with self._llm_adapter (NanobotLLMAdapter) mirroring guiclaw CLI reference pattern"
 metrics:
   duration: 12 min
   completed: "2026-03-25"
@@ -48,7 +48,7 @@ metrics:
 
 - **Found during:** GREEN phase — tests patched `nanobot.agent.tools.gui.GuiAgent.__init__` but `GuiAgent` was only imported inside `_run_task()` (local scope), making the dotted-name target unresolvable.
 - **Issue:** `AttributeError: module 'nanobot.agent.tools.gui' has no attribute 'GuiAgent'` when tests attempted `patch("nanobot.agent.tools.gui.GuiAgent.__init__", ...)`.
-- **Fix:** Moved `from opengui.agent import GuiAgent` and `from opengui.trajectory.recorder import TrajectoryRecorder` from inside `_run_task()` to module-level imports. Removed the now-redundant local import in `_scrub_payload` static method. No behavior change — `opengui.interfaces` was already imported at module level, confirming no circular-import risk.
+- **Fix:** Moved `from guiclaw.agent import GuiAgent` and `from guiclaw.trajectory.recorder import TrajectoryRecorder` from inside `_run_task()` to module-level imports. Removed the now-redundant local import in `_scrub_payload` static method. No behavior change — `guiclaw.interfaces` was already imported at module level, confirming no circular-import risk.
 - **Files modified:** `nanobot/agent/tools/gui.py`
 - **Commit:** 5f81c1b (included in GREEN commit)
 

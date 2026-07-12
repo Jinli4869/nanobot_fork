@@ -919,22 +919,22 @@ class AgentLoop:
 
     @staticmethod
     def _load_gui_memory_for_planner() -> str:
-        """Load os_guide, app_guide, and icon_guide entries from the opengui MemoryStore.
+        """Load os_guide, app_guide, and icon_guide entries from the guiclaw MemoryStore.
 
         Returns a formatted string of guide entries for planner consumption, or an empty
-        string when the memory directory does not exist or opengui is unavailable.
+        string when the memory directory does not exist or guiclaw is unavailable.
         Guide entries (not policy) are surfaced here so the planner can refine GUI task
         instructions with device and app navigation knowledge.
         """
-        from nanobot.agent.tools.gui import DEFAULT_OPENGUI_MEMORY_DIR
+        from nanobot.agent.tools.gui import DEFAULT_GUICLAW_MEMORY_DIR
 
-        if not DEFAULT_OPENGUI_MEMORY_DIR.exists():
+        if not DEFAULT_GUICLAW_MEMORY_DIR.exists():
             return ""
         try:
-            from opengui.memory.store import MemoryStore as GuiMemoryStore
-            from opengui.memory.types import MemoryType
+            from guiclaw.memory.store import MemoryStore as GuiMemoryStore
+            from guiclaw.memory.types import MemoryType
 
-            gui_store = GuiMemoryStore(DEFAULT_OPENGUI_MEMORY_DIR)
+            gui_store = GuiMemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
             guide_entries = []
             for memory_type in (MemoryType.OS_GUIDE, MemoryType.APP_GUIDE, MemoryType.ICON_GUIDE):
                 guide_entries.extend(gui_store.list_all(memory_type=memory_type))

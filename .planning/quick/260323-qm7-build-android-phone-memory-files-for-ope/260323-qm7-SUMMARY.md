@@ -1,22 +1,22 @@
 ---
 phase: quick-260323-qm7
 plan: 01
-subsystem: opengui-memory
+subsystem: guiclaw-memory
 tags: [memory, android, mobile, chinese-apps, icon-guide, policy]
 dependency_graph:
   requires: []
   provides: [android-os-memory, android-app-memory, icon-guide, policy]
-  affects: [opengui-memory-store, opengui-agent-context]
+  affects: [guiclaw-memory-store, guiclaw-agent-context]
 tech_stack:
   added: []
   patterns: [H2-section-markdown-memory-format]
 key_files:
   created:
-    - /Users/jinli/.opengui/memory/icon_guide.md
-    - /Users/jinli/.opengui/memory/policy.md
+    - /Users/jinli/.guiclaw/memory/icon_guide.md
+    - /Users/jinli/.guiclaw/memory/policy.md
   modified:
-    - /Users/jinli/.opengui/memory/os_guide.md
-    - /Users/jinli/.opengui/memory/app_guide.md
+    - /Users/jinli/.guiclaw/memory/os_guide.md
+    - /Users/jinli/.guiclaw/memory/app_guide.md
 decisions:
   - "H2 sub-headings inside entry content must be replaced with plain text or lower-level headings to avoid MemoryStore parser splitting them as separate sections"
   - "tmp_ files contain entries already suitable for Android platform; converted 2 existing Android entries from tmp_os_guide.md alongside adding 15 new Android entries"
@@ -27,7 +27,7 @@ metrics:
   completed_date: "2026-03-23"
 ---
 
-# Quick Task 260323-qm7: Build Android Phone Memory Files for OpenGUI
+# Quick Task 260323-qm7: Build Android Phone Memory Files for GUIClaw
 
 **One-liner:** 86-entry parseable memory store covering 17 Android OS operations, 35 Android app guides (15 Chinese apps), 10 icon semantics, and 8 safety policies — migrated from tmp_ files and extended with comprehensive new content.
 
@@ -75,7 +75,7 @@ Four fully-formatted memory files parseable by `MemoryStore._parse_section()`, c
 - **Found during:** Task 3 validation
 - **Issue:** The existing `os_guide.md` macOS entry contained `## MacOS-快捷键` in its content body, and the `app_guide.md` browser entry contained `## browser-hotkeys` in its content body. The MemoryStore parser splits files on `^## ` (multiline regex), so these internal H2 headings were being split into separate malformed sections, causing the parent entries to have empty `content` fields.
 - **Fix:** Replaced `## MacOS-快捷键` with `macOS 快捷键列表：` (plain text) and `## browser-hotkeys` with `浏览器快捷键列表：` (plain text). Content semantics fully preserved.
-- **Files modified:** `/Users/jinli/.opengui/memory/os_guide.md`, `/Users/jinli/.opengui/memory/app_guide.md`
+- **Files modified:** `/Users/jinli/.guiclaw/memory/os_guide.md`, `/Users/jinli/.guiclaw/memory/app_guide.md`
 - **Commit:** 3608ed9
 
 ## Self-Check

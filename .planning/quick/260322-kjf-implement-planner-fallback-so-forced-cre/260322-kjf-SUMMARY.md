@@ -12,9 +12,9 @@
 ## Files Changed
 
 - `nanobot/agent/planner.py`
-- `tests/test_opengui_agent_loop.py`
+- `tests/test_guiclaw_agent_loop.py`
 
 ## Verification
 
-- `uv run pytest tests/test_opengui_agent_loop.py tests/test_opengui_p2_integration.py -q`
+- `uv run pytest tests/test_guiclaw_agent_loop.py tests/test_guiclaw_p2_integration.py -q`
 - Result: `18 passed`

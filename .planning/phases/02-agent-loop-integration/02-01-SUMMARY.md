@@ -34,9 +34,9 @@ Extended Phase 1 data models and migrated MemoryStore format to prepare for agen
 - (none — all files were modifications)
 
 ### key-files.modified
-- `opengui/skills/data.py` — Extended SkillStep and Skill dataclasses
-- `opengui/skills/library.py` — Added update() method
-- `opengui/memory/store.py` — Full markdown format rewrite
+- `guiclaw/skills/data.py` — Extended SkillStep and Skill dataclasses
+- `guiclaw/skills/library.py` — Added update() method
+- `guiclaw/memory/store.py` — Full markdown format rewrite
 
 ## Commits
 - `e26353e` feat(02-01): extend SkillStep/Skill dataclasses and add SkillLibrary.update()

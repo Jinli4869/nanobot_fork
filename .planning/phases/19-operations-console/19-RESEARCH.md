@@ -1,7 +1,7 @@
 # Phase 19: Operations Console - Research
 
 **Researched:** 2026-03-21
-**Domain:** Browser-safe operations APIs for nanobot runtime inspection, GUI task launch, and filtered OpenGUI trace/log exposure under `nanobot/tui`
+**Domain:** Browser-safe operations APIs for nanobot runtime inspection, GUI task launch, and filtered GUIClaw trace/log exposure under `nanobot/tui`
 **Confidence:** HIGH
 
 <user_constraints>
@@ -17,13 +17,13 @@ No `19-CONTEXT.md` exists for this phase. This research therefore treats the fol
 - `.planning/phases/18-chat-workspace/18-chat-workspace-02-SUMMARY.md`
 - `.planning/phases/18-chat-workspace/18-chat-workspace-03-SUMMARY.md`
 - The explicit user constraint to keep work primarily under `nanobot/tui`
-- The explicit user constraint to avoid broad refactors to `nanobot` or `opengui` core paths
+- The explicit user constraint to avoid broad refactors to `nanobot` or `guiclaw` core paths
 - The explicit user constraint to focus on stable browser-safe inspection/launch contracts, parameter validation, and filtered trace/log exposure
 - The explicit user request to recommend a 3-plan split aligned with roadmap bullets if justified
 
 ### Locked Decisions
 - Keep Phase 19 centered under `nanobot/tui`; edits outside that tree should stay thin and host-facing.
-- Do not broaden the web milestone into a rewrite of `opengui.cli`, `opengui.agent`, or core nanobot runtime modules.
+- Do not broaden the web milestone into a rewrite of `guiclaw.cli`, `guiclaw.agent`, or core nanobot runtime modules.
 - Build on the Phase 17/18 pattern: routes -> dependencies -> services -> typed contracts/adapters.
 - Preserve Phase 18 chat boundaries: `SessionManager` remains the durable session source, and the in-process event broker remains transient transport state.
 - Treat browser inspection as filtered and contract-backed, not as raw filesystem browsing.
@@ -41,18 +41,18 @@ No `19-CONTEXT.md` exists for this phase. This research therefore treats the fol
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| OPS-01 | User can inspect runtime status for sessions, background GUI runs, and recent failures from the web UI | Add a runtime aggregation service that merges `SessionManager` metadata, app-local active run registry state, and filtered summaries from persisted OpenGUI traces |
-| OPS-02 | User can launch supported nanobot or OpenGUI tasks from the web UI with explicit task parameters | Add typed launch request schemas and a launch service that exposes only a narrow, validated GUI-task surface instead of arbitrary CLI/subprocess execution |
+| OPS-01 | User can inspect runtime status for sessions, background GUI runs, and recent failures from the web UI | Add a runtime aggregation service that merges `SessionManager` metadata, app-local active run registry state, and filtered summaries from persisted GUIClaw traces |
+| OPS-02 | User can launch supported nanobot or GUIClaw tasks from the web UI with explicit task parameters | Add typed launch request schemas and a launch service that exposes only a narrow, validated GUI-task surface instead of arbitrary CLI/subprocess execution |
 | OPS-03 | User can inspect structured logs or event traces for web-triggered runs without dropping to the terminal | Add artifact-reader services that parse existing JSONL traces and return filtered summaries/events/log lines through stable DTOs |
 </phase_requirements>
 
 ## Summary
 
-Phase 19 should not invent a second operations runtime. The repo already has the pieces needed for a safe browser-facing console: `SessionManager` persists session metadata under workspace `sessions/*.jsonl`; `GuiSubagentTool.execute()` already returns a structured JSON payload with `success`, `summary`, `trace_path`, `steps_taken`, and `error`; and OpenGUI already writes stable JSONL artifacts in `opengui_runs/**/trace_*.jsonl` and per-attempt `trace.jsonl`. The right move is to wrap those existing surfaces behind narrow `nanobot/tui` contracts rather than exposing raw files or calling CLI commands from routes.
+Phase 19 should not invent a second operations runtime. The repo already has the pieces needed for a safe browser-facing console: `SessionManager` persists session metadata under workspace `sessions/*.jsonl`; `GuiSubagentTool.execute()` already returns a structured JSON payload with `success`, `summary`, `trace_path`, `steps_taken`, and `error`; and GUIClaw already writes stable JSONL artifacts in `guiclaw_runs/**/trace_*.jsonl` and per-attempt `trace.jsonl`. The right move is to wrap those existing surfaces behind narrow `nanobot/tui` contracts rather than exposing raw files or calling CLI commands from routes.
 
 The core Phase 19 pattern should be an operations registry plus artifact reader. Active web-triggered runs need a small app-local registry keyed by `run_id` so the browser can see launch status immediately. Completed and historical state should come from persisted JSONL artifacts, not from process memory. That matches the Phase 18 durability split: transient state for in-flight UX, persisted state for recovery and inspection.
 
-**Primary recommendation:** Implement Phase 19 as three plans matching the roadmap: `19-01` runtime/run status aggregation, `19-02` typed task launch for a very small set of supported GUI workflows, and `19-03` filtered trace/log APIs that read existing OpenGUI artifacts but never expose raw prompt/model payloads or arbitrary file paths.
+**Primary recommendation:** Implement Phase 19 as three plans matching the roadmap: `19-01` runtime/run status aggregation, `19-02` typed task launch for a very small set of supported GUI workflows, and `19-03` filtered trace/log APIs that read existing GUIClaw artifacts but never expose raw prompt/model payloads or arbitrary file paths.
 
 ## Standard Stack
 
@@ -64,7 +64,7 @@ The core Phase 19 pattern should be an operations registry plus artifact reader.
 | `uvicorn[standard]` | `>=0.30.0,<1.0.0` in repo; `0.42.0` verified in Phase 18 research on 2026-03-21 | Local ASGI runtime | Existing Phase 17 runtime seam |
 | `SessionManager` | repo-local | Durable session inspection | Existing source of truth for workspace sessions |
 | `GuiSubagentTool` | repo-local | Narrow nanobot-hosted GUI launch path | Already enforces the host-facing JSON result contract |
-| `TrajectoryRecorder` + OpenGUI JSONL traces | repo-local | Durable run history and filtered diagnostics | Existing structured artifact format; no new store needed |
+| `TrajectoryRecorder` + GUIClaw JSONL traces | repo-local | Durable run history and filtered diagnostics | Existing structured artifact format; no new store needed |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
@@ -77,7 +77,7 @@ The core Phase 19 pattern should be an operations registry plus artifact reader.
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| `GuiSubagentTool` launch adapter | `opengui.cli.run_cli()` subprocess or CLI-equivalent wrapper | Worse parameter safety, harder testing, more drift from browser contracts |
+| `GuiSubagentTool` launch adapter | `guiclaw.cli.run_cli()` subprocess or CLI-equivalent wrapper | Worse parameter safety, harder testing, more drift from browser contracts |
 | JSONL artifact reader | New DB or cache for run history | More moving parts for no v1.3 benefit |
 | Filtered DTOs for trace/log reads | Raw file browser or direct JSONL download | Faster to ship, but violates browser-safety and filtering constraints |
 | Typed task kinds | Free-form `task_type + params: dict[str, Any]` passthrough | Simpler to code, but weak validation and easy scope creep |
@@ -118,8 +118,8 @@ nanobot/tui/
 ```python
 # Source:
 # - nanobot/session/manager.py
-# - opengui/trajectory/recorder.py
-# - opengui/agent.py
+# - guiclaw/trajectory/recorder.py
+# - guiclaw/agent.py
 
 class RunRegistryEntry(BaseModel):
     run_id: str
@@ -127,8 +127,8 @@ class RunRegistryEntry(BaseModel):
     task_kind: Literal[
         "nanobot_open_url",
         "nanobot_open_settings",
-        "opengui_launch_app",
-        "opengui_open_settings",
+        "guiclaw_launch_app",
+        "guiclaw_open_settings",
     ]
     started_at: str
     trace_path: str | None = None  # internal only; browser APIs stay run_id-addressed
@@ -146,7 +146,7 @@ class RunRegistryEntry(BaseModel):
 ```python
 # Source inspiration:
 # - nanobot/agent/tools/gui.py
-# - opengui/cli.py
+# - guiclaw/cli.py
 
 class NanobotOpenUrlLaunchRequest(BaseModel):
     kind: Literal["nanobot_open_url"]
@@ -161,18 +161,18 @@ class NanobotOpenSettingsLaunchRequest(BaseModel):
     require_background_isolation: bool = False
     acknowledge_background_fallback: bool = False
 
-class OpenGuiLaunchAppRequest(BaseModel):
-    kind: Literal["opengui_launch_app"]
+class GUIClawLaunchAppRequest(BaseModel):
+    kind: Literal["guiclaw_launch_app"]
     app_id: Literal["calculator", "notepad", "settings", "terminal"]
     backend: Literal["dry-run", "local"] | None = None
 
-class OpenGuiOpenSettingsRequest(BaseModel):
-    kind: Literal["opengui_open_settings"]
+class GUIClawOpenSettingsRequest(BaseModel):
+    kind: Literal["guiclaw_open_settings"]
     panel: Literal["network", "display", "privacy", "bluetooth"]
     backend: Literal["dry-run", "local"] | None = None
 ```
 
-The browser contract must stay explicit even if the server-side adapter internally translates one of these operations into existing nanobot/OpenGUI task text. Public APIs should reject any free-form `task`, `prompt`, `command`, or `argv` field.
+The browser contract must stay explicit even if the server-side adapter internally translates one of these operations into existing nanobot/GUIClaw task text. Public APIs should reject any free-form `task`, `prompt`, `command`, or `argv` field.
 
 ### Pattern 3: Return Stable Inspection DTOs, Not Raw Artifacts
 **What:** Parse existing JSONL traces into browser-safe summaries and filtered event lists.
@@ -180,8 +180,8 @@ The browser contract must stay explicit even if the server-side adapter internal
 **Example:**
 ```python
 # Source:
-# - opengui/trajectory/recorder.py
-# - opengui/agent.py
+# - guiclaw/trajectory/recorder.py
+# - guiclaw/agent.py
 
 SAFE_TRACE_EVENT_TYPES = {
     "metadata",
@@ -226,7 +226,7 @@ async def launch_run(
 ```
 
 ### Anti-Patterns to Avoid
-- **Calling `opengui.cli.run_cli()` or shelling out from routes:** CLI parsing is not the browser contract.
+- **Calling `guiclaw.cli.run_cli()` or shelling out from routes:** CLI parsing is not the browser contract.
 - **Surfacing raw `trace.jsonl` or `trace_*.jsonl` content verbatim:** step payloads may include screenshot paths, model output, or future noisy fields.
 - **One generic “run anything” endpoint:** this will immediately violate the explicit-parameter constraint.
 - **Using process memory as the only run history store:** refresh/restart would erase diagnostics.
@@ -236,10 +236,10 @@ async def launch_run(
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| Run durability | New operation database | Existing JSONL artifacts in `opengui_runs` plus app-local registry for active state | Current artifact model already records metadata, step, retry, and result events |
+| Run durability | New operation database | Existing JSONL artifacts in `guiclaw_runs` plus app-local registry for active state | Current artifact model already records metadata, step, retry, and result events |
 | Browser launch safety | Free-form dict passthrough | Pydantic discriminated launch models | Prevents arbitrary runtime mutation and makes UI contracts explicit |
 | Runtime status | `ps`, grepping logs, or CLI stdout parsing | Aggregated status service over `SessionManager`, active registry, and parsed traces | More stable and testable |
-| GUI execution | New web-only OpenGUI orchestrator | Thin adapter over `GuiSubagentTool.execute()` first; optional direct OpenGUI adapter only if still contract-backed | Reuses the host-visible JSON result contract |
+| GUI execution | New web-only GUIClaw orchestrator | Thin adapter over `GuiSubagentTool.execute()` first; optional direct GUIClaw adapter only if still contract-backed | Reuses the host-visible JSON result contract |
 | Trace filtering | Regex-only text scraping | Structured JSONL parsing with allowlisted fields/event types | Easier to keep browser-safe as artifacts evolve |
 
 **Key insight:** Phase 19 should add an operations API surface, not a new runtime. The repo already emits structured data; the missing work is aggregation, validation, and filtering.
@@ -304,8 +304,8 @@ payload = json.loads(await gui_tool.execute(task="open system settings"))
 ### Existing Trace Shapes That Phase 19 Can Parse
 ```json
 // Source:
-// - /Users/jinli/Documents/Personal/nanobot_fork/opengui/trajectory/recorder.py
-// - /Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py
+// - /Users/jinli/Documents/Personal/nanobot_fork/guiclaw/trajectory/recorder.py
+// - /Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py
 {"type":"metadata","task":"open settings","platform":"android","initial_phase":"agent"}
 {"type":"attempt_start","attempt":0,"max_retries":3,"task":"open system settings"}
 {"type":"attempt_exception","attempt":0,"error_type":"BadRequestError","error_message":"..."}
@@ -316,8 +316,8 @@ payload = json.loads(await gui_tool.execute(task="open system settings"))
 ### Recommended Browser Filter
 ```python
 # Source basis:
-# - opengui/trajectory/recorder.py
-# - opengui/agent.py
+# - guiclaw/trajectory/recorder.py
+# - guiclaw/agent.py
 
 def summarize_step(raw: dict[str, Any]) -> str:
     action = raw.get("action")
@@ -334,10 +334,10 @@ def summarize_step(raw: dict[str, Any]) -> str:
 - Workspace sessions: `workspace/sessions/*.jsonl`
   - Safe fields: `key`, `created_at`, `updated_at`, metadata fields already written by the browser path such as `origin` and `channel`
   - Use for: session status counts, recent browser sessions, recent activity timestamps
-- OpenGUI aggregate traces: `opengui_runs/**/trace_*.jsonl`
+- GUIClaw aggregate traces: `guiclaw_runs/**/trace_*.jsonl`
   - Safe fields to parse and expose: `type`, `task`, `platform`, `initial_phase`, `timestamp`, `step_index`, `success`, `total_steps`, `duration_s`, `error`, `attempt`, `max_retries`, `error_type`
   - Use for: run summary cards, recent failures, completion status, step counts, retry counts
-- OpenGUI per-attempt traces: `opengui_runs/**/trace.jsonl`
+- GUIClaw per-attempt traces: `guiclaw_runs/**/trace.jsonl`
   - Safe fields to parse and expose after filtering: `event`, `timestamp`, `step_index`, `action`, `tool_result`, `done`, `error_type`, `error_message`
   - Use for: compact activity log and per-run timeline
 
@@ -366,7 +366,7 @@ def summarize_step(raw: dict[str, Any]) -> str:
     - `acknowledge_background_fallback` optional
     - `target_app_class` optional Windows-only hint
   - Why narrow enough: already host-facing, already returns structured JSON, already tested for remediation and filtering semantics
-- `opengui_gui`
+- `guiclaw_gui`
   - Only if implemented as a thin service adapter under `nanobot/tui`
   - Parameters:
     - `task` required
@@ -406,7 +406,7 @@ Primary outputs:
 
 ### Plan 19-03: Filtered Trace and Log Exposure
 Focus:
-- parse existing `opengui_runs` JSONL artifacts
+- parse existing `guiclaw_runs` JSONL artifacts
 - expose filtered run detail, event timeline, and recent failure diagnostics
 - keep browser contracts independent from raw filesystem layout
 
@@ -420,7 +420,7 @@ Primary outputs:
 | Old Approach | Current Approach | When Changed | Impact |
 |--------------|------------------|--------------|--------|
 | Contract-only `/tasks` route with `mutable=false` | Typed, explicit launch routes under `nanobot/tui` | Phase 19 | Browser can launch a small supported task set without opening the terminal |
-| Manual terminal inspection of `opengui_runs` | Filtered browser-safe run summaries and trace events | Phase 19 | Operators can diagnose failed runs from the web UI |
+| Manual terminal inspection of `guiclaw_runs` | Filtered browser-safe run summaries and trace events | Phase 19 | Operators can diagnose failed runs from the web UI |
 | Raw artifact layout as implicit knowledge | Stable DTOs over existing JSONL artifacts | Phase 19 | Frontend stays decoupled from directory naming and trace-file quirks |
 
 **Deprecated/outdated:**
@@ -429,10 +429,10 @@ Primary outputs:
 
 ## Open Questions
 
-1. **Should Phase 19 support both `nanobot_gui` and `opengui_gui`, or only the nanobot-hosted path first?**
+1. **Should Phase 19 support both `nanobot_gui` and `guiclaw_gui`, or only the nanobot-hosted path first?**
    - What we know: `GuiSubagentTool.execute()` already exposes the cleanest host-facing JSON result contract.
-   - What's unclear: whether a direct OpenGUI launch path is needed before Phase 20 frontend integration.
-   - Recommendation: ship `nanobot_gui` first, and add `opengui_gui` only if it can reuse the same run registry and filtered artifact contracts without touching core OpenGUI flow control.
+   - What's unclear: whether a direct GUIClaw launch path is needed before Phase 20 frontend integration.
+   - Recommendation: ship `nanobot_gui` first, and add `guiclaw_gui` only if it can reuse the same run registry and filtered artifact contracts without touching core GUIClaw flow control.
 
 2. **Should active run updates be polling-only or reuse SSE?**
    - What we know: Phase 18 already established a working GET SSE pattern, but the current requirement only needs inspection, not a live viewer.
@@ -447,7 +447,7 @@ Primary outputs:
 | Framework | `pytest>=9.0.0,<10.0.0` |
 | Config file | `pyproject.toml` |
 | Quick run command | `.venv/bin/python -m pytest tests/test_tui_p19_runtime.py tests/test_tui_p19_launch.py tests/test_tui_p19_traces.py -q` |
-| Full suite command | `.venv/bin/python -m pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_launch.py tests/test_tui_p19_traces.py tests/test_commands.py tests/test_opengui_p16_host_integration.py -q` |
+| Full suite command | `.venv/bin/python -m pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_launch.py tests/test_tui_p19_traces.py tests/test_commands.py tests/test_guiclaw_p16_host_integration.py -q` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
@@ -458,14 +458,14 @@ Primary outputs:
 
 ### Sampling Rate
 - **Per task commit:** `.venv/bin/python -m pytest tests/test_tui_p19_runtime.py tests/test_tui_p19_launch.py tests/test_tui_p19_traces.py -q`
-- **Per wave merge:** `.venv/bin/python -m pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_launch.py tests/test_tui_p19_traces.py tests/test_commands.py tests/test_opengui_p16_host_integration.py -q`
+- **Per wave merge:** `.venv/bin/python -m pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_launch.py tests/test_tui_p19_traces.py tests/test_commands.py tests/test_guiclaw_p16_host_integration.py -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
 - [ ] `tests/test_tui_p19_runtime.py` — covers OPS-01 runtime aggregation and recent-failure listing
 - [ ] `tests/test_tui_p19_launch.py` — covers OPS-02 request validation and launch-state transitions
 - [ ] `tests/test_tui_p19_traces.py` — covers OPS-03 artifact parsing, filtering, and stable trace DTOs
-- [ ] Shared fixture for synthetic `opengui_runs` artifact trees under `tmp_path`
+- [ ] Shared fixture for synthetic `guiclaw_runs` artifact trees under `tmp_path`
 
 ## Sources
 
@@ -486,15 +486,15 @@ Primary outputs:
 - [tasks.py](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/tui/services/tasks.py) - current task service
 - [manager.py](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/session/manager.py) - session persistence format and listing behavior
 - [gui.py](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) - host-facing GUI execution contract and filtering behavior
-- [agent.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py) - attempt logging and run artifact format
-- [recorder.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/trajectory/recorder.py) - trajectory event schema
-- [cli.py](/Users/jinli/Documents/Personal/nanobot_fork/opengui/cli.py) - CLI-only parameter surface and why not to import it into routes
-- [test_opengui_p3_nanobot.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) - GUI tool contract coverage
-- [test_opengui_p16_host_integration.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p16_host_integration.py) - remediation/filtering parity expectations
+- [agent.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py) - attempt logging and run artifact format
+- [recorder.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/trajectory/recorder.py) - trajectory event schema
+- [cli.py](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/cli.py) - CLI-only parameter surface and why not to import it into routes
+- [test_guiclaw_p3_nanobot.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) - GUI tool contract coverage
+- [test_guiclaw_p16_host_integration.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p16_host_integration.py) - remediation/filtering parity expectations
 
 ### Secondary (MEDIUM confidence)
 - [pyproject.toml](/Users/jinli/Documents/Personal/nanobot_fork/pyproject.toml) - dependency ranges and pytest config
-- Existing `opengui_runs/*` artifacts in the workspace - confirmed current JSONL layout for aggregate and per-attempt traces
+- Existing `guiclaw_runs/*` artifacts in the workspace - confirmed current JSONL layout for aggregate and per-attempt traces
 
 ### Tertiary (LOW confidence)
 - None
@@ -503,7 +503,7 @@ Primary outputs:
 
 **Confidence breakdown:**
 - Standard stack: MEDIUM-HIGH - repo pins and prior Phase 18 verification are strong, but this turn did not re-query package registries
-- Architecture: HIGH - grounded directly in current `nanobot/tui`, `SessionManager`, `GuiSubagentTool`, and OpenGUI artifact formats
+- Architecture: HIGH - grounded directly in current `nanobot/tui`, `SessionManager`, `GuiSubagentTool`, and GUIClaw artifact formats
 - Pitfalls: HIGH - derived from current placeholder routes, existing filtering logic, and concrete artifact shapes already present in the workspace
 
 **Research date:** 2026-03-21

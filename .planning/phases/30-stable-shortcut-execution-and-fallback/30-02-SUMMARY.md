@@ -2,7 +2,7 @@
 phase: 30-stable-shortcut-execution-and-fallback
 plan: "02"
 subsystem: testing
-tags: [opengui, pytest, shortcut-execution, settle-timing, postconditions]
+tags: [guiclaw, pytest, shortcut-execution, settle-timing, postconditions]
 requires:
   - phase: 30-stable-shortcut-execution-and-fallback
     provides: Plan 01 settle timing, post-step observation, and ShortcutExecutor runtime wiring
@@ -17,7 +17,7 @@ key-files:
   created:
     - .planning/phases/30-stable-shortcut-execution-and-fallback/30-02-SUMMARY.md
   modified:
-    - tests/test_opengui_p30_stable_shortcut_execution.py
+    - tests/test_guiclaw_p30_stable_shortcut_execution.py
 key-decisions:
   - "Plan 02 stayed test-only because the new assertions passed immediately against the Plan 01 runtime behavior."
   - "Postcondition coverage asserts the evaluator saw a post-boundary screenshot so the contract check is tied to settled UI state, not just a boundary flag."
@@ -54,7 +54,7 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- [tests/test_opengui_p30_stable_shortcut_execution.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p30_stable_shortcut_execution.py) - adds the three required Phase 30 focused tests for settle timing, post-step observation, and post-step validation.
+- [tests/test_guiclaw_p30_stable_shortcut_execution.py](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p30_stable_shortcut_execution.py) - adds the three required Phase 30 focused tests for settle timing, post-step observation, and post-step validation.
 - [30-02-SUMMARY.md](/Users/jinli/Documents/Personal/nanobot_fork/.planning/phases/30-stable-shortcut-execution-and-fallback/30-02-SUMMARY.md) - records execution results, verification evidence, and phase readiness.
 
 ## Decisions Made

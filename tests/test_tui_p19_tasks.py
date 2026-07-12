@@ -50,12 +50,12 @@ def test_launch_endpoint_accepts_only_supported_task_kinds() -> None:
             "acknowledge_background_fallback": True,
         },
         {
-            "kind": "opengui_launch_app",
+            "kind": "guiclaw_launch_app",
             "app_id": "calculator",
             "backend": "dry-run",
         },
         {
-            "kind": "opengui_open_settings",
+            "kind": "guiclaw_open_settings",
             "panel": "network",
             "backend": "local",
         },
@@ -79,9 +79,9 @@ def test_launch_endpoint_accepts_only_supported_task_kinds() -> None:
     [
         ({"kind": "unsupported_operation"}, "kind"),
         ({"kind": "nanobot_open_url", "task": "open docs"}, "url"),
-        ({"kind": "opengui_launch_app", "prompt": "open calculator"}, "app_id"),
-        ({"kind": "opengui_open_settings", "panel": "network", "params": {"backend": "local"}}, "backend"),
-        ({"kind": "nanobot_open_settings", "panel": "network", "command": ["python", "-m", "opengui.cli"]}, "command"),
+        ({"kind": "guiclaw_launch_app", "prompt": "open calculator"}, "app_id"),
+        ({"kind": "guiclaw_open_settings", "panel": "network", "params": {"backend": "local"}}, "backend"),
+        ({"kind": "nanobot_open_settings", "panel": "network", "command": ["python", "-m", "guiclaw.cli"]}, "command"),
     ],
 )
 def test_launch_endpoint_rejects_untyped_or_unsafe_parameters(
@@ -102,7 +102,7 @@ def test_launch_request_contract_exposes_only_typed_requests() -> None:
     assert "launch_task" in contract_hints
     launch_repr = repr(contract_hints["launch_task"])
     assert "NanobotOpenUrlLaunchRequest" in launch_repr
-    assert "OpenGuiOpenSettingsRequest" in launch_repr
+    assert "GUIClawOpenSettingsRequest" in launch_repr
     assert "LaunchRunResponse" in launch_repr
     assert "dict[str, Any]" not in launch_repr
 
@@ -160,13 +160,13 @@ def test_launch_endpoint_returns_registry_backed_run_id_immediately() -> None:
     service = TaskLaunchService(
         registry=registry,
         nanobot_runner=_awaitable_result(summary="Opened docs", trace_ref="gui/run-001"),
-        opengui_runner=_awaitable_result(summary="Opened calculator"),
+        guiclaw_runner=_awaitable_result(summary="Opened calculator"),
     )
     client = _make_runtime_launch_app(service, registry)
 
     response = client.post(
         "/tasks/runs",
-        json={"kind": "opengui_launch_app", "app_id": "calculator", "backend": "dry-run"},
+        json={"kind": "guiclaw_launch_app", "app_id": "calculator", "backend": "dry-run"},
     )
 
     assert response.status_code == 202
@@ -177,7 +177,7 @@ def test_launch_endpoint_returns_registry_backed_run_id_immediately() -> None:
 
     run = registry.get_run(payload["run_id"])
     assert run is not None
-    assert run.task_kind == "opengui_launch_app"
+    assert run.task_kind == "guiclaw_launch_app"
     assert run.status in {"queued", "running", "succeeded"}
 
 
@@ -200,7 +200,7 @@ def test_launch_runs_transition_through_registry_states() -> None:
     service = TaskLaunchService(
         registry=tracking_registry,
         nanobot_runner=_awaitable_result(summary="Opened privacy settings", steps_taken=4),
-        opengui_runner=_awaitable_result(summary="Opened calculator"),
+        guiclaw_runner=_awaitable_result(summary="Opened calculator"),
     )
     client = _make_runtime_launch_app(service, tracking_registry)
     response = client.post(
@@ -234,14 +234,14 @@ def test_launch_failures_surface_in_runtime_inspection() -> None:
     service = TaskLaunchService(
         registry=registry,
         nanobot_runner=_awaitable_result(summary="Opened docs"),
-        opengui_runner=_failing_runner,
+        guiclaw_runner=_failing_runner,
     )
     client = _make_runtime_launch_app(service, registry)
 
     response = client.post(
         "/tasks/runs",
         json={
-            "kind": "opengui_open_settings",
+            "kind": "guiclaw_open_settings",
             "panel": "network",
             "backend": "dry-run",
         },

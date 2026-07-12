@@ -21,8 +21,8 @@ key-files:
     - nanobot/agent/capabilities.py
     - nanobot/agent/planner.py
     - nanobot/agent/loop.py
-    - tests/test_opengui_p21_planner_context.py
-    - tests/test_opengui_p8_planning.py
+    - tests/test_guiclaw_p21_planner_context.py
+    - tests/test_guiclaw_p8_planning.py
 key-decisions:
   - "Routing memory stays planner-only and read-only by extracting compact DTOs from MemoryStore instead of reusing ContextBuilder or get_memory_context()."
   - "Planner prompts render routing memory in a separate capped section with explicit omission text once hint count or budget limits are hit."
@@ -64,8 +64,8 @@ Each task was committed atomically:
 - `nanobot/agent/capabilities.py` - `PlanningContext` typing updated to carry hint DTOs
 - `nanobot/agent/planner.py` - bounded `Routing memory hints:` prompt section with omission marker
 - `nanobot/agent/loop.py` - routing-hint extraction before `planner.plan(...)`
-- `tests/test_opengui_p21_planner_context.py` - red/green coverage for hint extraction, exclusion, and prompt guardrails
-- `tests/test_opengui_p8_planning.py` - `_plan_and_execute()` regression coverage for injected memory hints
+- `tests/test_guiclaw_p21_planner_context.py` - red/green coverage for hint extraction, exclusion, and prompt guardrails
+- `tests/test_guiclaw_p8_planning.py` - `_plan_and_execute()` regression coverage for injected memory hints
 
 ## Decisions Made
 - `PlanningMemoryHintExtractor` reads `MEMORY.md` plus a bounded tail of `HISTORY.md`, but only keeps snippets containing route evidence and outcome language.
@@ -81,7 +81,7 @@ Each task was committed atomically:
 - **Issue:** `PlanningContext.memory_hints` still used `tuple[str, ...]`, which no longer matched the plan's planner-only hint DTO contract.
 - **Fix:** Updated `nanobot/agent/capabilities.py` to carry `PlanningMemoryHint` instances through the existing planning-context seam.
 - **Files modified:** `nanobot/agent/capabilities.py`
-- **Verification:** `uv run pytest -q tests/test_opengui_p8_planning.py tests/test_mcp_tool.py tests/test_opengui_p21_planner_context.py`
+- **Verification:** `uv run pytest -q tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py tests/test_guiclaw_p21_planner_context.py`
 - **Committed in:** `d954583`
 
 ---

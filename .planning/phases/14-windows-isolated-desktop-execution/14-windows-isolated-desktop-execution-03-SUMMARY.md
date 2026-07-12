@@ -18,7 +18,7 @@ tech-stack:
   patterns: [probe.backend_name host dispatch, wrapped backend shutdown in finally, preserved JSON failure metadata]
 key-files:
   created: []
-  modified: [opengui/cli.py, nanobot/agent/tools/gui.py, tests/test_opengui_p5_cli.py, tests/test_opengui_p11_integration.py]
+  modified: [guiclaw/cli.py, nanobot/agent/tools/gui.py, tests/test_guiclaw_p5_cli.py, tests/test_guiclaw_p11_integration.py]
 key-decisions:
   - "Both host entry points dispatch isolated execution from probe.backend_name instead of raw platform branching."
   - "Nanobot preserves cleanup_reason= and display_id= tokens by returning RuntimeError text through the existing background JSON failure payload."
@@ -57,10 +57,10 @@ completed: 2026-03-20
 _Note: TDD tasks used test → feat commits._
 
 ## Files Created/Modified
-- `opengui/cli.py` - adds Windows isolated manager selection and backend wrapping in the CLI path.
+- `guiclaw/cli.py` - adds Windows isolated manager selection and backend wrapping in the CLI path.
 - `nanobot/agent/tools/gui.py` - adds Windows isolated manager selection, wrapper dispatch, and RuntimeError-to-JSON handling.
-- `tests/test_opengui_p5_cli.py` - covers CLI Windows isolated dispatch, remediation ordering, and target-surface metadata logging.
-- `tests/test_opengui_p11_integration.py` - covers nanobot Windows isolated dispatch, blocked non-interactive JSON, and cleanup metadata preservation.
+- `tests/test_guiclaw_p5_cli.py` - covers CLI Windows isolated dispatch, remediation ordering, and target-surface metadata logging.
+- `tests/test_guiclaw_p11_integration.py` - covers nanobot Windows isolated dispatch, blocked non-interactive JSON, and cleanup metadata preservation.
 
 ## Decisions Made
 - Use `probe.backend_name` as the only post-probe selection key in both host entry points so Phase 12/14 runtime contracts stay aligned.

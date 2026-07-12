@@ -2,7 +2,7 @@
 phase: 27-storage-search-agent-integration
 plan: 02
 subsystem: integration
-tags: [opengui, nanobot, skills, memory, tdd, integration]
+tags: [guiclaw, nanobot, skills, memory, tdd, integration]
 requires:
   - phase: 27-storage-search-agent-integration
     provides: "Unified skill stores and layer-aware search results from Plan 01"
@@ -17,9 +17,9 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/agent.py
+    - guiclaw/agent.py
     - nanobot/agent/tools/gui.py
-    - tests/test_opengui_p27_storage_search_agent.py
+    - tests/test_guiclaw_p27_storage_search_agent.py
 key-decisions:
   - "Keep the legacy skill_library path in GuiAgent for maintenance and fallback while preferring UnifiedSkillSearch when provided."
   - "Reuse the same MemoryStore load in GuiSubagentTool for policy prompt context and TaskSkill memory-context injection."
@@ -60,8 +60,8 @@ Each task was committed atomically:
 _Note: Task 1 used TDD and therefore produced separate RED and GREEN commits._
 
 ## Files Created/Modified
-- `tests/test_opengui_p27_storage_search_agent.py` - Added Phase 27 agent-integration regression coverage.
-- `opengui/agent.py` - Added unified search wiring, layer logging, TaskSkill memory injection, and mixed-shape match handling.
+- `tests/test_guiclaw_p27_storage_search_agent.py` - Added Phase 27 agent-integration regression coverage.
+- `guiclaw/agent.py` - Added unified search wiring, layer logging, TaskSkill memory injection, and mixed-shape match handling.
 - `nanobot/agent/tools/gui.py` - Added `UnifiedSkillSearch` construction and shared `MemoryStore` wiring into `GuiAgent`.
 
 ## Decisions Made
@@ -84,8 +84,8 @@ _Note: Task 1 used TDD and therefore produced separate RED and GREEN commits._
 - **Found during:** Closeout verification after Task 1/Task 2
 - **Issue:** Mocked or malformed skill execution results could surface a non-string `execution_summary`, which then broke prompt construction in the fallback agent loop.
 - **Fix:** Treated `execution_summary` as optional and only propagated it when it is a real string.
-- **Files modified:** `opengui/agent.py`
-- **Verification:** `uv run pytest tests/test_opengui_p2_integration.py::test_skill_path_chosen_above_threshold tests/test_opengui_p2_integration.py::test_full_flow_with_mock_llm -q`
+- **Files modified:** `guiclaw/agent.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p2_integration.py::test_skill_path_chosen_above_threshold tests/test_guiclaw_p2_integration.py::test_full_flow_with_mock_llm -q`
 - **Committed in:** `16f79b8`
 
 ---
@@ -108,7 +108,7 @@ None - no external service configuration required.
 
 PASSED
 - Found summary artifact on disk.
-- Found `opengui/agent.py`, `nanobot/agent/tools/gui.py`, and `tests/test_opengui_p27_storage_search_agent.py`.
+- Found `guiclaw/agent.py`, `nanobot/agent/tools/gui.py`, and `tests/test_guiclaw_p27_storage_search_agent.py`.
 - Verified task commits exist in git history: `c15ed5d`, `548effd`, `2e7932c`, `16f79b8`.
 
 ---

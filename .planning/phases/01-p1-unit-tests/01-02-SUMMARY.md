@@ -22,7 +22,7 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p1_skills.py
+    - tests/test_guiclaw_p1_skills.py
   modified: []
 
 key-decisions:
@@ -49,7 +49,7 @@ completed: 2026-03-17
 
 ## Accomplishments
 
-- Created `tests/test_opengui_p1_skills.py` with 18 tests (491 lines), covering all TEST-03 requirements
+- Created `tests/test_guiclaw_p1_skills.py` with 18 tests (491 lines), covering all TEST-03 requirements
 - Verified all 39 tests (8 P0 + 13 memory + 18 skills) pass with no failures
 - All tests run with no network calls, real LLM, or real device — only DryRunBackend + fake helpers
 
@@ -85,7 +85,7 @@ completed: 2026-03-17
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p1_skills.py` — 18 unit tests, 491 lines
+- `tests/test_guiclaw_p1_skills.py` — 18 unit tests, 491 lines
 
 ## Decisions Made
 

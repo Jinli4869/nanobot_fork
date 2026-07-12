@@ -3,12 +3,12 @@ created: 2026-03-20T02:44:44.490Z
 title: Background GUI execution with user intervention handoff
 area: agent
 files:
-  - opengui/agent.py
-  - opengui/backends/desktop.py
-  - opengui/backends/adb.py
-  - opengui/action.py
-  - opengui/trajectory/recorder.py
-  - opengui/interfaces.py
+  - guiclaw/agent.py
+  - guiclaw/backends/desktop.py
+  - guiclaw/backends/adb.py
+  - guiclaw/action.py
+  - guiclaw/trajectory/recorder.py
+  - guiclaw/interfaces.py
 ---
 
 ## Problem
@@ -194,7 +194,7 @@ files:
 ## Implementation Roadmap
 
 ### Phase 1: 后台执行基础设施
-- 新建 `opengui/backends/virtual_display.py`
+- 新建 `guiclaw/backends/virtual_display.py`
 - 实现 `VirtualDisplayManager` 协议 + macOS/Windows/Linux 实现
 - `DesktopBackend` 增加 `background_mode` 参数
 - Android: 模拟器 headless 模式支持 (`emulator -no-window`)
@@ -206,7 +206,7 @@ files:
 - `InterventionPolicy` 确定性策略层
 
 ### Phase 3: 通知与 Handoff
-- `opengui/notification.py` — 跨平台通知
+- `guiclaw/notification.py` — 跨平台通知
 - `InterventionHandler` 协议 (interfaces.py)
 - 窗口焦点保存/恢复（桌面）/ scrcpy 弹出（Android）
 - trajectory 记录介入事件

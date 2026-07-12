@@ -16,7 +16,7 @@ key-files:
   created:
     - .planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-02-SUMMARY.md
   modified:
-    - tests/test_opengui_p11_integration.py
+    - tests/test_guiclaw_p11_integration.py
 key-decisions:
   - "Phase 16 Plan 02 stayed test-only because nanobot already preserved the required fallback guidance, cleanup tokens, and scrubbed intervention behavior."
 patterns-established:
@@ -53,7 +53,7 @@ This inline Codex execution did not create git commits.
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p11_integration.py` - Added Phase 16 nanobot parity coverage for shared decision tokens, cleanup evidence, and scrubbed intervention output.
+- `tests/test_guiclaw_p11_integration.py` - Added Phase 16 nanobot parity coverage for shared decision tokens, cleanup evidence, and scrubbed intervention output.
 - `.planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-02-SUMMARY.md` - Recorded Wave 1 nanobot completion details.
 
 ## Decisions Made
@@ -78,6 +78,6 @@ None - no external service configuration required.
 
 ## Self-Check: PASSED
 
-- Found `tests/test_opengui_p11_integration.py`.
+- Found `tests/test_guiclaw_p11_integration.py`.
 - Verified the Phase 16 nanobot test slice passed.
 - Found `.planning/phases/16-host-integration-and-verification/16-host-integration-and-verification-02-SUMMARY.md`.

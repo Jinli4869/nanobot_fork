@@ -15,8 +15,8 @@ key_files:
   modified:
     - nanobot/agent/planner.py
     - nanobot/agent/router.py
-    - tests/test_opengui_p8_planning.py
-    - tests/test_opengui_p22_route_dispatch.py
+    - tests/test_guiclaw_p8_planning.py
+    - tests/test_guiclaw_p22_route_dispatch.py
 decisions:
   - "PlanNode.params placed before children in field order so atom-only fields are grouped together"
   - "to_dict() omits params key entirely when None (sparse serialisation preserves backward compat)"
@@ -39,8 +39,8 @@ metrics:
 
 | Task | Name | Commit | Key Files |
 |------|------|--------|-----------|
-| 1 | Add params field to PlanNode + LLM schema and prompt guidance | 2f63f1b | nanobot/agent/planner.py, tests/test_opengui_p8_planning.py |
-| 2 | Update router dispatch to prefer node.params over instruction fallback | 76e6b2b | nanobot/agent/router.py, tests/test_opengui_p22_route_dispatch.py |
+| 1 | Add params field to PlanNode + LLM schema and prompt guidance | 2f63f1b | nanobot/agent/planner.py, tests/test_guiclaw_p8_planning.py |
+| 2 | Update router dispatch to prefer node.params over instruction fallback | 76e6b2b | nanobot/agent/router.py, tests/test_guiclaw_p22_route_dispatch.py |
 
 ## What Was Built
 
@@ -97,9 +97,9 @@ Skip condition changed from `param_key is None` to `param_key is None and node.p
 
 | Suite | Tests | Result |
 |-------|-------|--------|
-| test_opengui_p8_planning.py | 8 new + 19 existing = 27 | all pass |
-| test_opengui_p22_route_dispatch.py | 8 new + 49 existing = 57 | all pass (wait — see below) |
-| test_opengui_p21_planner_context.py | 15 existing | all pass |
+| test_guiclaw_p8_planning.py | 8 new + 19 existing = 27 | all pass |
+| test_guiclaw_p22_route_dispatch.py | 8 new + 49 existing = 57 | all pass (wait — see below) |
+| test_guiclaw_p21_planner_context.py | 15 existing | all pass |
 | **Total** | **72** | **all pass** |
 
 ## Self-Check: PASSED
@@ -107,8 +107,8 @@ Skip condition changed from `param_key is None` to `param_key is None and node.p
 Files exist:
 - nanobot/agent/planner.py — FOUND
 - nanobot/agent/router.py — FOUND
-- tests/test_opengui_p8_planning.py — FOUND
-- tests/test_opengui_p22_route_dispatch.py — FOUND
+- tests/test_guiclaw_p8_planning.py — FOUND
+- tests/test_guiclaw_p22_route_dispatch.py — FOUND
 
 Commits exist:
 - d0606e5 — test RED Task 1

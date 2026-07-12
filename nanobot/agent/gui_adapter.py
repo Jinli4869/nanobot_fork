@@ -1,4 +1,4 @@
-"""Adapter bridge from nanobot providers to opengui protocols."""
+"""Adapter bridge from nanobot providers to guiclaw protocols."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from typing import Any
 import numpy as np
 
 from nanobot.providers.base import LLMProvider as NanobotLLMProvider
-from opengui.interfaces import LLMResponse as OpenGuiLLMResponse
-from opengui.interfaces import ToolCall
+from guiclaw.interfaces import LLMResponse as GUIClawLLMResponse
+from guiclaw.interfaces import ToolCall
 
 
 class NanobotLLMAdapter:
-    """Wrap a nanobot LLM provider with opengui's chat interface.
+    """Wrap a nanobot LLM provider with guiclaw's chat interface.
 
     When ``capture_ttft`` is True, the adapter routes through
     ``chat_stream_with_retry`` so the first text delta timestamp can be
@@ -48,7 +48,7 @@ class NanobotLLMAdapter:
         tool_choice: str | None = None,
         model: str | None = None,
         max_tokens: int | None = None,
-    ) -> OpenGuiLLMResponse:
+    ) -> GUIClawLLMResponse:
         effective_max_tokens = max_tokens if max_tokens is not None else self._max_tokens
         kwargs: dict[str, Any] = dict(
             messages=messages,
@@ -83,7 +83,7 @@ class NanobotLLMAdapter:
             ToolCall(id=call.id, name=call.name, arguments=call.arguments)
             for call in (nano_resp.tool_calls or [])
         ] or None
-        return OpenGuiLLMResponse(
+        return GUIClawLLMResponse(
             content=nano_resp.content or "",
             tool_calls=tool_calls,
             raw=nano_resp,
@@ -94,7 +94,7 @@ class NanobotLLMAdapter:
 
 
 class NanobotEmbeddingAdapter:
-    """Wrap an async embedding callable with opengui's embed interface."""
+    """Wrap an async embedding callable with guiclaw's embed interface."""
 
     def __init__(self, embed_fn: Callable[[list[str]], Awaitable[np.ndarray]]) -> None:
         self._embed_fn = embed_fn

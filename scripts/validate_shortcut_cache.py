@@ -25,11 +25,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, quote_plus, urlparse, urlunparse
 
-from opengui.skills.deeplink import (
+from guiclaw.skills.deeplink import (
     AppShortcutProfile,
     add_validated_shortcut_skill,
 )
-from opengui.skills.flat import FlatSkillLibrary
+from guiclaw.skills.flat import FlatSkillLibrary
 
 
 VIEW_ACTION = "android.intent.action.VIEW"

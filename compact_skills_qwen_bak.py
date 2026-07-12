@@ -1,4 +1,4 @@
-from opengui.skills.flat import C, R, action, skill, tag
+from guiclaw.skills.flat import C, R, action, skill, tag
 
 
 @skill(app='com.android.camera2', platform='android', tags=['compact', 'compact_extracted'], skill_id='compact:com.android.camera2:take_photo', name='take_photo', description='Opens the camera application and captures a photo by tapping the shutter button.', created_at=1780854017.3433895, success_count=1, success_streak=1)

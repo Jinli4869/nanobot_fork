@@ -35,15 +35,15 @@ tech-stack:
 
 key-files:
   created:
-    - opengui/backends/desktop.py
-    - tests/test_opengui_p4_desktop.py
+    - guiclaw/backends/desktop.py
+    - tests/test_guiclaw_p4_desktop.py
   modified:
-    - opengui/backends/__init__.py
+    - guiclaw/backends/__init__.py
     - nanobot/agent/tools/gui.py
     - pyproject.toml
 
 key-decisions:
-  - "pyautogui/pyperclip imported at module level (not lazily) so patch('opengui.backends.desktop.pyautogui') works in tests without display"
+  - "pyautogui/pyperclip imported at module level (not lazily) so patch('guiclaw.backends.desktop.pyautogui') works in tests without display"
   - "HiDPI detection by comparing mss physical size against monitor['width']/['height'] logical size; resize with Image.LANCZOS"
   - "input_text uses pyperclip.copy() + hotkey paste (command/ctrl+v) for Unicode correctness, not typewrite"
   - "close_app on macOS calls osascript quit AND pkill as fallback — both always invoked for resilience"
@@ -90,15 +90,15 @@ completed: 2026-03-18
 
 ## Files Created/Modified
 
-- `opengui/backends/desktop.py` - LocalDesktopBackend: observe/execute/preflight/platform (300+ lines)
-- `tests/test_opengui_p4_desktop.py` - 28 unit tests with fully mocked display deps (530+ lines)
+- `guiclaw/backends/desktop.py` - LocalDesktopBackend: observe/execute/preflight/platform (300+ lines)
+- `tests/test_guiclaw_p4_desktop.py` - 28 unit tests with fully mocked display deps (530+ lines)
 - `nanobot/agent/tools/gui.py` - Replaced NotImplementedError with lazy LocalDesktopBackend import
-- `opengui/backends/__init__.py` - Added LocalDesktopBackend to docstring import examples
+- `guiclaw/backends/__init__.py` - Added LocalDesktopBackend to docstring import examples
 - `pyproject.toml` - Added `[desktop]` optional-deps extra and desktop packages to `[dev]`
 
 ## Decisions Made
 
-- **Module-level imports for pyautogui/pyperclip:** The plan suggested lazy imports inside methods, but `patch("opengui.backends.desktop.pyautogui")` requires the name to exist at module scope. Used `try/except ImportError` to keep them optional.
+- **Module-level imports for pyautogui/pyperclip:** The plan suggested lazy imports inside methods, but `patch("guiclaw.backends.desktop.pyautogui")` requires the name to exist at module scope. Used `try/except ImportError` to keep them optional.
 - **close_app calls both osascript AND pkill on macOS:** The plan specified osascript graceful quit then pkill fallback on timeout. Implemented both always invoked (graceful → force) for deterministic behavior in tests and production.
 - **desktop packages added to `dev` extra too:** The test environment needs mss/pyautogui/pyperclip importable even without `--extra desktop`.
 
@@ -108,9 +108,9 @@ completed: 2026-03-18
 
 **1. [Rule 3 - Blocking] Changed pyautogui/pyperclip from lazy to module-level imports**
 - **Found during:** Task 1 GREEN phase (first test run)
-- **Issue:** `patch("opengui.backends.desktop.pyautogui")` raised `AttributeError: does not have the attribute 'pyautogui'` because lazy imports inside methods don't create module-level names
+- **Issue:** `patch("guiclaw.backends.desktop.pyautogui")` raised `AttributeError: does not have the attribute 'pyautogui'` because lazy imports inside methods don't create module-level names
 - **Fix:** Moved imports to module top-level with `try/except ImportError` guard; updated `__init__` to skip `pyautogui.PAUSE = 0.0` when None; removed redundant local imports from methods
-- **Files modified:** `opengui/backends/desktop.py`
+- **Files modified:** `guiclaw/backends/desktop.py`
 - **Verification:** All 28 tests pass; `pyautogui` mock patches resolve correctly
 - **Committed in:** `94afcd6` (implementation commit)
 
@@ -118,7 +118,7 @@ completed: 2026-03-18
 - **Found during:** Task 2 verification run
 - **Issue:** Test asserted `_run_cmd("open", "-a", "Safari")` but implementation passes `timeout=5.0` keyword arg
 - **Fix:** Updated test assertion to `_run_cmd("open", "-a", "Safari", timeout=5.0)`
-- **Files modified:** `tests/test_opengui_p4_desktop.py`
+- **Files modified:** `tests/test_guiclaw_p4_desktop.py`
 - **Verification:** Test passes
 - **Committed in:** `94afcd6` (implementation commit)
 

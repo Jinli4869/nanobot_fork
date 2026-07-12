@@ -11,7 +11,7 @@
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │                 GUI task execution entrypoint               │
-│      nanobot GuiSubagentTool / OpenGUI GuiAgent run()      │
+│      nanobot GuiSubagentTool / GUIClaw GuiAgent run()      │
 └──────────────────────────────┬───────────────────────────────┘
                                │
                                v
@@ -49,7 +49,7 @@
 ## Recommended Project Structure
 
 ```text
-opengui/
+guiclaw/
 ├── skills/
 │   ├── shortcut.py              # Canonical shortcut contract
 │   ├── shortcut_extractor.py    # Promotion pipeline and critics
@@ -65,7 +65,7 @@ nanobot/
 
 ### Structure Rationale
 
-- **`opengui/skills/` stays the canonical ownership boundary:** v1.6 is about finishing the new shortcut architecture, not scattering shortcut rules across host layers.
+- **`guiclaw/skills/` stays the canonical ownership boundary:** v1.6 is about finishing the new shortcut architecture, not scattering shortcut rules across host layers.
 - **`nanobot/agent/tools/gui.py` remains the production integration seam:** it already owns run artifacts, extraction scheduling, and evaluation hooks.
 
 ## Architectural Patterns
@@ -135,16 +135,16 @@ Task + current app/screen
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| `nanobot/agent/tools/gui.py` <-> `opengui.skills.*` | direct imports and structured calls | Keep host integration thin; shortcut semantics live in OpenGUI |
+| `nanobot/agent/tools/gui.py` <-> `guiclaw.skills.*` | direct imports and structured calls | Keep host integration thin; shortcut semantics live in GUIClaw |
 | `GuiAgent` <-> `UnifiedSkillSearch` | ranked candidate lookup | Extend to include current-screen-aware selection behavior |
 | `GuiAgent` / executors <-> trajectory recorder | structured events | Needed for diagnosable shortcut health and stability |
 
 ## Sources
 
 - `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/shortcut_extractor.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/multi_layer_executor.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/shortcut_extractor.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/multi_layer_executor.py`
 - `/Users/jinli/Documents/Personal/AppAgentX/deployment.py`
 
 ---

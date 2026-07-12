@@ -181,7 +181,7 @@ dev = [
 [project.scripts]
 nanobot = "nanobot.cli.commands:app"
 nanobot-tui = "nanobot.tui.__main__:main"
-opengui = "opengui.cli:main"
+guiclaw = "guiclaw.cli:main"
 
 # Third-party tool plugins register here.  Built-in tools are discovered
 # automatically via pkgutil scanning in ToolLoader.discover().
@@ -201,8 +201,8 @@ allow-direct-references = true
 [tool.hatch.build]
 include = [
     "nanobot/**/*.py",
-    "opengui/**/*.py",
-    "opengui/assets/**/*",
+    "guiclaw/**/*.py",
+    "guiclaw/assets/**/*",
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
@@ -218,16 +218,16 @@ artifacts = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["nanobot", "opengui"]
+packages = ["nanobot", "guiclaw"]
 
 [tool.hatch.build.targets.wheel.sources]
 "nanobot" = "nanobot"
-"opengui" = "opengui"
+"guiclaw" = "guiclaw"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
-    "opengui/",
+    "guiclaw/",
     "bridge/",
     "nanobot/web/dist/",
     "hatch_build.py",

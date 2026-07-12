@@ -6,11 +6,11 @@
 
 ## Summary
 
-Phase 11 is pure integration and test wiring work. No new backend or display logic is invented — the task is to connect `BackgroundDesktopBackend` + `XvfbDisplayManager` (built in Phases 9–10) into two entry points: the standalone CLI (`opengui/cli.py`) and nanobot's `GuiSubagentTool` (`nanobot/agent/tools/gui.py` + `nanobot/config/schema.py`). The fifth deliverable is a CI-safe test suite covering all new code paths.
+Phase 11 is pure integration and test wiring work. No new backend or display logic is invented — the task is to connect `BackgroundDesktopBackend` + `XvfbDisplayManager` (built in Phases 9–10) into two entry points: the standalone CLI (`guiclaw/cli.py`) and nanobot's `GuiSubagentTool` (`nanobot/agent/tools/gui.py` + `nanobot/config/schema.py`). The fifth deliverable is a CI-safe test suite covering all new code paths.
 
-The codebase is well-structured for this work. All integration points are already identified: `parse_args()` / `run_cli()` in cli.py, `GuiConfig` in schema.py, and `GuiSubagentTool._build_backend()` / `execute()` in gui.py. The Phase 10 test file (`test_opengui_p10_background.py`) establishes the mock helper and try/finally DISPLAY patterns that must be reused. The existing test suite runs 663 tests with 1 pre-existing unrelated failure; regressions in this suite are the acceptance gate.
+The codebase is well-structured for this work. All integration points are already identified: `parse_args()` / `run_cli()` in cli.py, `GuiConfig` in schema.py, and `GuiSubagentTool._build_backend()` / `execute()` in gui.py. The Phase 10 test file (`test_guiclaw_p10_background.py`) establishes the mock helper and try/finally DISPLAY patterns that must be reused. The existing test suite runs 663 tests with 1 pre-existing unrelated failure; regressions in this suite are the acceptance gate.
 
-**Primary recommendation:** Extend existing files rather than creating new ones — add to `test_opengui_p5_cli.py` for CLI, create `test_opengui_p11_integration.py` for nanobot/GuiConfig coverage. Use `NoOpDisplayManager` (already in `opengui.backends.virtual_display`) as the universal test mock; never use `XvfbDisplayManager` in tests.
+**Primary recommendation:** Extend existing files rather than creating new ones — add to `test_guiclaw_p5_cli.py` for CLI, create `test_guiclaw_p11_integration.py` for nanobot/GuiConfig coverage. Use `NoOpDisplayManager` (already in `guiclaw.backends.virtual_display`) as the universal test mock; never use `XvfbDisplayManager` in tests.
 
 <user_constraints>
 ## User Constraints (from CONTEXT.md)
@@ -39,7 +39,7 @@ The codebase is well-structured for this work. All integration points are alread
 - Same fallback behavior in nanobot path: if `background=true` and platform is not Linux, log warning and skip wrapping
 
 **Test strategy**
-- CLI background tests extend `tests/test_opengui_p5_cli.py`
+- CLI background tests extend `tests/test_guiclaw_p5_cli.py`
 - Nanobot background tests extend existing nanobot GUI test files
 - Mock `XvfbDisplayManager` with `NoOpDisplayManager` or a mock — do NOT mock at `asyncio.subprocess` boundary
 - Both unit tests (build_backend wrapping logic, config parsing, validation) and integration tests (full `run_cli` path with `--background` and mock agent)
@@ -92,7 +92,7 @@ None — discussion stayed within phase scope
 
 ### Recommended Project Structure
 ```
-opengui/
+guiclaw/
 ├── cli.py                          # Add --background flags to parse_args(), CliConfig, run_cli()
 ├── backends/
 │   ├── background.py               # Unchanged (Phase 10)
@@ -106,8 +106,8 @@ nanobot/
     └── tools/
         └── gui.py                  # Extend execute() with background wrapping
 tests/
-├── test_opengui_p5_cli.py          # Extend with --background CLI tests
-└── test_opengui_p11_integration.py # New file: GuiConfig schema + nanobot execute() tests
+├── test_guiclaw_p5_cli.py          # Extend with --background CLI tests
+└── test_guiclaw_p11_integration.py # New file: GuiConfig schema + nanobot execute() tests
 ```
 
 ### Pattern 1: CLI argparse + CliConfig extension
@@ -162,8 +162,8 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
                 "Background mode (Xvfb) is Linux-only; running in foreground on %s", sys.platform
             )
         else:
-            from opengui.backends.background import BackgroundDesktopBackend
-            from opengui.backends.displays.xvfb import XvfbDisplayManager
+            from guiclaw.backends.background import BackgroundDesktopBackend
+            from guiclaw.backends.displays.xvfb import XvfbDisplayManager
             display_num = args.display_num or 99
             width = args.width or 1280
             height = args.height or 720
@@ -221,8 +221,8 @@ class GuiConfig(Base):
 **Example:**
 ```python
 async def execute(self, task: str, backend: str | None = None, **kwargs: Any) -> str:
-    from opengui.agent import GuiAgent
-    from opengui.trajectory.recorder import TrajectoryRecorder
+    from guiclaw.agent import GuiAgent
+    from guiclaw.trajectory.recorder import TrajectoryRecorder
 
     active_backend = self._select_backend(backend)
 
@@ -236,8 +236,8 @@ async def execute(self, task: str, backend: str | None = None, **kwargs: Any) ->
                 sys.platform,
             )
         else:
-            from opengui.backends.background import BackgroundDesktopBackend
-            from opengui.backends.displays.xvfb import XvfbDisplayManager
+            from guiclaw.backends.background import BackgroundDesktopBackend
+            from guiclaw.backends.displays.xvfb import XvfbDisplayManager
             display_num = self._gui_config.display_num or 99
             mgr = XvfbDisplayManager(
                 display_num=display_num,
@@ -256,14 +256,14 @@ async def execute(self, task: str, backend: str | None = None, **kwargs: Any) ->
 
 ### Pattern 4: Test structure for background CLI tests
 
-**What:** Extend `test_opengui_p5_cli.py` with tests for `parse_args()` (new flags), `resolve_backend_name()` with `--background`, and `run_cli()` with `--background` using `monkeypatch` to replace `BackgroundDesktopBackend` and `XvfbDisplayManager`.
+**What:** Extend `test_guiclaw_p5_cli.py` with tests for `parse_args()` (new flags), `resolve_backend_name()` with `--background`, and `run_cli()` with `--background` using `monkeypatch` to replace `BackgroundDesktopBackend` and `XvfbDisplayManager`.
 
-**Key mock approach (CONTEXT.md decision):** Mock `XvfbDisplayManager` with `NoOpDisplayManager` — do NOT mock at `asyncio.subprocess` boundary. This means tests patch `XvfbDisplayManager` in `cli` module namespace OR patch the constructor in `opengui.backends.displays.xvfb`.
+**Key mock approach (CONTEXT.md decision):** Mock `XvfbDisplayManager` with `NoOpDisplayManager` — do NOT mock at `asyncio.subprocess` boundary. This means tests patch `XvfbDisplayManager` in `cli` module namespace OR patch the constructor in `guiclaw.backends.displays.xvfb`.
 
 ```python
-# In test_opengui_p5_cli.py — new test for --background parse
+# In test_guiclaw_p5_cli.py — new test for --background parse
 def test_cli_parses_background_flags() -> None:
-    import opengui.cli as cli
+    import guiclaw.cli as cli
 
     args = cli.parse_args(["--background", "--task", "Open Settings"])
     assert args.background is True
@@ -281,7 +281,7 @@ def test_cli_parses_background_flags() -> None:
 ```
 
 ```python
-# In test_opengui_p11_integration.py — GuiConfig validation test
+# In test_guiclaw_p11_integration.py — GuiConfig validation test
 def test_guiconfig_background_requires_local_backend() -> None:
     from nanobot.config.schema import GuiConfig
     from pydantic import ValidationError
@@ -340,11 +340,11 @@ def test_guiconfig_background_requires_local_backend() -> None:
 **How to avoid:** Check `sys.platform == "linux"` before importing/constructing `XvfbDisplayManager`. Tests that pass `--background` args on macOS CI must monkeypatch `BackgroundDesktopBackend` or test the non-Linux fallback path explicitly.
 **Warning signs:** `XvfbNotFoundError` in CI test output.
 
-### Pitfall 5: test_opengui_p5_cli.py monkeypatch scope for BackgroundDesktopBackend
+### Pitfall 5: test_guiclaw_p5_cli.py monkeypatch scope for BackgroundDesktopBackend
 **What goes wrong:** `BackgroundDesktopBackend` and `XvfbDisplayManager` are not currently imported at the module level in `cli.py` — they're lazy-imported inside `run_cli()`. `monkeypatch.setattr(cli, "BackgroundDesktopBackend", ...)` will fail if the name doesn't exist in the module namespace at patch time.
 **Why it happens:** Lazy imports (inside function body) mean the name is not a module-level attribute.
-**How to avoid:** Two options: (a) import `BackgroundDesktopBackend` at module level in `cli.py` (conditional behind `TYPE_CHECKING` or always); OR (b) patch at the source module: `monkeypatch.setattr("opengui.backends.background.BackgroundDesktopBackend", ...)`. Option (a) is simpler. Check how `LocalDesktopBackend` is handled — it's a module-level `None` that gets replaced by lazy import.
-**Warning signs:** `AttributeError: <module 'opengui.cli'> does not have attribute 'BackgroundDesktopBackend'`.
+**How to avoid:** Two options: (a) import `BackgroundDesktopBackend` at module level in `cli.py` (conditional behind `TYPE_CHECKING` or always); OR (b) patch at the source module: `monkeypatch.setattr("guiclaw.backends.background.BackgroundDesktopBackend", ...)`. Option (a) is simpler. Check how `LocalDesktopBackend` is handled — it's a module-level `None` that gets replaced by lazy import.
+**Warning signs:** `AttributeError: <module 'guiclaw.cli'> does not have attribute 'BackgroundDesktopBackend'`.
 
 ## Code Examples
 
@@ -352,9 +352,9 @@ Verified patterns from project source code:
 
 ### Extending argparse in parse_args() — current pattern
 ```python
-# Source: opengui/cli.py line 177
+# Source: guiclaw/cli.py line 177
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="python -m opengui.cli")
+    parser = argparse.ArgumentParser(prog="python -m guiclaw.cli")
     # ... existing flags ...
     parser.add_argument("--dry-run", action="store_true", help="Shortcut for --backend dry-run")
     # New --background flag follows the same pattern as --dry-run
@@ -366,7 +366,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 ### resolve_backend_name() — must be extended
 ```python
-# Source: opengui/cli.py line 213
+# Source: guiclaw/cli.py line 213
 def resolve_backend_name(args: argparse.Namespace) -> str:
     return "dry-run" if args.dry_run else args.backend
     # Must become:
@@ -391,10 +391,10 @@ def _validate_something(self) -> "GuiConfig":
 
 ### NoOpDisplayManager as test replacement for XvfbDisplayManager
 ```python
-# Source: opengui/backends/virtual_display.py
+# Source: guiclaw/backends/virtual_display.py
 # NoOpDisplayManager satisfies VirtualDisplayManager protocol
 # returns DisplayInfo(display_id="noop", width=1280, height=720)
-from opengui.backends.virtual_display import NoOpDisplayManager
+from guiclaw.backends.virtual_display import NoOpDisplayManager
 
 mgr = NoOpDisplayManager(width=1280, height=720)
 backend = BackgroundDesktopBackend(inner, mgr)
@@ -404,7 +404,7 @@ async with backend:
 
 ### AsyncMock manager pattern from Phase 10
 ```python
-# Source: tests/test_opengui_p10_background.py line 27
+# Source: tests/test_guiclaw_p10_background.py line 27
 def _make_mock_manager(display_id: str = ":99", ...) -> AsyncMock:
     mgr = AsyncMock()
     mgr.start = AsyncMock(return_value=DisplayInfo(display_id=display_id, width=1920, height=1080))
@@ -414,7 +414,7 @@ def _make_mock_manager(display_id: str = ":99", ...) -> AsyncMock:
 
 ### monkeypatch for module-level None replacement (cli.py pattern)
 ```python
-# Source: tests/test_opengui_p5_cli.py line 114
+# Source: tests/test_guiclaw_p5_cli.py line 114
 monkeypatch.setattr(cli, "LocalDesktopBackend", FakeLocalDesktopBackend)
 # BackgroundDesktopBackend needs the same treatment:
 # In cli.py, add at module level: BackgroundDesktopBackend = None
@@ -442,9 +442,9 @@ monkeypatch.setattr(cli, "LocalDesktopBackend", FakeLocalDesktopBackend)
    - Recommendation: Extract a private `_execute_agent(task, config, backend, ...)` coroutine. This avoids repeating 20+ lines of agent assembly for the background vs non-background paths, and makes tests easier to target.
 
 3. **Test file for nanobot GuiConfig + execute() tests**
-   - What we know: CONTEXT.md says "extend existing nanobot GUI test files"; the existing file is `test_opengui_p3_nanobot.py`
+   - What we know: CONTEXT.md says "extend existing nanobot GUI test files"; the existing file is `test_guiclaw_p3_nanobot.py`
    - What's unclear: Whether to extend p3 or create a new p11 file
-   - Recommendation: Create `test_opengui_p11_integration.py` — it keeps Phase 11 coverage isolated and avoids making the already-large p3 file harder to read. The Phase 3 file tests protocol adapters; Phase 11 tests background wiring — different concerns.
+   - Recommendation: Create `test_guiclaw_p11_integration.py` — it keeps Phase 11 coverage isolated and avoids making the already-large p3 file harder to read. The Phase 3 file tests protocol adapters; Phase 11 tests background wiring — different concerns.
 
 ## Validation Architecture
 
@@ -453,38 +453,38 @@ monkeypatch.setattr(cli, "LocalDesktopBackend", FakeLocalDesktopBackend)
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio 1.3+ |
 | Config file | `pyproject.toml` `[tool.pytest.ini_options]` — `asyncio_mode = "auto"` |
-| Quick run command | `.venv/bin/pytest tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -x -q` |
+| Quick run command | `.venv/bin/pytest tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -x -q` |
 | Full suite command | `.venv/bin/pytest tests/ -q` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| INTG-01 | `parse_args()` accepts `--background`, `--display-num`, `--width`, `--height`; errors on `--backend adb` | unit | `.venv/bin/pytest tests/test_opengui_p5_cli.py::test_cli_parses_background_flags -x` | Wave 0 |
-| INTG-01 | `resolve_backend_name()` returns `"local"` when `--background` set | unit | `.venv/bin/pytest tests/test_opengui_p5_cli.py::test_background_implies_local_backend -x` | Wave 0 |
-| INTG-02 | `GuiConfig` accepts `background`, `display_num`, `display_width`, `display_height` | unit | `.venv/bin/pytest tests/test_opengui_p11_integration.py::test_guiconfig_background_fields -x` | Wave 0 |
-| INTG-02 | `GuiConfig` model_validator rejects `background=True` with non-local backend | unit | `.venv/bin/pytest tests/test_opengui_p11_integration.py::test_guiconfig_background_requires_local -x` | Wave 0 |
-| INTG-03 | `run_cli()` wraps backend in `BackgroundDesktopBackend` when `--background` set (Linux) | integration | `.venv/bin/pytest tests/test_opengui_p5_cli.py::test_run_cli_background_wraps_backend -x` | Wave 0 |
-| INTG-03 | `run_cli()` falls back to foreground on non-Linux with warning | unit | `.venv/bin/pytest tests/test_opengui_p5_cli.py::test_run_cli_background_nonlinux_fallback -x` | Wave 0 |
-| INTG-04 | `GuiSubagentTool.execute()` wraps backend in `BackgroundDesktopBackend` when `background=True` | integration | `.venv/bin/pytest tests/test_opengui_p11_integration.py::test_gui_tool_execute_background_wraps_backend -x` | Wave 0 |
-| INTG-04 | `GuiSubagentTool.execute()` skips wrapping on non-Linux with warning | unit | `.venv/bin/pytest tests/test_opengui_p11_integration.py::test_gui_tool_execute_background_nonlinux_fallback -x` | Wave 0 |
+| INTG-01 | `parse_args()` accepts `--background`, `--display-num`, `--width`, `--height`; errors on `--backend adb` | unit | `.venv/bin/pytest tests/test_guiclaw_p5_cli.py::test_cli_parses_background_flags -x` | Wave 0 |
+| INTG-01 | `resolve_backend_name()` returns `"local"` when `--background` set | unit | `.venv/bin/pytest tests/test_guiclaw_p5_cli.py::test_background_implies_local_backend -x` | Wave 0 |
+| INTG-02 | `GuiConfig` accepts `background`, `display_num`, `display_width`, `display_height` | unit | `.venv/bin/pytest tests/test_guiclaw_p11_integration.py::test_guiconfig_background_fields -x` | Wave 0 |
+| INTG-02 | `GuiConfig` model_validator rejects `background=True` with non-local backend | unit | `.venv/bin/pytest tests/test_guiclaw_p11_integration.py::test_guiconfig_background_requires_local -x` | Wave 0 |
+| INTG-03 | `run_cli()` wraps backend in `BackgroundDesktopBackend` when `--background` set (Linux) | integration | `.venv/bin/pytest tests/test_guiclaw_p5_cli.py::test_run_cli_background_wraps_backend -x` | Wave 0 |
+| INTG-03 | `run_cli()` falls back to foreground on non-Linux with warning | unit | `.venv/bin/pytest tests/test_guiclaw_p5_cli.py::test_run_cli_background_nonlinux_fallback -x` | Wave 0 |
+| INTG-04 | `GuiSubagentTool.execute()` wraps backend in `BackgroundDesktopBackend` when `background=True` | integration | `.venv/bin/pytest tests/test_guiclaw_p11_integration.py::test_gui_tool_execute_background_wraps_backend -x` | Wave 0 |
+| INTG-04 | `GuiSubagentTool.execute()` skips wrapping on non-Linux with warning | unit | `.venv/bin/pytest tests/test_guiclaw_p11_integration.py::test_gui_tool_execute_background_nonlinux_fallback -x` | Wave 0 |
 | TEST-V11-01 | All new tests pass without real Xvfb binary | suite | `.venv/bin/pytest tests/ -q` | Wave 0 gaps below |
 
 ### Sampling Rate
-- **Per task commit:** `.venv/bin/pytest tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -x -q`
+- **Per task commit:** `.venv/bin/pytest tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -x -q`
 - **Per wave merge:** `.venv/bin/pytest tests/ -q`
 - **Phase gate:** Full suite green (max 1 pre-existing failure in `test_tool_validation.py`) before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p11_integration.py` — covers INTG-02 (GuiConfig schema), INTG-04 (nanobot execute wrapping)
-- [ ] `tests/test_opengui_p5_cli.py` additions — covers INTG-01 (parse_args), INTG-03 (run_cli wrapping)
+- [ ] `tests/test_guiclaw_p11_integration.py` — covers INTG-02 (GuiConfig schema), INTG-04 (nanobot execute wrapping)
+- [ ] `tests/test_guiclaw_p5_cli.py` additions — covers INTG-01 (parse_args), INTG-03 (run_cli wrapping)
 - [ ] Framework install: already present — pytest and pytest-asyncio in `pyproject.toml`
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct code inspection: `opengui/cli.py`, `nanobot/agent/tools/gui.py`, `nanobot/config/schema.py` — exact signatures, current state, integration points
-- Direct code inspection: `opengui/backends/background.py`, `opengui/backends/virtual_display.py`, `opengui/backends/displays/xvfb.py` — Phase 9/10 implementation
-- Direct code inspection: `tests/test_opengui_p10_background.py`, `tests/test_opengui_p5_cli.py` — established mock patterns
+- Direct code inspection: `guiclaw/cli.py`, `nanobot/agent/tools/gui.py`, `nanobot/config/schema.py` — exact signatures, current state, integration points
+- Direct code inspection: `guiclaw/backends/background.py`, `guiclaw/backends/virtual_display.py`, `guiclaw/backends/displays/xvfb.py` — Phase 9/10 implementation
+- Direct code inspection: `tests/test_guiclaw_p10_background.py`, `tests/test_guiclaw_p5_cli.py` — established mock patterns
 - `pyproject.toml` — verified pytest-asyncio `asyncio_mode = "auto"`, dependency versions
 - `.planning/phases/11-integration-tests/11-CONTEXT.md` — locked decisions, constraints
 

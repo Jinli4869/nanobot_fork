@@ -2,7 +2,7 @@
 phase: 27-storage-search-agent-integration
 plan: 01
 subsystem: storage
-tags: [json, bm25, faiss, search, tdd, opengui-skills]
+tags: [json, bm25, faiss, search, tdd, guiclaw-skills]
 requires:
   - phase: 24-schema-and-grounding
     provides: ShortcutSkill and TaskSkill serialization contracts
@@ -20,10 +20,10 @@ tech-stack:
   patterns: [atomic-json-write, per-store-hybrid-search, tdd-red-green]
 key-files:
   created:
-    - opengui/skills/shortcut_store.py
-    - tests/test_opengui_p27_storage_search_agent.py
+    - guiclaw/skills/shortcut_store.py
+    - tests/test_guiclaw_p27_storage_search_agent.py
   modified:
-    - opengui/skills/__init__.py
+    - guiclaw/skills/__init__.py
 key-decisions:
   - "Keep shortcut and task persistence in separate per-platform JSON files with a version: 1 envelope."
   - "Run BM25 plus optional FAISS search inside each store, then merge via UnifiedSkillSearch with layer weights."
@@ -62,9 +62,9 @@ Each task was committed atomically:
 _Note: TDD task produced separate RED and GREEN commits._
 
 ## Files Created/Modified
-- `opengui/skills/shortcut_store.py` - New versioned shortcut/task stores plus unified search orchestration.
-- `opengui/skills/__init__.py` - Public Phase 27 exports for the new store/search symbols.
-- `tests/test_opengui_p27_storage_search_agent.py` - Regression coverage for persistence, search ranking, weighting, removal, and import safety.
+- `guiclaw/skills/shortcut_store.py` - New versioned shortcut/task stores plus unified search orchestration.
+- `guiclaw/skills/__init__.py` - Public Phase 27 exports for the new store/search symbols.
+- `tests/test_guiclaw_p27_storage_search_agent.py` - Regression coverage for persistence, search ranking, weighting, removal, and import safety.
 
 ## Decisions Made
 - Used the existing `SkillLibrary` save/rebuild/search pattern as the base contract so persistence and retrieval behavior stay aligned with the legacy skill system.
@@ -78,8 +78,8 @@ _Note: TDD task produced separate RED and GREEN commits._
 - **Found during:** Task 1 (Create shortcut_store.py with versioned stores and unified search)
 - **Issue:** `load_all()` initially deserialized each persisted record twice, which could generate mismatched IDs for payloads relying on default `from_dict()` values.
 - **Fix:** Reused a single deserialized object per record before inserting it into the in-memory store.
-- **Files modified:** `opengui/skills/shortcut_store.py`
-- **Verification:** `uv run pytest tests/test_opengui_p27_storage_search_agent.py`; `uv run python -m py_compile opengui/skills/shortcut_store.py`
+- **Files modified:** `guiclaw/skills/shortcut_store.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p27_storage_search_agent.py`; `uv run python -m py_compile guiclaw/skills/shortcut_store.py`
 - **Committed in:** `f65ad3c`
 
 ---
@@ -102,7 +102,7 @@ None - no external service configuration required.
 
 PASSED
 - Found summary artifact on disk.
-- Found `opengui/skills/shortcut_store.py` and `tests/test_opengui_p27_storage_search_agent.py`.
+- Found `guiclaw/skills/shortcut_store.py` and `tests/test_guiclaw_p27_storage_search_agent.py`.
 - Verified both task commits exist in git history: `cf657ba`, `f65ad3c`.
 
 ---

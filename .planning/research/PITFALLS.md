@@ -130,8 +130,8 @@ Phase 31
 - `/Users/jinli/Documents/Personal/AppAgentX/deployment.py`
 - `/Users/jinli/Documents/Personal/MobileAgent/Mobile-Agent-v3.5/mobile_use/utils.py`
 - `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/skills/shortcut_extractor.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/skills/shortcut_extractor.py`
 
 ---
 *Pitfalls research for: shortcut extraction and stable shortcut execution*

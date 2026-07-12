@@ -35,8 +35,8 @@ score: 6/6 must-haves verified
 | `nanobot/agent/planner.py` | Backward-compatible route metadata and planner prompt/context plumbing | ✓ VERIFIED | `PlanNode` route fields are optional and backward-compatible; `TaskPlanner.plan(..., planning_context=...)` renders catalog plus bounded routing hints and route-aware `create_plan` guidance; wired from `loop.py`. |
 | `nanobot/agent/loop.py` | Runtime catalog/hint injection and route-aware planning logs | ✓ VERIFIED | Builds catalog and memory hints immediately before planning, passes `PlanningContext`, and logs formatted plus raw route-aware trees. |
 | `nanobot/agent/planning_memory.py` | Planner-only routing-memory DTOs, extraction, and serialization guardrails | ✓ VERIFIED | Contains `PlanningMemoryHint`, `PlanningMemoryHintExtractor`, count/length/total caps, route matching, and read-only `MemoryStore` usage; wired into both `loop.py` and `planner.py`. |
-| `tests/test_opengui_p21_planner_context.py` | Catalog and memory-hint regression coverage | ✓ VERIFIED | Covers allowlisted catalog generation, prompt route metadata, hint extraction/exclusion, and serialization guardrails; exercised in targeted pytest slice. |
-| `tests/test_opengui_p8_planning.py` | Regression coverage for route metadata, route-aware logging, and planner-context injection | ✓ VERIFIED | Covers route metadata round-trip/legacy parsing and `_plan_and_execute()` logging/context plumbing; exercised in targeted pytest slice. |
+| `tests/test_guiclaw_p21_planner_context.py` | Catalog and memory-hint regression coverage | ✓ VERIFIED | Covers allowlisted catalog generation, prompt route metadata, hint extraction/exclusion, and serialization guardrails; exercised in targeted pytest slice. |
+| `tests/test_guiclaw_p8_planning.py` | Regression coverage for route metadata, route-aware logging, and planner-context injection | ✓ VERIFIED | Covers route metadata round-trip/legacy parsing and `_plan_and_execute()` logging/context plumbing; exercised in targeted pytest slice. |
 
 ### Key Link Verification
 
@@ -75,7 +75,7 @@ None required for the phase goal. The goal is satisfied by prompt/context wiring
 No gaps found. The codebase contains the live planner route catalog, backward-compatible route metadata, route-aware planning logs, planner-only routing-memory extraction, and bounded prompt serialization needed to satisfy `CAP-01` and `CAP-02`.
 
 Additional verification performed:
-- `uv run pytest -q tests/test_opengui_p21_planner_context.py tests/test_opengui_p8_planning.py tests/test_mcp_tool.py -k "catalog or route or plan_and_execute_logs_tree or format_plan_tree or memory_hint or guardrail or plan_and_execute"` → `11 passed, 26 deselected`
+- `uv run pytest -q tests/test_guiclaw_p21_planner_context.py tests/test_guiclaw_p8_planning.py tests/test_mcp_tool.py -k "catalog or route or plan_and_execute_logs_tree or format_plan_tree or memory_hint or guardrail or plan_and_execute"` → `11 passed, 26 deselected`
 - Verified documented task commits exist in git: `b179d56`, `ce9b6bf`, `c873d59`, `f19e365`, `98b83f1`, `877958a`, `4aad951`, `d954583`
 
 ---

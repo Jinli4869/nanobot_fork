@@ -5,9 +5,9 @@ type: execute
 wave: 1
 depends_on: []
 files_modified:
-  - opengui/skills/normalization.py
-  - opengui/prompts/system.py
-  - tests/test_opengui.py
+  - guiclaw/skills/normalization.py
+  - guiclaw/prompts/system.py
+  - tests/test_guiclaw.py
 autonomous: true
 requirements: []
 must_haves:
@@ -17,20 +17,20 @@ must_haves:
     - "System prompt Android app list shows only display names without package names"
     - "resolve_android_package still resolves display names to package names at execution time"
   artifacts:
-    - path: "opengui/skills/normalization.py"
+    - path: "guiclaw/skills/normalization.py"
       provides: "OPPO/ColorOS mappings and filtered annotate_android_apps"
       contains: "com.coloros"
-    - path: "opengui/prompts/system.py"
+    - path: "guiclaw/prompts/system.py"
       provides: "Display-name-only app list in system prompt"
-    - path: "tests/test_opengui.py"
+    - path: "tests/test_guiclaw.py"
       provides: "Regression tests for filtered annotation and display-name-only prompt"
   key_links:
-    - from: "opengui/prompts/system.py"
-      to: "opengui/skills/normalization.py"
+    - from: "guiclaw/prompts/system.py"
+      to: "guiclaw/skills/normalization.py"
       via: "annotate_android_apps import"
       pattern: "annotate_android_apps"
-    - from: "opengui/agent.py"
-      to: "opengui/skills/normalization.py"
+    - from: "guiclaw/agent.py"
+      to: "guiclaw/skills/normalization.py"
       via: "resolve_android_package at execution time"
       pattern: "resolve_android_package"
 ---
@@ -49,22 +49,22 @@ Output: Updated normalization.py with OPPO mappings + filtered annotate_android_
 </execution_context>
 
 <context>
-@opengui/skills/normalization.py
-@opengui/prompts/system.py
-@opengui/agent.py (lines 682-692 — resolve_android_package usage at execution time)
-@tests/test_opengui.py (existing test_build_system_prompt_uses_mobile_agent_style_sections)
+@guiclaw/skills/normalization.py
+@guiclaw/prompts/system.py
+@guiclaw/agent.py (lines 682-692 — resolve_android_package usage at execution time)
+@tests/test_guiclaw.py (existing test_build_system_prompt_uses_mobile_agent_style_sections)
 
 <interfaces>
 <!-- Key functions the executor needs to understand -->
 
-From opengui/skills/normalization.py:
+From guiclaw/skills/normalization.py:
 ```python
 _ANDROID_PACKAGE_DISPLAY_NAMES: dict[str, str]  # package -> "中文/English"
 def annotate_android_apps(packages: list[str]) -> list[str]  # currently returns ALL packages
 def resolve_android_package(app_text: str) -> str  # display name -> package name (used at execution time)
 ```
 
-From opengui/prompts/system.py:
+From guiclaw/prompts/system.py:
 ```python
 def build_system_prompt(
     *,
@@ -80,7 +80,7 @@ def build_system_prompt(
 Current Android app list format in system prompt (lines 103-115):
 ```python
 if platform == "android":
-    from opengui.skills.normalization import annotate_android_apps
+    from guiclaw.skills.normalization import annotate_android_apps
     annotated = annotate_android_apps(installed_apps)
     app_list = "\n".join(f"- {app}" for app in annotated)
     # Shows: "- 美团/Meituan: com.sankuai.meituan" and "- com.unknown.pkg"
@@ -92,7 +92,7 @@ if platform == "android":
 
 <task type="auto">
   <name>Task 1: Add OPPO/ColorOS mappings and filter annotate_android_apps</name>
-  <files>opengui/skills/normalization.py</files>
+  <files>guiclaw/skills/normalization.py</files>
   <action>
 Two changes in normalization.py:
 
@@ -123,7 +123,7 @@ Two changes in normalization.py:
   </action>
   <verify>
     <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -c "
-from opengui.skills.normalization import annotate_android_apps, _ANDROID_PACKAGE_DISPLAY_NAMES, resolve_android_package
+from guiclaw.skills.normalization import annotate_android_apps, _ANDROID_PACKAGE_DISPLAY_NAMES, resolve_android_package
 
 # Verify OPPO mappings exist
 assert 'com.coloros.soundrecorder' in _ANDROID_PACKAGE_DISPLAY_NAMES
@@ -149,13 +149,13 @@ print('All checks passed')
 
 <task type="auto">
   <name>Task 2: Change system prompt to display-name-only format and add tests</name>
-  <files>opengui/prompts/system.py, tests/test_opengui.py</files>
+  <files>guiclaw/prompts/system.py, tests/test_guiclaw.py</files>
   <action>
 Two changes:
 
-1. In `opengui/prompts/system.py`, modify the Android branch of the `installed_apps` section (lines 103-115). Change the app list format to show ONLY display names (e.g. "- 美团/Meituan") without the package name. Since `annotate_android_apps` returns `"display_name: package_name"` format, extract just the display name portion. Alternatively, create a new helper or modify the call to directly get display names from `_ANDROID_PACKAGE_DISPLAY_NAMES`. Update the header text from "use the package name (the `com.xxx.xxx` identifier)" to something like "The following apps are available on this device:" since the model will use the display name and `resolve_android_package()` handles the package name lookup at execution time.
+1. In `guiclaw/prompts/system.py`, modify the Android branch of the `installed_apps` section (lines 103-115). Change the app list format to show ONLY display names (e.g. "- 美团/Meituan") without the package name. Since `annotate_android_apps` returns `"display_name: package_name"` format, extract just the display name portion. Alternatively, create a new helper or modify the call to directly get display names from `_ANDROID_PACKAGE_DISPLAY_NAMES`. Update the header text from "use the package name (the `com.xxx.xxx` identifier)" to something like "The following apps are available on this device:" since the model will use the display name and `resolve_android_package()` handles the package name lookup at execution time.
 
-2. In `tests/test_opengui.py`, add three tests after `test_build_system_prompt_uses_mobile_agent_style_sections`:
+2. In `tests/test_guiclaw.py`, add three tests after `test_build_system_prompt_uses_mobile_agent_style_sections`:
 
    a. `test_annotate_android_apps_filters_unmapped_packages` — import `annotate_android_apps` from normalization, pass a list containing one known package (e.g. "com.sankuai.meituan") and one unknown package (e.g. "com.unknown.xyz"), assert the result has length 1 and contains the known app's display name, and does NOT contain "com.unknown.xyz".
 
@@ -164,7 +164,7 @@ Two changes:
    c. `test_build_system_prompt_android_apps_excludes_unmapped` — call `build_system_prompt(platform="android", installed_apps=["com.totally.unknown"])`, assert the prompt does NOT contain "# Installed Apps" section at all (since no apps survived filtering, the section should be omitted or empty). OR if the section is still rendered with zero items, assert it has no app list entries. Use whichever approach matches the implementation.
   </action>
   <verify>
-    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_opengui.py::test_build_system_prompt_uses_mobile_agent_style_sections tests/test_opengui.py::test_annotate_android_apps_filters_unmapped_packages tests/test_opengui.py::test_build_system_prompt_android_apps_shows_display_names_only tests/test_opengui.py::test_build_system_prompt_android_apps_excludes_unmapped -x -v</automated>
+    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_guiclaw.py::test_build_system_prompt_uses_mobile_agent_style_sections tests/test_guiclaw.py::test_annotate_android_apps_filters_unmapped_packages tests/test_guiclaw.py::test_build_system_prompt_android_apps_shows_display_names_only tests/test_guiclaw.py::test_build_system_prompt_android_apps_excludes_unmapped -x -v</automated>
   </verify>
   <done>System prompt shows display names only (no package names) for Android apps. Unmapped apps are excluded from the prompt. Three new regression tests pass alongside the existing system prompt test.</done>
 </task>
@@ -172,9 +172,9 @@ Two changes:
 </tasks>
 
 <verification>
-1. Run all existing opengui tests to check for regressions: `python -m pytest tests/test_opengui.py -x -v`
-2. Verify the system prompt output manually for a realistic package list: `python -c "from opengui.prompts.system import build_system_prompt; print(build_system_prompt(platform='android', installed_apps=['com.sankuai.meituan', 'com.tencent.mm', 'com.coloros.soundrecorder', 'com.unknown.pkg']))"`
-3. Verify resolve_android_package still works at execution time for mapped display names: `python -c "from opengui.skills.normalization import resolve_android_package; print(resolve_android_package('美团'))"`
+1. Run all existing guiclaw tests to check for regressions: `python -m pytest tests/test_guiclaw.py -x -v`
+2. Verify the system prompt output manually for a realistic package list: `python -c "from guiclaw.prompts.system import build_system_prompt; print(build_system_prompt(platform='android', installed_apps=['com.sankuai.meituan', 'com.tencent.mm', 'com.coloros.soundrecorder', 'com.unknown.pkg']))"`
+3. Verify resolve_android_package still works at execution time for mapped display names: `python -c "from guiclaw.skills.normalization import resolve_android_package; print(resolve_android_package('美团'))"`
 </verification>
 
 <success_criteria>

@@ -26,7 +26,7 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p8_planning.py
+    - tests/test_guiclaw_p8_planning.py
   modified:
     - nanobot/agent/router.py
 
@@ -74,7 +74,7 @@ completed: 2026-03-19
 ## Files Created/Modified
 
 - `nanobot/agent/router.py` — Added `import asyncio`, `_CAPABILITY_PRIORITY` dict, `max_concurrency` param, parallel `_execute_and`, sorted `_execute_or`
-- `tests/test_opengui_p8_planning.py` — 8 new tests for parallel AND and prioritized OR behaviors
+- `tests/test_guiclaw_p8_planning.py` — 8 new tests for parallel AND and prioritized OR behaviors
 
 ## Decisions Made
 
@@ -91,8 +91,8 @@ completed: 2026-03-19
 - **Found during:** Task 2 (GREEN phase — first test run)
 - **Issue:** `next(i for i, x in enumerate(...))` inside an `async def` raises `RuntimeError: coroutine raised StopIteration` in Python 3.7+ when the generator is exhausted inside an async coroutine
 - **Fix:** Replaced `next()` generator expression with a direct `assert dispatch_order[0].startswith("mcp:")` check plus `assert not any(x.startswith("gui:") ...)` — conceptually equivalent but generator-free
-- **Files modified:** `tests/test_opengui_p8_planning.py`
-- **Verification:** `pytest tests/test_opengui_p8_planning.py -x -q` passes 8/8
+- **Files modified:** `tests/test_guiclaw_p8_planning.py`
+- **Verification:** `pytest tests/test_guiclaw_p8_planning.py -x -q` passes 8/8
 - **Committed in:** e49a328c (Task 2 GREEN commit)
 
 ---
@@ -102,7 +102,7 @@ completed: 2026-03-19
 
 ## Issues Encountered
 
-- One pre-existing test ordering flakiness observed when running the full suite in a particular collection order: `test_opengui_p8_trajectory.py::test_planner_router_exported_from_agent_package` sometimes failed due to import side-effects from test discovery order. Verified the test passes in isolation and in direct pairing — not caused by our changes; pre-existing cross-test contamination unrelated to this plan.
+- One pre-existing test ordering flakiness observed when running the full suite in a particular collection order: `test_guiclaw_p8_trajectory.py::test_planner_router_exported_from_agent_package` sometimes failed due to import side-effects from test discovery order. Verified the test passes in isolation and in direct pairing — not caused by our changes; pre-existing cross-test contamination unrelated to this plan.
 
 ## Next Phase Readiness
 
@@ -117,7 +117,7 @@ completed: 2026-03-19
 
 All files verified:
 - `nanobot/agent/router.py` — exists
-- `tests/test_opengui_p8_planning.py` — exists
+- `tests/test_guiclaw_p8_planning.py` — exists
 - `.planning/phases/08-dead-export-cleanup/08-02-SUMMARY.md` — exists
 - Commit `684aa4d` (RED tests) — exists
 - Commit `e49a328c` (GREEN implementation) — exists

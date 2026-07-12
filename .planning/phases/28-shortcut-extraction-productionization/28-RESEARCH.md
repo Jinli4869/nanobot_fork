@@ -9,10 +9,10 @@
 
 | ID | Description | Research Support |
 |----|-------------|-----------------|
-| SXTR-01 | Successful GUI runs can promote shortcut candidates from trace step events only, excluding summary/result noise and malformed artifacts. | `TrajectoryRecorder` already emits typed JSONL events (`metadata`, `phase_change`, `step`, `result`). The current legacy path still reads the whole trace through `SkillExtractor.extract_from_file()` in [`opengui/skills/extractor.py`](../../../../opengui/skills/extractor.py), but Phase 28 can cut over to a promotion pipeline that explicitly filters `type == "step"` and rejects malformed or underspecified events before extraction. |
-| SXTR-02 | Each promoted shortcut records normalized app/platform identifiers, reusable parameter slots, structured state conditions, and provenance back to the source trace. | `ShortcutSkillProducer` in [`opengui/skills/shortcut_extractor.py`](../../../../opengui/skills/shortcut_extractor.py) already normalizes app IDs and produces `parameter_slots`, `preconditions`, and `postconditions`, but there is no provenance field yet in [`opengui/skills/shortcut.py`](../../../../opengui/skills/shortcut.py). Phase 28 must add backward-compatible provenance metadata to the shortcut schema or an adjacent promotion envelope. |
+| SXTR-01 | Successful GUI runs can promote shortcut candidates from trace step events only, excluding summary/result noise and malformed artifacts. | `TrajectoryRecorder` already emits typed JSONL events (`metadata`, `phase_change`, `step`, `result`). The current legacy path still reads the whole trace through `SkillExtractor.extract_from_file()` in [`guiclaw/skills/extractor.py`](../../../../guiclaw/skills/extractor.py), but Phase 28 can cut over to a promotion pipeline that explicitly filters `type == "step"` and rejects malformed or underspecified events before extraction. |
+| SXTR-02 | Each promoted shortcut records normalized app/platform identifiers, reusable parameter slots, structured state conditions, and provenance back to the source trace. | `ShortcutSkillProducer` in [`guiclaw/skills/shortcut_extractor.py`](../../../../guiclaw/skills/shortcut_extractor.py) already normalizes app IDs and produces `parameter_slots`, `preconditions`, and `postconditions`, but there is no provenance field yet in [`guiclaw/skills/shortcut.py`](../../../../guiclaw/skills/shortcut.py). Phase 28 must add backward-compatible provenance metadata to the shortcut schema or an adjacent promotion envelope. |
 | SXTR-03 | The promotion pipeline rejects brittle shortcuts using explicit gates for minimum usable steps, unsupported patterns, and low-quality evidence. | `ExtractionPipeline` already rejects trajectories with fewer than two steps and exposes structured rejection results, but the default critics are always-pass. Phase 28 needs real gating at the promotion seam for unsupported action patterns, low-signal steps, and traces that do not provide stable state evidence. |
-| SXTR-04 | Duplicate or near-duplicate shortcut candidates are merged, versioned, or rejected instead of being stored as repeated library entries. | `ShortcutSkillStore` in [`opengui/skills/shortcut_store.py`](../../../../opengui/skills/shortcut_store.py) only supports direct `add/remove/get/search`; dedup/version behavior exists only in the legacy `SkillLibrary.add_or_merge()` path in [`opengui/skills/library.py`](../../../../opengui/skills/library.py). Phase 28 must bring merge/version semantics into the shortcut-layer production path without regressing Phase 27 retrieval/search behavior. |
+| SXTR-04 | Duplicate or near-duplicate shortcut candidates are merged, versioned, or rejected instead of being stored as repeated library entries. | `ShortcutSkillStore` in [`guiclaw/skills/shortcut_store.py`](../../../../guiclaw/skills/shortcut_store.py) only supports direct `add/remove/get/search`; dedup/version behavior exists only in the legacy `SkillLibrary.add_or_merge()` path in [`guiclaw/skills/library.py`](../../../../guiclaw/skills/library.py). Phase 28 must bring merge/version semantics into the shortcut-layer production path without regressing Phase 27 retrieval/search behavior. |
 
 </phase_requirements>
 
@@ -21,7 +21,7 @@
 Phase 28 is the production bridge between the v1.5 shortcut architecture and the still-legacy post-run extraction path. The gap is concrete in the current codebase:
 
 1. [`nanobot/agent/tools/gui.py`](../../../../nanobot/agent/tools/gui.py) background postprocessing still calls `_extract_skill()`.
-2. `_extract_skill()` instantiates the legacy `SkillExtractor` from [`opengui/skills/extractor.py`](../../../../opengui/skills/extractor.py).
+2. `_extract_skill()` instantiates the legacy `SkillExtractor` from [`guiclaw/skills/extractor.py`](../../../../guiclaw/skills/extractor.py).
 3. The extracted object is written through `skill_library.add_or_merge(...)`, which targets the legacy `SkillLibrary`, not `ShortcutSkillStore`.
 4. Meanwhile, Phase 26 already shipped `ExtractionPipeline` and `ShortcutSkillProducer`, and Phase 27 already shipped `ShortcutSkillStore`, `TaskSkillStore`, and `UnifiedSkillSearch`.
 
@@ -40,7 +40,7 @@ The cleanest split remains the roadmap's three-plan shape:
 2. **Add metadata, gating, and merge/version behavior** at the shortcut-layer contract/store seam.
 3. **Lock it down with regression coverage** around malformed traces, summary/result noise, low-quality candidates, and duplicate handling.
 
-**Primary recommendation:** introduce a dedicated promotion module such as `opengui/skills/shortcut_promotion.py` that owns trace parsing, gate application, provenance assembly, and `ShortcutSkillStore` integration. Keep `shortcut_extractor.py` focused on Phase 26 extraction primitives and keep `nanobot/agent/tools/gui.py` as a caller, not as the place where promotion policy lives.
+**Primary recommendation:** introduce a dedicated promotion module such as `guiclaw/skills/shortcut_promotion.py` that owns trace parsing, gate application, provenance assembly, and `ShortcutSkillStore` integration. Keep `shortcut_extractor.py` focused on Phase 26 extraction primitives and keep `nanobot/agent/tools/gui.py` as a caller, not as the place where promotion policy lives.
 
 ## Standard Stack
 
@@ -48,22 +48,22 @@ The cleanest split remains the roadmap's three-plan shape:
 
 | Library / Module | Version | Purpose | Why Standard |
 |------------------|---------|---------|--------------|
-| Python stdlib `json`, `dataclasses`, `pathlib`, `time`, `uuid` | `>=3.11` | Trace parsing, metadata, schema evolution | Matches current OpenGUI patterns |
-| [`opengui/trajectory/recorder.py`](../../../../opengui/trajectory/recorder.py) | workspace current | Source-of-truth event format (`metadata`, `phase_change`, `step`, `result`) | Defines the exact typed trace surface Phase 28 must consume |
-| [`opengui/skills/shortcut_extractor.py`](../../../../opengui/skills/shortcut_extractor.py) | workspace current | `ExtractionPipeline`, critics, `ShortcutSkillProducer` | Phase 26 already solved the candidate-production core |
-| [`opengui/skills/shortcut.py`](../../../../opengui/skills/shortcut.py) | workspace current | `ShortcutSkill`, `ParameterSlot`, `StateDescriptor` | Shortcut schema contract that later phases search and execute |
-| [`opengui/skills/shortcut_store.py`](../../../../opengui/skills/shortcut_store.py) | workspace current | Persistent shortcut storage and search | Phase 27 storage/search target that Phase 28 must populate |
-| [`opengui/skills/normalization.py`](../../../../opengui/skills/normalization.py) | workspace current | App normalization and store-root helpers | Existing platform/app identity normalization |
+| Python stdlib `json`, `dataclasses`, `pathlib`, `time`, `uuid` | `>=3.11` | Trace parsing, metadata, schema evolution | Matches current GUIClaw patterns |
+| [`guiclaw/trajectory/recorder.py`](../../../../guiclaw/trajectory/recorder.py) | workspace current | Source-of-truth event format (`metadata`, `phase_change`, `step`, `result`) | Defines the exact typed trace surface Phase 28 must consume |
+| [`guiclaw/skills/shortcut_extractor.py`](../../../../guiclaw/skills/shortcut_extractor.py) | workspace current | `ExtractionPipeline`, critics, `ShortcutSkillProducer` | Phase 26 already solved the candidate-production core |
+| [`guiclaw/skills/shortcut.py`](../../../../guiclaw/skills/shortcut.py) | workspace current | `ShortcutSkill`, `ParameterSlot`, `StateDescriptor` | Shortcut schema contract that later phases search and execute |
+| [`guiclaw/skills/shortcut_store.py`](../../../../guiclaw/skills/shortcut_store.py) | workspace current | Persistent shortcut storage and search | Phase 27 storage/search target that Phase 28 must populate |
+| [`guiclaw/skills/normalization.py`](../../../../guiclaw/skills/normalization.py) | workspace current | App normalization and store-root helpers | Existing platform/app identity normalization |
 | [`nanobot/agent/tools/gui.py`](../../../../nanobot/agent/tools/gui.py) | workspace current | GUI post-run postprocessing seam | Current production caller that needs cutover |
 
 ### Supporting
 
 | Library / Module | Version | Purpose | When to Use |
 |------------------|---------|---------|-------------|
-| [`opengui/skills/library.py`](../../../../opengui/skills/library.py) | workspace current | Legacy merge heuristics and conflict detection | Reference for duplicate/merge/version logic only; do not keep as the production shortcut sink |
+| [`guiclaw/skills/library.py`](../../../../guiclaw/skills/library.py) | workspace current | Legacy merge heuristics and conflict detection | Reference for duplicate/merge/version logic only; do not keep as the production shortcut sink |
 | `pytest`, `pytest-asyncio` | workspace locked | Regression tests for productionized extraction | All Phase 28 automated coverage |
-| [`tests/test_opengui_p8_trajectory.py`](../../../../tests/test_opengui_p8_trajectory.py) | workspace current | Existing background-postprocessing expectations | Extend to preserve non-blocking post-run behavior after cutover |
-| [`tests/test_opengui_p27_storage_search_agent.py`](../../../../tests/test_opengui_p27_storage_search_agent.py) | workspace current | Existing store/search contract coverage | Use as a compatibility backstop while adding promotion semantics |
+| [`tests/test_guiclaw_p8_trajectory.py`](../../../../tests/test_guiclaw_p8_trajectory.py) | workspace current | Existing background-postprocessing expectations | Extend to preserve non-blocking post-run behavior after cutover |
+| [`tests/test_guiclaw_p27_storage_search_agent.py`](../../../../tests/test_guiclaw_p27_storage_search_agent.py) | workspace current | Existing store/search contract coverage | Use as a compatibility backstop while adding promotion semantics |
 
 ### Alternatives Considered
 
@@ -78,7 +78,7 @@ The cleanest split remains the roadmap's three-plan shape:
 ### Recommended Project Structure
 
 ```text
-opengui/
+guiclaw/
 └── skills/
     ├── shortcut.py                 # extend schema with backward-compatible provenance/version metadata
     ├── shortcut_extractor.py       # keep Phase 26 primitives focused on candidate production
@@ -89,9 +89,9 @@ nanobot/
 └── agent/tools/gui.py              # call promotion module during background postprocessing
 
 tests/
-├── test_opengui_p8_trajectory.py   # preserve async/non-blocking postprocessing behavior
-├── test_opengui_p27_storage_search_agent.py
-└── test_opengui_p28_shortcut_productionization.py   # NEW focused Phase 28 coverage
+├── test_guiclaw_p8_trajectory.py   # preserve async/non-blocking postprocessing behavior
+├── test_guiclaw_p27_storage_search_agent.py
+└── test_guiclaw_p28_shortcut_productionization.py   # NEW focused Phase 28 coverage
 ```
 
 ### Pattern 1: Dedicated Promotion Seam From Typed Trace Events
@@ -103,9 +103,9 @@ tests/
 **Concrete fit in current codebase:**
 
 - Caller remains [`GuiSubagentTool._run_trajectory_postprocessing()`](../../../../nanobot/agent/tools/gui.py).
-- Trace shape comes from [`TrajectoryRecorder`](../../../../opengui/trajectory/recorder.py).
-- Candidate production comes from [`ExtractionPipeline.run()`](../../../../opengui/skills/shortcut_extractor.py).
-- Persistence lands in [`ShortcutSkillStore`](../../../../opengui/skills/shortcut_store.py).
+- Trace shape comes from [`TrajectoryRecorder`](../../../../guiclaw/trajectory/recorder.py).
+- Candidate production comes from [`ExtractionPipeline.run()`](../../../../guiclaw/skills/shortcut_extractor.py).
+- Persistence lands in [`ShortcutSkillStore`](../../../../guiclaw/skills/shortcut_store.py).
 
 ### Pattern 2: Backward-Compatible Provenance Metadata
 
@@ -143,7 +143,7 @@ tests/
 
 **Why:** SXTR-04 requires duplicate handling in the new store, and the existing shortcut store has no conflict detection.
 
-**Best current reference:** [`SkillLibrary.add_or_merge()`](../../../../opengui/skills/library.py) already has:
+**Best current reference:** [`SkillLibrary.add_or_merge()`](../../../../guiclaw/skills/library.py) already has:
 
 - normalized app bucketing,
 - best-conflict selection,
@@ -163,7 +163,7 @@ That logic should be adapted, not copied blindly, because the shortcut schema di
 
 **What:** Keep promotion in the same asynchronous background-postprocessing slot used today by summarization and optional evaluation.
 
-**Why:** [`tests/test_opengui_p8_trajectory.py`](../../../../tests/test_opengui_p8_trajectory.py) and [`tests/test_opengui_p11_integration.py`](../../../../tests/test_opengui_p11_integration.py) already assert that GUI tool results return before postprocessing finishes and that postprocessing failures are non-fatal.
+**Why:** [`tests/test_guiclaw_p8_trajectory.py`](../../../../tests/test_guiclaw_p8_trajectory.py) and [`tests/test_guiclaw_p11_integration.py`](../../../../tests/test_guiclaw_p11_integration.py) already assert that GUI tool results return before postprocessing finishes and that postprocessing failures are non-fatal.
 
 **Implication for planning:** promotion failures should log structured reasons and write usage/diagnostic artifacts, but they must not block or poison the user-visible GUI task result.
 
@@ -190,8 +190,8 @@ That logic should be adapted, not copied blindly, because the shortcut schema di
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| Trace event taxonomy | Ad hoc JSON shape guesses | [`TrajectoryRecorder`](../../../../opengui/trajectory/recorder.py) event format | It already defines the production trace contract |
-| Candidate production | New LLM extraction prompt path | [`ExtractionPipeline` and `ShortcutSkillProducer`](../../../../opengui/skills/shortcut_extractor.py) | Phase 26 already solved the schema conversion core |
+| Trace event taxonomy | Ad hoc JSON shape guesses | [`TrajectoryRecorder`](../../../../guiclaw/trajectory/recorder.py) event format | It already defines the production trace contract |
+| Candidate production | New LLM extraction prompt path | [`ExtractionPipeline` and `ShortcutSkillProducer`](../../../../guiclaw/skills/shortcut_extractor.py) | Phase 26 already solved the schema conversion core |
 | Store root resolution | Inline path concatenation | `get_gui_skill_store_root()` in normalization helpers | Preserves current workspace-aware store layout |
 | Duplicate heuristics | Fresh heuristic invented from scratch | Adapt `SkillLibrary` conflict/merge patterns | Existing code already encodes app-aware merge behavior that users depend on |
 
@@ -235,8 +235,8 @@ That logic should be adapted, not copied blindly, because the shortcut schema di
 
 - **Framework:** `pytest` + `pytest-asyncio`
 - **Config:** [`pyproject.toml`](../../../../pyproject.toml)
-- **Quick run:** `uv run pytest tests/test_opengui_p8_trajectory.py tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p28_shortcut_productionization.py`
-- **Full slice:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p27_storage_search_agent.py tests/test_opengui_p8_trajectory.py tests/test_opengui_p11_integration.py tests/test_opengui_p28_shortcut_productionization.py`
+- **Quick run:** `uv run pytest tests/test_guiclaw_p8_trajectory.py tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p28_shortcut_productionization.py`
+- **Full slice:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p27_storage_search_agent.py tests/test_guiclaw_p8_trajectory.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p28_shortcut_productionization.py`
 
 ### Phase Requirements -> Test Map
 
@@ -255,7 +255,7 @@ That logic should be adapted, not copied blindly, because the shortcut schema di
 
 ### Wave 0 Gaps
 
-- New test file required: `tests/test_opengui_p28_shortcut_productionization.py`
+- New test file required: `tests/test_guiclaw_p28_shortcut_productionization.py`
 - Existing infrastructure otherwise already covers async tool behavior, extraction primitives, and store/search reload
 
 ## Sources
@@ -263,18 +263,18 @@ That logic should be adapted, not copied blindly, because the shortcut schema di
 ### Primary (HIGH confidence)
 
 - [`nanobot/agent/tools/gui.py`](../../../../nanobot/agent/tools/gui.py) — current production post-run extraction seam
-- [`opengui/skills/extractor.py`](../../../../opengui/skills/extractor.py) — legacy extraction path still used in production
-- [`opengui/skills/shortcut_extractor.py`](../../../../opengui/skills/shortcut_extractor.py) — Phase 26 candidate pipeline
-- [`opengui/skills/shortcut_store.py`](../../../../opengui/skills/shortcut_store.py) — Phase 27 shortcut/task stores and unified search
-- [`opengui/skills/shortcut.py`](../../../../opengui/skills/shortcut.py) — current shortcut schema
-- [`opengui/trajectory/recorder.py`](../../../../opengui/trajectory/recorder.py) — typed trace event contract
-- [`opengui/skills/library.py`](../../../../opengui/skills/library.py) — legacy merge/dedup logic reference
+- [`guiclaw/skills/extractor.py`](../../../../guiclaw/skills/extractor.py) — legacy extraction path still used in production
+- [`guiclaw/skills/shortcut_extractor.py`](../../../../guiclaw/skills/shortcut_extractor.py) — Phase 26 candidate pipeline
+- [`guiclaw/skills/shortcut_store.py`](../../../../guiclaw/skills/shortcut_store.py) — Phase 27 shortcut/task stores and unified search
+- [`guiclaw/skills/shortcut.py`](../../../../guiclaw/skills/shortcut.py) — current shortcut schema
+- [`guiclaw/trajectory/recorder.py`](../../../../guiclaw/trajectory/recorder.py) — typed trace event contract
+- [`guiclaw/skills/library.py`](../../../../guiclaw/skills/library.py) — legacy merge/dedup logic reference
 
 ### Secondary (MEDIUM confidence)
 
-- [`tests/test_opengui_p8_trajectory.py`](../../../../tests/test_opengui_p8_trajectory.py) — postprocessing behavior guarantees
-- [`tests/test_opengui_p11_integration.py`](../../../../tests/test_opengui_p11_integration.py) — GUI tool integration expectations
-- [`tests/test_opengui_p27_storage_search_agent.py`](../../../../tests/test_opengui_p27_storage_search_agent.py) — store/search compatibility constraints
+- [`tests/test_guiclaw_p8_trajectory.py`](../../../../tests/test_guiclaw_p8_trajectory.py) — postprocessing behavior guarantees
+- [`tests/test_guiclaw_p11_integration.py`](../../../../tests/test_guiclaw_p11_integration.py) — GUI tool integration expectations
+- [`tests/test_guiclaw_p27_storage_search_agent.py`](../../../../tests/test_guiclaw_p27_storage_search_agent.py) — store/search compatibility constraints
 - `.planning/phases/26-quality-gated-extraction/26-RESEARCH.md` — prior phase design rationale
 - `.planning/phases/27-storage-search-agent-integration/27-RESEARCH.md` — prior phase storage/search rationale
 

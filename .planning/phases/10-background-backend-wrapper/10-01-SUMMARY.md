@@ -25,7 +25,7 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p10_background.py
+    - tests/test_guiclaw_p10_background.py
   modified: []
 
 key-decisions:
@@ -61,7 +61,7 @@ completed: "2026-03-20"
 
 ## Accomplishments
 
-- Created `tests/test_opengui_p10_background.py` with all required test functions covering BGND-01 through BGND-04
+- Created `tests/test_guiclaw_p10_background.py` with all required test functions covering BGND-01 through BGND-04
 - Confirmed TDD RED state: 5 tests fail against current draft (lifecycle guard, context manager, idempotent shutdown, error suppression), 9 pass for already-implemented behavior
 - Established `_make_mock_manager` and `_make_mock_inner` helper factories with correct PropertyMock pattern for `platform` attribute
 
@@ -75,7 +75,7 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p10_background.py` — 285-line async test suite with 14 test functions organized into 4 BGND sections
+- `tests/test_guiclaw_p10_background.py` — 285-line async test suite with 14 test functions organized into 4 BGND sections
 
 ## Decisions Made
 
@@ -102,7 +102,7 @@ None — no external service configuration required.
 
 ## Self-Check: PASSED
 
-- `tests/test_opengui_p10_background.py` — FOUND
+- `tests/test_guiclaw_p10_background.py` — FOUND
 - `10-01-SUMMARY.md` — FOUND
 - Commit `22f1643` — FOUND
 

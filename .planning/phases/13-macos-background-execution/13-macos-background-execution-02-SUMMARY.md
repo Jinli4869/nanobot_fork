@@ -29,10 +29,10 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/backends/background.py
-    - opengui/backends/desktop.py
-    - tests/test_opengui_p13_macos_display.py
-    - tests/test_opengui_p4_desktop.py
+    - guiclaw/backends/background.py
+    - guiclaw/backends/desktop.py
+    - tests/test_guiclaw_p13_macos_display.py
+    - tests/test_guiclaw_p4_desktop.py
 
 key-decisions:
   - "Added configure_target_display() as a narrow optional hook on LocalDesktopBackend instead of pushing display-manager knowledge deeper into action execution."
@@ -76,10 +76,10 @@ Each task was committed atomically:
 2. **Task 2: Inject DisplayInfo from the wrapper and prove observe/execute alignment** - `06116c1` (`feat`)
 
 ## Files Created/Modified
-- `opengui/backends/desktop.py` - adds target display storage, `configure_target_display()`, and monitor-index-aware screenshot capture
-- `tests/test_opengui_p4_desktop.py` - extends the mss helper and adds primary-vs-configured monitor coverage
-- `opengui/backends/background.py` - injects and clears target-display metadata around wrapper lifecycle events
-- `tests/test_opengui_p13_macos_display.py` - adds wrapper-routing tests for preflight ordering and offset-aligned execution
+- `guiclaw/backends/desktop.py` - adds target display storage, `configure_target_display()`, and monitor-index-aware screenshot capture
+- `tests/test_guiclaw_p4_desktop.py` - extends the mss helper and adds primary-vs-configured monitor coverage
+- `guiclaw/backends/background.py` - injects and clears target-display metadata around wrapper lifecycle events
+- `tests/test_guiclaw_p13_macos_display.py` - adds wrapper-routing tests for preflight ordering and offset-aligned execution
 
 ## Decisions Made
 
@@ -105,10 +105,10 @@ Phase 13 now has a stable target-surface routing seam across capture and input. 
 
 ## Self-Check: PASSED
 
-- `opengui/backends/desktop.py` - FOUND
-- `opengui/backends/background.py` - FOUND
-- `tests/test_opengui_p4_desktop.py` - FOUND
-- `tests/test_opengui_p13_macos_display.py` - FOUND
+- `guiclaw/backends/desktop.py` - FOUND
+- `guiclaw/backends/background.py` - FOUND
+- `tests/test_guiclaw_p4_desktop.py` - FOUND
+- `tests/test_guiclaw_p13_macos_display.py` - FOUND
 
 ---
 *Phase: 13-macos-background-execution*

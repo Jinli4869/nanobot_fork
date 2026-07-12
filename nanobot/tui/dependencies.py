@@ -32,7 +32,7 @@ from nanobot.tui.services import (
     TaskLaunchService,
     TraceInspectionService,
 )
-from nanobot.tui.services.tasks import run_nanobot_launch, run_opengui_launch
+from nanobot.tui.services.tasks import run_nanobot_launch, run_guiclaw_launch
 
 
 def _resolve_workspace_path(
@@ -184,8 +184,8 @@ def get_task_launch_service(request: Request) -> TaskLaunchService:
             "trace_ref": result.trace_ref,
         }
 
-    async def _opengui_runner(payload: Any) -> dict[str, Any]:
-        result = await run_opengui_launch(payload)
+    async def _guiclaw_runner(payload: Any) -> dict[str, Any]:
+        result = await run_guiclaw_launch(payload)
         return {
             "summary": result.summary,
             "steps_taken": result.steps_taken,
@@ -204,7 +204,7 @@ def get_task_launch_service(request: Request) -> TaskLaunchService:
         ),
         registry,
         nanobot_runner=_nanobot_runner,
-        opengui_runner=_opengui_runner,
+        guiclaw_runner=_guiclaw_runner,
     )
 
 

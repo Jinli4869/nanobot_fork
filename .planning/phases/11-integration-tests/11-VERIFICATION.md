@@ -19,13 +19,13 @@ re_verification: false
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | `parse_args()` accepts `--background`, `--display-num`, `--width`, `--height` flags | VERIFIED | `opengui/cli.py` lines 207-229: four `add_argument` calls, all present |
+| 1 | `parse_args()` accepts `--background`, `--display-num`, `--width`, `--height` flags | VERIFIED | `guiclaw/cli.py` lines 207-229: four `add_argument` calls, all present |
 | 2 | `--background` errors with `parser.error()` when combined with `--backend adb` or `--dry-run` | VERIFIED | Lines 234-237: two explicit `parser.error()` guards |
 | 3 | `--background` implies `--backend local` via `resolve_backend_name()` | VERIFIED | Lines 252-257: `if getattr(args, "background", False): return "local"` |
 | 4 | `run_cli()` wraps `LocalDesktopBackend` in `BackgroundDesktopBackend` with `XvfbDisplayManager` on Linux | VERIFIED | Lines 407-425: platform guard + wrapping + `async with backend:` |
 | 5 | `run_cli()` logs warning and skips wrapping on non-Linux platforms | VERIFIED | Lines 408-413: `if sys.platform != "linux": logging.warning(...)` |
 | 6 | Default resolution is 1280x720 when no `--width`/`--height` given | VERIFIED | Lines 420-421: `width = args.width if args.width is not None else 1280; height = args.height if args.height is not None else 720` |
-| 7 | All new CLI tests pass without a real Xvfb binary | VERIFIED | `pytest tests/test_opengui_p5_cli.py` — 15 passed (8 pre-existing + 7 new) |
+| 7 | All new CLI tests pass without a real Xvfb binary | VERIFIED | `pytest tests/test_guiclaw_p5_cli.py` — 15 passed (8 pre-existing + 7 new) |
 
 ### Observable Truths (Plan 02 — GuiConfig / nanobot)
 
@@ -35,7 +35,7 @@ re_verification: false
 | 9 | `GuiConfig` `model_validator` rejects `background=True` with non-local backend | VERIFIED | Lines 174-180: `@model_validator(mode="after")` raises `ValueError` for non-`"local"` backends |
 | 10 | `GuiSubagentTool.execute()` wraps backend in `BackgroundDesktopBackend` when `background=True` on Linux | VERIFIED | `nanobot/agent/tools/gui.py` lines 84-105: `if self._gui_config.background:` + platform check + `async with active_backend:` |
 | 11 | `GuiSubagentTool.execute()` logs warning and skips wrapping on non-Linux | VERIFIED | Lines 87-92: `logger.warning(...)` branch with "Linux-only" message |
-| 12 | All new nanobot tests pass without a real Xvfb binary | VERIFIED | `pytest tests/test_opengui_p11_integration.py` — 8 passed |
+| 12 | All new nanobot tests pass without a real Xvfb binary | VERIFIED | `pytest tests/test_guiclaw_p11_integration.py` — 8 passed |
 
 **Score:** 12/12 observable truths verified (condensed to 9/9 must-haves across both plans)
 
@@ -43,26 +43,26 @@ re_verification: false
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `opengui/cli.py` | `--background` flag in `parse_args`, wrapping in `run_cli` | VERIFIED | Contains `add_argument.*--background`, `BackgroundDesktopBackend`, `XvfbDisplayManager(display_num=`, `_execute_agent`, `sys.platform` guard |
-| `tests/test_opengui_p5_cli.py` | CLI background tests | VERIFIED | Contains all 7 required test functions: `test_cli_parses_background_flags`, `test_cli_background_rejects_adb`, `test_cli_background_rejects_dry_run`, `test_cli_background_implies_local`, `test_run_cli_background_wraps_backend`, `test_run_cli_background_nonlinux_fallback`, `test_run_cli_background_uses_cli_args` |
+| `guiclaw/cli.py` | `--background` flag in `parse_args`, wrapping in `run_cli` | VERIFIED | Contains `add_argument.*--background`, `BackgroundDesktopBackend`, `XvfbDisplayManager(display_num=`, `_execute_agent`, `sys.platform` guard |
+| `tests/test_guiclaw_p5_cli.py` | CLI background tests | VERIFIED | Contains all 7 required test functions: `test_cli_parses_background_flags`, `test_cli_background_rejects_adb`, `test_cli_background_rejects_dry_run`, `test_cli_background_implies_local`, `test_run_cli_background_wraps_backend`, `test_run_cli_background_nonlinux_fallback`, `test_run_cli_background_uses_cli_args` |
 | `nanobot/config/schema.py` | `GuiConfig` with background fields and `model_validator` | VERIFIED | `background: bool = False`, `display_num`, `display_width`, `display_height`, `@model_validator(mode="after")`, `_validate_background_requires_local` all present |
 | `nanobot/agent/tools/gui.py` | `execute()` background wrapping logic | VERIFIED | `async def _run_task`, `self._gui_config.background`, `BackgroundDesktopBackend(active_backend, mgr)`, `async with active_backend:`, `sys.platform != "linux"`, `XvfbDisplayManager(` all present |
-| `tests/test_opengui_p11_integration.py` | `GuiConfig` schema and `execute()` wrapping tests | VERIFIED | Contains all 8 required test functions |
+| `tests/test_guiclaw_p11_integration.py` | `GuiConfig` schema and `execute()` wrapping tests | VERIFIED | Contains all 8 required test functions |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `opengui/cli.py::parse_args` | `opengui/cli.py::resolve_backend_name` | `--background` forces return `'local'` | WIRED | `getattr(args, "background", False)` guard in `resolve_backend_name()` at line 255 |
-| `opengui/cli.py::run_cli` | `opengui.backends.background.BackgroundDesktopBackend` | `async with` wrapping on Linux | WIRED | Module-level `BackgroundDesktopBackend = None` placeholder + lazy import + `async with backend:` at line 424 |
+| `guiclaw/cli.py::parse_args` | `guiclaw/cli.py::resolve_backend_name` | `--background` forces return `'local'` | WIRED | `getattr(args, "background", False)` guard in `resolve_backend_name()` at line 255 |
+| `guiclaw/cli.py::run_cli` | `guiclaw.backends.background.BackgroundDesktopBackend` | `async with` wrapping on Linux | WIRED | Module-level `BackgroundDesktopBackend = None` placeholder + lazy import + `async with backend:` at line 424 |
 | `nanobot/config/schema.py::GuiConfig` | `nanobot/agent/tools/gui.py::execute` | `self._gui_config.background` check | WIRED | `if self._gui_config.background:` at line 84 of `gui.py` reads directly from schema field |
-| `nanobot/agent/tools/gui.py::execute` | `opengui.backends.background.BackgroundDesktopBackend` | `async with` wrapping | WIRED | `from opengui.backends.background import BackgroundDesktopBackend` + `async with active_backend:` at lines 94, 104 |
+| `nanobot/agent/tools/gui.py::execute` | `guiclaw.backends.background.BackgroundDesktopBackend` | `async with` wrapping | WIRED | `from guiclaw.backends.background import BackgroundDesktopBackend` + `async with active_backend:` at lines 94, 104 |
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|-------------|-------------|--------|----------|
-| INTG-01 | 11-01 | CLI `--background` flag with `display_num`, `width`, `height` config | SATISFIED | `opengui/cli.py` lines 207-229; 4 argparse flags; `BackgroundConfig` dataclass added to `CliConfig` |
+| INTG-01 | 11-01 | CLI `--background` flag with `display_num`, `width`, `height` config | SATISFIED | `guiclaw/cli.py` lines 207-229; 4 argparse flags; `BackgroundConfig` dataclass added to `CliConfig` |
 | INTG-02 | 11-02 | `GuiConfig.background` fields in nanobot config schema | SATISFIED | `nanobot/config/schema.py` lines 169-180; 4 new fields + `model_validator` |
 | INTG-03 | 11-01 | `build_backend` wraps `LocalDesktopBackend` when `background=true` (CLI) | SATISFIED | Wrapping logic in `run_cli()` lines 407-425; `build_backend` returns local backend which is then wrapped |
 | INTG-04 | 11-02 | `_build_backend` wraps `LocalDesktopBackend` when `background=true` (nanobot) | SATISFIED | `execute()` wrapping logic in `nanobot/agent/tools/gui.py` lines 84-107 |
@@ -87,8 +87,8 @@ None required. All behavioral contracts are verifiable programmatically via the 
 
 ```
 23 passed in 1.71s
-  tests/test_opengui_p5_cli.py   — 15 passed (8 pre-existing + 7 new background tests)
-  tests/test_opengui_p11_integration.py — 8 passed (5 schema + 3 execute() wrapping)
+  tests/test_guiclaw_p5_cli.py   — 15 passed (8 pre-existing + 7 new background tests)
+  tests/test_guiclaw_p11_integration.py — 8 passed (5 schema + 3 execute() wrapping)
 ```
 
 Commits verified in repository:

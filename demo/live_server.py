@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sidecar server for the real-time OpenGUI Android demo."""
+"""Sidecar server for the real-time GUIClaw Android demo."""
 
 from __future__ import annotations
 
@@ -388,7 +388,7 @@ def create_app(
     config_path: Path | None = None,
     ios_mjpeg_source_factory: Callable[..., IosMjpegFrameSource] | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="OpenGUI live demo", version="0.1.0")
+    app = FastAPI(title="GUIClaw live demo", version="0.1.0")
     manager = LiveRunManager(config_path=config_path)
     app.state.live_manager = manager
 
@@ -501,7 +501,7 @@ def create_app(
             return
 
         try:
-            from opengui.backends.adb import ScrcpyFrameSource
+            from guiclaw.backends.adb import ScrcpyFrameSource
 
             source = ScrcpyFrameSource(
                 serial=serial,
@@ -542,7 +542,7 @@ def create_app(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the OpenGUI real-time demo sidecar.")
+    parser = argparse.ArgumentParser(description="Run the GUIClaw real-time demo sidecar.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18880)
     parser.add_argument("--config", type=Path, default=None)

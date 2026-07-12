@@ -87,8 +87,8 @@ def test_planner_system_prompt_omits_gui_memory_when_empty() -> None:
 
 def test_gui_tool_load_policy_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """_load_policy_context returns formatted policy lines from the memory store."""
-    from opengui.memory.store import MemoryStore
-    from opengui.memory.types import MemoryEntry, MemoryType
+    from guiclaw.memory.store import MemoryStore
+    from guiclaw.memory.types import MemoryEntry, MemoryType
 
     # Build a real MemoryStore with known policy entries
     store_dir = tmp_path / "memory"
@@ -112,10 +112,10 @@ def test_gui_tool_load_policy_context(tmp_path: Path, monkeypatch: pytest.Monkey
     )
     store.save()
 
-    # Monkeypatch DEFAULT_OPENGUI_MEMORY_DIR inside the gui tool module
+    # Monkeypatch DEFAULT_GUICLAW_MEMORY_DIR inside the gui tool module
     import nanobot.agent.tools.gui as gui_module
 
-    monkeypatch.setattr(gui_module, "DEFAULT_OPENGUI_MEMORY_DIR", store_dir)
+    monkeypatch.setattr(gui_module, "DEFAULT_GUICLAW_MEMORY_DIR", store_dir)
 
     # Call _load_policy_context as an unbound method (self is unused in this method)
     result = gui_module.GuiSubagentTool._load_policy_context(object())
@@ -136,9 +136,9 @@ def test_gui_tool_load_policy_context(tmp_path: Path, monkeypatch: pytest.Monkey
 @pytest.mark.asyncio
 async def test_gui_agent_uses_policy_context_directly(tmp_path: Path) -> None:
     """GuiAgent._retrieve_memory returns policy_context directly without calling the retriever."""
-    from opengui.agent import GuiAgent
-    from opengui.backends.dry_run import DryRunBackend
-    from opengui.trajectory.recorder import TrajectoryRecorder
+    from guiclaw.agent import GuiAgent
+    from guiclaw.backends.dry_run import DryRunBackend
+    from guiclaw.trajectory.recorder import TrajectoryRecorder
 
     recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="test task")
     recorder.start()
@@ -169,9 +169,9 @@ async def test_gui_agent_uses_policy_context_directly(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_gui_agent_falls_back_to_retriever_when_no_policy_context(tmp_path: Path) -> None:
     """GuiAgent._retrieve_memory uses memory_retriever search when policy_context is None."""
-    from opengui.agent import GuiAgent
-    from opengui.backends.dry_run import DryRunBackend
-    from opengui.trajectory.recorder import TrajectoryRecorder
+    from guiclaw.agent import GuiAgent
+    from guiclaw.backends.dry_run import DryRunBackend
+    from guiclaw.trajectory.recorder import TrajectoryRecorder
 
     recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="test task")
     recorder.start()

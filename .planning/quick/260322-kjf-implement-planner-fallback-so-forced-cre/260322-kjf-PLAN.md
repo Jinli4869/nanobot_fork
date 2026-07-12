@@ -12,4 +12,4 @@
 
 ## Verification
 
-- Run `uv run pytest tests/test_opengui_agent_loop.py tests/test_opengui_p2_integration.py -q`
+- Run `uv run pytest tests/test_guiclaw_agent_loop.py tests/test_guiclaw_p2_integration.py -q`

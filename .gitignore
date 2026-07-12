@@ -99,7 +99,8 @@ temp/
 *.tmp
 exp/
 .playwright-mcp/
-opengui_runs/
+guiclaw_runs/
+open[g]ui_runs/
 bridge/node_modules/
 
 # Demo generated data (screenshots & trajectory JSON from convert-trajectory.py)
@@ -111,7 +112,9 @@ nanobot/tui/web/node_modules/
 # nanobot/tui/web/dist/
 nanobot/tui/web/.vite/
 nanobot/tui/web/coverage/
-.opengui
+.guiclaw
+.open[g]ui/
 gui_runs/
-gui-claw-demo-video/
+guiclaw-demo-video/
+gui[-]claw-demo-video/
 node_modules/

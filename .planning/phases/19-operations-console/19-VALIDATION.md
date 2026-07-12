@@ -20,7 +20,7 @@ created: 2026-03-21
 | **Framework** | pytest |
 | **Config file** | `pyproject.toml` |
 | **Quick run command** | `uv run --extra dev pytest tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py -q` |
-| **Full suite command** | `uv run --extra dev pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py tests/test_opengui_p3_nanobot.py tests/test_opengui_p16_host_integration.py -q` |
+| **Full suite command** | `uv run --extra dev pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p16_host_integration.py -q` |
 | **Estimated runtime** | ~30 seconds |
 
 **Fallback command (current local sandbox):** `.venv/bin/python -m pytest tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py -q`
@@ -30,7 +30,7 @@ created: 2026-03-21
 ## Sampling Rate
 
 - **After every 19-01 task commit:** Run `uv run --extra dev pytest tests/test_tui_p19_runtime.py tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py -q`
-- **After every 19-02 task commit:** Run `uv run --extra dev pytest tests/test_tui_p19_tasks.py tests/test_tui_p19_runtime.py tests/test_opengui_p3_nanobot.py tests/test_opengui_p16_host_integration.py -q`
+- **After every 19-02 task commit:** Run `uv run --extra dev pytest tests/test_tui_p19_tasks.py tests/test_tui_p19_runtime.py tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p16_host_integration.py -q`
 - **After every 19-03 task commit:** Run `uv run --extra dev pytest tests/test_tui_p19_traces.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py -q`
 - **After every plan wave:** Run the smallest task slice for that wave, then promote to the full Phase 17-19 regression slice after `19-03` Task 2
 - **Before `$gsd-verify-work`:** Full suite must be green
@@ -45,9 +45,9 @@ created: 2026-03-21
 | 19-01-01 | 01 | 1 | OPS-01 | unit/api | `uv run --extra dev pytest tests/test_tui_p19_runtime.py::test_runtime_endpoint_reports_sessions_runs_and_recent_failures tests/test_tui_p19_runtime.py::test_runtime_recent_failures_are_filtered_to_browser_safe_fields -q` | planned | ⬜ pending |
 | 19-01-02 | 01 | 1 | OPS-01 | integration/api | `uv run --extra dev pytest tests/test_tui_p19_runtime.py tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py -q` | planned | ⬜ pending |
 | 19-02-01 | 02 | 2 | OPS-02 | unit/api | `uv run --extra dev pytest tests/test_tui_p19_tasks.py::test_launch_endpoint_accepts_only_supported_task_kinds tests/test_tui_p19_tasks.py::test_launch_endpoint_rejects_untyped_or_unsafe_parameters -q` | planned | ⬜ pending |
-| 19-02-02 | 02 | 2 | OPS-02 | integration/runtime | `uv run --extra dev pytest tests/test_tui_p19_tasks.py tests/test_tui_p19_runtime.py tests/test_opengui_p3_nanobot.py tests/test_opengui_p16_host_integration.py -q` | planned | ⬜ pending |
+| 19-02-02 | 02 | 2 | OPS-02 | integration/runtime | `uv run --extra dev pytest tests/test_tui_p19_tasks.py tests/test_tui_p19_runtime.py tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p16_host_integration.py -q` | planned | ⬜ pending |
 | 19-03-01 | 03 | 3 | OPS-03 | unit/api | `uv run --extra dev pytest tests/test_tui_p19_traces.py::test_trace_endpoint_returns_filtered_events_for_browser_consumers tests/test_tui_p19_traces.py::test_log_endpoint_returns_filtered_lines_without_raw_paths_or_prompts -q` | planned | ⬜ pending |
-| 19-03-02 | 03 | 3 | OPS-03 | regression | `uv run --extra dev pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py tests/test_opengui_p3_nanobot.py tests/test_opengui_p16_host_integration.py -q` | planned | ⬜ pending |
+| 19-03-02 | 03 | 3 | OPS-03 | regression | `uv run --extra dev pytest tests/test_tui_p17_runtime.py tests/test_tui_p17_config.py tests/test_tui_p18_chat.py tests/test_tui_p18_streaming.py tests/test_tui_p19_runtime.py tests/test_tui_p19_tasks.py tests/test_tui_p19_traces.py tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p16_host_integration.py -q` | planned | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

@@ -2,10 +2,10 @@
 phase: 03-nanobot-subagent
 plan: 02
 subsystem: api
-tags: [opengui, nanobot, tool-registry, trajectory, skill-extraction]
+tags: [guiclaw, nanobot, tool-registry, trajectory, skill-extraction]
 requires:
   - phase: 03-01
-    provides: GuiConfig plus nanobot-to-opengui adapters used by the GUI subagent tool
+    provides: GuiConfig plus nanobot-to-guiclaw adapters used by the GUI subagent tool
 provides:
   - GuiSubagentTool with backend selection, workspace trajectory persistence, and structured JSON results
   - Conditional AgentLoop registration of gui_task when gui_config is present
@@ -17,13 +17,13 @@ tech-stack:
   patterns: [per-platform GUI skill library caching, recorder-backed trajectory extraction, config-driven tool registration]
 key-files:
   created: [.planning/phases/03-nanobot-subagent/03-02-SUMMARY.md, nanobot/agent/tools/gui.py]
-  modified: [nanobot/agent/loop.py, nanobot/cli/commands.py, tests/test_opengui_p3_nanobot.py]
+  modified: [nanobot/agent/loop.py, nanobot/cli/commands.py, tests/test_guiclaw_p3_nanobot.py]
 key-decisions:
   - "GuiSubagentTool returns the recorder JSONL path so downstream consumers and extraction use the trajectory format SkillExtractor understands."
   - "GUI skill libraries are cached per backend platform under workspace/gui_skills/{platform} and selected at execution time."
   - "GUI run directories use microsecond timestamps to avoid collisions across consecutive execute() calls."
 patterns-established:
-  - "Nanobot tool wrappers can persist opengui artifacts under the host workspace while keeping extraction failures non-fatal."
+  - "Nanobot tool wrappers can persist guiclaw artifacts under the host workspace while keeping extraction failures non-fatal."
   - "AgentLoop feature registration stays opt-in by threading nullable config sections into constructor-time tool setup."
 requirements-completed: [NANO-01, NANO-04, NANO-05]
 duration: 10 min
@@ -47,7 +47,7 @@ completed: 2026-03-18
 - Added [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) with `GuiSubagentTool`, backend selection, unique run directories, recorder-backed `trace_path` results, and non-fatal auto skill extraction.
 - Updated [`nanobot/agent/loop.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/loop.py) to accept `gui_config` and register `gui_task` only when GUI config is present.
 - Updated [`nanobot/cli/commands.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/cli/commands.py) so runtime-created agent loops actually receive `config.gui`.
-- Replaced the remaining Phase 3 xfail scaffolding in [`tests/test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) with passing coverage for registration, JSON results, trajectory persistence, skill extraction, fresh recorders, and AgentLoop wiring.
+- Replaced the remaining Phase 3 xfail scaffolding in [`tests/test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) with passing coverage for registration, JSON results, trajectory persistence, skill extraction, fresh recorders, and AgentLoop wiring.
 
 ## Task Commits
 
@@ -65,7 +65,7 @@ New task commits could not be created from this sandbox because writes inside `.
 - [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) - New nanobot tool that drives `GuiAgent`, persists traces in the workspace, and extracts skills after each run.
 - [`nanobot/agent/loop.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/loop.py) - Adds `gui_config` support and conditional GUI tool registration.
 - [`nanobot/cli/commands.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/cli/commands.py) - Passes `config.gui` into `AgentLoop` construction paths.
-- [`tests/test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) - Covers NANO-01, NANO-04, and NANO-05 with real assertions.
+- [`tests/test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) - Covers NANO-01, NANO-04, and NANO-05 with real assertions.
 
 ## Decisions Made
 
@@ -81,16 +81,16 @@ New task commits could not be created from this sandbox because writes inside `.
 - **Found during:** Task 1 (GuiSubagentTool implementation)
 - **Issue:** `GuiAgent`'s `trace.jsonl` uses `event` payloads, but `SkillExtractor.extract_from_file()` only reads recorder-style `type == "step"` events.
 - **Fix:** Resolved `trace_path` from `TrajectoryRecorder.path`, returned that file in the tool result, and used it for post-run extraction.
-- **Files modified:** `nanobot/agent/tools/gui.py`, `tests/test_opengui_p3_nanobot.py`
-- **Verification:** `./.venv/bin/python -m pytest tests/test_opengui_p3_nanobot.py -x -q`; `PATH="$(pwd)/.venv/bin:$PATH" ./.venv/bin/python -m pytest tests/ -x -q`
+- **Files modified:** `nanobot/agent/tools/gui.py`, `tests/test_guiclaw_p3_nanobot.py`
+- **Verification:** `./.venv/bin/python -m pytest tests/test_guiclaw_p3_nanobot.py -x -q`; `PATH="$(pwd)/.venv/bin:$PATH" ./.venv/bin/python -m pytest tests/ -x -q`
 - **Committed in:** Not committed - sandbox blocked Git writes
 
 **2. [Rule 1 - Bug] Made GUI run directories collision-safe**
 - **Found during:** Task 1 (fresh recorder coverage)
 - **Issue:** Second-resolution timestamps could reuse the same run directory for back-to-back `execute()` calls, making trace artifacts ambiguous.
 - **Fix:** Switched run directory names to microsecond timestamps with `exist_ok=False` retry semantics.
-- **Files modified:** `nanobot/agent/tools/gui.py`, `tests/test_opengui_p3_nanobot.py`
-- **Verification:** `./.venv/bin/python -m pytest tests/test_opengui_p3_nanobot.py -x -q`
+- **Files modified:** `nanobot/agent/tools/gui.py`, `tests/test_guiclaw_p3_nanobot.py`
+- **Verification:** `./.venv/bin/python -m pytest tests/test_guiclaw_p3_nanobot.py -x -q`
 - **Committed in:** Not committed - sandbox blocked Git writes
 
 ---
@@ -116,7 +116,7 @@ None - no external service configuration required.
 
 - [x] [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py) exists
 - [x] [`nanobot/agent/loop.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/loop.py) contains `gui_config` registration wiring
-- [x] [`tests/test_opengui_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p3_nanobot.py) passes with `19 passed`
+- [x] [`tests/test_guiclaw_p3_nanobot.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p3_nanobot.py) passes with `19 passed`
 - [x] Full suite passes with repo virtualenv on `PATH`: `521 passed, 6 warnings`
 
 ---

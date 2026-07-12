@@ -74,7 +74,7 @@ Each task was committed atomically:
 - `nanobot/tui/static.py` - Resolves built assets from `nanobot.tui.web` instead of a looser parent package path.
 - `pyproject.toml` - Adds the `nanobot-tui` script and includes built frontend assets in wheel and sdist metadata.
 - `tests/test_tui_p20_entrypoints.py` - Verifies startup wiring, package metadata, and resource-package importability.
-- `tests/test_commands.py` - Confirms the existing `nanobot` and `opengui` CLI scripts remain intact.
+- `tests/test_commands.py` - Confirms the existing `nanobot` and `guiclaw` CLI scripts remain intact.
 - `README.md` - Documents the supported dev and built web workspace startup flows.
 - `.planning/phases/20-web-app-integration-and-verification/20-MANUAL-SMOKE.md` - Defines the real-browser and CLI smoke path for Phase 20 closeout.
 

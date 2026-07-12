@@ -13,7 +13,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import reextract_gui_skill as single
-from opengui.postprocessing import EvaluationConfig
+from guiclaw.postprocessing import EvaluationConfig
 
 
 @dataclass(frozen=True)
@@ -34,7 +34,7 @@ class SkippedTrace:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Batch re-run OpenGUI post-run skill extraction under task/nanobot_gui_task_runs directories.",
+        description="Batch re-run GUIClaw post-run skill extraction under task/nanobot_gui_task_runs directories.",
     )
     parser.add_argument(
         "root",
@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config-source",
-        choices=("nanobot", "opengui"),
+        choices=("nanobot", "guiclaw"),
         default="nanobot",
         help="Provider config source. Defaults to ~/.nanobot/config.json.",
     )
@@ -54,16 +54,16 @@ def parse_args() -> argparse.Namespace:
         help="nanobot config path when --config-source=nanobot.",
     )
     parser.add_argument(
-        "--opengui-config",
+        "--guiclaw-config",
         type=Path,
-        default=single.DEFAULT_OPENGUI_CONFIG,
-        help="OpenGUI YAML config path when --config-source=opengui.",
+        default=single.DEFAULT_GUICLAW_CONFIG,
+        help="GUIClaw YAML config path when --config-source=guiclaw.",
     )
     parser.add_argument(
         "--skill-store-root",
         type=Path,
         default=None,
-        help="Override skill store root. Defaults to nanobot gui_skills or OpenGUI skills_dir.",
+        help="Override skill store root. Defaults to nanobot gui_skills or GUIClaw skills_dir.",
     )
     parser.add_argument(
         "--platform",

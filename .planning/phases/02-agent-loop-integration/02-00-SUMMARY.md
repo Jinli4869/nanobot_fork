@@ -7,8 +7,8 @@ tags: [pytest, xfail, stubs, tdd, wave0]
 # Dependency graph
 requires: []
 provides:
-  - "tests/test_opengui_p2_integration.py: 8 xfail stubs for AGENT-04/05/06, SKILL-08, TRAJ-03, TEST-05"
-  - "tests/test_opengui_p2_memory.py: 2 xfail stubs for MEM-05"
+  - "tests/test_guiclaw_p2_integration.py: 8 xfail stubs for AGENT-04/05/06, SKILL-08, TRAJ-03, TEST-05"
+  - "tests/test_guiclaw_p2_memory.py: 2 xfail stubs for MEM-05"
 affects:
   - 02-01
   - 02-02
@@ -23,8 +23,8 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p2_integration.py
-    - tests/test_opengui_p2_memory.py
+    - tests/test_guiclaw_p2_integration.py
+    - tests/test_guiclaw_p2_memory.py
   modified: []
 
 key-decisions:
@@ -56,8 +56,8 @@ completed: 2026-03-17
 
 ## Accomplishments
 
-- Created `tests/test_opengui_p2_integration.py` with 8 xfail stubs covering GuiAgent integration requirements: memory injection (AGENT-04), skill path selection (AGENT-05), free exploration fallback (AGENT-05), trajectory recording (AGENT-06/TRAJ-03), task planner decomposition (AGENT-04), router dispatch (AGENT-04/05/06), router replan on failure (AGENT-04), and full end-to-end flow (TEST-05)
-- Created `tests/test_opengui_p2_memory.py` with 2 xfail stubs covering POLICY-always-included rule and memory context formatting (MEM-05)
+- Created `tests/test_guiclaw_p2_integration.py` with 8 xfail stubs covering GuiAgent integration requirements: memory injection (AGENT-04), skill path selection (AGENT-05), free exploration fallback (AGENT-05), trajectory recording (AGENT-06/TRAJ-03), task planner decomposition (AGENT-04), router dispatch (AGENT-04/05/06), router replan on failure (AGENT-04), and full end-to-end flow (TEST-05)
+- Created `tests/test_guiclaw_p2_memory.py` with 2 xfail stubs covering POLICY-always-included rule and memory context formatting (MEM-05)
 - All 10 stubs collected by pytest, report XFAIL (not error, not skip, not pass), satisfying Nyquist compliance for Waves 1-3
 
 ## Task Commits
@@ -70,8 +70,8 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p2_integration.py` - 8 async xfail stub tests for GuiAgent and main-agent integration requirements
-- `tests/test_opengui_p2_memory.py` - 2 async xfail stub tests for MemoryStore/injection requirements
+- `tests/test_guiclaw_p2_integration.py` - 8 async xfail stub tests for GuiAgent and main-agent integration requirements
+- `tests/test_guiclaw_p2_memory.py` - 2 async xfail stub tests for MemoryStore/injection requirements
 
 ## Decisions Made
 

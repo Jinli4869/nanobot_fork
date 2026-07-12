@@ -24,10 +24,10 @@ tech-stack:
 key-files:
   created: []
   modified:
-    - opengui/cli.py
+    - guiclaw/cli.py
     - nanobot/agent/tools/gui.py
-    - tests/test_opengui_p5_cli.py
-    - tests/test_opengui_p11_integration.py
+    - tests/test_guiclaw_p5_cli.py
+    - tests/test_guiclaw_p11_integration.py
 
 key-decisions:
   - "CLI and nanobot both default omitted Windows app-class hints to classic-win32 only for background local runs on win32 hosts."
@@ -72,10 +72,10 @@ Each task was committed atomically:
 2. **Task 2: Run and stabilize the Phase 14 gap-closure regression slice** - `8f7aa3d` (`test`)
 
 ## Files Created/Modified
-- `opengui/cli.py` - adds `--target-app-class`, resolves the Windows default probe hint, and forwards `target_app_class` into the shared probe.
+- `guiclaw/cli.py` - adds `--target-app-class`, resolves the Windows default probe hint, and forwards `target_app_class` into the shared probe.
 - `nanobot/agent/tools/gui.py` - adds `target_app_class` to the tool schema and forwards the resolved value into the shared probe before mode resolution.
-- `tests/test_opengui_p5_cli.py` - covers explicit/default CLI propagation and aligns the Windows metadata fixture with the worker pipe contract.
-- `tests/test_opengui_p11_integration.py` - covers nanobot propagation plus pre-agent `windows_app_class_unsupported` failure ordering.
+- `tests/test_guiclaw_p5_cli.py` - covers explicit/default CLI propagation and aligns the Windows metadata fixture with the worker pipe contract.
+- `tests/test_guiclaw_p11_integration.py` - covers nanobot propagation plus pre-agent `windows_app_class_unsupported` failure ordering.
 
 ## Decisions Made
 
@@ -91,8 +91,8 @@ Each task was committed atomically:
 - **Found during:** Task 2
 - **Issue:** `test_run_cli_logs_windows_target_surface_metadata` faked a worker process without `stdin`/`stdout`, so `WindowsIsolatedBackend.preflight()` failed before the metadata assertions could run.
 - **Fix:** Added minimal writable `stdin`, readable `stdout`, and closable pipe stubs to the CLI Windows metadata test fixture.
-- **Files modified:** `tests/test_opengui_p5_cli.py`
-- **Verification:** `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py tests/test_opengui_p12_runtime_contracts.py -q`
+- **Files modified:** `tests/test_guiclaw_p5_cli.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p14_windows_desktop.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py tests/test_guiclaw_p12_runtime_contracts.py -q`
 - **Committed in:** `8f7aa3d`
 
 ---

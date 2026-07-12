@@ -1,8 +1,8 @@
-# OpenGUI
+# GUIClaw
 
 ## What This Is
 
-OpenGUI is a portable GUI subagent package that automates Android and desktop environments through a vision-action loop, while nanobot remains the primary host shell that exposes those capabilities to end users. With v1.5, the codebase now has a two-layer shortcut/task skill architecture; v1.6 focuses on turning that architecture into a stable production shortcut system that can extract reusable shortcuts from traces, decide when they are safe to use, and execute them reliably.
+GUIClaw is a portable GUI subagent package that automates Android and desktop environments through a vision-action loop, while nanobot remains the primary host shell that exposes those capabilities to end users. With v1.5, the codebase now has a two-layer shortcut/task skill architecture; v1.6 focuses on turning that architecture into a stable production shortcut system that can extract reusable shortcuts from traces, decide when they are safe to use, and execute them reliably.
 
 ## Core Value
 
@@ -26,7 +26,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 - Stable shortcut execution with live target binding, post-step settle/verification, and clean fallback to non-shortcut flows
 - Shortcut telemetry and regression coverage so unstable shortcuts can be diagnosed and pruned
 
-## Previous Milestone: v1.5 New OpenGUI Skills Architecture (Completed)
+## Previous Milestone: v1.5 New GUIClaw Skills Architecture (Completed)
 
 **Goal:** Replace the flat single-layer skill system with a two-layer tree architecture: a shortcut layer (verifiable macro actions with typed contracts and parameter slots) and a task-level layer (shortcut composition with ATOM fallbacks and conditional branches), backed by a pluggable grounding protocol, a quality-gated extraction pipeline, and separate layer-aware skill stores.
 
@@ -96,7 +96,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 ## Context
 
 - **Brownfield status:** The codebase now includes shipped P0, v1.0-v1.5 functionality, including the new shortcut/task architecture and unified search.
-- **Host integration:** nanobot remains the primary host-agent target; the OpenGUI core loop should stay reusable across host surfaces.
+- **Host integration:** nanobot remains the primary host-agent target; the GUIClaw core loop should stay reusable across host surfaces.
 - **Testing posture:** Background and cross-platform execution paths should remain CI-safe by mocking subprocess/device boundaries instead of depending on live displays.
 - **Milestone framing:** v1.6 is not about inventing more shortcut schema; it is about closing the production gap between the shipped architecture and the live GUI task path.
 
@@ -104,7 +104,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Protocol-based boundaries between host and GUI agent | Keep OpenGUI reusable across host agents | ✓ Good |
+| Protocol-based boundaries between host and GUI agent | Keep GUIClaw reusable across host agents | ✓ Good |
 | Mobile-Agent-style prompting | Proven prompt structure for GUI action loops | ✓ Good |
 | `[0,999]` relative coordinates | Preserve resolution portability | ✓ Good |
 | JSON storage before graph or SQL migration | Lower complexity at current scale | ✓ Good |
@@ -115,7 +115,7 @@ Any host agent can spawn a GUI subagent to complete device tasks autonomously, w
 
 ## Constraints
 
-- OpenGUI must not import nanobot or claw internals directly.
+- GUIClaw must not import nanobot or claw internals directly.
 - Existing CLI, nanobot, and background-execution flows must keep working while shortcut productionization lands.
 - V1.6 must preserve a safe non-shortcut fallback path for any task where shortcut reuse is unsafe.
 - The milestone should not require Neo4j, Pinecone, OmniParser, or cloud-only services to become usable.

@@ -22,7 +22,7 @@ nanobot_fork/
 │   ├── templates/              # Default workspace templates
 │   └── utils/                  # Helper utilities
 │
-├── opengui/                    # GUI automation module (separate package)
+├── guiclaw/                    # GUI automation module (separate package)
 │   ├── agents/                 # GUI agent implementations
 │   ├── backends/               # Platform-specific UI backends
 │   ├── memory/                 # GUI state memory
@@ -110,7 +110,7 @@ nanobot_fork/
 - Contains: Token estimation, time formatting, file helpers
 - Key files: `helpers.py`, `evaluator.py`
 
-**`opengui/`:**
+**`guiclaw/`:**
 - Purpose: Desktop GUI automation (separate module, experimental)
 - Contains: Agent for GUI interaction, action/observation tracking, backend abstractions
 - Key files: `agent.py`, `action.py`, `observation.py`, `interfaces.py`

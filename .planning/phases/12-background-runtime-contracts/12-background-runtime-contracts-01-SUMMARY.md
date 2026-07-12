@@ -31,12 +31,12 @@ tech-stack:
 
 key-files:
   created:
-    - opengui/backends/background_runtime.py
-    - tests/test_opengui_p12_runtime_contracts.py
+    - guiclaw/backends/background_runtime.py
+    - tests/test_guiclaw_p12_runtime_contracts.py
   modified:
-    - opengui/backends/background.py
-    - tests/test_opengui_p5_cli.py
-    - tests/test_opengui_p11_integration.py
+    - guiclaw/backends/background.py
+    - tests/test_guiclaw_p5_cli.py
+    - tests/test_guiclaw_p11_integration.py
 
 requirements-completed:
   - BGND-05
@@ -49,11 +49,11 @@ completed: "2026-03-20"
 
 # Phase 12 Plan 01 Summary
 
-Shared runtime contracts are now centralized in `opengui/backends/background_runtime.py`. The new module provides host normalization, Xvfb capability probing, policy-based mode resolution, stable resolved-mode logging, and a `BackgroundRuntimeCoordinator` that serializes overlapping background runs with explicit busy metadata.
+Shared runtime contracts are now centralized in `guiclaw/backends/background_runtime.py`. The new module provides host normalization, Xvfb capability probing, policy-based mode resolution, stable resolved-mode logging, and a `BackgroundRuntimeCoordinator` that serializes overlapping background runs with explicit busy metadata.
 
 `BackgroundDesktopBackend` now acquires a process-wide runtime lease before display startup and keeps it until shutdown completes. That closes the process-global overlap gap from BGND-07 without changing the wrapper's public lifecycle shape for callers.
 
-The runtime test file was promoted from placeholder coverage to green contract tests. `uv run pytest tests/test_opengui_p12_runtime_contracts.py -q` passes, covering Linux Xvfb availability detection, fallback/blocked mode resolution, and waiter serialization.
+The runtime test file was promoted from placeholder coverage to green contract tests. `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py -q` passes, covering Linux Xvfb availability detection, fallback/blocked mode resolution, and waiter serialization.
 
 ## Issues Encountered
 
@@ -61,7 +61,7 @@ None.
 
 ## Self-Check: PASSED
 
-- `opengui/backends/background_runtime.py` - FOUND
-- `opengui/backends/background.py` - FOUND
-- `tests/test_opengui_p12_runtime_contracts.py` - FOUND
+- `guiclaw/backends/background_runtime.py` - FOUND
+- `guiclaw/backends/background.py` - FOUND
+- `tests/test_guiclaw_p12_runtime_contracts.py` - FOUND
 

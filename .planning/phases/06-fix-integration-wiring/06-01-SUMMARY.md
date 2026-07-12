@@ -7,12 +7,12 @@ dependency_graph:
   requires:
     - "03-01: GuiSubagentTool, NanobotLLMAdapter, NanobotEmbeddingAdapter"
     - "04-01: LocalDesktopBackend (Pillow dependency identified)"
-    - "05-01: opengui CLI (entry point identified)"
+    - "05-01: guiclaw CLI (entry point identified)"
   provides:
     - "GuiConfig.embedding_model field (NANO-03, BACK-03, CLI-01)"
     - "NanobotEmbeddingAdapter wiring in GuiSubagentTool via litellm.aembedding"
     - "Pillow>=10.0 in desktop and dev extras"
-    - "opengui = opengui.cli:main console script"
+    - "guiclaw = guiclaw.cli:main console script"
   affects:
     - "nanobot/config/schema.py"
     - "nanobot/agent/tools/gui.py"
@@ -25,7 +25,7 @@ tech_stack:
     - "Conditional adapter construction: embedding_adapter = build() if config.embedding_model else None"
 key_files:
   created:
-    - tests/test_opengui_p6_wiring.py
+    - tests/test_guiclaw_p6_wiring.py
   modified:
     - nanobot/config/schema.py
     - nanobot/agent/tools/gui.py
@@ -43,7 +43,7 @@ metrics:
 
 # Phase 6 Plan 1: Fix Integration Wiring Summary
 
-**One-liner:** Closed three broken cross-phase wiring seams — GuiConfig.embedding_model field, NanobotEmbeddingAdapter→SkillLibrary wiring via litellm.aembedding, and pyproject.toml metadata (Pillow + opengui script).
+**One-liner:** Closed three broken cross-phase wiring seams — GuiConfig.embedding_model field, NanobotEmbeddingAdapter→SkillLibrary wiring via litellm.aembedding, and pyproject.toml metadata (Pillow + guiclaw script).
 
 ## Objective
 
@@ -51,13 +51,13 @@ Close integration gaps left after Phases 3-5 without reopening prior scope:
 1. Expose `GuiConfig.embedding_model` with camelCase alias support
 2. Wire `NanobotEmbeddingAdapter` in `GuiSubagentTool` for embedding-backed skill search
 3. Declare `Pillow>=10.0` in `desktop` and `dev` extras
-4. Add `opengui = "opengui.cli:main"` console script
+4. Add `guiclaw = "guiclaw.cli:main"` console script
 
 ## Tasks Completed
 
 | Task | Name | Commit | Files |
 |------|------|--------|-------|
-| 1 | Add Phase 6 regression coverage (TDD RED) | 36a24a3 | tests/test_opengui_p6_wiring.py |
+| 1 | Add Phase 6 regression coverage (TDD RED) | 36a24a3 | tests/test_guiclaw_p6_wiring.py |
 | 2 | Implement wiring and metadata fixes (TDD GREEN) | 4575db8 | nanobot/config/schema.py, nanobot/agent/tools/gui.py, pyproject.toml |
 
 ## Key Changes
@@ -78,7 +78,7 @@ Added `embedding_model: str | None = None` to `GuiConfig`. The existing `Base` m
 
 ### pyproject.toml
 - `Pillow>=10.0` added to both `[project.optional-dependencies].desktop` and `dev`
-- `opengui = "opengui.cli:main"` added to `[project.scripts]`
+- `guiclaw = "guiclaw.cli:main"` added to `[project.scripts]`
 
 ## Verification
 
@@ -94,8 +94,8 @@ None — plan executed exactly as written. The `_resolve_model` guard (`callable
 
 ## Self-Check: PASSED
 
-- `tests/test_opengui_p6_wiring.py` exists: FOUND
+- `tests/test_guiclaw_p6_wiring.py` exists: FOUND
 - `nanobot/config/schema.py` has `embedding_model: str | None = None`: FOUND (line 168)
 - `nanobot/agent/tools/gui.py` imports and uses `NanobotEmbeddingAdapter`: FOUND
-- `pyproject.toml` has 2x `Pillow>=10.0` and `opengui` script: FOUND
+- `pyproject.toml` has 2x `Pillow>=10.0` and `guiclaw` script: FOUND
 - Commits `36a24a3` and `4575db8`: FOUND in git log

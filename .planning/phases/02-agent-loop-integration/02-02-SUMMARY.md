@@ -29,8 +29,8 @@ Wired memory retrieval, skill search + execute, and trajectory recording into Gu
 - (none)
 
 ### key-files.modified
-- `opengui/agent.py` — Full memory/skill/trajectory integration in GuiAgent
-- `tests/test_opengui.py` — Updated with trajectory_recorder parameter
+- `guiclaw/agent.py` — Full memory/skill/trajectory integration in GuiAgent
+- `tests/test_guiclaw.py` — Updated with trajectory_recorder parameter
 
 ## Commits
 - `75dd212` feat(02-02): wire memory, skill, and trajectory into GuiAgent.run()

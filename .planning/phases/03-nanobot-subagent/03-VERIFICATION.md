@@ -21,7 +21,7 @@ re_verification: false
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | `NanobotLLMAdapter.chat()` returns an opengui `LLMResponse` with `ToolCall` objects (not `ToolCallRequest`) | VERIFIED | `gui_adapter.py:34-37` constructs `ToolCall` from each `ToolCallRequest`; `test_llm_adapter_maps_response` asserts `isinstance(result.tool_calls[0], OpenGuiToolCall)` and passes |
+| 1 | `NanobotLLMAdapter.chat()` returns an guiclaw `LLMResponse` with `ToolCall` objects (not `ToolCallRequest`) | VERIFIED | `gui_adapter.py:34-37` constructs `ToolCall` from each `ToolCallRequest`; `test_llm_adapter_maps_response` asserts `isinstance(result.tool_calls[0], GUIClawToolCall)` and passes |
 | 2 | `NanobotLLMAdapter.chat()` converts empty `tool_calls` list to `None` | VERIFIED | `gui_adapter.py:37` uses `] or None`; `test_llm_adapter_empty_tool_calls` passes |
 | 3 | `NanobotLLMAdapter` delegates to `chat_with_retry` internally (no duplicate retry logic) | VERIFIED | `gui_adapter.py:28-33` calls `self._provider.chat_with_retry(...)` directly; no retry loop in adapter |
 | 4 | `NanobotEmbeddingAdapter.embed()` returns `np.ndarray` from a callable | VERIFIED | `gui_adapter.py:51-52`; `test_embedding_adapter` asserts `isinstance(result, np.ndarray)` and passes |
@@ -50,9 +50,9 @@ re_verification: false
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `nanobot/agent/gui_adapter.py` | `NanobotLLMAdapter` + `NanobotEmbeddingAdapter` | VERIFIED | 53 lines, both classes present with correct signatures, imports nanobot and opengui types, substantive conversion logic |
+| `nanobot/agent/gui_adapter.py` | `NanobotLLMAdapter` + `NanobotEmbeddingAdapter` | VERIFIED | 53 lines, both classes present with correct signatures, imports nanobot and guiclaw types, substantive conversion logic |
 | `nanobot/config/schema.py` | `AdbConfig` + `GuiConfig` Pydantic models | VERIFIED | `AdbConfig` at line 154, `GuiConfig` at line 160, `Config.gui` at line 178; all fields match spec |
-| `tests/test_opengui_p3_nanobot.py` | Wave 0 test stubs + adapter/config unit tests (min 100 lines) | VERIFIED | 535 lines; all 6 original stubs promoted to real tests; 19 tests total, 0 xfail |
+| `tests/test_guiclaw_p3_nanobot.py` | Wave 0 test stubs + adapter/config unit tests (min 100 lines) | VERIFIED | 535 lines; all 6 original stubs promoted to real tests; 19 tests total, 0 xfail |
 
 ### Plan 02 Artifacts
 
@@ -60,7 +60,7 @@ re_verification: false
 |----------|----------|--------|---------|
 | `nanobot/agent/tools/gui.py` | `GuiSubagentTool` implementation (min 80 lines) | VERIFIED | 195 lines, subclasses `Tool`, has `name`/`description`/`parameters` properties, `execute()` with full workflow |
 | `nanobot/agent/loop.py` | Updated `AgentLoop` with `gui_config` param and conditional registration | VERIFIED | `gui_config: "GuiConfig \| None" = None` at line 67, stored at line 83, conditional registration at lines 137-147 |
-| `tests/test_opengui_p3_nanobot.py` | Full test coverage for NANO-01, NANO-04, NANO-05 (min 200 lines) | VERIFIED | 535 lines; `test_gui_tool_registered`, `test_trajectory_saved_to_workspace`, `test_auto_skill_extraction`, `test_execute_creates_fresh_trajectory_recorder`, `test_agent_loop_registers_gui_tool`, `test_agent_loop_no_gui_config` all pass |
+| `tests/test_guiclaw_p3_nanobot.py` | Full test coverage for NANO-01, NANO-04, NANO-05 (min 200 lines) | VERIFIED | 535 lines; `test_gui_tool_registered`, `test_trajectory_saved_to_workspace`, `test_auto_skill_extraction`, `test_execute_creates_fresh_trajectory_recorder`, `test_agent_loop_registers_gui_tool`, `test_agent_loop_no_gui_config` all pass |
 
 ---
 
@@ -71,7 +71,7 @@ re_verification: false
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
 | `nanobot/agent/gui_adapter.py` | `nanobot/providers/base.py` | imports `LLMProvider` | WIRED | `gui_adapter.py:10`: `from nanobot.providers.base import LLMProvider as NanobotLLMProvider` |
-| `nanobot/agent/gui_adapter.py` | `opengui/interfaces.py` | imports `LLMResponse`, `ToolCall` | WIRED | `gui_adapter.py:11-12`: `from opengui.interfaces import LLMResponse as OpenGuiLLMResponse` and `from opengui.interfaces import ToolCall` |
+| `nanobot/agent/gui_adapter.py` | `guiclaw/interfaces.py` | imports `LLMResponse`, `ToolCall` | WIRED | `gui_adapter.py:11-12`: `from guiclaw.interfaces import LLMResponse as GUIClawLLMResponse` and `from guiclaw.interfaces import ToolCall` |
 | `nanobot/config/schema.py` | `Config` class | `gui` field on `Config` | WIRED | `schema.py:178`: `gui: GuiConfig \| None = None` |
 
 ### Plan 02 Key Links
@@ -79,9 +79,9 @@ re_verification: false
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
 | `nanobot/agent/tools/gui.py` | `nanobot/agent/gui_adapter.py` | imports `NanobotLLMAdapter` | WIRED | `gui.py:11`: `from nanobot.agent.gui_adapter import NanobotLLMAdapter` |
-| `nanobot/agent/tools/gui.py` | `opengui/agent.py` | constructs `GuiAgent` and calls `run()` | WIRED | `gui.py:78`: lazy `from opengui.agent import GuiAgent`; `gui.py:89-100`: `agent = GuiAgent(...)` then `result = await agent.run(task=task)` |
-| `nanobot/agent/tools/gui.py` | `opengui/skills/extractor.py` | calls `SkillExtractor.extract_from_file()` | WIRED | `gui.py:161`: lazy import; `gui.py:165`: `skill = await extractor.extract_from_file(trace_path, is_success=is_success)` |
-| `nanobot/agent/tools/gui.py` | `opengui/skills/library.py` | calls `SkillLibrary.add_or_merge()` | WIRED | `gui.py:169`: `await skill_library.add_or_merge(skill)` |
+| `nanobot/agent/tools/gui.py` | `guiclaw/agent.py` | constructs `GuiAgent` and calls `run()` | WIRED | `gui.py:78`: lazy `from guiclaw.agent import GuiAgent`; `gui.py:89-100`: `agent = GuiAgent(...)` then `result = await agent.run(task=task)` |
+| `nanobot/agent/tools/gui.py` | `guiclaw/skills/extractor.py` | calls `SkillExtractor.extract_from_file()` | WIRED | `gui.py:161`: lazy import; `gui.py:165`: `skill = await extractor.extract_from_file(trace_path, is_success=is_success)` |
+| `nanobot/agent/tools/gui.py` | `guiclaw/skills/library.py` | calls `SkillLibrary.add_or_merge()` | WIRED | `gui.py:169`: `await skill_library.add_or_merge(skill)` |
 | `nanobot/agent/loop.py` | `nanobot/agent/tools/gui.py` | conditional import and registration | WIRED | `loop.py:138`: `from nanobot.agent.tools.gui import GuiSubagentTool`; `loop.py:141-146`: `GuiSubagentTool(...)` registration |
 
 ---
@@ -91,7 +91,7 @@ re_verification: false
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|-------------|-------------|--------|----------|
 | NANO-01 | 03-02-PLAN.md | `GuiSubagentTool` registered in nanobot tool registry | SATISFIED | `loop.py:137-147` conditional registration; `test_agent_loop_registers_gui_tool` passes |
-| NANO-02 | 03-01-PLAN.md | `NanobotLLMAdapter` wrapping nanobot's provider to opengui `LLMProvider` protocol | SATISFIED | `gui_adapter.py:15-42`; 6 adapter tests pass including isinstance check against `OpenGuiLLMProvider` protocol |
+| NANO-02 | 03-01-PLAN.md | `NanobotLLMAdapter` wrapping nanobot's provider to guiclaw `LLMProvider` protocol | SATISFIED | `gui_adapter.py:15-42`; 6 adapter tests pass including isinstance check against `GUIClawLLMProvider` protocol |
 | NANO-03 | 03-01-PLAN.md | Backend selection from nanobot config (`adb`/`local`/`dry-run`) | SATISFIED | `GuiConfig.backend` Literal field, `_build_backend()` in `gui.py:120-134`; `test_backend_selection` passes |
 | NANO-04 | 03-02-PLAN.md | Trajectory saved to nanobot workspace for later skill extraction | SATISFIED | Timestamped run dir under `workspace/gui_runs/` with `trace.jsonl`; `test_trajectory_saved_to_workspace` passes |
 | NANO-05 | 03-02-PLAN.md | Main agent trajectory summary skill for post-run skill extraction | SATISFIED | `_extract_skill()` in `gui.py:157-177` called unconditionally after each run; `test_auto_skill_extraction` passes |
@@ -115,7 +115,7 @@ No anti-patterns detected in phase 3 implementation files:
 
 None — all critical behaviors are covered by the automated test suite. The following aspects are exercised programmatically:
 
-- Adapter type protocol conformance: `isinstance(adapter, OpenGuiLLMProvider)` tested in `test_llm_adapter_maps_response`
+- Adapter type protocol conformance: `isinstance(adapter, GUIClawLLMProvider)` tested in `test_llm_adapter_maps_response`
 - Trajectory JSONL persistence: `test_trajectory_saved_to_workspace` asserts file system state
 - Skill extraction lifecycle: `test_auto_skill_extraction` uses monkeypatching to observe both `extract_from_file` and `add_or_merge` calls
 - Fresh recorder per call: `test_execute_creates_fresh_trajectory_recorder` confirms distinct object IDs and distinct trace paths
@@ -125,7 +125,7 @@ None — all critical behaviors are covered by the automated test suite. The fol
 ## Test Suite Result
 
 ```
-tests/test_opengui_p3_nanobot.py — 19 passed, 0 failed, 0 xfail (1.95s)
+tests/test_guiclaw_p3_nanobot.py — 19 passed, 0 failed, 0 xfail (1.95s)
 ```
 
 All 19 tests pass with zero xfail markers remaining. Full test suite not re-run in this verification pass, but SUMMARY reports 521 passed / 6 warnings for the full suite.

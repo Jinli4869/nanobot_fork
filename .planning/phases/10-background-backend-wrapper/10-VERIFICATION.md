@@ -34,16 +34,16 @@ re_verification: false
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `tests/test_opengui_p10_background.py` | All Phase 10 test cases (14 async tests, min 150 lines) | VERIFIED | 285 lines, 14 async test functions, imports `BackgroundDesktopBackend` and `DeviceBackend`, all 14 tests pass |
-| `opengui/backends/background.py` | Production BackgroundDesktopBackend with full lifecycle management (min 90 lines, contains `_SENTINEL`, exports `BackgroundDesktopBackend`) | VERIFIED | 178 lines, contains `_SENTINEL: object = object()` at line 40, class defined at line 44, all plan acceptance criteria items present |
+| `tests/test_guiclaw_p10_background.py` | All Phase 10 test cases (14 async tests, min 150 lines) | VERIFIED | 285 lines, 14 async test functions, imports `BackgroundDesktopBackend` and `DeviceBackend`, all 14 tests pass |
+| `guiclaw/backends/background.py` | Production BackgroundDesktopBackend with full lifecycle management (min 90 lines, contains `_SENTINEL`, exports `BackgroundDesktopBackend`) | VERIFIED | 178 lines, contains `_SENTINEL: object = object()` at line 40, class defined at line 44, all plan acceptance criteria items present |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `tests/test_opengui_p10_background.py` | `opengui/backends/background.py` | `from opengui.backends.background import BackgroundDesktopBackend` | VERIFIED | Found at line 18 of test file |
-| `opengui/backends/background.py` | `opengui/backends/virtual_display.py` | `from opengui.backends.virtual_display import DisplayInfo, VirtualDisplayManager` | VERIFIED | Found at line 30 of background.py |
-| `opengui/backends/background.py` | `opengui/interfaces.py` | TYPE_CHECKING import of DeviceBackend | VERIFIED | Found at line 34 of background.py inside `if TYPE_CHECKING:` block |
+| `tests/test_guiclaw_p10_background.py` | `guiclaw/backends/background.py` | `from guiclaw.backends.background import BackgroundDesktopBackend` | VERIFIED | Found at line 18 of test file |
+| `guiclaw/backends/background.py` | `guiclaw/backends/virtual_display.py` | `from guiclaw.backends.virtual_display import DisplayInfo, VirtualDisplayManager` | VERIFIED | Found at line 30 of background.py |
+| `guiclaw/backends/background.py` | `guiclaw/interfaces.py` | TYPE_CHECKING import of DeviceBackend | VERIFIED | Found at line 34 of background.py inside `if TYPE_CHECKING:` block |
 
 ### Requirements Coverage
 
@@ -60,7 +60,7 @@ No orphaned BGND requirements. All four BGND IDs declared in both plans' `requir
 
 | File | Pattern | Severity | Notes |
 |------|---------|----------|-------|
-| (none in phase 10 files) | — | — | No TODO/FIXME/PLACEHOLDER/stub patterns found in `opengui/backends/background.py` or `tests/test_opengui_p10_background.py` |
+| (none in phase 10 files) | — | — | No TODO/FIXME/PLACEHOLDER/stub patterns found in `guiclaw/backends/background.py` or `tests/test_guiclaw_p10_background.py` |
 
 No `type: ignore[union-attr]` comments remain. No `inner: object` annotation remains (replaced with `inner: DeviceBackend` under `TYPE_CHECKING`). No explicit subclassing of `DeviceBackend`.
 
@@ -68,7 +68,7 @@ No `type: ignore[union-attr]` comments remain. No `inner: object` annotation rem
 
 Full test suite run: **1 pre-existing failure, 647 passed, 0 regressions from Phase 10.**
 
-The one failing test (`tests/test_tool_validation.py::test_exec_head_tail_truncation`) calls `python` instead of `python3` and fails because `python` is not in PATH on macOS. This failure predates Phase 10 — verified by checking `git log -- tests/test_tool_validation.py` (last touched by commit `91d95f1`, which is an unrelated fix). Phase 10 commits (`22f1643`, `6f2778d`) touch only `tests/test_opengui_p10_background.py` and `opengui/backends/background.py`.
+The one failing test (`tests/test_tool_validation.py::test_exec_head_tail_truncation`) calls `python` instead of `python3` and fails because `python` is not in PATH on macOS. This failure predates Phase 10 — verified by checking `git log -- tests/test_tool_validation.py` (last touched by commit `91d95f1`, which is an unrelated fix). Phase 10 commits (`22f1643`, `6f2778d`) touch only `tests/test_guiclaw_p10_background.py` and `guiclaw/backends/background.py`.
 
 ### Commit Verification
 
@@ -90,7 +90,7 @@ None. All behaviors are fully verifiable via automated tests:
 
 ## Summary
 
-Phase 10 goal is fully achieved. `BackgroundDesktopBackend` in `opengui/backends/background.py` (178 lines) correctly:
+Phase 10 goal is fully achieved. `BackgroundDesktopBackend` in `guiclaw/backends/background.py` (178 lines) correctly:
 
 1. Decorates any `DeviceBackend` without subclassing (structural protocol conformance)
 2. Manages virtual display lifecycle via `VirtualDisplayManager.start()`/`stop()` calls in `preflight()`/`shutdown()`
@@ -100,7 +100,7 @@ Phase 10 goal is fully achieved. `BackgroundDesktopBackend` in `opengui/backends
 6. Provides an async context manager that calls `preflight()`/`shutdown()` automatically
 7. Implements idempotent, error-suppressing shutdown with a `_stopped: bool` flag
 
-All 14 tests in `tests/test_opengui_p10_background.py` pass. All 4 BGND requirements are satisfied. No regressions introduced in the 647-test suite that passed before Phase 10.
+All 14 tests in `tests/test_guiclaw_p10_background.py` pass. All 4 BGND requirements are satisfied. No regressions introduced in the 647-test suite that passed before Phase 10.
 
 ---
 

@@ -6,7 +6,7 @@
 <domain>
 ## Phase Boundary
 
-Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent loop without any host agent code, plus a documented adapter pattern (ADAPTERS.md) so other claw integrations can implement their own LLMProvider/DeviceBackend bridges. This phase does NOT add new agent capabilities, modify the agent loop, or change any existing backends.
+Standalone CLI entry point (`python -m guiclaw.cli`) that drives a full GuiAgent loop without any host agent code, plus a documented adapter pattern (ADAPTERS.md) so other claw integrations can implement their own LLMProvider/DeviceBackend bridges. This phase does NOT add new agent capabilities, modify the agent loop, or change any existing backends.
 
 </domain>
 
@@ -14,8 +14,8 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 ## Implementation Decisions
 
 ### CLI invocation & flags
-- Entry point: `python -m opengui.cli` via `opengui/cli.py` + `opengui/__main__.py`
-- Task specified as positional arg OR `--task` flag: `python -m opengui.cli "Open Settings"` or `--task "Open Settings"`
+- Entry point: `python -m guiclaw.cli` via `guiclaw/cli.py` + `guiclaw/__main__.py`
+- Task specified as positional arg OR `--task` flag: `python -m guiclaw.cli "Open Settings"` or `--task "Open Settings"`
 - Backend selection: `--backend adb|local|dry-run` (default: `local`)
 - `--dry-run` shortcut flag as alias for `--backend dry-run`
 - Minimal flags only: `--backend`, `--task`, `--dry-run`, `--json`, `--config`. No agent tuning knobs (max-steps etc.) — sensible defaults
@@ -25,11 +25,11 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 - Step-by-step log printed during runs: `Step 1: tap (500, 300) — Tapped Settings icon`
 - Final result in human-readable text by default
 - `--json` flag outputs AgentResult as JSON for scripting/CI use
-- Artifacts (screenshots + trace.jsonl) auto-saved to `./opengui_runs/{timestamp}/` by default
+- Artifacts (screenshots + trace.jsonl) auto-saved to `./guiclaw_runs/{timestamp}/` by default
 
 ### LLM provider setup
 - CLI ships its own **OpenAI-compatible LLMProvider** implementation — works with OpenAI, Azure, local servers (Ollama, vLLM), any OpenAI-compatible endpoint
-- Config file at `~/.opengui/config.yaml` with provider settings (base_url, model, api_key)
+- Config file at `~/.guiclaw/config.yaml` with provider settings (base_url, model, api_key)
 - Environment variable fallback: `OPENAI_API_KEY` used if api_key not in config — standard convention, good for CI
 - Config file overridable via `--config path/to/config.yaml`
 - **Memory/skills are optional**: if embedding config is present in config.yaml (embedding_api_key, embedding_model), memory retrieval and skill library are enabled. If absent, agent runs without them — keeps one-off CLI use simple
@@ -37,7 +37,7 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 ### Adapter documentation (EXT-01)
 - Separate `ADAPTERS.md` file in repo root (not inline docstrings)
 - Scope: protocol summary + code example — list the two protocols (LLMProvider, DeviceBackend), explain the wiring pattern
-- Includes a **skeleton example adapter** (~30 lines) showing how to wrap a hypothetical host's LLM into opengui's LLMProvider — copy-paste starting point
+- Includes a **skeleton example adapter** (~30 lines) showing how to wrap a hypothetical host's LLM into guiclaw's LLMProvider — copy-paste starting point
 - References NanobotLLMAdapter as the real-world production example
 
 ### Claude's Discretion
@@ -56,21 +56,21 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 **Downstream agents MUST read these before planning or implementing.**
 
 ### Core Protocols
-- `opengui/interfaces.py` — LLMProvider, DeviceBackend, EmbeddingProvider protocols that adapters must conform to
-- `opengui/agent.py` — GuiAgent constructor params (llm, backend, trajectory_recorder, memory_retriever, skill_library) and AgentResult dataclass
+- `guiclaw/interfaces.py` — LLMProvider, DeviceBackend, EmbeddingProvider protocols that adapters must conform to
+- `guiclaw/agent.py` — GuiAgent constructor params (llm, backend, trajectory_recorder, memory_retriever, skill_library) and AgentResult dataclass
 
 ### Existing Backend Implementations
-- `opengui/backends/adb.py` — AdbBackend reference implementation
-- `opengui/backends/desktop.py` — LocalDesktopBackend for `--backend local`
-- `opengui/backends/dry_run.py` — DryRunBackend for `--dry-run`
+- `guiclaw/backends/adb.py` — AdbBackend reference implementation
+- `guiclaw/backends/desktop.py` — LocalDesktopBackend for `--backend local`
+- `guiclaw/backends/dry_run.py` — DryRunBackend for `--dry-run`
 
 ### Adapter Reference Implementation
 - `nanobot/agent/gui_adapter.py` — NanobotLLMAdapter + NanobotEmbeddingAdapter (real-world adapter bridge pattern to document)
 
 ### Agent Components (optional CLI features)
-- `opengui/memory/retriever.py` — MemoryRetriever for optional memory support
-- `opengui/skills/library.py` — SkillLibrary for optional skill support
-- `opengui/trajectory/recorder.py` — TrajectoryRecorder for run artifacts
+- `guiclaw/memory/retriever.py` — MemoryRetriever for optional memory support
+- `guiclaw/skills/library.py` — SkillLibrary for optional skill support
+- `guiclaw/trajectory/recorder.py` — TrajectoryRecorder for run artifacts
 
 ### Prior Phase Decisions
 - `.planning/phases/03-nanobot-subagent/03-CONTEXT.md` — Backend selection pattern, adapter bridge design
@@ -84,7 +84,7 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 ### Reusable Assets
 - `GuiAgent`: Full constructor with all optional components — CLI just needs to wire up the right provider and backend
 - `AgentResult`: Frozen dataclass with success, summary, trace_path, steps_taken, error — maps directly to CLI output
-- `TrajectoryRecorder`: JSONL recording with artifacts_root — CLI sets artifacts_root to `./opengui_runs/{timestamp}/`
+- `TrajectoryRecorder`: JSONL recording with artifacts_root — CLI sets artifacts_root to `./guiclaw_runs/{timestamp}/`
 - `AdbBackend`, `LocalDesktopBackend`, `DryRunBackend`: All three backends ready to use
 - `MemoryRetriever`, `SkillLibrary`, `SkillExecutor`: Optional components CLI can wire if embedding config present
 
@@ -95,8 +95,8 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 - `ProgressCallback` type in interfaces.py — CLI can use this for step-by-step logging
 
 ### Integration Points
-- `opengui/__main__.py`: New file — `from opengui.cli import main; main()`
-- `opengui/cli.py`: New file — argparse setup, config loading, provider construction, agent wiring
+- `guiclaw/__main__.py`: New file — `from guiclaw.cli import main; main()`
+- `guiclaw/cli.py`: New file — argparse setup, config loading, provider construction, agent wiring
 - `ADAPTERS.md`: New file in repo root — adapter pattern documentation
 
 </code_context>
@@ -117,7 +117,7 @@ Standalone CLI entry point (`python -m opengui.cli`) that drives a full GuiAgent
 - Interactive mode (step-by-step with user confirmation) — explicitly out of scope per PROJECT.md
 - Plugin system for custom backends — overkill for v1, DeviceBackend protocol is sufficient
 - Web UI for watching agent runs — separate project entirely
-- Config file validation/init command (`opengui init`) — nice-to-have for v2
+- Config file validation/init command (`guiclaw init`) — nice-to-have for v2
 - Multi-provider support (Anthropic, Google natively) — OpenAI-compatible covers most cases via proxy
 
 </deferred>

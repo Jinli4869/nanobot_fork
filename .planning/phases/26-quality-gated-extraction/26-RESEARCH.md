@@ -19,24 +19,24 @@
 
 Phase 26 builds a pure pipeline layer on top of the Phase 24 schema contracts. It does not touch `ShortcutExecutor` or `TaskSkillExecutor` from Phase 25. The work has three distinct pieces that compose in sequence: two critic protocols (step-level and trajectory-level) and one extraction transformation (trajectory steps → `ShortcutSkill` candidate).
 
-The existing `SkillExtractor` in `opengui/skills/extractor.py` is the legacy analog of EXTR-04, but it produces a flat `Skill` object (legacy schema) not a `ShortcutSkill`. Phase 26 must produce a `ShortcutSkill` using the Phase 24 types. The simplest route is a new `ShortcutSkillProducer` class that re-uses the existing LLM extraction prompt pattern but targets the new schema. The critics are entirely new — there is no partial predecessor to adapt.
+The existing `SkillExtractor` in `guiclaw/skills/extractor.py` is the legacy analog of EXTR-04, but it produces a flat `Skill` object (legacy schema) not a `ShortcutSkill`. Phase 26 must produce a `ShortcutSkill` using the Phase 24 types. The simplest route is a new `ShortcutSkillProducer` class that re-uses the existing LLM extraction prompt pattern but targets the new schema. The critics are entirely new — there is no partial predecessor to adapt.
 
 The key design constraint inherited from Phases 24 and 25 is the project's protocol-injection pattern: critics must be `@runtime_checkable Protocol` interfaces so tests can use fakes with no LLM dependency. The extraction pipeline should be a thin orchestrator that wires critics + producer together, returning structured results (not raising exceptions) on rejection.
 
-The trajectory data structure is already well-defined in `opengui/trajectory/recorder.py`. A trajectory JSONL file contains `metadata`, `step`, and `result` events. The `step` events each carry `action`, `screenshot_path`, `observation`, `step_index`, and optional `model_output`. These are the raw inputs the critics and producer consume.
+The trajectory data structure is already well-defined in `guiclaw/trajectory/recorder.py`. A trajectory JSONL file contains `metadata`, `step`, and `result` events. The `step` events each carry `action`, `screenshot_path`, `observation`, `step_index`, and optional `model_output`. These are the raw inputs the critics and producer consume.
 
-**Primary recommendation:** Build Phase 26 as a new `opengui/skills/extraction/` package (or a single new file `opengui/skills/shortcut_extractor.py`) with three public symbols: `StepCritic` protocol, `TrajectoryCritic` protocol, and `ExtractionPipeline` + `ShortcutSkillProducer`. Use the project's frozen-dataclass + `Protocol` style throughout.
+**Primary recommendation:** Build Phase 26 as a new `guiclaw/skills/extraction/` package (or a single new file `guiclaw/skills/shortcut_extractor.py`) with three public symbols: `StepCritic` protocol, `TrajectoryCritic` protocol, and `ExtractionPipeline` + `ShortcutSkillProducer`. Use the project's frozen-dataclass + `Protocol` style throughout.
 
 ## Standard Stack
 
 ### Core
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| Python stdlib `dataclasses`, `typing`, `pathlib` | `>=3.11` | Verdict dataclasses, Protocol definitions | Matches all existing `opengui` contracts |
-| `opengui.skills.shortcut` | workspace current | `ShortcutSkill`, `StateDescriptor`, `ParameterSlot` | Phase 24 schema types are the target output of EXTR-04 |
-| `opengui.skills.data` | workspace current | `SkillStep` — trajectory step type when steps are re-parsed | Reused throughout; trajectory steps can carry `action_type`, `target`, etc. matching this type |
-| `opengui.interfaces.LLMProvider` | workspace current | LLM-driven critic and producer implementation | Same interface used by `SkillExtractor` and `LLMGrounder` |
-| `opengui.trajectory.recorder` | workspace current | `TrajectoryRecorder` event format consumed by critics/pipeline | Step events have known structure; no new trajectory format needed |
+| Python stdlib `dataclasses`, `typing`, `pathlib` | `>=3.11` | Verdict dataclasses, Protocol definitions | Matches all existing `guiclaw` contracts |
+| `guiclaw.skills.shortcut` | workspace current | `ShortcutSkill`, `StateDescriptor`, `ParameterSlot` | Phase 24 schema types are the target output of EXTR-04 |
+| `guiclaw.skills.data` | workspace current | `SkillStep` — trajectory step type when steps are re-parsed | Reused throughout; trajectory steps can carry `action_type`, `target`, etc. matching this type |
+| `guiclaw.interfaces.LLMProvider` | workspace current | LLM-driven critic and producer implementation | Same interface used by `SkillExtractor` and `LLMGrounder` |
+| `guiclaw.trajectory.recorder` | workspace current | `TrajectoryRecorder` event format consumed by critics/pipeline | Step events have known structure; no new trajectory format needed |
 
 ### Supporting
 | Library | Version | Purpose | When to Use |
@@ -47,7 +47,7 @@ The trajectory data structure is already well-defined in `opengui/trajectory/rec
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
-| Separate `opengui/skills/shortcut_extractor.py` | Extend `opengui/skills/extractor.py` | Extension mixes two schemas in one file and risks touching the legacy path; new file avoids coupling |
+| Separate `guiclaw/skills/shortcut_extractor.py` | Extend `guiclaw/skills/extractor.py` | Extension mixes two schemas in one file and risks touching the legacy path; new file avoids coupling |
 | `ShortcutSkillProducer` as a separate class | Inline production inside `ExtractionPipeline` | Inline is simpler but harder to test in isolation; a separate callable/class matches the project's single-responsibility style and enables stub replacement |
 | `Protocol`-based critics | Abstract base classes | ABCs add inheritance coupling; `Protocol` matches the existing `GrounderProtocol`, `ConditionEvaluator`, `StateValidator` style across the codebase |
 
@@ -60,7 +60,7 @@ uv sync --extra dev
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 └── skills/
     ├── extractor.py              # existing SkillExtractor (legacy Skill, do not touch)
     ├── shortcut.py               # existing ShortcutSkill / StateDescriptor / ParameterSlot
@@ -68,10 +68,10 @@ opengui/
     └── __init__.py               # export new Phase 26 public symbols
 
 tests/
-└── test_opengui_p26_quality_gated_extraction.py  # NEW: Phase 26 coverage
+└── test_guiclaw_p26_quality_gated_extraction.py  # NEW: Phase 26 coverage
 ```
 
-A flat file `shortcut_extractor.py` is preferred over a new package (`extraction/`) to stay consistent with the existing flat module layout in `opengui/skills/`.
+A flat file `shortcut_extractor.py` is preferred over a new package (`extraction/`) to stay consistent with the existing flat module layout in `guiclaw/skills/`.
 
 ### Pattern 1: Verdict Dataclasses With Boolean Discriminators
 **What:** Each critic returns a frozen dataclass with `passed: bool` and `reason: str`. The calling pipeline pattern-matches on `verdict.passed`.
@@ -97,7 +97,7 @@ class TrajectoryVerdict:
 **When to use:** `ExtractionPipeline.__init__()` parameters.
 **Example:**
 ```python
-# Source: ConditionEvaluator pattern in opengui/skills/multi_layer_executor.py
+# Source: ConditionEvaluator pattern in guiclaw/skills/multi_layer_executor.py
 @runtime_checkable
 class StepCritic(Protocol):
     async def evaluate(self, step: dict[str, Any], step_index: int) -> StepVerdict: ...
@@ -131,7 +131,7 @@ class ExtractionRejected:
 **When to use:** Inside `ShortcutSkillProducer.produce()` or equivalent.
 **Example:**
 ```python
-# Source: opengui/skills/data.py SkillStep.valid_state + shortcut.py ParameterSlot
+# Source: guiclaw/skills/data.py SkillStep.valid_state + shortcut.py ParameterSlot
 import re
 _PARAM_RE = re.compile(r"\{\{(\w+)\}\}")
 
@@ -164,8 +164,8 @@ def _map_conditions(steps: list[SkillStep]) -> tuple[StateDescriptor, ...]:
 |---------|-------------|-------------|-----|
 | JSON parsing and trajectory reading | Custom JSONL parser | `json.loads()` per line; pattern from `SkillExtractor.extract_from_file()` | The trajectory format is already established in `recorder.py` and consumed by `extractor.py` |
 | `{{param}}` extraction from step targets | Ad hoc string parsing | `re.compile(r"\{\{(\w+)\}\}")` — same pattern used in existing extraction prompts | The existing extraction prompt already defines this convention; reuse it exactly |
-| App identifier normalization | Inline string manipulation | `normalize_app_identifier()` from `opengui/skills/normalization.py` | Already handles Android, iOS, and macOS app identifier forms |
-| Base64 screenshot encoding for LLM critic | New encoder | `_encode_image_b64()` from `opengui/skills/extractor.py` | Exact same PIL-based scaling + encoding pattern; extract or re-use |
+| App identifier normalization | Inline string manipulation | `normalize_app_identifier()` from `guiclaw/skills/normalization.py` | Already handles Android, iOS, and macOS app identifier forms |
+| Base64 screenshot encoding for LLM critic | New encoder | `_encode_image_b64()` from `guiclaw/skills/extractor.py` | Exact same PIL-based scaling + encoding pattern; extract or re-use |
 
 **Key insight:** The data-flow for Phase 26 is trajectory steps → critics → producer → `ShortcutSkill`. Everything except the critics and the `ShortcutSkill`-specific producer already has precedent in `extractor.py`. Phase 26 is an orchestration layer over well-established primitives.
 
@@ -190,7 +190,7 @@ def _map_conditions(steps: list[SkillStep]) -> tuple[StateDescriptor, ...]:
 ### Pitfall 4: Pipeline Module Imports Executor or Storage Code
 **What goes wrong:** `shortcut_extractor.py` imports `ShortcutExecutor`, `TaskSkillExecutor`, or any Phase 27 storage modules — creating coupling to execution or persistence concerns.
 **Why it happens:** It is tempting to wire things together in one file.
-**How to avoid:** `shortcut_extractor.py` may only import from `opengui/skills/shortcut.py`, `opengui/skills/data.py`, `opengui/skills/normalization.py`, and `opengui/interfaces.py`. No executor, no store, no Phase 27 symbols.
+**How to avoid:** `shortcut_extractor.py` may only import from `guiclaw/skills/shortcut.py`, `guiclaw/skills/data.py`, `guiclaw/skills/normalization.py`, and `guiclaw/interfaces.py`. No executor, no store, no Phase 27 symbols.
 
 ### Pitfall 5: Always-Pass Defaults Mask Missing Protocol Implementations In Tests
 **What goes wrong:** All pipeline tests pass even with no-op critics because the always-pass default is silently used.
@@ -203,7 +203,7 @@ Verified patterns from repo sources:
 
 ### Trajectory JSONL Step Event Shape
 ```python
-# Source: opengui/trajectory/recorder.py TrajectoryRecorder.record_step()
+# Source: guiclaw/trajectory/recorder.py TrajectoryRecorder.record_step()
 {
     "type": "step",
     "step_index": 2,
@@ -218,7 +218,7 @@ Verified patterns from repo sources:
 
 ### Reading Steps From a JSONL File
 ```python
-# Source: opengui/skills/extractor.py SkillExtractor.extract_from_file()
+# Source: guiclaw/skills/extractor.py SkillExtractor.extract_from_file()
 lines = trajectory_path.read_text(encoding="utf-8").strip().splitlines()
 events = [json.loads(line) for line in lines if line.strip()]
 steps = [e for e in events if e.get("type") == "step"]
@@ -228,7 +228,7 @@ is_success = result_events[-1].get("success", True) if result_events else True
 
 ### Frozen Dataclass Protocol Combination (from Phase 24/25 style)
 ```python
-# Source: opengui/skills/multi_layer_executor.py (ConditionEvaluator + ContractViolationReport)
+# Source: guiclaw/skills/multi_layer_executor.py (ConditionEvaluator + ContractViolationReport)
 from typing import Protocol, runtime_checkable
 from dataclasses import dataclass
 
@@ -245,7 +245,7 @@ class StepVerdict:
 
 ### ParameterSlot Inference From Target Strings
 ```python
-# Source: opengui/skills/extractor.py extraction prompt uses {{param}} convention
+# Source: guiclaw/skills/extractor.py extraction prompt uses {{param}} convention
 import re
 _PARAM_RE = re.compile(r"\{\{(\w+)\}\}")
 names = _PARAM_RE.findall("Tap on {{button_name}} in the {{panel}} view")
@@ -254,10 +254,10 @@ names = _PARAM_RE.findall("Tap on {{button_name}} in the {{panel}} view")
 
 ### ShortcutSkill Construction (Phase 24 schema)
 ```python
-# Source: opengui/skills/shortcut.py ShortcutSkill
+# Source: guiclaw/skills/shortcut.py ShortcutSkill
 import uuid, time
-from opengui.skills.shortcut import ShortcutSkill, ParameterSlot, StateDescriptor
-from opengui.skills.data import SkillStep
+from guiclaw.skills.shortcut import ShortcutSkill, ParameterSlot, StateDescriptor
+from guiclaw.skills.data import SkillStep
 
 candidate = ShortcutSkill(
     skill_id=str(uuid.uuid4()),
@@ -316,49 +316,49 @@ candidate = ShortcutSkill(
 |----------|-------|
 | Framework | `pytest >=9.0.0,<10.0.0` + `pytest-asyncio >=1.3.0,<2.0.0` |
 | Config file | `pyproject.toml` (`[tool.pytest.ini_options]`, `asyncio_mode = "auto"`) |
-| Quick run command | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py -q` |
 | Full suite command | `uv run pytest -q` |
 
 ### Phase Requirements -> Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| EXTR-01 | Step critic evaluates a single step and returns a `StepVerdict(passed=False)` that causes pipeline to stop before trajectory critic | unit | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py -q -k step_critic` | ❌ Wave 0 |
-| EXTR-02 | Trajectory critic evaluates complete step list and returns `TrajectoryVerdict(passed=False)` that stops promotion | unit | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py -q -k trajectory_critic` | ❌ Wave 0 |
-| EXTR-03 | Pipeline calls critics in order: step first, then trajectory; only calls producer when both pass | unit | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py -q -k pipeline` | ❌ Wave 0 |
-| EXTR-04 | Producer builds a `ShortcutSkill` from steps with inferred `ParameterSlot`s and mapped `StateDescriptor` pre/post conditions | unit | `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py -q -k producer` | ❌ Wave 0 |
-| Phase 26 import safety | New module imports and compiles without circular imports | smoke | `uv run python -m py_compile opengui/skills/shortcut_extractor.py` | ❌ Wave 0 |
+| EXTR-01 | Step critic evaluates a single step and returns a `StepVerdict(passed=False)` that causes pipeline to stop before trajectory critic | unit | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py -q -k step_critic` | ❌ Wave 0 |
+| EXTR-02 | Trajectory critic evaluates complete step list and returns `TrajectoryVerdict(passed=False)` that stops promotion | unit | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py -q -k trajectory_critic` | ❌ Wave 0 |
+| EXTR-03 | Pipeline calls critics in order: step first, then trajectory; only calls producer when both pass | unit | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py -q -k pipeline` | ❌ Wave 0 |
+| EXTR-04 | Producer builds a `ShortcutSkill` from steps with inferred `ParameterSlot`s and mapped `StateDescriptor` pre/post conditions | unit | `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py -q -k producer` | ❌ Wave 0 |
+| Phase 26 import safety | New module imports and compiles without circular imports | smoke | `uv run python -m py_compile guiclaw/skills/shortcut_extractor.py` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p25_multi_layer_execution.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p26_quality_gated_extraction.py tests/test_opengui_p24_schema_grounding.py tests/test_opengui_p25_multi_layer_execution.py tests/test_opengui_p1_skills.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p25_multi_layer_execution.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p26_quality_gated_extraction.py tests/test_guiclaw_p24_schema_grounding.py tests/test_guiclaw_p25_multi_layer_execution.py tests/test_guiclaw_p1_skills.py -q`
 - **Phase gate:** `uv run pytest -q`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p26_quality_gated_extraction.py` — covers EXTR-01 through EXTR-04 and import safety
-- [ ] `opengui/skills/shortcut_extractor.py` — the new module (empty stub or full TDD RED stubs before GREEN)
-- [ ] Add `StepCritic`, `TrajectoryCritic`, `StepVerdict`, `TrajectoryVerdict`, `ExtractionPipeline`, `ExtractionSuccess`, `ExtractionRejected`, `ShortcutSkillProducer` to `opengui/skills/__init__.py` exports
+- [ ] `tests/test_guiclaw_p26_quality_gated_extraction.py` — covers EXTR-01 through EXTR-04 and import safety
+- [ ] `guiclaw/skills/shortcut_extractor.py` — the new module (empty stub or full TDD RED stubs before GREEN)
+- [ ] Add `StepCritic`, `TrajectoryCritic`, `StepVerdict`, `TrajectoryVerdict`, `ExtractionPipeline`, `ExtractionSuccess`, `ExtractionRejected`, `ShortcutSkillProducer` to `guiclaw/skills/__init__.py` exports
 
 ## Sources
 
 ### Primary (HIGH confidence)
 - `.planning/REQUIREMENTS.md` — EXTR-01 through EXTR-04 requirement text
-- `opengui/skills/extractor.py` — legacy extraction pattern (LLM calls, JSONL parsing, step iteration)
-- `opengui/skills/shortcut.py` — `ShortcutSkill`, `StateDescriptor`, `ParameterSlot` — Phase 24 target schema
-- `opengui/skills/task_skill.py` — `SkillStep` reuse pattern, task node serialization style
-- `opengui/skills/data.py` — `SkillStep.valid_state`, `SkillStep.expected_state` — source for condition mapping
-- `opengui/skills/multi_layer_executor.py` — Protocol pattern, result union pattern, always-pass default pattern
-- `opengui/trajectory/recorder.py` — trajectory JSONL event format and step event schema
-- `opengui/skills/normalization.py` — `normalize_app_identifier()` for producer
-- `opengui/interfaces.py` — `LLMProvider` and `@runtime_checkable Protocol` style
-- `opengui/grounding/protocol.py` — `GrounderProtocol` / `GroundingResult` as second Protocol-style reference
+- `guiclaw/skills/extractor.py` — legacy extraction pattern (LLM calls, JSONL parsing, step iteration)
+- `guiclaw/skills/shortcut.py` — `ShortcutSkill`, `StateDescriptor`, `ParameterSlot` — Phase 24 target schema
+- `guiclaw/skills/task_skill.py` — `SkillStep` reuse pattern, task node serialization style
+- `guiclaw/skills/data.py` — `SkillStep.valid_state`, `SkillStep.expected_state` — source for condition mapping
+- `guiclaw/skills/multi_layer_executor.py` — Protocol pattern, result union pattern, always-pass default pattern
+- `guiclaw/trajectory/recorder.py` — trajectory JSONL event format and step event schema
+- `guiclaw/skills/normalization.py` — `normalize_app_identifier()` for producer
+- `guiclaw/interfaces.py` — `LLMProvider` and `@runtime_checkable Protocol` style
+- `guiclaw/grounding/protocol.py` — `GrounderProtocol` / `GroundingResult` as second Protocol-style reference
 - `.planning/STATE.md` — Phase 24/25 decisions, v1.5 roadmap decisions
 - `.planning/phases/24-schema-and-grounding/24-RESEARCH.md` — Phase 24 research (schema reference)
 - `.planning/phases/25-multi-layer-execution/25-RESEARCH.md` — Phase 25 research (Protocol injection style)
 - `.planning/phases/25-multi-layer-execution/25-02-SUMMARY.md` — confirmed Phase 25 is complete, no executor regressions
 
 ### Secondary (MEDIUM confidence)
-- `tests/test_opengui_p25_multi_layer_execution.py` — test stub pattern (FakeBackend, StubGrounder) confirms test style for Phase 26
-- `tests/test_opengui_p24_schema_grounding.py` — existing grounding/schema protocol test style
+- `tests/test_guiclaw_p25_multi_layer_execution.py` — test stub pattern (FakeBackend, StubGrounder) confirms test style for Phase 26
+- `tests/test_guiclaw_p24_schema_grounding.py` — existing grounding/schema protocol test style
 
 ### Tertiary (LOW confidence)
 - None

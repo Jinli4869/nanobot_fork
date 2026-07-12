@@ -17,8 +17,8 @@ tech-stack:
   added: []
   patterns: [tdd-red-green, explicit-intervention-action-contract, prompt-parser-schema-parity]
 key-files:
-  created: [tests/test_opengui_p15_intervention.py]
-  modified: [opengui/action.py, opengui/prompts/system.py, opengui/agent.py]
+  created: [tests/test_guiclaw_p15_intervention.py]
+  modified: [guiclaw/action.py, guiclaw/prompts/system.py, guiclaw/agent.py]
 key-decisions:
   - "Intervention is a first-class action_type instead of overloading done or assistant free text."
   - "The parser, system prompt, and runtime tool schema must advertise the same request_intervention vocabulary."
@@ -53,10 +53,10 @@ completed: 2026-03-21
 2. **Task 2: Implement the explicit intervention action in parser and tool schemas** - `ead7a77`, `50b46ad` (`feat`, `fix`)
 
 ## Files Created/Modified
-- `tests/test_opengui_p15_intervention.py` - Locks the explicit intervention contract with four focused pytest cases
-- `opengui/action.py` - Accepts `request_intervention`, validates non-empty reason text, and describes the action for logs/debug output
-- `opengui/prompts/system.py` - Exposes `request_intervention` in the tool enum and instructs the model to use it for sensitive, blocked, or unsafe states
-- `opengui/agent.py` - Keeps the runtime `computer_use` schema aligned with the parser and prompt contract
+- `tests/test_guiclaw_p15_intervention.py` - Locks the explicit intervention contract with four focused pytest cases
+- `guiclaw/action.py` - Accepts `request_intervention`, validates non-empty reason text, and describes the action for logs/debug output
+- `guiclaw/prompts/system.py` - Exposes `request_intervention` in the tool enum and instructs the model to use it for sensitive, blocked, or unsafe states
+- `guiclaw/agent.py` - Keeps the runtime `computer_use` schema aligned with the parser and prompt contract
 
 ## Decisions Made
 
@@ -72,7 +72,7 @@ completed: 2026-03-21
 
 ## Issues Encountered
 
-- A transient git index lock caused two staging attempts to fail mid-task. I retried staging sequentially, confirmed the first implementation commit only touched `opengui/prompts/system.py`, and completed the remaining parser/runtime changes in a follow-up commit.
+- A transient git index lock caused two staging attempts to fail mid-task. I retried staging sequentially, confirmed the first implementation commit only touched `guiclaw/prompts/system.py`, and completed the remaining parser/runtime changes in a follow-up commit.
 
 ## User Setup Required
 

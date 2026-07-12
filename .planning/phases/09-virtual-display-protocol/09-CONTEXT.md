@@ -14,9 +14,9 @@ Define VirtualDisplayManager protocol and DisplayInfo dataclass with two impleme
 ## Implementation Decisions
 
 ### Protocol location
-- VirtualDisplayManager protocol and DisplayInfo dataclass live in `opengui.backends.virtual_display`
-- Re-export both from `opengui.interfaces` so `from opengui.interfaces import VirtualDisplayManager, DisplayInfo` works (satisfies ROADMAP SC-1)
-- NoOpDisplayManager stays in `opengui.backends.virtual_display` alongside the protocol
+- VirtualDisplayManager protocol and DisplayInfo dataclass live in `guiclaw.backends.virtual_display`
+- Re-export both from `guiclaw.interfaces` so `from guiclaw.interfaces import VirtualDisplayManager, DisplayInfo` works (satisfies ROADMAP SC-1)
+- NoOpDisplayManager stays in `guiclaw.backends.virtual_display` alongside the protocol
 
 ### DisplayInfo fields
 - Field naming: `offset_x` / `offset_y` (not `x_offset` / `y_offset` from ROADMAP — update ROADMAP to match)
@@ -62,10 +62,10 @@ Define VirtualDisplayManager protocol and DisplayInfo dataclass with two impleme
 - `.planning/PROJECT.md` — Zero host dependency constraint, decorator pattern decision, Xvfb subprocess management decision
 
 ### Existing code (draft baseline)
-- `opengui/interfaces.py` — Current protocols (DeviceBackend, LLMProvider) where re-exports will be added
-- `opengui/backends/virtual_display.py` — Draft VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager
-- `opengui/backends/displays/xvfb.py` — Draft XvfbDisplayManager implementation
-- `opengui/backends/__init__.py` — Backend import pattern (explicit imports, no wildcard)
+- `guiclaw/interfaces.py` — Current protocols (DeviceBackend, LLMProvider) where re-exports will be added
+- `guiclaw/backends/virtual_display.py` — Draft VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager
+- `guiclaw/backends/displays/xvfb.py` — Draft XvfbDisplayManager implementation
+- `guiclaw/backends/__init__.py` — Backend import pattern (explicit imports, no wildcard)
 
 </canonical_refs>
 
@@ -73,8 +73,8 @@ Define VirtualDisplayManager protocol and DisplayInfo dataclass with two impleme
 ## Existing Code Insights
 
 ### Reusable Assets
-- `opengui/interfaces.py`: Established protocol pattern using `@typing.runtime_checkable` + `typing.Protocol` — VirtualDisplayManager should follow the same pattern
-- `opengui/backends/dry_run.py`: Example of a simple no-op backend — NoOpDisplayManager follows the same simplicity principle
+- `guiclaw/interfaces.py`: Established protocol pattern using `@typing.runtime_checkable` + `typing.Protocol` — VirtualDisplayManager should follow the same pattern
+- `guiclaw/backends/dry_run.py`: Example of a simple no-op backend — NoOpDisplayManager follows the same simplicity principle
 - Draft code in `virtual_display.py` and `displays/xvfb.py` already implements most of the protocol and Xvfb logic
 
 ### Established Patterns
@@ -84,8 +84,8 @@ Define VirtualDisplayManager protocol and DisplayInfo dataclass with two impleme
 - Async lifecycle: backends have async methods (`observe`, `execute`, `preflight`)
 
 ### Integration Points
-- `opengui/interfaces.py` — Add re-exports for `VirtualDisplayManager` and `DisplayInfo`
-- `opengui/backends/__init__.py` — May add import documentation for new modules
+- `guiclaw/interfaces.py` — Add re-exports for `VirtualDisplayManager` and `DisplayInfo`
+- `guiclaw/backends/__init__.py` — May add import documentation for new modules
 - Phase 10 (`background.py`) will consume `VirtualDisplayManager` protocol and `DisplayInfo` — ensure protocol is stable before Phase 10
 
 </code_context>

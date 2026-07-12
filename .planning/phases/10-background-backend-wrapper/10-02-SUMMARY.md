@@ -30,7 +30,7 @@ tech-stack:
 
 key-files:
   created:
-    - opengui/backends/background.py
+    - guiclaw/backends/background.py
   modified: []
 
 key-decisions:
@@ -67,7 +67,7 @@ completed: "2026-03-20"
 
 ## Accomplishments
 
-- Rewrote `opengui/backends/background.py` from 95-line draft to 178-line production implementation
+- Rewrote `guiclaw/backends/background.py` from 95-line draft to 178-line production implementation
 - Added `_assert_started()` lifecycle guard that raises `RuntimeError("call preflight() or use async with before observe/execute")` when `observe()`/`execute()` called before `preflight()`
 - Added `__aenter__`/`__aexit__` for async context manager support with automatic preflight/shutdown
 - Implemented sentinel-based DISPLAY save/restore: `_original_display` initialized to `_SENTINEL`, set to `os.environ.get("DISPLAY")` at preflight, restored or deleted at shutdown
@@ -85,7 +85,7 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `opengui/backends/background.py` — 178-line production BackgroundDesktopBackend with full lifecycle management, structural DeviceBackend conformance, sentinel DISPLAY save/restore, and idempotent shutdown
+- `guiclaw/backends/background.py` — 178-line production BackgroundDesktopBackend with full lifecycle management, structural DeviceBackend conformance, sentinel DISPLAY save/restore, and idempotent shutdown
 
 ## Decisions Made
 
@@ -114,7 +114,7 @@ None — no external service configuration required.
 
 ## Self-Check: PASSED
 
-- `opengui/backends/background.py` — FOUND
+- `guiclaw/backends/background.py` — FOUND
 - `.planning/phases/10-background-backend-wrapper/10-02-SUMMARY.md` — FOUND
 - Commit `6f2778d` — FOUND
 

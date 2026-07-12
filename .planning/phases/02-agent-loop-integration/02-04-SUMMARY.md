@@ -12,7 +12,7 @@ Replaced Wave 0 xfail test stubs with comprehensive integration tests covering a
 
 ### Task 1: Phase 2 integration and memory test suites
 
-**tests/test_opengui_p2_integration.py** (8 tests):
+**tests/test_guiclaw_p2_integration.py** (8 tests):
 - `test_memory_injected_into_system_prompt` — AGENT-04/MEM-05: memory context appears in LLM system prompt
 - `test_skill_path_chosen_above_threshold` — AGENT-05/SKILL-08: skill execution triggered above threshold, SKILL phase in trajectory
 - `test_free_explore_when_no_skill_match` — AGENT-05: free exploration when no skill match, no SKILL phase
@@ -22,7 +22,7 @@ Replaced Wave 0 xfail test stubs with comprehensive integration tests covering a
 - `test_router_replans_on_and_child_failure` — AND-child failure triggers replanning
 - `test_full_flow_with_mock_llm` — TEST-05: end-to-end with DryRunBackend + memory + skill + trajectory
 
-**tests/test_opengui_p2_memory.py** (2 tests):
+**tests/test_guiclaw_p2_memory.py** (2 tests):
 - `test_policy_always_included` — MEM-05: POLICY entries in system prompt even with low top_k
 - `test_memory_context_formatted_in_system_prompt` — MEM-05: formatted "Relevant Knowledge" section
 
@@ -37,9 +37,9 @@ Fixed `_retrieve_memory` to fetch POLICY entries via a separate search call, not
 ## Key files
 
 ### key-files.modified
-- `tests/test_opengui_p2_integration.py` — 8 integration tests replacing xfail stubs
-- `tests/test_opengui_p2_memory.py` — 2 memory tests replacing xfail stubs
-- `opengui/agent.py` — POLICY always-include bug fix
+- `tests/test_guiclaw_p2_integration.py` — 8 integration tests replacing xfail stubs
+- `tests/test_guiclaw_p2_memory.py` — 2 memory tests replacing xfail stubs
+- `guiclaw/agent.py` — POLICY always-include bug fix
 
 ## Commits
 - `1245a6f` fix(02-02): ensure POLICY memory entries always included via separate fetch

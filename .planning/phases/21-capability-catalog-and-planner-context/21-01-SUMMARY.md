@@ -17,11 +17,11 @@ tech-stack:
 key-files:
   created:
     - nanobot/agent/capabilities.py
-    - tests/test_opengui_p21_planner_context.py
+    - tests/test_guiclaw_p21_planner_context.py
   modified:
     - nanobot/agent/planner.py
     - nanobot/agent/loop.py
-    - tests/test_opengui_p8_planning.py
+    - tests/test_guiclaw_p8_planning.py
 key-decisions:
   - "PlanningContext now wraps planner-only inputs so future memory hints can extend planning without another planner API break."
   - "Capability catalogs are built from an allowlisted live route inventory instead of dumping raw tool schemas into the planner prompt."
@@ -62,8 +62,8 @@ Each task was committed atomically:
 - `nanobot/agent/capabilities.py` - planner-only route summary DTOs, prompt serialization helpers, and live catalog builder
 - `nanobot/agent/planner.py` - optional route metadata on `PlanNode` plus `planning_context` prompt plumbing and route-aware tool guidance
 - `nanobot/agent/loop.py` - live planning-context construction and route-aware plan tree formatting
-- `tests/test_opengui_p21_planner_context.py` - Phase 21 catalog and planner-prompt coverage
-- `tests/test_opengui_p8_planning.py` - regression coverage for route metadata compatibility and route-aware planner logging
+- `tests/test_guiclaw_p21_planner_context.py` - Phase 21 catalog and planner-prompt coverage
+- `tests/test_guiclaw_p8_planning.py` - regression coverage for route metadata compatibility and route-aware planner logging
 
 ## Decisions Made
 - `TaskPlanner.plan(...)` now accepts `planning_context` directly instead of reusing the broader agent context path, keeping the planner prompt bounded and phase-local.

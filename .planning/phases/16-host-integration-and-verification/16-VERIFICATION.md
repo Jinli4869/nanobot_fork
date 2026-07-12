@@ -29,37 +29,37 @@ human_verification:
 
 Phase 16 now has direct parity coverage for CLI and nanobot plus a green cross-slice regression slice spanning the prior platform and intervention work:
 
-- `tests/test_opengui_p16_host_integration.py` proves both hosts share Windows app-class defaulting, shared remediation semantics, and cleanup plus scrubbed handoff-token behavior.
-- `tests/test_opengui_p5_cli.py` and `tests/test_opengui_p11_integration.py` now carry explicit Phase 16 host-entry assertions rather than relying only on earlier phase coverage.
+- `tests/test_guiclaw_p16_host_integration.py` proves both hosts share Windows app-class defaulting, shared remediation semantics, and cleanup plus scrubbed handoff-token behavior.
+- `tests/test_guiclaw_p5_cli.py` and `tests/test_guiclaw_p11_integration.py` now carry explicit Phase 16 host-entry assertions rather than relying only on earlier phase coverage.
 - The focused regression slice passed green across:
-  - `tests/test_opengui_p16_host_integration.py`
-  - `tests/test_opengui_p5_cli.py`
-  - `tests/test_opengui_p11_integration.py`
-  - `tests/test_opengui_p10_background.py`
-  - `tests/test_opengui_p12_runtime_contracts.py`
-  - `tests/test_opengui_p13_macos_display.py`
-  - `tests/test_opengui_p14_windows_desktop.py`
-  - `tests/test_opengui_p15_intervention.py`
+  - `tests/test_guiclaw_p16_host_integration.py`
+  - `tests/test_guiclaw_p5_cli.py`
+  - `tests/test_guiclaw_p11_integration.py`
+  - `tests/test_guiclaw_p10_background.py`
+  - `tests/test_guiclaw_p12_runtime_contracts.py`
+  - `tests/test_guiclaw_p13_macos_display.py`
+  - `tests/test_guiclaw_p14_windows_desktop.py`
+  - `tests/test_guiclaw_p15_intervention.py`
 
 ## Requirements Coverage
 
 | Requirement | Automated Evidence | Manual Verification Required | Evidence Artifact / Status |
 | --- | --- | --- | --- |
-| `BGND-05` | `tests/test_opengui_p12_runtime_contracts.py`, `tests/test_opengui_p10_background.py` | No | Shared runtime probe and lifecycle coverage remain green |
-| `BGND-06` | `tests/test_opengui_p12_runtime_contracts.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | No | CLI and nanobot capability messaging remains test-backed |
-| `BGND-07` | `tests/test_opengui_p12_runtime_contracts.py`, `tests/test_opengui_p11_integration.py` | No | Serialized background-run ownership remains covered |
-| `MAC-01` | `tests/test_opengui_p13_macos_display.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | Yes | Automated coverage is green; host validation continues via `13-MANUAL-SMOKE.md` and `16-MANUAL-SMOKE.md` |
-| `MAC-02` | `tests/test_opengui_p13_macos_display.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | Yes | Remediation text is automated; real permission-state parity remains human-needed |
-| `MAC-03` | `tests/test_opengui_p13_macos_display.py` | Yes | Automated routing is green; scaled-layout host validation remains manual |
-| `WIN-01` | `tests/test_opengui_p14_windows_desktop.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | Yes | Prior verification still requires real Windows alternate-desktop validation |
-| `WIN-02` | `tests/test_opengui_p14_windows_desktop.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py`, `tests/test_opengui_p16_host_integration.py` | Yes | Unsupported-app-class parity is automated; real Windows host validation remains manual |
-| `WIN-03` | `tests/test_opengui_p14_windows_desktop.py`, `tests/test_opengui_p11_integration.py`, `tests/test_opengui_p16_host_integration.py` | Yes | Cleanup-token coverage is green; leak-free host validation remains manual |
-| `SAFE-01` | `tests/test_opengui_p15_intervention.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | No | Intervention request contract remains green |
-| `SAFE-02` | `tests/test_opengui_p15_intervention.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | Yes | Automated pause behavior is green; real host pause/no-capture validation remains manual |
-| `SAFE-03` | `tests/test_opengui_p15_intervention.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py` | Yes | Resume path is automated; real handoff validation remains manual |
-| `SAFE-04` | `tests/test_opengui_p15_intervention.py`, `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p11_integration.py`, `tests/test_opengui_p16_host_integration.py` | Yes | Scrubbing remains automated; live-host artifact inspection remains manual |
-| `INTG-05` | `tests/test_opengui_p5_cli.py`, `tests/test_opengui_p16_host_integration.py` | Yes | CLI parity is test-backed; real-host parity checklist is still outstanding |
-| `INTG-06` | `tests/test_opengui_p11_integration.py`, `tests/test_opengui_p16_host_integration.py` | Yes | Nanobot parity is test-backed; real-host parity checklist is still outstanding |
+| `BGND-05` | `tests/test_guiclaw_p12_runtime_contracts.py`, `tests/test_guiclaw_p10_background.py` | No | Shared runtime probe and lifecycle coverage remain green |
+| `BGND-06` | `tests/test_guiclaw_p12_runtime_contracts.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | No | CLI and nanobot capability messaging remains test-backed |
+| `BGND-07` | `tests/test_guiclaw_p12_runtime_contracts.py`, `tests/test_guiclaw_p11_integration.py` | No | Serialized background-run ownership remains covered |
+| `MAC-01` | `tests/test_guiclaw_p13_macos_display.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | Yes | Automated coverage is green; host validation continues via `13-MANUAL-SMOKE.md` and `16-MANUAL-SMOKE.md` |
+| `MAC-02` | `tests/test_guiclaw_p13_macos_display.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | Yes | Remediation text is automated; real permission-state parity remains human-needed |
+| `MAC-03` | `tests/test_guiclaw_p13_macos_display.py` | Yes | Automated routing is green; scaled-layout host validation remains manual |
+| `WIN-01` | `tests/test_guiclaw_p14_windows_desktop.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | Yes | Prior verification still requires real Windows alternate-desktop validation |
+| `WIN-02` | `tests/test_guiclaw_p14_windows_desktop.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py`, `tests/test_guiclaw_p16_host_integration.py` | Yes | Unsupported-app-class parity is automated; real Windows host validation remains manual |
+| `WIN-03` | `tests/test_guiclaw_p14_windows_desktop.py`, `tests/test_guiclaw_p11_integration.py`, `tests/test_guiclaw_p16_host_integration.py` | Yes | Cleanup-token coverage is green; leak-free host validation remains manual |
+| `SAFE-01` | `tests/test_guiclaw_p15_intervention.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | No | Intervention request contract remains green |
+| `SAFE-02` | `tests/test_guiclaw_p15_intervention.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | Yes | Automated pause behavior is green; real host pause/no-capture validation remains manual |
+| `SAFE-03` | `tests/test_guiclaw_p15_intervention.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py` | Yes | Resume path is automated; real handoff validation remains manual |
+| `SAFE-04` | `tests/test_guiclaw_p15_intervention.py`, `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p11_integration.py`, `tests/test_guiclaw_p16_host_integration.py` | Yes | Scrubbing remains automated; live-host artifact inspection remains manual |
+| `INTG-05` | `tests/test_guiclaw_p5_cli.py`, `tests/test_guiclaw_p16_host_integration.py` | Yes | CLI parity is test-backed; real-host parity checklist is still outstanding |
+| `INTG-06` | `tests/test_guiclaw_p11_integration.py`, `tests/test_guiclaw_p16_host_integration.py` | Yes | Nanobot parity is test-backed; real-host parity checklist is still outstanding |
 | `TEST-V12-01` | Full focused slice across `p10`, `p12`, `p13`, `p14`, `p15`, `p5`, `p11`, and `p16` | Yes | Automated regression gate passed; milestone closeout still carries human-needed host checks |
 
 ## Manual Carry-Forward

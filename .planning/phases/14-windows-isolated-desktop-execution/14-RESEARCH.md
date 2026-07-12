@@ -14,7 +14,7 @@ No `14-CONTEXT.md` exists for this phase. This research therefore treats the fol
 - project-level research already captured in `.planning/research/SUMMARY.md`, `.planning/research/STACK.md`, and `.planning/research/PITFALLS.md`
 
 ### Locked Decisions Inherited From Prior Phases
-- Keep the shared `opengui/backends/background_runtime.py` probe/result/resolution contract introduced in Phase 12; Phase 14 extends it rather than bypassing it.
+- Keep the shared `guiclaw/backends/background_runtime.py` probe/result/resolution contract introduced in Phase 12; Phase 14 extends it rather than bypassing it.
 - Keep CLI and nanobot on the same capability vocabulary and resolved-mode logging contract.
 - Do not silently downgrade from requested background isolation; unsupported Windows paths must warn or block explicitly.
 - Keep Linux and macOS behavior unchanged.
@@ -83,22 +83,22 @@ uv pip install "pywin32==311; sys_platform == 'win32'"
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── backends/
 │   ├── background_runtime.py          # extend Windows host probe + remediation
 │   ├── windows_isolated_desktop.py    # new: worker-backed DeviceBackend for Windows
 │   ├── windows_worker.py              # new: child process entry point bound to lpDesktop
 │   ├── background.py                  # likely unchanged for Windows; remains Linux/macOS wrapper
 │   └── desktop.py                     # foreground backend remains shared, but not the hidden-desktop owner
-opengui/
+guiclaw/
 ├── cli.py                             # build isolated backend from runtime backend_name
 nanobot/
 └── agent/tools/gui.py                 # same shared contract, Windows backend dispatch
 tests/
-├── test_opengui_p14_windows_desktop.py
-├── test_opengui_p12_runtime_contracts.py
-├── test_opengui_p5_cli.py
-└── test_opengui_p11_integration.py
+├── test_guiclaw_p14_windows_desktop.py
+├── test_guiclaw_p12_runtime_contracts.py
+├── test_guiclaw_p5_cli.py
+└── test_guiclaw_p11_integration.py
 ```
 
 ### Pattern 1: Keep the Shared Runtime Contract, Add Windows Host Preflight
@@ -125,7 +125,7 @@ tests/
 **When to use:** Every isolated Windows run that resolves to `mode="isolated"`.
 **Concrete recommendation:**
 - Parent backend creates the desktop with `CreateDesktopW`.
-- Parent launches the worker with `STARTUPINFO.lpDesktop = "WinSta0\\OpenGUI-<run-id>"`.
+- Parent launches the worker with `STARTUPINFO.lpDesktop = "WinSta0\\GUIClaw-<run-id>"`.
 - Worker opens/owns its desktop-local capture/input path before importing GUI-heavy modules.
 - Parent never calls `SetThreadDesktop()` on the long-lived main event-loop thread.
 
@@ -239,7 +239,7 @@ Verified patterns from official sources:
 ### Example 1: Creation-Time Desktop Assignment
 ```python
 # Source: Microsoft Learn CreateDesktopW + STARTUPINFOW + Thread Connection to a Desktop
-desktop_name = f"OpenGUI-{run_id}"
+desktop_name = f"GUIClaw-{run_id}"
 desktop = CreateDesktopW(desktop_name, None, None, 0, DESKTOP_ACCESS_MASK, None)
 
 startup = STARTUPINFOW()
@@ -248,7 +248,7 @@ startup.lpDesktop = f"WinSta0\\{desktop_name}"
 
 process_info = create_worker_process(
     python_exe=python_exe,
-    module="opengui.backends.windows_worker",
+    module="guiclaw.backends.windows_worker",
     startupinfo=startup,
 )
 ```
@@ -304,32 +304,32 @@ finally:
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio 1.3.x |
 | Config file | `pyproject.toml` — `[tool.pytest.ini_options]` with `asyncio_mode = "auto"` |
-| Quick run command | `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p12_runtime_contracts.py -q` |
-| Full suite command | `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p12_runtime_contracts.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py tests/test_guiclaw_p12_runtime_contracts.py -q` |
+| Full suite command | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py tests/test_guiclaw_p12_runtime_contracts.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -q` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| WIN-01 | Windows probe reports `supported=True` with `backend_name="windows_isolated_desktop"` when session/input-desktop checks pass | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_probe_reports_windows_alternate_desktop_available -q` | ❌ Wave 0 |
-| WIN-01 | Windows isolated backend creates a named desktop, launches the worker with `lpDesktop`, and exposes a backend-local observe/execute contract | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_windows_isolated_backend_launches_worker_on_named_desktop -q` | ❌ Wave 0 |
-| WIN-02 | Non-interactive launch contexts resolve to fallback/blocked before agent startup | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_probe_blocks_noninteractive_windows_session -q` | ❌ Wave 0 |
-| WIN-02 | Unsupported app surfaces return a stable warning/block reason instead of continuing blindly | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_windows_backend_rejects_unsupported_app_surface -q` | ❌ Wave 0 |
-| WIN-03 | Success path closes worker/process/desktop resources in the correct order | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_windows_backend_closes_resources_on_success -q` | ❌ Wave 0 |
-| WIN-03 | Failure during preflight still closes created desktop/process handles | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_windows_backend_closes_resources_on_preflight_failure -q` | ❌ Wave 0 |
-| WIN-03 | Cancellation triggers the same cleanup path without leaking handles | unit | `uv run pytest tests/test_opengui_p14_windows_desktop.py::test_windows_backend_closes_resources_on_cancellation -q` | ❌ Wave 0 |
-| WIN-01, WIN-02 | CLI chooses the Windows isolated backend from the shared runtime probe and logs the resolved mode before agent start | integration | `uv run pytest tests/test_opengui_p5_cli.py::test_run_cli_uses_windows_isolated_backend_for_win32_mode -q` | ❌ Wave 0 |
-| WIN-01, WIN-02 | Nanobot chooses the same Windows isolated backend and preserves fallback/block messaging semantics | integration | `uv run pytest tests/test_opengui_p11_integration.py::test_gui_tool_uses_windows_isolated_backend_for_win32_mode -q` | ❌ Wave 0 |
+| WIN-01 | Windows probe reports `supported=True` with `backend_name="windows_isolated_desktop"` when session/input-desktop checks pass | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_probe_reports_windows_alternate_desktop_available -q` | ❌ Wave 0 |
+| WIN-01 | Windows isolated backend creates a named desktop, launches the worker with `lpDesktop`, and exposes a backend-local observe/execute contract | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_windows_isolated_backend_launches_worker_on_named_desktop -q` | ❌ Wave 0 |
+| WIN-02 | Non-interactive launch contexts resolve to fallback/blocked before agent startup | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_probe_blocks_noninteractive_windows_session -q` | ❌ Wave 0 |
+| WIN-02 | Unsupported app surfaces return a stable warning/block reason instead of continuing blindly | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_windows_backend_rejects_unsupported_app_surface -q` | ❌ Wave 0 |
+| WIN-03 | Success path closes worker/process/desktop resources in the correct order | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_windows_backend_closes_resources_on_success -q` | ❌ Wave 0 |
+| WIN-03 | Failure during preflight still closes created desktop/process handles | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_windows_backend_closes_resources_on_preflight_failure -q` | ❌ Wave 0 |
+| WIN-03 | Cancellation triggers the same cleanup path without leaking handles | unit | `uv run pytest tests/test_guiclaw_p14_windows_desktop.py::test_windows_backend_closes_resources_on_cancellation -q` | ❌ Wave 0 |
+| WIN-01, WIN-02 | CLI chooses the Windows isolated backend from the shared runtime probe and logs the resolved mode before agent start | integration | `uv run pytest tests/test_guiclaw_p5_cli.py::test_run_cli_uses_windows_isolated_backend_for_win32_mode -q` | ❌ Wave 0 |
+| WIN-01, WIN-02 | Nanobot chooses the same Windows isolated backend and preserves fallback/block messaging semantics | integration | `uv run pytest tests/test_guiclaw_p11_integration.py::test_gui_tool_uses_windows_isolated_backend_for_win32_mode -q` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p12_runtime_contracts.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p14_windows_desktop.py tests/test_opengui_p12_runtime_contracts.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p14_windows_desktop.py tests/test_guiclaw_p12_runtime_contracts.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p14_windows_desktop.py tests/test_guiclaw_p12_runtime_contracts.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p14_windows_desktop.py` — Windows probe, worker launch, app-support gate, cleanup ordering
-- [ ] `tests/test_opengui_p12_runtime_contracts.py` additions — Windows reason-code and backend-name coverage
-- [ ] `tests/test_opengui_p5_cli.py` additions — CLI Windows backend dispatch and remediation ordering
-- [ ] `tests/test_opengui_p11_integration.py` additions — nanobot Windows backend dispatch and remediation ordering
+- [ ] `tests/test_guiclaw_p14_windows_desktop.py` — Windows probe, worker launch, app-support gate, cleanup ordering
+- [ ] `tests/test_guiclaw_p12_runtime_contracts.py` additions — Windows reason-code and backend-name coverage
+- [ ] `tests/test_guiclaw_p5_cli.py` additions — CLI Windows backend dispatch and remediation ordering
+- [ ] `tests/test_guiclaw_p11_integration.py` additions — nanobot Windows backend dispatch and remediation ordering
 
 ### Manual-Only Verifications
 
@@ -359,7 +359,7 @@ finally:
 ### Secondary (MEDIUM confidence)
 - `.planning/research/STACK.md` — prior Windows background-execution recommendations and dependency posture
 - `.planning/research/PITFALLS.md` — prior Windows hidden-desktop failure modes and mitigation themes
-- Existing code seams in `opengui/backends/background_runtime.py`, `opengui/backends/background.py`, `opengui/cli.py`, and `nanobot/agent/tools/gui.py`
+- Existing code seams in `guiclaw/backends/background_runtime.py`, `guiclaw/backends/background.py`, `guiclaw/cli.py`, and `nanobot/agent/tools/gui.py`
 
 ### Tertiary (LOW confidence)
 - App-class support boundaries beyond the documented Win32/session/UIPI/capture limits are partly inference. Packaged/UWP/Electron/DirectX-heavy surfaces should be treated as “runtime capability check required,” not as a permanently closed set, until real-host smoke data exists.

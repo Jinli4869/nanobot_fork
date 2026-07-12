@@ -1,8 +1,8 @@
-# Roadmap: OpenGUI
+# Roadmap: GUIClaw
 
 ## Overview
 
-OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI subagent core, v1.1-v1.2 completed safe background execution across major desktop targets, v1.3 added a local-first nanobot web workspace, v1.4 made planning and routing capability-aware, and v1.5 shipped the new shortcut/task skill architecture. Milestone v1.6 turns that architecture into a stable production shortcut path, then closes the remaining production gaps around concise extraction, low-token validation, and reliable reuse.
+GUIClaw has shipped five milestones so far: v1.0 established the reusable GUI subagent core, v1.1-v1.2 completed safe background execution across major desktop targets, v1.3 added a local-first nanobot web workspace, v1.4 made planning and routing capability-aware, and v1.5 shipped the new shortcut/task skill architecture. Milestone v1.6 turns that architecture into a stable production shortcut path, then closes the remaining production gaps around concise extraction, low-token validation, and reliable reuse.
 
 ## Milestones
 
@@ -11,10 +11,10 @@ OpenGUI has shipped five milestones so far: v1.0 established the reusable GUI su
 - ✅ **v1.2 Cross-Platform Background Execution** - Phases 12-16 (shipped 2026-03-21)
 - ✅ **v1.3 Nanobot Web Workspace** - Phases 17-20 (shipped 2026-03-22)
 - ✅ **v1.4 Capability-Aware Planning and Routing** - Phases 21-23 (shipped 2026-03-28)
-- ✅ **v1.5 New OpenGUI Skills Architecture** - Phases 24-27 (shipped 2026-04-02)
+- ✅ **v1.5 New GUIClaw Skills Architecture** - Phases 24-27 (shipped 2026-04-02)
 - 🚧 **v1.6 Shortcut Extraction and Stable Execution** - Phases 28-33 (current)
 
-## Completed Milestone: v1.5 New OpenGUI Skills Architecture
+## Completed Milestone: v1.5 New GUIClaw Skills Architecture
 
 **Goal:** Replace the flat single-layer skill system with a two-layer tree architecture: a shortcut layer with typed contracts and parameter slots, and a task-level layer with shortcut composition, inline ATOM fallbacks, and conditional branches.
 

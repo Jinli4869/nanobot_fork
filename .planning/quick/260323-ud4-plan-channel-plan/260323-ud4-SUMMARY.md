@@ -32,7 +32,7 @@
 
 更新测试：
 
-- `tests/test_opengui_p8_planning.py`
+- `tests/test_guiclaw_p8_planning.py`
   - 现在会断言 `_plan_and_execute()` 触发了一次 `bus.publish_outbound()`
   - 并检查：
     - channel / chat_id 正确
@@ -43,8 +43,8 @@
 验证结果：
 
 ```bash
-uv run pytest tests/test_opengui_p8_planning.py tests/test_opengui_agent_loop.py -q
-uv run python -m py_compile nanobot/agent/loop.py tests/test_opengui_p8_planning.py
+uv run pytest tests/test_guiclaw_p8_planning.py tests/test_guiclaw_agent_loop.py -q
+uv run python -m py_compile nanobot/agent/loop.py tests/test_guiclaw_p8_planning.py
 ```
 
 结果：

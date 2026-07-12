@@ -21,7 +21,7 @@ No `15-CONTEXT.md` exists for this phase. This research therefore treats the fol
 - Keep trajectory and trace artifacts available, but prevent credential-like or other sensitive handoff data from leaking into them.
 
 ### Claude's Discretion
-- Exact names for the intervention dataclasses/protocols and whether they live in `opengui.interfaces` or a small dedicated module.
+- Exact names for the intervention dataclasses/protocols and whether they live in `guiclaw.interfaces` or a small dedicated module.
 - Whether the intervention request is represented as a new `Action` type or as a richer terminal/non-terminal control object, as long as the LLM can request it explicitly.
 - Whether host resume is implemented with an in-process handler callback, a blocking prompt adapter, or a lightweight coordination object, as long as resume requires explicit confirmation and uses a fresh observation.
 </user_constraints>
@@ -59,7 +59,7 @@ This keeps the safety boundary in the orchestration layer, while leaving platfor
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
 | Python stdlib (`asyncio`, `dataclasses`, `json`, `pathlib`, `time`) | Project target `>=3.11` | Pause/resume coordination, event recording, and handler payloads | Existing agent and backend runtime already use these primitives |
-| Existing OpenGUI protocols (`Action`, `Observation`, `DeviceBackend`, `TrajectoryRecorder`) | repo-local | Extend the current control loop instead of introducing a second orchestration layer | Phase 15 is a contract extension, not a new subsystem |
+| Existing GUIClaw protocols (`Action`, `Observation`, `DeviceBackend`, `TrajectoryRecorder`) | repo-local | Extend the current control loop instead of introducing a second orchestration layer | Phase 15 is a contract extension, not a new subsystem |
 | Existing desktop backends and runtime wrappers | repo-local | Reuse target-surface ownership from Phases 13-14 | Those backends already know how to reach the isolated target the human needs to enter |
 
 ### Supporting
@@ -81,7 +81,7 @@ This keeps the safety boundary in the orchestration layer, while leaving platfor
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── action.py                         # add explicit intervention action parsing/validation
 ├── agent.py                          # pause/resume orchestration and fresh-observation resume
 ├── prompts/system.py                 # teach the model when to request intervention
@@ -93,10 +93,10 @@ opengui/
 nanobot/
 └── agent/tools/gui.py                # structured intervention handling with the same core contract
 tests/
-├── test_opengui_p15_intervention.py  # agent-level pause/resume + scrubbing coverage
-├── test_opengui_p5_cli.py            # CLI intervention flow coverage
-├── test_opengui_p11_integration.py   # nanobot intervention flow coverage
-└── test_opengui_p14_windows_desktop.py / test_opengui_p10_background.py  # backend target-surface hook coverage
+├── test_guiclaw_p15_intervention.py  # agent-level pause/resume + scrubbing coverage
+├── test_guiclaw_p5_cli.py            # CLI intervention flow coverage
+├── test_guiclaw_p11_integration.py   # nanobot intervention flow coverage
+└── test_guiclaw_p14_windows_desktop.py / test_guiclaw_p10_background.py  # backend target-surface hook coverage
 ```
 
 ### Pattern 1: Make Intervention Explicit in the Tool Contract
@@ -104,9 +104,9 @@ tests/
 **When to use:** Whenever the model reaches a payment, login, OTP, permission, uncertainty, or blocked state where automation should stop.
 **Concrete recommendation:**
 - Add `request_intervention` to:
-  - `opengui/action.py::VALID_ACTION_TYPES`
-  - the tool schema in `opengui/agent.py`
-  - the tool schema in `opengui/prompts/system.py`
+  - `guiclaw/action.py::VALID_ACTION_TYPES`
+  - the tool schema in `guiclaw/agent.py`
+  - the tool schema in `guiclaw/prompts/system.py`
 - Require a human-readable `text` reason for that action.
 - Keep `done` reserved for terminal success/failure only.
 
@@ -131,7 +131,7 @@ tests/
 **What:** Introduce a small protocol that receives the intervention request and coordinates the human handoff/resume.
 **When to use:** Every host that embeds `GuiAgent` and wants consistent intervention behavior.
 **Concrete recommendation:**
-- Add a protocol in `opengui/interfaces.py`, for example:
+- Add a protocol in `guiclaw/interfaces.py`, for example:
   - `request_intervention(request: InterventionRequest) -> InterventionResolution`
 - `InterventionRequest` should include:
   - task
@@ -144,7 +144,7 @@ tests/
   - optional scrubbed operator note
   - timestamp(s)
 
-**Why:** This keeps the OpenGUI core reusable while letting the CLI block on terminal confirmation and nanobot choose its own user-facing mediation without forking agent logic.
+**Why:** This keeps the GUIClaw core reusable while letting the CLI block on terminal confirmation and nanobot choose its own user-facing mediation without forking agent logic.
 
 ### Pattern 4: Let Background Backends Provide Target-Surface Handoff Metadata, Not Policy
 **What:** Linux/macOS background wrappers and the Windows isolated backend should expose enough information for the host to switch the user into the automation target.
@@ -240,13 +240,13 @@ The phase is well suited to a four-plan split with Wave 0 test coverage landing 
 
 ### Recommended Automated Coverage
 - New phase test file:
-  - `tests/test_opengui_p15_intervention.py`
+  - `tests/test_guiclaw_p15_intervention.py`
 - Likely extensions to existing tests:
-  - `tests/test_opengui.py`
-  - `tests/test_opengui_p5_cli.py`
-  - `tests/test_opengui_p11_integration.py`
-  - `tests/test_opengui_p10_background.py`
-  - `tests/test_opengui_p14_windows_desktop.py`
+  - `tests/test_guiclaw.py`
+  - `tests/test_guiclaw_p5_cli.py`
+  - `tests/test_guiclaw_p11_integration.py`
+  - `tests/test_guiclaw_p10_background.py`
+  - `tests/test_guiclaw_p14_windows_desktop.py`
 
 ### Minimum Behaviors to Lock in Before Production Refactors
 - `parse_action()` accepts `request_intervention` and requires a reason field.

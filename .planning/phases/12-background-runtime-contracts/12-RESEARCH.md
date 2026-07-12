@@ -63,13 +63,13 @@ None — discussion stayed within phase scope.
 
 ## Summary
 
-Phase 12 should not add another platform-specific backend layer. It should add one shared runtime contract that all desktop background callers use before they decide whether to run isolated, fall back, or block. The current codebase does not have that contract: `opengui/cli.py` and `nanobot/agent/tools/gui.py` each make their own Linux-only fallback decision, while [`opengui/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/backends/background.py) mutates `os.environ["DISPLAY"]` for the whole process with no serialization guard. That is the main planning risk.
+Phase 12 should not add another platform-specific backend layer. It should add one shared runtime contract that all desktop background callers use before they decide whether to run isolated, fall back, or block. The current codebase does not have that contract: `guiclaw/cli.py` and `nanobot/agent/tools/gui.py` each make their own Linux-only fallback decision, while [`guiclaw/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/backends/background.py) mutates `os.environ["DISPLAY"]` for the whole process with no serialization guard. That is the main planning risk.
 
 The standard implementation path is: keep `BackgroundDesktopBackend` as the execution wrapper, add a new shared `background_runtime` module for probing and mode resolution, and add a process-scope async lease that protects the entire wrapped lifetime from `preflight()` through `shutdown()`. Use a narrow probe result, a separate mode-resolution object, and centralized logging helpers so CLI and nanobot stop drifting.
 
 The most important design choice is the concurrency primitive. Use `asyncio.Condition`, not a sleep loop and not `lock.locked()` plus ad hoc metadata. Python’s docs explicitly position `Condition` as the combination of an event and a lock for exclusive shared-resource coordination, which matches the “wait, report busy state, then acquire exclusive runtime slot” requirement exactly.
 
-**Primary recommendation:** Add `opengui/backends/background_runtime.py` to own probe/result/resolution/coordinator contracts, wire both CLI and nanobot through it, and have `BackgroundDesktopBackend` acquire a global process-scope lease for its full lifecycle.
+**Primary recommendation:** Add `guiclaw/backends/background_runtime.py` to own probe/result/resolution/coordinator contracts, wire both CLI and nanobot through it, and have `BackgroundDesktopBackend` acquire a global process-scope lease for its full lifecycle.
 
 ## Standard Stack
 
@@ -110,7 +110,7 @@ No new third-party runtime package is recommended for this phase.
 
 ### Recommended Project Structure
 ```text
-opengui/
+guiclaw/
 ├── backends/
 │   ├── background.py            # existing wrapper; consume the shared runtime lease
 │   ├── background_runtime.py    # new: probe/result/resolution/coordinator contracts
@@ -118,9 +118,9 @@ opengui/
 │   └── displays/
 │       └── xvfb.py              # existing Linux isolated backend; add a cheap probe helper
 tests/
-├── test_opengui_p12_runtime_contracts.py  # new: probe, resolution, serialization coverage
-├── test_opengui_p5_cli.py                 # extend: mode reporting order and fallback/block paths
-└── test_opengui_p11_integration.py        # extend: nanobot uses the shared contract
+├── test_guiclaw_p12_runtime_contracts.py  # new: probe, resolution, serialization coverage
+├── test_guiclaw_p5_cli.py                 # extend: mode reporting order and fallback/block paths
+└── test_guiclaw_p11_integration.py        # extend: nanobot uses the shared contract
 ```
 
 ### Pattern 1: Probe Separate From Policy
@@ -205,7 +205,7 @@ async with runtime_coordinator.lease({"owner": "cli", "task": task_id}):
     async with BackgroundDesktopBackend(inner_backend, display_manager):
         return await run_isolated()
 ```
-Source: Repo integration points in [`opengui/cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/cli.py) and [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py), with synchronization behavior grounded in https://docs.python.org/3.11/library/asyncio-sync.html
+Source: Repo integration points in [`guiclaw/cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/cli.py) and [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py), with synchronization behavior grounded in https://docs.python.org/3.11/library/asyncio-sync.html
 
 ### Anti-Patterns to Avoid
 - **Duplicated platform gating:** Do not keep separate fallback logic in CLI and nanobot once the shared contract exists.
@@ -295,7 +295,7 @@ def resolve_run_mode(
         requires_acknowledgement=require_ack_for_fallback,
     )
 ```
-Source: repo policy split from [`opengui/cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/cli.py) and [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py)
+Source: repo policy split from [`guiclaw/cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/cli.py) and [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py)
 
 ### Cancellation-Safe Lease Release
 ```python
@@ -303,7 +303,7 @@ async with coordinator.lease(run_metadata):
     async with BackgroundDesktopBackend(inner_backend, display_manager) as backend:
         return await _execute_agent(args, config, backend, provider, task)
 ```
-Source: `async with` usage pattern backed by https://docs.python.org/3.11/library/asyncio-sync.html and the existing wrapper contract in [`opengui/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/backends/background.py)
+Source: `async with` usage pattern backed by https://docs.python.org/3.11/library/asyncio-sync.html and the existing wrapper contract in [`guiclaw/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/backends/background.py)
 
 ### Nanobot Config Guard Remains Model-Level
 ```python
@@ -331,7 +331,7 @@ Source: current pattern in [`nanobot/config/schema.py`](/Users/jinli/Documents/P
 ## Open Questions
 
 1. **Should the coordinator live inside `BackgroundDesktopBackend` or only in callers?**
-   - What we know: [`opengui/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/backends/background.py) is already the shared lifecycle seam, and direct wrapper usage should not bypass serialization accidentally.
+   - What we know: [`guiclaw/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/backends/background.py) is already the shared lifecycle seam, and direct wrapper usage should not bypass serialization accidentally.
    - What's unclear: Whether future isolated backends will need the same guard without using this wrapper.
    - Recommendation: Put the process-scope lease acquisition in `BackgroundDesktopBackend` for safety, but keep probe/resolution outside in `background_runtime.py`.
 
@@ -352,30 +352,30 @@ Source: current pattern in [`nanobot/config/schema.py`](/Users/jinli/Documents/P
 |----------|-------|
 | Framework | `pytest 9.0.2` + `pytest-asyncio 1.3.0` |
 | Config file | [`pyproject.toml`](/Users/jinli/Documents/Personal/nanobot_fork/pyproject.toml) |
-| Quick run command | `uv run pytest tests/test_opengui_p12_runtime_contracts.py -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py -q` |
 | Full suite command | `uv run pytest` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| BGND-05 | Probe happens before any isolated backend startup or fallback/block decision | unit + integration | `uv run pytest tests/test_opengui_p12_runtime_contracts.py tests/test_opengui_p5_cli.py -q` | ❌ Wave 0 |
-| BGND-06 | Resolved mode is logged explicitly before automation begins for isolated, fallback, and blocked cases | integration | `uv run pytest tests/test_opengui_p12_runtime_contracts.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -q` | ❌ Wave 0 |
-| BGND-07 | Overlapping background runs serialize deterministically and emit busy/waiting status with active-run metadata | unit | `uv run pytest tests/test_opengui_p12_runtime_contracts.py -q` | ❌ Wave 0 |
+| BGND-05 | Probe happens before any isolated backend startup or fallback/block decision | unit + integration | `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py tests/test_guiclaw_p5_cli.py -q` | ❌ Wave 0 |
+| BGND-06 | Resolved mode is logged explicitly before automation begins for isolated, fallback, and blocked cases | integration | `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -q` | ❌ Wave 0 |
+| BGND-07 | Overlapping background runs serialize deterministically and emit busy/waiting status with active-run metadata | unit | `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py -q` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui_p12_runtime_contracts.py -q`
-- **Per wave merge:** `uv run pytest tests/test_opengui_p12_runtime_contracts.py tests/test_opengui_p5_cli.py tests/test_opengui_p11_integration.py -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py -q`
+- **Per wave merge:** `uv run pytest tests/test_guiclaw_p12_runtime_contracts.py tests/test_guiclaw_p5_cli.py tests/test_guiclaw_p11_integration.py -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] [`tests/test_opengui_p12_runtime_contracts.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p12_runtime_contracts.py) — new probe, mode-resolution, and coordinator serialization coverage for `BGND-05` to `BGND-07`
-- [ ] [`tests/test_opengui_p5_cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p5_cli.py) — extend with pre-run mode logging order and blocked/fallback assertions
-- [ ] [`tests/test_opengui_p11_integration.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p11_integration.py) — extend nanobot parity tests to use the shared runtime contract
+- [ ] [`tests/test_guiclaw_p12_runtime_contracts.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p12_runtime_contracts.py) — new probe, mode-resolution, and coordinator serialization coverage for `BGND-05` to `BGND-07`
+- [ ] [`tests/test_guiclaw_p5_cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p5_cli.py) — extend with pre-run mode logging order and blocked/fallback assertions
+- [ ] [`tests/test_guiclaw_p11_integration.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p11_integration.py) — extend nanobot parity tests to use the shared runtime contract
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Repo inspection: [`opengui/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/backends/background.py), [`opengui/cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/opengui/cli.py), [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py), [`nanobot/config/schema.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/config/schema.py), [`tests/test_opengui_p10_background.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p10_background.py), [`tests/test_opengui_p5_cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p5_cli.py), [`tests/test_opengui_p11_integration.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_opengui_p11_integration.py)
+- Repo inspection: [`guiclaw/backends/background.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/backends/background.py), [`guiclaw/cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/cli.py), [`nanobot/agent/tools/gui.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py), [`nanobot/config/schema.py`](/Users/jinli/Documents/Personal/nanobot_fork/nanobot/config/schema.py), [`tests/test_guiclaw_p10_background.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p10_background.py), [`tests/test_guiclaw_p5_cli.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p5_cli.py), [`tests/test_guiclaw_p11_integration.py`](/Users/jinli/Documents/Personal/nanobot_fork/tests/test_guiclaw_p11_integration.py)
 - Python `asyncio` synchronization primitives: https://docs.python.org/3.11/library/asyncio-sync.html
 - Python `os.environ` semantics: https://docs.python.org/3.11/library/os.html
 - Pydantic validators and `model_validator`: https://docs.pydantic.dev/latest/concepts/validators/

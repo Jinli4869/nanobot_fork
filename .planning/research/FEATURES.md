@@ -22,7 +22,7 @@
 |---------|-------------------|------------|-------|
 | Shortcut health telemetry and demotion signals | Makes shortcut quality observable instead of mysterious | MEDIUM | Helps prune brittle shortcuts over time |
 | Merge/version handling for duplicate shortcuts | Keeps the library clean as more traces arrive | MEDIUM | Avoids store pollution from repeated near-identical traces |
-| Cross-surface shortcut stability contract | Reuse the same architecture on Android, local desktop, iOS, and HDC | HIGH | Important for OpenGUI's portable-agent positioning |
+| Cross-surface shortcut stability contract | Reuse the same architecture on Android, local desktop, iOS, and HDC | HIGH | Important for GUIClaw's portable-agent positioning |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
@@ -86,7 +86,7 @@
 
 | Feature | AppAgentX | Mobile-Agent-v3.5/mobile_use | Our Approach |
 |---------|-----------|-------------------------------|--------------|
-| Shortcut concept | Evolves high-level shortcuts from history and evaluates execution conditions | Does not emphasize shortcut libraries, but enforces disciplined action/observation loops | Keep OpenGUI's shortcut/task schema but make the runtime production-ready |
+| Shortcut concept | Evolves high-level shortcuts from history and evaluates execution conditions | Does not emphasize shortcut libraries, but enforces disciplined action/observation loops | Keep GUIClaw's shortcut/task schema but make the runtime production-ready |
 | Shortcut use gate | Explicit shortcut association, evaluation, prioritization, and template generation | Emphasizes step-by-step action correctness and waiting for screen changes | Add a screen-aware shortcut selector before execution |
 | Runtime stability | Template generation from current screen context | Explicit wait action and screenshot/history discipline | Combine live grounding with settle-and-verify execution contracts |
 
@@ -96,7 +96,7 @@
 - `/Users/jinli/Documents/Personal/AppAgentX/deployment.py`
 - `/Users/jinli/Documents/Personal/MobileAgent/Mobile-Agent-v3.5/mobile_use/utils.py`
 - `/Users/jinli/Documents/Personal/nanobot_fork/nanobot/agent/tools/gui.py`
-- `/Users/jinli/Documents/Personal/nanobot_fork/opengui/agent.py`
+- `/Users/jinli/Documents/Personal/nanobot_fork/guiclaw/agent.py`
 
 ---
 *Feature research for: shortcut extraction and stable shortcut execution*

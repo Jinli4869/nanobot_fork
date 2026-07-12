@@ -33,7 +33,7 @@ from typing import Any
 
 # -- project imports (require nanobot_fork on PYTHONPATH) --------------------
 try:
-    from opengui.memory.gui_memory_item import GuiMemoryItem
+    from guiclaw.memory.gui_memory_item import GuiMemoryItem
 except ImportError:
     # Lightweight fallback when running standalone (without PYTHONPATH)
     from dataclasses import dataclass, field
@@ -344,7 +344,7 @@ def get_trace_outcome(trace_path: Path) -> tuple[str, str] | None:
     """Return ``(outcome, note)`` for a single trace from its own ``result`` event.
 
     The recorder writes a terminal ``result`` event with an explicit ``success``
-    bool (``opengui/trajectory/recorder.py``).  That signal is authoritative for
+    bool (``guiclaw/trajectory/recorder.py``).  That signal is authoritative for
     *this* gui-task run and is preferred over the task-level ``result.txt``, which
     is shared by every run under a task dir and otherwise mislabels mixed-outcome
     sub-runs (a failed run inheriting a sibling's success, or vice versa).
@@ -363,7 +363,7 @@ def get_trace_outcome(trace_path: Path) -> tuple[str, str] | None:
 
 #: ``result.error`` prefixes marking a trajectory cut short by a detector or
 #: infrastructure noise rather than a genuine task outcome.  Mirrors
-#: ``opengui.postprocessing._ABNORMAL_TERMINATION_PREFIXES``.
+#: ``guiclaw.postprocessing._ABNORMAL_TERMINATION_PREFIXES``.
 _ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
     "stagnation_detected",
     "step_timeout",
@@ -374,7 +374,7 @@ _ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
 def _is_abnormal_termination(result_event: dict[str, Any] | None) -> bool:
     """True if a trajectory ended abnormally (intervention / stagnation / timeout).
 
-    Mirrors ``opengui.postprocessing._is_abnormal_termination`` so the offline
+    Mirrors ``guiclaw.postprocessing._is_abnormal_termination`` so the offline
     inducers agree with the online skill pipeline:
 
     * ``intervention_cancelled`` (human-takeover handoff that was cancelled) is
@@ -415,7 +415,7 @@ def trace_is_abnormal(trace_path: Path) -> bool:
 # Memory bank I/O
 # ---------------------------------------------------------------------------
 
-DEFAULT_MEMORY_BANK_PATH = Path.home() / ".opengui" / "memory" / "gui_memory_bank.jsonl"
+DEFAULT_MEMORY_BANK_PATH = Path.home() / ".guiclaw" / "memory" / "gui_memory_bank.jsonl"
 
 
 def load_memory_bank(path: Path) -> list[GuiMemoryItem]:

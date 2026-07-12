@@ -16,7 +16,7 @@ tech-stack:
   patterns: [red-green task commits, additive schema evolution, store-owned deduplication]
 key-files:
   created: [.planning/phases/28-shortcut-extraction-productionization/28-02-SUMMARY.md]
-  modified: [opengui/skills/shortcut.py, opengui/skills/shortcut_store.py, opengui/skills/shortcut_promotion.py, tests/test_opengui_p27_storage_search_agent.py, tests/test_opengui_p28_shortcut_productionization.py]
+  modified: [guiclaw/skills/shortcut.py, guiclaw/skills/shortcut_store.py, guiclaw/skills/shortcut_promotion.py, tests/test_guiclaw_p27_storage_search_agent.py, tests/test_guiclaw_p28_shortcut_productionization.py]
 key-decisions:
   - "Shortcut provenance lives directly on ShortcutSkill with safe defaults so existing Phase 27 stores still deserialize."
   - "ShortcutSkillStore now owns duplicate handling through add_or_merge() instead of letting promotion append blindly."
@@ -54,11 +54,11 @@ Each task was committed atomically:
 2. **Task 2: Implement backward-compatible provenance fields, production gates, and shortcut-layer merge/version support** - `567d7cd` (feat)
 
 ## Files Created/Modified
-- `opengui/skills/shortcut.py` - Adds persisted provenance/version fields with safe deserialization defaults.
-- `opengui/skills/shortcut_store.py` - Adds shortcut listing, updating, conflict detection, and merge/version persistence behavior.
-- `opengui/skills/shortcut_promotion.py` - Enforces production gates and persists enriched shortcuts through `add_or_merge()`.
-- `tests/test_opengui_p27_storage_search_agent.py` - Extends Phase 27 round-trip coverage to include new optional metadata.
-- `tests/test_opengui_p28_shortcut_productionization.py` - Locks provenance, reload, low-value rejection, and merge/version contracts.
+- `guiclaw/skills/shortcut.py` - Adds persisted provenance/version fields with safe deserialization defaults.
+- `guiclaw/skills/shortcut_store.py` - Adds shortcut listing, updating, conflict detection, and merge/version persistence behavior.
+- `guiclaw/skills/shortcut_promotion.py` - Enforces production gates and persists enriched shortcuts through `add_or_merge()`.
+- `tests/test_guiclaw_p27_storage_search_agent.py` - Extends Phase 27 round-trip coverage to include new optional metadata.
+- `tests/test_guiclaw_p28_shortcut_productionization.py` - Locks provenance, reload, low-value rejection, and merge/version contracts.
 
 ## Decisions Made
 - Stored provenance on `ShortcutSkill` directly so later routing and debugging phases can consume it without sidecar lookups.

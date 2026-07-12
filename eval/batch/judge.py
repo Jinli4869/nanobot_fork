@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from opengui.evaluation import (
+from guiclaw.evaluation import (
     DEFAULT_API_BASE,
     DEFAULT_JUDGE_MODEL,
     evaluate_gui_trajectory_sync,

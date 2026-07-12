@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from opengui.skills.data import Skill, SkillStep
-from opengui.skills.flat import C, R
+from guiclaw.skills.data import Skill, SkillStep
+from guiclaw.skills.flat import C, R
 
 from scripts.induce_compact_skills import (
     _has_terminal_action,
@@ -265,7 +265,7 @@ class TestMergeOutput:
         weaker = cluster_compact_skills(_succ(skill), min_support=1)  # support=1
         added2 = merge_into_output(weaker, out)
         assert added2 == 0
-        from opengui.skills.flat import compile_flat_skills
+        from guiclaw.skills.flat import compile_flat_skills
 
         compiled = compile_flat_skills(out.read_text(encoding="utf-8"))
         assert not compiled.errors

@@ -35,7 +35,7 @@ Wire `--background` flag into the standalone CLI and nanobot's `GuiConfig`, plus
 - Same fallback behavior in nanobot path: if `background=true` and platform is not Linux, log warning and skip wrapping
 
 ### Test strategy
-- CLI background tests extend `tests/test_opengui_p5_cli.py`
+- CLI background tests extend `tests/test_guiclaw_p5_cli.py`
 - Nanobot background tests extend existing nanobot GUI test files
 - Mock `XvfbDisplayManager` with `NoOpDisplayManager` or a mock — do NOT mock at `asyncio.subprocess` boundary
 - Both unit tests (build_backend wrapping logic, config parsing, validation) and integration tests (full `run_cli` path with `--background` and mock agent)
@@ -66,16 +66,16 @@ Wire `--background` flag into the standalone CLI and nanobot's `GuiConfig`, plus
 - `.planning/phases/10-background-backend-wrapper/10-CONTEXT.md` — BackgroundDesktopBackend lifecycle, DISPLAY env isolation, idempotent shutdown, async context manager
 
 ### Existing code (integration targets)
-- `opengui/cli.py` — Standalone CLI entry point: `parse_args()`, `build_backend()`, `run_cli()`, `CliConfig` dataclass
+- `guiclaw/cli.py` — Standalone CLI entry point: `parse_args()`, `build_backend()`, `run_cli()`, `CliConfig` dataclass
 - `nanobot/agent/tools/gui.py` — `GuiSubagentTool`: `_build_backend()`, `execute()`, constructor
 - `nanobot/config/schema.py` — `GuiConfig` Pydantic model (line 160): current fields to extend
-- `opengui/backends/background.py` — `BackgroundDesktopBackend` implementation to wire into both paths
-- `opengui/backends/virtual_display.py` — `VirtualDisplayManager`, `DisplayInfo`, `NoOpDisplayManager`
-- `opengui/backends/displays/xvfb.py` — `XvfbDisplayManager` to instantiate from CLI/nanobot config
+- `guiclaw/backends/background.py` — `BackgroundDesktopBackend` implementation to wire into both paths
+- `guiclaw/backends/virtual_display.py` — `VirtualDisplayManager`, `DisplayInfo`, `NoOpDisplayManager`
+- `guiclaw/backends/displays/xvfb.py` — `XvfbDisplayManager` to instantiate from CLI/nanobot config
 
 ### Existing tests (extend these)
-- `tests/test_opengui_p5_cli.py` — CLI test file to extend with --background tests
-- `tests/test_opengui_p4_desktop.py` — Desktop backend tests (reference for mock patterns)
+- `tests/test_guiclaw_p5_cli.py` — CLI test file to extend with --background tests
+- `tests/test_guiclaw_p4_desktop.py` — Desktop backend tests (reference for mock patterns)
 
 </canonical_refs>
 
@@ -83,8 +83,8 @@ Wire `--background` flag into the standalone CLI and nanobot's `GuiConfig`, plus
 ## Existing Code Insights
 
 ### Reusable Assets
-- `NoOpDisplayManager` from `opengui.backends.virtual_display`: Perfect mock replacement for `XvfbDisplayManager` in tests
-- `DryRunBackend` from `opengui.backends.dry_run`: Usable as inner backend for integration tests
+- `NoOpDisplayManager` from `guiclaw.backends.virtual_display`: Perfect mock replacement for `XvfbDisplayManager` in tests
+- `DryRunBackend` from `guiclaw.backends.dry_run`: Usable as inner backend for integration tests
 - `OpenAICompatibleLLMProvider` / `OpenAICompatibleEmbeddingProvider` in `cli.py`: Already handles provider bridging
 - `BackgroundDesktopBackend` supports `async with` — cleanest pattern for both CLI and nanobot wrapping
 
@@ -92,7 +92,7 @@ Wire `--background` flag into the standalone CLI and nanobot's `GuiConfig`, plus
 - `GuiConfig` uses Pydantic `BaseModel` with `Field(default_factory=...)` for nested configs
 - `_build_backend()` in `gui.py` uses lazy imports per backend type
 - `build_backend()` in `cli.py` uses conditional imports (LocalDesktopBackend lazy-loaded)
-- CLI tests in `test_opengui_p5_cli.py` test `parse_args()` and `build_backend()` as separate units
+- CLI tests in `test_guiclaw_p5_cli.py` test `parse_args()` and `build_backend()` as separate units
 - Phase 10 tests use `try/finally` with original-value save for DISPLAY env
 
 ### Integration Points
@@ -106,7 +106,7 @@ Wire `--background` flag into the standalone CLI and nanobot's `GuiConfig`, plus
 <specifics>
 ## Specific Ideas
 
-- `--background` alone should "just work" — `python -m opengui.cli --background --task "Open Settings"` with zero additional config
+- `--background` alone should "just work" — `python -m guiclaw.cli --background --task "Open Settings"` with zero additional config
 - Platform fallback: log message should mention that Xvfb is Linux-only and suggest running on Linux for background mode
 - Pydantic validation error should clearly say "background mode requires backend='local'" — not a generic validation failure
 

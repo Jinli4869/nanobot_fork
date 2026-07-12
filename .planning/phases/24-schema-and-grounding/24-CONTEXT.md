@@ -14,9 +14,9 @@ Define the two-layer skill data models (ShortcutSkill, TaskSkill) and the plugga
 ## Implementation Decisions
 
 ### Module placement
-- New skill types extend `opengui/skills/` — add `shortcut.py` (ShortcutSkill) and `task_skill.py` (TaskSkill) alongside the existing `data.py`
+- New skill types extend `guiclaw/skills/` — add `shortcut.py` (ShortcutSkill) and `task_skill.py` (TaskSkill) alongside the existing `data.py`
 - Existing `Skill` and `SkillStep` coexist untouched in Phase 24; migration/deprecation is deferred to Phase 27
-- `GrounderProtocol`, `LLMGrounder`, `GroundingContext`, and `GroundingResult` live in a new `opengui/grounding/` module
+- `GrounderProtocol`, `LLMGrounder`, `GroundingContext`, and `GroundingResult` live in a new `guiclaw/grounding/` module
 
 ### State descriptor shape
 - `StateDescriptor` is a frozen dataclass with three fields: `kind: str`, `value: str`, `negated: bool = False`
@@ -24,7 +24,7 @@ Define the two-layer skill data models (ShortcutSkill, TaskSkill) and the plugga
 - `ParameterSlot` is a frozen dataclass with `name: str`, `type: str` (a serialization-friendly string tag like `'str'`, `'int'`, `'bool'`), `description: str`
 
 ### Grounding interface style
-- `GrounderProtocol` uses `typing.Protocol` with `@runtime_checkable` — matches the existing `LLMProvider` and `DeviceBackend` pattern in `opengui/interfaces.py`
+- `GrounderProtocol` uses `typing.Protocol` with `@runtime_checkable` — matches the existing `LLMProvider` and `DeviceBackend` pattern in `guiclaw/interfaces.py`
 - Signature: `async def ground(self, target: str, context: GroundingContext) -> GroundingResult`
 - `GroundingResult` is a frozen dataclass: `grounder_id: str`, `confidence: float`, `resolved_params: dict[str, Any]`, `fallback_metadata: dict[str, Any] | None`
 - `GroundingContext` is a frozen dataclass: `screenshot_path: Path`, `observation: Observation`, `parameter_slots: tuple[ParameterSlot, ...]`, `task_hint: str | None`
@@ -39,11 +39,11 @@ Define the two-layer skill data models (ShortcutSkill, TaskSkill) and the plugga
 
 ### TaskSkill memory context pointer
 - `TaskSkill` carries an optional `memory_context_id: str | None` — pointer to an app memory context entry in the existing memory system (SCHEMA-06)
-- Claude's discretion on the exact field name and whether it references `opengui/memory/types.py` directly or by ID string
+- Claude's discretion on the exact field name and whether it references `guiclaw/memory/types.py` directly or by ID string
 
 ### Claude's Discretion
 - Exact starter vocab list for `StateDescriptor.kind` beyond the three examples above
-- Whether `opengui/grounding/__init__.py` re-exports all grounding types or just the Protocol
+- Whether `guiclaw/grounding/__init__.py` re-exports all grounding types or just the Protocol
 - Exact field order and optional fields on `ShortcutSkill` (e.g. `success_count`, `tags`) — can mirror the existing `Skill` class structure for consistency
 - Whether `LLMGrounder.__init__` accepts the existing `LLMProvider` protocol or a concrete provider type
 
@@ -59,10 +59,10 @@ Define the two-layer skill data models (ShortcutSkill, TaskSkill) and the plugga
 - `.planning/REQUIREMENTS.md` — Full v1.5 requirement definitions for SCHEMA and GRND groups; also shows EXEC/EXTR/STOR/INTEG so phase 24 schemas can be designed with downstream consumers in mind
 
 ### Existing codebase contracts
-- `opengui/skills/data.py` — Existing `Skill` and `SkillStep` dataclasses that coexist and that ATOMFallbackNode (SkillStep reuse) builds on
-- `opengui/interfaces.py` — Existing `LLMProvider` and `DeviceBackend` Protocol pattern that `GrounderProtocol` must follow
-- `opengui/observation.py` — `Observation` type that `GroundingContext.observation` carries
-- `opengui/memory/types.py` — Memory context types that `TaskSkill.memory_context_id` may reference
+- `guiclaw/skills/data.py` — Existing `Skill` and `SkillStep` dataclasses that coexist and that ATOMFallbackNode (SkillStep reuse) builds on
+- `guiclaw/interfaces.py` — Existing `LLMProvider` and `DeviceBackend` Protocol pattern that `GrounderProtocol` must follow
+- `guiclaw/observation.py` — `Observation` type that `GroundingContext.observation` carries
+- `guiclaw/memory/types.py` — Memory context types that `TaskSkill.memory_context_id` may reference
 
 </canonical_refs>
 
@@ -70,18 +70,18 @@ Define the two-layer skill data models (ShortcutSkill, TaskSkill) and the plugga
 ## Existing Code Insights
 
 ### Reusable Assets
-- `SkillStep` (`opengui/skills/data.py`): Frozen dataclass with `action_type`, `target`, `parameters`, `fixed`/`fixed_values` — Phase 24 reuses this directly as the ATOM fallback node type in TaskSkill
-- `Observation` (`opengui/observation.py`): Existing type for device state snapshots — used in `GroundingContext`
-- `LLMProvider` / `DeviceBackend` (`opengui/interfaces.py`): The `@runtime_checkable Protocol` pattern Phase 24 must replicate for `GrounderProtocol`
+- `SkillStep` (`guiclaw/skills/data.py`): Frozen dataclass with `action_type`, `target`, `parameters`, `fixed`/`fixed_values` — Phase 24 reuses this directly as the ATOM fallback node type in TaskSkill
+- `Observation` (`guiclaw/observation.py`): Existing type for device state snapshots — used in `GroundingContext`
+- `LLMProvider` / `DeviceBackend` (`guiclaw/interfaces.py`): The `@runtime_checkable Protocol` pattern Phase 24 must replicate for `GrounderProtocol`
 
 ### Established Patterns
 - Frozen dataclasses with `to_dict()` / `from_dict()` for serialization (used by `Skill`, `SkillStep`, `TrajectoryRecorder`)
 - `typing.Protocol` with `@runtime_checkable` for structural interfaces — no inheritance required for implementations
-- All public exports via `__init__.py` with an explicit `__all__` list (see `opengui/skills/__init__.py`)
+- All public exports via `__init__.py` with an explicit `__all__` list (see `guiclaw/skills/__init__.py`)
 
 ### Integration Points
-- `opengui/skills/__init__.py`: Must be updated to export new types from `shortcut.py` and `task_skill.py`
-- `opengui/grounding/__init__.py`: New file — exports `GrounderProtocol`, `LLMGrounder`, `GroundingContext`, `GroundingResult`
+- `guiclaw/skills/__init__.py`: Must be updated to export new types from `shortcut.py` and `task_skill.py`
+- `guiclaw/grounding/__init__.py`: New file — exports `GrounderProtocol`, `LLMGrounder`, `GroundingContext`, `GroundingResult`
 - Phase 25 (executor) will import `ShortcutSkill`, `TaskSkill`, `TaskNode`, and `GrounderProtocol` directly
 - Phase 26 (extraction) will import `ShortcutSkill`, `ParameterSlot`, and `StateDescriptor` to produce skill candidates
 - Phase 27 (storage) will import both skill types for versioned JSON persistence

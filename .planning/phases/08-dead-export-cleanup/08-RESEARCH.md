@@ -26,7 +26,7 @@
 - How the LLM complexity assessment prompt is structured
 - Exact concurrency limit default and configuration mechanism
 - Whether PlanNode/NodeResult/RouterContext are exported from nanobot.agent.__init__ alongside main classes
-- Whether TrajectorySummarizer gets a top-level opengui re-export or stays in opengui.trajectory
+- Whether TrajectorySummarizer gets a top-level guiclaw re-export or stays in guiclaw.trajectory
 
 ### Deferred Ideas (OUT OF SCOPE)
 None — discussion stayed within phase scope
@@ -40,7 +40,7 @@ This phase wires three fully-implemented but production-unreachable components �
 
 **TaskPlanner + TreeRouter** need a two-part integration into `AgentLoop._process_message` (or a wrapper around `_run_agent_loop`): (1) a lightweight pre-call complexity check that asks the LLM "does this task need decomposition?", and (2) if yes, a full plan + dispatch cycle that replaces the direct `_run_agent_loop` call with `TaskPlanner.plan` + `TreeRouter.execute`. The `RouterContext` must wire `gui_agent` (the existing `GuiSubagentTool`), `tool_registry` (`self.tools`), and `mcp_client` (from the MCP stack).
 
-**TrajectorySummarizer** needs a post-run hook in `GuiSubagentTool.execute()`. It already calls `_extract_skill` after every run; adding a `TrajectorySummarizer.summarize_file` call immediately before skill extraction makes summaries available as part of the extraction context or for logging. The summarizer lives in `opengui.trajectory` — no new files, just a new call in the existing pipeline.
+**TrajectorySummarizer** needs a post-run hook in `GuiSubagentTool.execute()`. It already calls `_extract_skill` after every run; adding a `TrajectorySummarizer.summarize_file` call immediately before skill extraction makes summaries available as part of the extraction context or for logging. The summarizer lives in `guiclaw.trajectory` — no new files, just a new call in the existing pipeline.
 
 **Primary recommendation:** Wire TaskPlanner/TreeRouter as a thin pre-flight layer in `AgentLoop._process_message` and add `TrajectorySummarizer` as the first step of the post-run chain in `GuiSubagentTool._extract_skill`.
 
@@ -55,7 +55,7 @@ All components are already present in the project. No new dependencies are requi
 |-----------|----------|---------|
 | `TaskPlanner` | `nanobot/agent/planner.py` | Decomposes tasks into AND/OR/ATOM trees via one LLM call with `create_plan` tool |
 | `TreeRouter` | `nanobot/agent/router.py` | Walks AND/OR/ATOM plan trees, dispatches ATOMs by capability to gui/tool/mcp executors |
-| `TrajectorySummarizer` | `opengui/trajectory/summarizer.py` | LLM-based trajectory summarization from JSONL file |
+| `TrajectorySummarizer` | `guiclaw/trajectory/summarizer.py` | LLM-based trajectory summarization from JSONL file |
 | `GuiSubagentTool` | `nanobot/agent/tools/gui.py` | Already registered; the `gui` capability executor for TreeRouter |
 | `ToolRegistry` | `nanobot/agent/tools/registry.py` | Already holds all registered tools; maps to `tool` capability |
 | `AgentLoop` | `nanobot/agent/loop.py` | Integration target for TaskPlanner + TreeRouter |
@@ -66,7 +66,7 @@ All components are already present in the project. No new dependencies are requi
 | `PlanNode` | `nanobot/agent/planner.py` | Returned by `TaskPlanner.plan`, consumed by `TreeRouter.execute` |
 | `NodeResult` | `nanobot/agent/router.py` | Returned from each tree node execution |
 | `RouterContext` | `nanobot/agent/router.py` | Threads executors through tree walk |
-| `NanobotLLMAdapter` | `nanobot/agent/gui_adapter.py` | Bridges nanobot LLMProvider to opengui LLMProvider — needed for TrajectorySummarizer |
+| `NanobotLLMAdapter` | `nanobot/agent/gui_adapter.py` | Bridges nanobot LLMProvider to guiclaw LLMProvider — needed for TrajectorySummarizer |
 
 ---
 
@@ -80,7 +80,7 @@ nanobot/
 │   ├── router.py           # existing — no changes
 │   ├── loop.py             # MODIFY: add planning pre-flight
 │   └── __init__.py         # MODIFY: add TaskPlanner + TreeRouter exports
-opengui/
+guiclaw/
 ├── trajectory/
 │   ├── summarizer.py       # existing — no changes
 │   └── __init__.py         # existing — TrajectorySummarizer already exported
@@ -202,7 +202,7 @@ async def _summarize_trajectory(self, trace_path: Path | None) -> str:
     """Summarize the trajectory via LLM; return empty string on error."""
     if trace_path is None or not trace_path.exists():
         return ""
-    from opengui.trajectory.summarizer import TrajectorySummarizer
+    from guiclaw.trajectory.summarizer import TrajectorySummarizer
     try:
         summarizer = TrajectorySummarizer(llm=self._llm_adapter)
         return await summarizer.summarize_file(trace_path)
@@ -216,7 +216,7 @@ async def _summarize_trajectory(self, trace_path: Path | None) -> str:
 - **Importing TaskPlanner/TreeRouter at module top-level in loop.py:** Use lazy import (`from nanobot.agent.planner import TaskPlanner`) inside the method, consistent with how `GuiSubagentTool` is imported in `_register_default_tools`.
 - **Mutating RouterContext across concurrent AND children:** `context.completed` is a list — append from parallel coroutines without a lock is a data race. Use `asyncio.Lock` or collect completed instructions per-child and merge after gather.
 - **Passing `self.tools` directly as `tool_registry` to RouterContext:** `TreeRouter._run_tool` checks `context.tool_registry is not None` then returns a placeholder. For Phase 8, passing `self.tools` (a `ToolRegistry`) satisfies the non-None check. Real tool dispatch via instruction string needs a dispatcher — this is acceptable to leave as a stub or route through the LLM (complexity gate ensures simple tool tasks don't get over-decomposed).
-- **Calling `TrajectorySummarizer` with nanobot's `LLMProvider` directly:** The summarizer expects `opengui.interfaces.LLMProvider`. The bridge is `self._llm_adapter` (a `NanobotLLMAdapter`) — always use the adapter.
+- **Calling `TrajectorySummarizer` with nanobot's `LLMProvider` directly:** The summarizer expects `guiclaw.interfaces.LLMProvider`. The bridge is `self._llm_adapter` (a `NanobotLLMAdapter`) — always use the adapter.
 
 ---
 
@@ -228,7 +228,7 @@ async def _summarize_trajectory(self, trace_path: Path | None) -> str:
 | Tree execution | Manual recursion | `TreeRouter.execute()` | Already handles AND/OR/ATOM, replan budget, all node types |
 | Trajectory summarization | Custom LLM call | `TrajectorySummarizer.summarize_file()` | Already implemented with compact events format and LLM call |
 | Concurrency limiting | Manual task tracking | `asyncio.Semaphore` | Standard stdlib primitive, no extra dependency |
-| LLM protocol bridging | New adapter class | `NanobotLLMAdapter` | Already bridges nanobot → opengui LLMProvider protocol |
+| LLM protocol bridging | New adapter class | `NanobotLLMAdapter` | Already bridges nanobot → guiclaw LLMProvider protocol |
 
 ---
 
@@ -367,7 +367,7 @@ __all__ = [
 |----------|-------|
 | Framework | pytest 9.x with pytest-asyncio |
 | Config file | `pyproject.toml` — `[tool.pytest.ini_options]` with `asyncio_mode = "auto"` |
-| Quick run command | `pytest tests/test_opengui_p3_nanobot.py tests/test_opengui_p2_integration.py -x -q` |
+| Quick run command | `pytest tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p2_integration.py -x -q` |
 | Full suite command | `pytest tests/ -x -q` |
 
 ### Phase Requirements → Test Map
@@ -376,22 +376,22 @@ This phase has no formal requirement IDs (tech debt) but has specific success cr
 
 | Behavior | Test Type | Automated Command | File Exists? |
 |----------|-----------|-------------------|-------------|
-| TaskPlanner wired: plan tree produced for complex task | unit | `pytest tests/test_opengui_p8_planning.py -x` | Wave 0 |
-| TreeRouter dispatches gui ATOM via GuiSubagentTool | unit | `pytest tests/test_opengui_p8_planning.py::test_router_gui_dispatch -x` | Wave 0 |
-| AND children execute in parallel (semaphore respected) | unit | `pytest tests/test_opengui_p8_planning.py::test_and_parallel -x` | Wave 0 |
-| OR children tried in mcp > tool > gui order | unit | `pytest tests/test_opengui_p8_planning.py::test_or_priority_order -x` | Wave 0 |
-| Complexity gate skips planning for simple task | unit | `pytest tests/test_opengui_p8_planning.py::test_complexity_gate_skip -x` | Wave 0 |
-| TrajectorySummarizer called after GUI run | unit | `pytest tests/test_opengui_p8_trajectory.py::test_summarizer_called_post_run -x` | Wave 0 |
+| TaskPlanner wired: plan tree produced for complex task | unit | `pytest tests/test_guiclaw_p8_planning.py -x` | Wave 0 |
+| TreeRouter dispatches gui ATOM via GuiSubagentTool | unit | `pytest tests/test_guiclaw_p8_planning.py::test_router_gui_dispatch -x` | Wave 0 |
+| AND children execute in parallel (semaphore respected) | unit | `pytest tests/test_guiclaw_p8_planning.py::test_and_parallel -x` | Wave 0 |
+| OR children tried in mcp > tool > gui order | unit | `pytest tests/test_guiclaw_p8_planning.py::test_or_priority_order -x` | Wave 0 |
+| Complexity gate skips planning for simple task | unit | `pytest tests/test_guiclaw_p8_planning.py::test_complexity_gate_skip -x` | Wave 0 |
+| TrajectorySummarizer called after GUI run | unit | `pytest tests/test_guiclaw_p8_trajectory.py::test_summarizer_called_post_run -x` | Wave 0 |
 | All existing tests still pass after changes | regression | `pytest tests/ -x -q` | Yes |
 
 ### Sampling Rate
-- **Per task commit:** `pytest tests/test_opengui_p3_nanobot.py tests/test_opengui_p2_integration.py tests/test_opengui_p8_planning.py -x -q` (if new file exists)
+- **Per task commit:** `pytest tests/test_guiclaw_p3_nanobot.py tests/test_guiclaw_p2_integration.py tests/test_guiclaw_p8_planning.py -x -q` (if new file exists)
 - **Per wave merge:** `pytest tests/ -x -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p8_planning.py` — new test file covering TaskPlanner+TreeRouter integration
-- [ ] `tests/test_opengui_p8_trajectory.py` — new test file covering TrajectorySummarizer wiring (or extend `test_opengui_p3_nanobot.py`)
+- [ ] `tests/test_guiclaw_p8_planning.py` — new test file covering TaskPlanner+TreeRouter integration
+- [ ] `tests/test_guiclaw_p8_trajectory.py` — new test file covering TrajectorySummarizer wiring (or extend `test_guiclaw_p3_nanobot.py`)
 
 *(Existing test infrastructure is sufficient for regression; only new behavior needs new test files)*
 
@@ -402,12 +402,12 @@ This phase has no formal requirement IDs (tech debt) but has specific success cr
 ### Primary (HIGH confidence)
 - Direct code inspection: `nanobot/agent/planner.py` — TaskPlanner public API, tool schema, fallback behavior
 - Direct code inspection: `nanobot/agent/router.py` — TreeRouter execution semantics, RouterContext fields, AND/OR/ATOM dispatch
-- Direct code inspection: `opengui/trajectory/summarizer.py` — TrajectorySummarizer public API, LLMProvider dependency
+- Direct code inspection: `guiclaw/trajectory/summarizer.py` — TrajectorySummarizer public API, LLMProvider dependency
 - Direct code inspection: `nanobot/agent/loop.py` — AgentLoop._register_default_tools, _run_agent_loop, _process_message integration point
 - Direct code inspection: `nanobot/agent/tools/gui.py` — GuiSubagentTool.execute, _extract_skill post-run chain
 - Direct code inspection: `nanobot/agent/__init__.py` — current exports (4 classes, planner/router absent)
-- Direct code inspection: `tests/test_opengui_p2_integration.py` — existing test patterns for planner/router
-- Direct code inspection: `tests/test_opengui_p3_nanobot.py` — existing test patterns for GuiSubagentTool
+- Direct code inspection: `tests/test_guiclaw_p2_integration.py` — existing test patterns for planner/router
+- Direct code inspection: `tests/test_guiclaw_p3_nanobot.py` — existing test patterns for GuiSubagentTool
 
 ### Secondary (MEDIUM confidence)
 - Python stdlib `asyncio.Semaphore` documentation — parallel concurrency control pattern

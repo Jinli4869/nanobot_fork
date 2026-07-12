@@ -33,14 +33,14 @@ class NanobotOpenSettingsLaunchRequest(NanobotLaunchOptions):
     panel: Literal["network", "display", "privacy", "bluetooth"]
 
 
-class OpenGuiLaunchAppRequest(_StrictModel):
-    kind: Literal["opengui_launch_app"]
+class GUIClawLaunchAppRequest(_StrictModel):
+    kind: Literal["guiclaw_launch_app"]
     app_id: Literal["calculator", "notepad", "settings", "terminal"]
     backend: Literal["dry-run", "local"] | None = None
 
 
-class OpenGuiOpenSettingsRequest(_StrictModel):
-    kind: Literal["opengui_open_settings"]
+class GUIClawOpenSettingsRequest(_StrictModel):
+    kind: Literal["guiclaw_open_settings"]
     panel: Literal["network", "display", "privacy", "bluetooth"]
     backend: Literal["dry-run", "local"] | None = None
 
@@ -48,8 +48,8 @@ class OpenGuiOpenSettingsRequest(_StrictModel):
 TaskLaunchRequest = Annotated[
     NanobotOpenUrlLaunchRequest
     | NanobotOpenSettingsLaunchRequest
-    | OpenGuiLaunchAppRequest
-    | OpenGuiOpenSettingsRequest,
+    | GUIClawLaunchAppRequest
+    | GUIClawOpenSettingsRequest,
     Field(discriminator="kind"),
 ]
 

@@ -13,8 +13,8 @@
 
 **Architecture: Two-Level Execution (REVISED)**
 - Main agent (nanobot) owns task decomposition: AND/OR/ATOM tree planner + router
-- GUI subagent (opengui) receives a single ATOM instruction, does skill match -> execute or free explore
-- AND/OR/ATOM tree is built ONCE at the main agent level — NOT duplicated inside opengui
+- GUI subagent (guiclaw) receives a single ATOM instruction, does skill match -> execute or free explore
+- AND/OR/ATOM tree is built ONCE at the main agent level — NOT duplicated inside guiclaw
 - GuiAgent.run() takes a single instruction string (an ATOM-level subgoal), not a full complex task
 - The existing `_run_once()` step loop remains the execution engine for each ATOM
 
@@ -31,7 +31,7 @@
 **Capability Registry via SKILL.md**
 - Main agent reads SKILL.md files from `nanobot/skills/` to understand available capabilities
 - Each SKILL.md declares: name, description, type (gui/tool/mcp/api), and trigger patterns
-- GUI capabilities come from opengui's SkillLibrary (searched at execution time)
+- GUI capabilities come from guiclaw's SkillLibrary (searched at execution time)
 - Non-GUI capabilities come from nanobot's existing tool registry and MCP servers
 
 **Main-Agent Router**
@@ -107,7 +107,7 @@
 - All new components passed as individual constructor params
 
 **Module Organization**
-- NO new `opengui/planner.py` or `opengui/tree_executor.py`
+- NO new `guiclaw/planner.py` or `guiclaw/tree_executor.py`
 - New `nanobot/agent/planner.py`: TaskPlanner
 - New `nanobot/agent/router.py`: TreeRouter
 
@@ -147,7 +147,7 @@
 | MEM-05 | Memory context formatted and injected into system prompt | `build_system_prompt()` already has `memory_context: str | None` parameter; requires updating `_build_messages()` to pass retrieved memory text + migrating MemoryStore to markdown format |
 | SKILL-08 | Skill execution integrated into agent loop (search -> match -> execute) | SkillExecutor exists but is not called from GuiAgent; requires adding search->threshold->execute->fallback branching at start of `_run_once()`, plus adding `fixed`/`fixed_values` fields to SkillStep |
 | TRAJ-03 | Trajectory recording integrated into agent loop | TrajectoryRecorder exists but is not called from GuiAgent; requires adding `recorder.start()` before the step loop and `recorder.record_step()` inside each step iteration |
-| TEST-05 | Integration test: full agent loop with DryRunBackend + mock LLM + memory + skills | The test orchestrates TaskPlanner (nanobot) -> Router -> GuiAgent (opengui) end-to-end using the established `_FakeEmbedder` + `_ScriptedLLM` patterns from Phase 1 |
+| TEST-05 | Integration test: full agent loop with DryRunBackend + mock LLM + memory + skills | The test orchestrates TaskPlanner (nanobot) -> Router -> GuiAgent (guiclaw) end-to-end using the established `_FakeEmbedder` + `_ScriptedLLM` patterns from Phase 1 |
 </phase_requirements>
 
 ---
@@ -156,7 +156,7 @@
 
 Phase 2 wires together three independently-tested subsystems (memory retrieval, skill execution, trajectory recording) into `GuiAgent.run()`, and adds a new `TaskPlanner` + `TreeRouter` at the nanobot main-agent level. The core challenge is architectural integration, not building new algorithms — all the pieces exist and are tested individually.
 
-The opengui side is straightforward: `GuiAgent.run()` gains three responsibilities at entry: retrieve memory context, search skill library, choose execution mode (skill or free explore). The `build_system_prompt()` function already has a `memory_context` slot; it just needs to be filled. `TrajectoryRecorder` has the full API (`start/record_step/set_phase/finish`) and only needs to be instantiated and called at the right points. `SkillExecutor` needs two new fields (`fixed`, `fixed_values`) on `SkillStep`, and skill confidence tracking (`success_streak`, `failure_streak`) on `Skill`.
+The guiclaw side is straightforward: `GuiAgent.run()` gains three responsibilities at entry: retrieve memory context, search skill library, choose execution mode (skill or free explore). The `build_system_prompt()` function already has a `memory_context` slot; it just needs to be filled. `TrajectoryRecorder` has the full API (`start/record_step/set_phase/finish`) and only needs to be instantiated and called at the right points. `SkillExecutor` needs two new fields (`fixed`, `fixed_values`) on `SkillStep`, and skill confidence tracking (`success_streak`, `failure_streak`) on `Skill`.
 
 The nanobot side is the larger new surface: `nanobot/agent/planner.py` implements a single-call LLM decomposition into a typed AND/OR/ATOM JSON tree, reading SKILL.md files for context. `nanobot/agent/router.py` walks the tree and dispatches each ATOM to the right executor (existing `ToolRegistry`, MCP wrapper, or a new `GuiSubagentExecutor` thin wrapper). The existing `SubagentManager` spawns background tasks — the router needs a synchronous (awaitable) variant for inline dispatch that returns the result before moving to the next ATOM.
 
@@ -183,13 +183,13 @@ The most subtle piece is the memory store migration from JSON to markdown with H
 | re (stdlib) | stdlib | Markdown H2 section parsing in MemoryStore | Markdown-to-entry chunking layer |
 | asyncio (stdlib) | stdlib | Async task coordination in Router | TreeRouter await chains |
 | loguru | installed | Logging in nanobot modules | Already used in SubagentManager |
-| logging (stdlib) | stdlib | Logging in opengui modules | Already used in executor.py, library.py |
+| logging (stdlib) | stdlib | Logging in guiclaw modules | Already used in executor.py, library.py |
 
 ### Alternatives Considered
 | Instead of | Could Use | Tradeoff |
 |------------|-----------|----------|
 | JSON tree for planner output | Pydantic models | JSON is simpler, avoids new dependency, consistent with existing JSONL patterns |
-| Inline recovery agent in GuiAgent | Separate RecoveryAgent class | Inline keeps opengui surface small; recovery is a bounded mini-loop, not a new abstraction |
+| Inline recovery agent in GuiAgent | Separate RecoveryAgent class | Inline keeps guiclaw surface small; recovery is a bounded mini-loop, not a new abstraction |
 | Markdown H2 chunking for memory | SQLite per-entry | SQLite deferred to v2 per REQUIREMENTS.md; markdown is human-readable and debuggable |
 
 ---
@@ -198,7 +198,7 @@ The most subtle piece is the memory store migration from JSON to markdown with H
 
 ### Recommended Module Structure
 ```
-opengui/
+guiclaw/
 ├── agent.py           # GuiAgent — add trajectory_recorder, memory_retriever, skill_library params
 ├── memory/
 │   ├── store.py       # REWRITE internals: JSON -> markdown H2 files; same public API
@@ -223,7 +223,7 @@ nanobot/
 if self._memory_retriever is not None:
     ranked = await self._memory_retriever.search(instruction, top_k=self._memory_top_k)
     # Always include POLICY entries regardless of score
-    from opengui.memory.types import MemoryType
+    from guiclaw.memory.types import MemoryType
     policies = [
         (e, s) for e, s in ranked if e.memory_type == MemoryType.POLICY
     ]
@@ -418,7 +418,7 @@ This is only called when the user explicitly enables partial execution. The defa
 ### Anti-Patterns to Avoid
 
 - **Passing EmbeddingProvider through GuiAgent:** EmbeddingProvider is shared between MemoryRetriever and SkillLibrary. The caller creates it and passes both retriever and library as constructed objects. GuiAgent should NOT manage or construct EmbeddingProvider.
-- **Duplicating the planner in opengui:** The CONTEXT.md explicitly prohibits this. opengui is a dumb executor of ATOM instructions.
+- **Duplicating the planner in guiclaw:** The CONTEXT.md explicitly prohibits this. guiclaw is a dumb executor of ATOM instructions.
 - **Using SubagentManager.spawn() in TreeRouter:** spawn() is async fire-and-forget via the message bus. TreeRouter needs awaitable inline execution. Use `GuiAgent.run()` directly.
 - **Storing mutable dicts in frozen dataclasses without `hash=False`:** Will cause `TypeError` at runtime when the dataclass tries to hash itself. Use `field(hash=False, compare=False)` on mutable fields.
 - **Including POLICY entries in the K-cap:** POLICY entries are always included, outside the top-K limit. They add to the context, they don't displace non-POLICY entries.
@@ -430,9 +430,9 @@ This is only called when the user explicitly enables partial execution. The defa
 
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
-| BM25 search for skill matching | Custom BM25 | `opengui.memory.retrieval._BM25Index` (already used in SkillLibrary) | Already implemented, tested, CJK-aware |
-| FAISS vector search | Custom cosine sim | `opengui.memory.retrieval._FaissIndex` (already used in SkillLibrary) | Project decision: no pure-Python fallback |
-| LLM state validation | Custom screen parser | `LLMStateValidator` in `opengui/skills/executor.py` | Already implemented with fail-open semantics |
+| BM25 search for skill matching | Custom BM25 | `guiclaw.memory.retrieval._BM25Index` (already used in SkillLibrary) | Already implemented, tested, CJK-aware |
+| FAISS vector search | Custom cosine sim | `guiclaw.memory.retrieval._FaissIndex` (already used in SkillLibrary) | Project decision: no pure-Python fallback |
+| LLM state validation | Custom screen parser | `LLMStateValidator` in `guiclaw/skills/executor.py` | Already implemented with fail-open semantics |
 | Tool call response parsing | Custom JSON extractor | Existing tool call parsing in nanobot's AgentLoop | Already handles malformed responses |
 | Markdown YAML frontmatter parsing | Custom YAML | `nanobot/agent/skills.py:SkillsLoader._strip_frontmatter()` pattern | Already implemented, simple regex approach |
 | Skill deduplication | Custom similarity check | `SkillLibrary.add_or_merge()` | Already implemented with multi-factor scoring |
@@ -489,7 +489,7 @@ This is only called when the user explicitly enables partial execution. The defa
 
 ### SkillStep with Fixed/Dynamic Fields
 ```python
-# Source: opengui/skills/data.py (to be modified)
+# Source: guiclaw/skills/data.py (to be modified)
 @dataclass(frozen=True)
 class SkillStep:
     action_type: str
@@ -504,7 +504,7 @@ class SkillStep:
 
 ### Skill with Confidence Fields
 ```python
-# Source: opengui/skills/data.py (to be modified)
+# Source: guiclaw/skills/data.py (to be modified)
 @dataclass(frozen=True)
 class Skill:
     # ... existing fields ...
@@ -558,7 +558,7 @@ _CREATE_PLAN_TOOL = {
 
 ### GuiAgent Constructor Extension
 ```python
-# Source: opengui/agent.py (to be modified)
+# Source: guiclaw/agent.py (to be modified)
 def __init__(
     self,
     llm: LLMProvider,
@@ -575,13 +575,13 @@ def __init__(
 
 ### Integration Test Skeleton
 ```python
-# Source: tests/test_opengui_p2_integration.py (new file)
+# Source: tests/test_guiclaw_p2_integration.py (new file)
 import pytest
-from opengui.backends.dry_run import DryRunBackend
-from opengui.trajectory.recorder import TrajectoryRecorder
-from opengui.memory.store import MemoryStore
-from opengui.memory.retrieval import MemoryRetriever
-from opengui.skills.library import SkillLibrary
+from guiclaw.backends.dry_run import DryRunBackend
+from guiclaw.trajectory.recorder import TrajectoryRecorder
+from guiclaw.memory.store import MemoryStore
+from guiclaw.memory.retrieval import MemoryRetriever
+from guiclaw.skills.library import SkillLibrary
 
 @pytest.mark.asyncio
 async def test_full_agent_loop_with_skill_match(tmp_path):
@@ -628,10 +628,10 @@ async def test_full_agent_loop_with_skill_match(tmp_path):
 |--------------|------------------|--------------|--------|
 | JSON-based MemoryStore (per REQUIREMENTS.md MEM-02) | Markdown H2 file per type | Phase 2 (this phase) | Human-readable, git-diffable memory files |
 | No planner (direct task execution) | AND/OR/ATOM tree planner at main-agent level | Phase 2 (this phase) | Mixed-modality task decomposition |
-| GuiAgent handles complex tasks end-to-end | GuiAgent handles single ATOM instruction | Phase 2 (this phase) | Simpler opengui, more composable nanobot |
+| GuiAgent handles complex tasks end-to-end | GuiAgent handles single ATOM instruction | Phase 2 (this phase) | Simpler guiclaw, more composable nanobot |
 | No confidence tracking on skills | success/failure counts + streaks | Phase 2 (this phase) | Skills below 0.3 confidence are auto-discarded |
 
-**Note:** The Phase 1 memory tests (`test_opengui_p1_memory.py`) test against the JSON-based `MemoryStore`. These tests MUST be updated as part of the markdown migration. The Phase 1 test suite is the primary regression check for the migration's backward compatibility.
+**Note:** The Phase 1 memory tests (`test_guiclaw_p1_memory.py`) test against the JSON-based `MemoryStore`. These tests MUST be updated as part of the markdown migration. The Phase 1 test suite is the primary regression check for the migration's backward compatibility.
 
 ---
 
@@ -661,38 +661,38 @@ async def test_full_agent_loop_with_skill_match(tmp_path):
 |----------|-------|
 | Framework | pytest 9.0.2 + pytest-asyncio 1.3.0 |
 | Config file | `pyproject.toml` (`[tool.pytest.ini_options]`) |
-| Quick run command | `uv run pytest tests/test_opengui_p2_integration.py -x -q` |
+| Quick run command | `uv run pytest tests/test_guiclaw_p2_integration.py -x -q` |
 | Full suite command | `uv run pytest tests/ -q` |
 
 ### Phase Requirements -> Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| AGENT-04 | Memory entries appear in system prompt when GuiAgent.run() is called | integration | `uv run pytest tests/test_opengui_p2_integration.py::test_memory_injected_into_system_prompt -x` | No — Wave 0 |
-| AGENT-05 | Matching skill is executed before free exploration; no-match falls through to explore | integration | `uv run pytest tests/test_opengui_p2_integration.py::test_skill_path_chosen_above_threshold -x` | No — Wave 0 |
-| AGENT-06 | Every agent run produces a JSONL trajectory file with metadata/step/result events | integration | `uv run pytest tests/test_opengui_p2_integration.py::test_trajectory_recorded_on_run -x` | No — Wave 0 |
-| MEM-05 | Memory context formatted and injected; POLICY entries always present | unit | `uv run pytest tests/test_opengui_p2_memory.py::test_policy_always_included -x` | No — Wave 0 |
-| SKILL-08 | Skill execution integrated: search->match->execute with confidence score gating | integration | `uv run pytest tests/test_opengui_p2_integration.py::test_skill_execution_fast_path -x` | No — Wave 0 |
-| TRAJ-03 | Trajectory JSONL has one step entry per vision-action step | integration | `uv run pytest tests/test_opengui_p2_integration.py::test_trajectory_step_count -x` | No — Wave 0 |
-| TEST-05 | Full flow with DryRunBackend + mock LLM + pre-seeded memory + skill runs to completion | integration | `uv run pytest tests/test_opengui_p2_integration.py -x` | No — Wave 0 |
+| AGENT-04 | Memory entries appear in system prompt when GuiAgent.run() is called | integration | `uv run pytest tests/test_guiclaw_p2_integration.py::test_memory_injected_into_system_prompt -x` | No — Wave 0 |
+| AGENT-05 | Matching skill is executed before free exploration; no-match falls through to explore | integration | `uv run pytest tests/test_guiclaw_p2_integration.py::test_skill_path_chosen_above_threshold -x` | No — Wave 0 |
+| AGENT-06 | Every agent run produces a JSONL trajectory file with metadata/step/result events | integration | `uv run pytest tests/test_guiclaw_p2_integration.py::test_trajectory_recorded_on_run -x` | No — Wave 0 |
+| MEM-05 | Memory context formatted and injected; POLICY entries always present | unit | `uv run pytest tests/test_guiclaw_p2_memory.py::test_policy_always_included -x` | No — Wave 0 |
+| SKILL-08 | Skill execution integrated: search->match->execute with confidence score gating | integration | `uv run pytest tests/test_guiclaw_p2_integration.py::test_skill_execution_fast_path -x` | No — Wave 0 |
+| TRAJ-03 | Trajectory JSONL has one step entry per vision-action step | integration | `uv run pytest tests/test_guiclaw_p2_integration.py::test_trajectory_step_count -x` | No — Wave 0 |
+| TEST-05 | Full flow with DryRunBackend + mock LLM + pre-seeded memory + skill runs to completion | integration | `uv run pytest tests/test_guiclaw_p2_integration.py -x` | No — Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `uv run pytest tests/test_opengui.py tests/test_opengui_p1_memory.py tests/test_opengui_p1_skills.py tests/test_opengui_p1_trajectory.py -x -q`
+- **Per task commit:** `uv run pytest tests/test_guiclaw.py tests/test_guiclaw_p1_memory.py tests/test_guiclaw_p1_skills.py tests/test_guiclaw_p1_trajectory.py -x -q`
 - **Per wave merge:** `uv run pytest tests/ -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p2_integration.py` — covers AGENT-04, AGENT-05, AGENT-06, SKILL-08, TRAJ-03, TEST-05
-- [ ] `tests/test_opengui_p2_memory.py` — covers MEM-05 (markdown migration + POLICY always-include)
-- [ ] `tests/test_opengui_p1_memory.py` — UPDATE existing tests to pass with markdown MemoryStore
+- [ ] `tests/test_guiclaw_p2_integration.py` — covers AGENT-04, AGENT-05, AGENT-06, SKILL-08, TRAJ-03, TEST-05
+- [ ] `tests/test_guiclaw_p2_memory.py` — covers MEM-05 (markdown migration + POLICY always-include)
+- [ ] `tests/test_guiclaw_p1_memory.py` — UPDATE existing tests to pass with markdown MemoryStore
 
 ---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Direct codebase inspection — `opengui/agent.py`, `opengui/skills/data.py`, `opengui/skills/executor.py`, `opengui/skills/library.py`, `opengui/memory/store.py`, `opengui/memory/retrieval.py`, `opengui/trajectory/recorder.py`, `opengui/prompts/system.py`
+- Direct codebase inspection — `guiclaw/agent.py`, `guiclaw/skills/data.py`, `guiclaw/skills/executor.py`, `guiclaw/skills/library.py`, `guiclaw/memory/store.py`, `guiclaw/memory/retrieval.py`, `guiclaw/trajectory/recorder.py`, `guiclaw/prompts/system.py`
 - Direct codebase inspection — `nanobot/agent/subagent.py`, `nanobot/agent/tools/registry.py`, `nanobot/agent/tools/base.py`, `nanobot/agent/skills.py`, `nanobot/agent/tools/mcp.py`
-- Direct codebase inspection — `tests/test_opengui.py`, `tests/test_opengui_p1_memory.py`, `tests/test_opengui_p1_skills.py`, `tests/test_opengui_p1_trajectory.py`
+- Direct codebase inspection — `tests/test_guiclaw.py`, `tests/test_guiclaw_p1_memory.py`, `tests/test_guiclaw_p1_skills.py`, `tests/test_guiclaw_p1_trajectory.py`
 - Direct codebase inspection — `pyproject.toml` (dependencies, pytest config)
 - `.planning/phases/02-agent-loop-integration/02-CONTEXT.md` — locked decisions
 

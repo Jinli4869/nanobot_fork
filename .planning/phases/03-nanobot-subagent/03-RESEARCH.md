@@ -1,7 +1,7 @@
 # Phase 3: Nanobot Subagent - Research
 
 **Researched:** 2026-03-18
-**Domain:** Python async adapter pattern, Pydantic config extension, asyncio background tasks, opengui-nanobot protocol bridging
+**Domain:** Python async adapter pattern, Pydantic config extension, asyncio background tasks, guiclaw-nanobot protocol bridging
 **Confidence:** HIGH
 
 ---
@@ -19,9 +19,9 @@
 - Router gets the result dict directly when awaited — no bus notification for GUI results
 
 **LLM Adapter Bridge**
-- NanobotLLMAdapter lives in `nanobot/agent/gui_adapter.py` — imports nanobot provider + opengui interfaces, keeps opengui zero-dependency on nanobot
-- Adapter strips to opengui protocol: only passes content + tool_calls + raw. Nanobot's reasoning_content, thinking_blocks, finish_reason, usage are dropped
-- Adapter delegates retry logic to nanobot's `chat_with_retry` internally — opengui's `chat()` gets a single reliable call, no duplicate retry logic
+- NanobotLLMAdapter lives in `nanobot/agent/gui_adapter.py` — imports nanobot provider + guiclaw interfaces, keeps guiclaw zero-dependency on nanobot
+- Adapter strips to guiclaw protocol: only passes content + tool_calls + raw. Nanobot's reasoning_content, thinking_blocks, finish_reason, usage are dropped
+- Adapter delegates retry logic to nanobot's `chat_with_retry` internally — guiclaw's `chat()` gets a single reliable call, no duplicate retry logic
 - NanobotEmbeddingAdapter as a separate small class alongside NanobotLLMAdapter — both created by the tool and passed to GuiAgent
 
 **Backend Selection**
@@ -32,7 +32,7 @@
 
 **Trajectory & Workspace**
 - Trajectory files saved to `workspace/gui_runs/` — each run gets a timestamped subdirectory with trace.jsonl + screenshots (e.g., `workspace/gui_runs/2026-03-18_143022/`)
-- Aligns with opengui's existing `artifacts_root` pattern
+- Aligns with guiclaw's existing `artifacts_root` pattern
 
 **Skill Extraction**
 - Auto-extraction after every GUI run — GuiSubagentTool automatically calls SkillExtractor on the trajectory. No manual trigger needed from the main agent
@@ -70,8 +70,8 @@
 | ID | Description | Research Support |
 |----|-------------|-----------------|
 | NANO-01 | GuiSubagentTool registered in nanobot tool registry | Tool ABC + ToolRegistry patterns fully understood; SpawnTool is reference for async background execution; `_register_default_tools()` in AgentLoop is where registration is hooked |
-| NANO-02 | NanobotLLMAdapter wrapping nanobot's provider to opengui LLMProvider protocol | Both protocols fully read; nanobot uses `chat_with_retry(messages, tools, model, ...)` returning `LLMResponse(content, tool_calls: list[ToolCallRequest], reasoning_content, thinking_blocks, finish_reason, usage)`; opengui protocol needs `chat(messages, tools, tool_choice) -> LLMResponse(content, tool_calls: list[ToolCall], raw)` |
-| NANO-03 | Backend selection from nanobot config (adb/local/dry-run) | Config schema uses Pydantic `Base` model with camelCase alias; `Config` root model is the target; AdbBackend and DryRunBackend exist in opengui/backends/ |
+| NANO-02 | NanobotLLMAdapter wrapping nanobot's provider to guiclaw LLMProvider protocol | Both protocols fully read; nanobot uses `chat_with_retry(messages, tools, model, ...)` returning `LLMResponse(content, tool_calls: list[ToolCallRequest], reasoning_content, thinking_blocks, finish_reason, usage)`; guiclaw protocol needs `chat(messages, tools, tool_choice) -> LLMResponse(content, tool_calls: list[ToolCall], raw)` |
+| NANO-03 | Backend selection from nanobot config (adb/local/dry-run) | Config schema uses Pydantic `Base` model with camelCase alias; `Config` root model is the target; AdbBackend and DryRunBackend exist in guiclaw/backends/ |
 | NANO-04 | Trajectory saved to nanobot workspace for later skill extraction | TrajectoryRecorder takes `output_dir: Path`; GuiAgent takes `artifacts_root: Path`; workspace/gui_runs/ is the target path |
 | NANO-05 | Main agent trajectory_summary skill for post-run skill extraction | SkillExtractor.extract() takes a trajectory path + LLM; SkillLibrary.add_or_merge() handles dedup; auto-extracted after every run inside GuiSubagentTool.execute() |
 </phase_requirements>
@@ -80,7 +80,7 @@
 
 ## Summary
 
-Phase 3 wires opengui's GuiAgent into nanobot as a first-class tool. The core challenge is a clean protocol bridge: nanobot's `LLMProvider` ABC and opengui's `LLMProvider` Protocol have different method signatures and response types, requiring a one-way adapter. The existing codebase provides all the primitives: the Tool ABC + ToolRegistry pattern is well-established, SpawnTool demonstrates background asyncio.Task execution, and GuiAgent's constructor accepts all optional components (memory, skills, embedder).
+Phase 3 wires guiclaw's GuiAgent into nanobot as a first-class tool. The core challenge is a clean protocol bridge: nanobot's `LLMProvider` ABC and guiclaw's `LLMProvider` Protocol have different method signatures and response types, requiring a one-way adapter. The existing codebase provides all the primitives: the Tool ABC + ToolRegistry pattern is well-established, SpawnTool demonstrates background asyncio.Task execution, and GuiAgent's constructor accepts all optional components (memory, skills, embedder).
 
 The three major construction tasks are: (1) `NanobotLLMAdapter` + `NanobotEmbeddingAdapter` in `gui_adapter.py`, (2) `GuiSubagentTool` in `tools/gui.py` that builds and drives a GuiAgent, and (3) config schema extension with a `GuiConfig` Pydantic model. Skill extraction is handled automatically by calling `SkillExtractor` + `SkillLibrary.add_or_merge()` after every `GuiAgent.run()`, using the existing implementations from Phase 1/2. The TreeRouter's `_run_gui` dispatch already calls `context.gui_agent.run()` — once `GuiSubagentTool` is registered, the router can be wired to use it via `RouterContext.gui_agent`.
 
@@ -96,7 +96,7 @@ All dependencies are already present in the project — Phase 3 introduces no ne
 
 | Library | Version | Purpose | Why Standard |
 |---------|---------|---------|--------------|
-| opengui | local | GuiAgent, SkillExtractor, SkillLibrary, TrajectoryRecorder | Phase 1/2 built this |
+| guiclaw | local | GuiAgent, SkillExtractor, SkillLibrary, TrajectoryRecorder | Phase 1/2 built this |
 | nanobot.providers.base | local | LLMProvider ABC, `chat_with_retry` with retry logic | Existing nanobot LLM infrastructure |
 | pydantic | 2.x (existing) | GuiConfig Pydantic model extending Config | Used throughout nanobot config schema |
 | asyncio | stdlib | Background task management for GuiSubagentTool | Already used in SpawnTool, AgentLoop |
@@ -138,22 +138,22 @@ workspace/
 
 ### Pattern 1: LLM Adapter Bridge
 
-**What:** One-directional wrapper — nanobot's `LLMProvider` ABC → opengui's `LLMProvider` Protocol.
+**What:** One-directional wrapper — nanobot's `LLMProvider` ABC → guiclaw's `LLMProvider` Protocol.
 
-**When to use:** Whenever nanobot's LLM infrastructure must be used inside opengui code, without introducing a reverse dependency.
+**When to use:** Whenever nanobot's LLM infrastructure must be used inside guiclaw code, without introducing a reverse dependency.
 
 The critical mapping:
-- Nanobot `chat_with_retry(messages, tools, model, max_tokens, temperature, ...)` → opengui `chat(messages, tools, tool_choice)`
-- Nanobot `LLMResponse.tool_calls: list[ToolCallRequest]` → opengui `LLMResponse.tool_calls: list[ToolCall]`
+- Nanobot `chat_with_retry(messages, tools, model, max_tokens, temperature, ...)` → guiclaw `chat(messages, tools, tool_choice)`
+- Nanobot `LLMResponse.tool_calls: list[ToolCallRequest]` → guiclaw `LLMResponse.tool_calls: list[ToolCall]`
 - `ToolCallRequest(id, name, arguments)` → `ToolCall(id, name, arguments)` — same fields, different frozen dataclass types
 - Nanobot extras (reasoning_content, thinking_blocks, finish_reason, usage) are dropped
-- The `tool_choice` parameter from opengui must be passed through; nanobot's `chat_with_retry` accepts it as a kwarg
+- The `tool_choice` parameter from guiclaw must be passed through; nanobot's `chat_with_retry` accepts it as a kwarg
 
 **Example structure (reference, not final code):**
 ```python
 # nanobot/agent/gui_adapter.py
 from nanobot.providers.base import LLMProvider as NanobotLLMProvider
-from opengui.interfaces import LLMResponse as OpenguiLLMResponse, ToolCall
+from guiclaw.interfaces import LLMResponse as GUIClawLLMResponse, ToolCall
 
 class NanobotLLMAdapter:
     def __init__(self, provider: NanobotLLMProvider, model: str) -> None:
@@ -165,7 +165,7 @@ class NanobotLLMAdapter:
         messages: list[dict],
         tools: list[dict] | None = None,
         tool_choice: str | None = None,
-    ) -> OpenguiLLMResponse:
+    ) -> GUIClawLLMResponse:
         # Delegate to chat_with_retry for built-in retry on transient errors
         nano_resp = await self._provider.chat_with_retry(
             messages=messages,
@@ -174,22 +174,22 @@ class NanobotLLMAdapter:
             tool_choice=tool_choice,
         )
         # Map ToolCallRequest -> ToolCall (strip nanobot-specific fields)
-        opengui_tool_calls = [
+        guiclaw_tool_calls = [
             ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)
             for tc in (nano_resp.tool_calls or [])
         ] or None
-        return OpenguiLLMResponse(
+        return GUIClawLLMResponse(
             content=nano_resp.content or "",
-            tool_calls=opengui_tool_calls,
+            tool_calls=guiclaw_tool_calls,
             raw=nano_resp,
         )
 ```
 
-**Key pitfall:** `nanobot.LLMResponse.tool_calls` is `list[ToolCallRequest]` (empty list by default). `opengui.LLMResponse.tool_calls` is `list[ToolCall] | None`. The adapter must convert `[]` → `None`.
+**Key pitfall:** `nanobot.LLMResponse.tool_calls` is `list[ToolCallRequest]` (empty list by default). `guiclaw.LLMResponse.tool_calls` is `list[ToolCall] | None`. The adapter must convert `[]` → `None`.
 
 ### Pattern 2: Embedding Adapter
 
-**What:** Wraps a nanobot-configured embedding endpoint (e.g., DashScope qwen3-vl-embedding) as opengui's `EmbeddingProvider` protocol.
+**What:** Wraps a nanobot-configured embedding endpoint (e.g., DashScope qwen3-vl-embedding) as guiclaw's `EmbeddingProvider` protocol.
 
 **When to use:** GuiAgent's `MemoryRetriever` and `SkillLibrary` both optionally accept an `EmbeddingProvider`. If no embedding endpoint is configured in nanobot, pass `None` (BM25-only retrieval still works).
 
@@ -212,7 +212,7 @@ The `embed_fn` must be sourced from the nanobot provider's embedding API. If the
 
 **When to use:** Any time the main agent wants to delegate a GUI task.
 
-**GuiAgent constructor signature (from opengui/agent.py):**
+**GuiAgent constructor signature (from guiclaw/agent.py):**
 ```python
 GuiAgent(
     llm: LLMProvider,           # NanobotLLMAdapter
@@ -296,9 +296,9 @@ def _register_default_tools(self) -> None:
 
 **What:** After `GuiAgent.run()` returns, extract skills from the trajectory JSONL.
 
-**How:** `SkillExtractor(llm=NanobotLLMAdapter)` — the extractor takes an opengui `LLMProvider`, so the same adapter used for the agent works. Then `SkillLibrary.add_or_merge(skill)` with immediate dedup. Per-platform: `workspace/gui_skills/{platform}/` from `backend.platform`.
+**How:** `SkillExtractor(llm=NanobotLLMAdapter)` — the extractor takes an guiclaw `LLMProvider`, so the same adapter used for the agent works. Then `SkillLibrary.add_or_merge(skill)` with immediate dedup. Per-platform: `workspace/gui_skills/{platform}/` from `backend.platform`.
 
-**`SkillExtractor.extract()` signature** (from opengui/skills/extractor.py):
+**`SkillExtractor.extract()` signature** (from guiclaw/skills/extractor.py):
 ```python
 async def extract(
     self,
@@ -311,7 +311,7 @@ Returns `None` if extraction fails (no error raised). Handle gracefully.
 
 ### Anti-Patterns to Avoid
 
-- **Importing nanobot from opengui:** All adapter code lives in `nanobot/`. opengui must remain zero-dependency on nanobot.
+- **Importing nanobot from guiclaw:** All adapter code lives in `nanobot/`. guiclaw must remain zero-dependency on nanobot.
 - **Rebuilding GuiAgent on every tool call:** GuiAgent is stateless per-run (TrajectoryRecorder is scoped per-run); it's safe to construct once at tool registration. BUT TrajectoryRecorder must be created fresh per run — it holds per-run state.
 - **Duplicate retry logic:** Do NOT implement retry in the adapter AND in the agent loop. Adapter delegates entirely to `chat_with_retry`.
 - **Blocking asyncio:** `GuiAgent.run()` is fully async. Always `await` it, never `asyncio.run()` inside the tool.
@@ -324,13 +324,13 @@ Returns `None` if extraction fails (no error raised). Handle gracefully.
 | Problem | Don't Build | Use Instead | Why |
 |---------|-------------|-------------|-----|
 | LLM retry on transient errors | Custom retry loop in adapter | `nanobot.providers.base.LLMProvider.chat_with_retry` | Already handles 429, 500, 502/503/504, image-stripping fallback |
-| Trajectory recording | Custom JSONL writer | `opengui.trajectory.recorder.TrajectoryRecorder` | Handles metadata, phase, step, result events with atomic writes |
-| Skill extraction from trajectory | Custom LLM prompt | `opengui.skills.extractor.SkillExtractor` | Handles both success and failure modes, parameter extraction, valid_state |
-| Skill deduplication | Custom similarity | `opengui.skills.library.SkillLibrary.add_or_merge` | Multi-factor similarity with LLM merge decision already implemented |
+| Trajectory recording | Custom JSONL writer | `guiclaw.trajectory.recorder.TrajectoryRecorder` | Handles metadata, phase, step, result events with atomic writes |
+| Skill extraction from trajectory | Custom LLM prompt | `guiclaw.skills.extractor.SkillExtractor` | Handles both success and failure modes, parameter extraction, valid_state |
+| Skill deduplication | Custom similarity | `guiclaw.skills.library.SkillLibrary.add_or_merge` | Multi-factor similarity with LLM merge decision already implemented |
 | Background task management | Custom asyncio task dict | `asyncio.create_task` + done callback (SpawnTool pattern) | SpawnTool already demonstrates the exact pattern needed |
 | JSON Schema validation for tool params | Custom validator | `Tool.validate_params` (base class) | Already handles required fields, type coercion via cast_params |
 
-**Key insight:** Every sub-problem in this phase has a working implementation in either nanobot or opengui. Phase 3 is pure assembly work with a thin adapter layer.
+**Key insight:** Every sub-problem in this phase has a working implementation in either nanobot or guiclaw. Phase 3 is pure assembly work with a thin adapter layer.
 
 ---
 
@@ -338,17 +338,17 @@ Returns `None` if extraction fails (no error raised). Handle gracefully.
 
 ### Pitfall 1: ToolCall Type Mismatch
 
-**What goes wrong:** Passing `nanobot.ToolCallRequest` objects to opengui code that expects `opengui.ToolCall` frozen dataclasses. The two types have the same `id/name/arguments` fields but are different classes.
+**What goes wrong:** Passing `nanobot.ToolCallRequest` objects to guiclaw code that expects `guiclaw.ToolCall` frozen dataclasses. The two types have the same `id/name/arguments` fields but are different classes.
 
-**Why it happens:** Both packages define their own response types. The adapter must explicitly construct `opengui.ToolCall` from `nanobot.ToolCallRequest`.
+**Why it happens:** Both packages define their own response types. The adapter must explicitly construct `guiclaw.ToolCall` from `nanobot.ToolCallRequest`.
 
 **How to avoid:** In `NanobotLLMAdapter.chat()`, always create new `ToolCall(id=tc.id, name=tc.name, arguments=tc.arguments)` instances. Never pass `ToolCallRequest` objects through.
 
-**Warning signs:** `AttributeError: 'ToolCallRequest' object has no attribute 'foo'` in opengui code, or isinstance checks failing in opengui.
+**Warning signs:** `AttributeError: 'ToolCallRequest' object has no attribute 'foo'` in guiclaw code, or isinstance checks failing in guiclaw.
 
 ### Pitfall 2: tool_calls None vs Empty List
 
-**What goes wrong:** `opengui.LLMResponse.tool_calls` is `list[ToolCall] | None` — `None` means no tool call. `nanobot.LLMResponse.tool_calls` is `list[ToolCallRequest]` with default `field(default_factory=list)` — empty list means no tool call.
+**What goes wrong:** `guiclaw.LLMResponse.tool_calls` is `list[ToolCall] | None` — `None` means no tool call. `nanobot.LLMResponse.tool_calls` is `list[ToolCallRequest]` with default `field(default_factory=list)` — empty list means no tool call.
 
 **Why it happens:** Different None-vs-empty conventions in the two codebases.
 
@@ -388,9 +388,9 @@ Returns `None` if extraction fails (no error raised). Handle gracefully.
 
 ### Pitfall 6: SkillExtractor Requires LLMProvider
 
-**What goes wrong:** Instantiating `SkillExtractor` with a nanobot `LLMProvider` instead of an opengui `LLMProvider`. `SkillExtractor` calls `self._llm.chat(messages)` expecting the opengui protocol.
+**What goes wrong:** Instantiating `SkillExtractor` with a nanobot `LLMProvider` instead of an guiclaw `LLMProvider`. `SkillExtractor` calls `self._llm.chat(messages)` expecting the guiclaw protocol.
 
-**How to avoid:** Pass the `NanobotLLMAdapter` instance (which satisfies opengui's `LLMProvider` protocol) to `SkillExtractor`.
+**How to avoid:** Pass the `NanobotLLMAdapter` instance (which satisfies guiclaw's `LLMProvider` protocol) to `SkillExtractor`.
 
 ---
 
@@ -401,7 +401,7 @@ Verified patterns from source code:
 ### GuiAgent.run() Return Value Mapping
 
 ```python
-# From opengui/agent.py — AgentResult fields
+# From guiclaw/agent.py — AgentResult fields
 @dataclass(frozen=True)
 class AgentResult:
     success: bool        # → result["success"]
@@ -452,7 +452,7 @@ bg_task.add_done_callback(lambda t: self._running_tasks.pop(task_id, None))
 ### SkillExtractor Usage
 
 ```python
-# From opengui/skills/extractor.py
+# From guiclaw/skills/extractor.py
 extractor = SkillExtractor(llm=nanobot_llm_adapter)
 skill = await extractor.extract(
     trajectory_path=trace_path,
@@ -538,31 +538,31 @@ class Config(BaseSettings):
 |----------|-------|
 | Framework | pytest (existing) |
 | Config file | `pyproject.toml` or `pytest.ini` (check project root) |
-| Quick run command | `pytest tests/test_opengui_p3*.py -x -q` |
+| Quick run command | `pytest tests/test_guiclaw_p3*.py -x -q` |
 | Full suite command | `pytest tests/ -x -q` |
 
 ### Phase Requirements → Test Map
 
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| NANO-01 | GuiSubagentTool is registered and callable via ToolRegistry | unit | `pytest tests/test_opengui_p3_nanobot.py::test_gui_tool_registered -x` | Wave 0 |
-| NANO-02 | NanobotLLMAdapter.chat() correctly maps ToolCallRequest→ToolCall and drops extras | unit | `pytest tests/test_opengui_p3_nanobot.py::test_llm_adapter_maps_response -x` | Wave 0 |
-| NANO-02 | NanobotLLMAdapter.chat() converts empty tool_calls list to None | unit | `pytest tests/test_opengui_p3_nanobot.py::test_llm_adapter_empty_tool_calls -x` | Wave 0 |
-| NANO-03 | GuiSubagentTool constructs AdbBackend / DryRunBackend from config | unit | `pytest tests/test_opengui_p3_nanobot.py::test_backend_selection -x` | Wave 0 |
-| NANO-04 | Trajectory JSONL written to workspace/gui_runs/ after a run | integration | `pytest tests/test_opengui_p3_nanobot.py::test_trajectory_saved_to_workspace -x` | Wave 0 |
-| NANO-05 | SkillExtractor called and skills added to per-platform library | integration | `pytest tests/test_opengui_p3_nanobot.py::test_auto_skill_extraction -x` | Wave 0 |
+| NANO-01 | GuiSubagentTool is registered and callable via ToolRegistry | unit | `pytest tests/test_guiclaw_p3_nanobot.py::test_gui_tool_registered -x` | Wave 0 |
+| NANO-02 | NanobotLLMAdapter.chat() correctly maps ToolCallRequest→ToolCall and drops extras | unit | `pytest tests/test_guiclaw_p3_nanobot.py::test_llm_adapter_maps_response -x` | Wave 0 |
+| NANO-02 | NanobotLLMAdapter.chat() converts empty tool_calls list to None | unit | `pytest tests/test_guiclaw_p3_nanobot.py::test_llm_adapter_empty_tool_calls -x` | Wave 0 |
+| NANO-03 | GuiSubagentTool constructs AdbBackend / DryRunBackend from config | unit | `pytest tests/test_guiclaw_p3_nanobot.py::test_backend_selection -x` | Wave 0 |
+| NANO-04 | Trajectory JSONL written to workspace/gui_runs/ after a run | integration | `pytest tests/test_guiclaw_p3_nanobot.py::test_trajectory_saved_to_workspace -x` | Wave 0 |
+| NANO-05 | SkillExtractor called and skills added to per-platform library | integration | `pytest tests/test_guiclaw_p3_nanobot.py::test_auto_skill_extraction -x` | Wave 0 |
 
 ### Sampling Rate
 
-- **Per task commit:** `pytest tests/test_opengui_p3_nanobot.py -x -q`
+- **Per task commit:** `pytest tests/test_guiclaw_p3_nanobot.py -x -q`
 - **Per wave merge:** `pytest tests/ -x -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
 
-- [ ] `tests/test_opengui_p3_nanobot.py` — covers NANO-01 through NANO-05
-- [ ] Uses `_FakeEmbedder` and `_ScriptedLLM` patterns from `test_opengui_p2_integration.py` and `test_opengui.py`
-- [ ] DryRunBackend available in opengui — use for integration tests (no real device needed)
+- [ ] `tests/test_guiclaw_p3_nanobot.py` — covers NANO-01 through NANO-05
+- [ ] Uses `_FakeEmbedder` and `_ScriptedLLM` patterns from `test_guiclaw_p2_integration.py` and `test_guiclaw.py`
+- [ ] DryRunBackend available in guiclaw — use for integration tests (no real device needed)
 
 ---
 
@@ -579,16 +579,16 @@ All findings below are from direct source code inspection of the working codebas
 - `nanobot/agent/loop.py` — AgentLoop._register_default_tools(), _background_tasks pattern
 - `nanobot/config/schema.py` — Config, Base, Pydantic field patterns, camelCase aliasing
 - `nanobot/providers/base.py` — LLMProvider ABC, LLMResponse, ToolCallRequest, chat_with_retry
-- `opengui/interfaces.py` — opengui LLMProvider Protocol, LLMResponse (content, tool_calls, raw), ToolCall, DeviceBackend, EmbeddingProvider
-- `opengui/agent.py` — GuiAgent constructor, AgentResult dataclass fields
-- `opengui/skills/extractor.py` — SkillExtractor.extract(trajectory_path, success) → Skill | None
-- `opengui/skills/library.py` — SkillLibrary(storage_path), add_or_merge(), dedup()
-- `opengui/trajectory/recorder.py` — TrajectoryRecorder(output_dir, task, platform), mutable per-run state
-- `opengui/memory/retrieval.py` — EmbeddingProvider protocol: `async def embed(texts) -> np.ndarray`
+- `guiclaw/interfaces.py` — guiclaw LLMProvider Protocol, LLMResponse (content, tool_calls, raw), ToolCall, DeviceBackend, EmbeddingProvider
+- `guiclaw/agent.py` — GuiAgent constructor, AgentResult dataclass fields
+- `guiclaw/skills/extractor.py` — SkillExtractor.extract(trajectory_path, success) → Skill | None
+- `guiclaw/skills/library.py` — SkillLibrary(storage_path), add_or_merge(), dedup()
+- `guiclaw/trajectory/recorder.py` — TrajectoryRecorder(output_dir, task, platform), mutable per-run state
+- `guiclaw/memory/retrieval.py` — EmbeddingProvider protocol: `async def embed(texts) -> np.ndarray`
 - `nanobot/agent/router.py` — RouterContext.gui_agent, _run_gui() dispatch pattern
 - `nanobot/agent/planner.py` — PlanNode, CapabilityType ("gui" | "tool" | "mcp" | "api")
-- `tests/test_opengui_p2_integration.py` — _FakeEmbedder, _RecordingLLM test helper patterns
-- `tests/test_opengui.py` — _ScriptedLLM pattern, DryRunBackend usage in tests
+- `tests/test_guiclaw_p2_integration.py` — _FakeEmbedder, _RecordingLLM test helper patterns
+- `tests/test_guiclaw.py` — _ScriptedLLM pattern, DryRunBackend usage in tests
 
 ### Secondary (MEDIUM confidence)
 

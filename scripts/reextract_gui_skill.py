@@ -15,12 +15,12 @@ import yaml
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.config.loader import load_config, resolve_config_env_vars
 from nanobot.providers.factory import build_gui_provider_snapshot
-from opengui.cli import OpenAICompatibleEmbeddingProvider, OpenAICompatibleLLMProvider
-from opengui.postprocessing import EvaluationConfig, PostRunProcessor
+from guiclaw.cli import OpenAICompatibleEmbeddingProvider, OpenAICompatibleLLMProvider
+from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
 
 
 DEFAULT_NANOBOT_CONFIG = Path.home() / ".nanobot" / "config.json"
-DEFAULT_OPENGUI_CONFIG = Path.home() / ".opengui" / "config.yaml"
+DEFAULT_GUICLAW_CONFIG = Path.home() / ".guiclaw" / "config.yaml"
 POSTPROCESSING_LOGS = (
     "extraction_result.json",
     "extraction_usage.json",
@@ -43,7 +43,7 @@ class ProviderBundle:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Re-run OpenGUI post-run skill extraction for an existing trace.",
+        description="Re-run GUIClaw post-run skill extraction for an existing trace.",
     )
     parser.add_argument(
         "trace_or_run_dir",
@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config-source",
-        choices=("nanobot", "opengui"),
+        choices=("nanobot", "guiclaw"),
         default="nanobot",
         help="Provider config source. Defaults to ~/.nanobot/config.json.",
     )
@@ -63,16 +63,16 @@ def parse_args() -> argparse.Namespace:
         help="nanobot config path when --config-source=nanobot.",
     )
     parser.add_argument(
-        "--opengui-config",
+        "--guiclaw-config",
         type=Path,
-        default=DEFAULT_OPENGUI_CONFIG,
-        help="OpenGUI YAML config path when --config-source=opengui.",
+        default=DEFAULT_GUICLAW_CONFIG,
+        help="GUIClaw YAML config path when --config-source=guiclaw.",
     )
     parser.add_argument(
         "--skill-store-root",
         type=Path,
         default=None,
-        help="Override skill store root. Defaults to nanobot gui_skills or OpenGUI skills_dir.",
+        help="Override skill store root. Defaults to nanobot gui_skills or GUIClaw skills_dir.",
     )
     parser.add_argument(
         "--task",
@@ -184,12 +184,12 @@ def bool_from_success(value: str, metadata: dict[str, Any]) -> bool:
 
 
 def load_provider_bundle(args: argparse.Namespace) -> ProviderBundle:
-    if args.config_source == "opengui":
-        return load_opengui_provider_bundle(args.opengui_config.expanduser(), args.skill_store_root)
+    if args.config_source == "guiclaw":
+        return load_guiclaw_provider_bundle(args.guiclaw_config.expanduser(), args.skill_store_root)
     return load_nanobot_provider_bundle(args.nanobot_config.expanduser(), args.skill_store_root)
 
 
-def load_opengui_provider_bundle(
+def load_guiclaw_provider_bundle(
     config_path: Path,
     skill_store_root: Path | None,
 ) -> ProviderBundle:
@@ -217,7 +217,7 @@ def load_opengui_provider_bundle(
 
     store_root = (
         skill_store_root
-        or Path(str(raw.get("skills_dir") or (Path.home() / ".opengui" / "skills")))
+        or Path(str(raw.get("skills_dir") or (Path.home() / ".guiclaw" / "skills")))
     )
     return ProviderBundle(
         llm=llm,

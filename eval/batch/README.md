@@ -19,7 +19,7 @@ Parsed from `trace_*.jsonl` (no extra LLM call):
 
 | metric | source |
 |---|---|
-| `success` | `opengui.evaluation.evaluate_gui_trajectory_sync` (vision LLM judge, cached) |
+| `success` | `guiclaw.evaluation.evaluate_gui_trajectory_sync` (vision LLM judge, cached) |
 | `steps` | count of `step` events |
 | `prompt/completion/total_tokens` | sum across `step` / `subgoal_step` / `skill_step` |
 | `avg_step_duration_s` | mean `step.duration_s` (wall-clock per step) |

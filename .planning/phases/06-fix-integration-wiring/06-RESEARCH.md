@@ -16,7 +16,7 @@
 - The embedding path should reuse nanobot's existing provider chain via `litellm.aembedding(...)`
 - If `gui.embedding_model` is not configured, nanobot GUI skill search should degrade gracefully to the current no-embedding behavior
 - `pyproject.toml` must add `Pillow>=10.0` to the `desktop` extra and the `dev` extra
-- `pyproject.toml` must add `opengui = "opengui.cli:main"` under `[project.scripts]`
+- `pyproject.toml` must add `guiclaw = "guiclaw.cli:main"` under `[project.scripts]`
 
 ### Claude's Discretion
 
@@ -40,8 +40,8 @@
 | ID | Description | Research Support |
 |----|-------------|-----------------|
 | NANO-03 | Nanobot GUI path supports backend-selected skill search correctly | `GuiSubagentTool` already builds per-platform `SkillLibrary`, but it never instantiates `NanobotEmbeddingAdapter`, so FAISS search is currently unavailable in nanobot runs |
-| BACK-03 | Desktop backend imports work after install | `opengui/backends/desktop.py` imports `from PIL import Image` at module import time, but `Pillow` is missing from both `desktop` and `dev` extras in current `pyproject.toml` |
-| CLI-01 | CLI has an installable entry point | `opengui/cli.py` and `opengui/__main__.py` already exist, but `[project.scripts]` still only declares `nanobot` |
+| BACK-03 | Desktop backend imports work after install | `guiclaw/backends/desktop.py` imports `from PIL import Image` at module import time, but `Pillow` is missing from both `desktop` and `dev` extras in current `pyproject.toml` |
+| CLI-01 | CLI has an installable entry point | `guiclaw/cli.py` and `guiclaw/__main__.py` already exist, but `[project.scripts]` still only declares `nanobot` |
 
 </phase_requirements>
 
@@ -52,14 +52,14 @@
 Phase 6 is a narrow gap-closure phase, not a new feature phase. All three missing pieces already have nearby implementations:
 
 - `NanobotEmbeddingAdapter` already exists in `nanobot/agent/gui_adapter.py`
-- the standalone CLI already exists in `opengui/cli.py`
+- the standalone CLI already exists in `guiclaw/cli.py`
 - the desktop backend already imports and uses `PIL.Image`
 
 The actual gaps are all wiring or packaging metadata:
 
 1. `nanobot/agent/tools/gui.py` sets `self._embedding_adapter = None` unconditionally, so `SkillLibrary(..., embedding_provider=self._embedding_adapter)` always runs BM25-only in the nanobot path
-2. `pyproject.toml` does not declare `Pillow` in the `desktop` extra or `dev` extra even though `opengui/backends/desktop.py` imports `PIL` at module import time
-3. `pyproject.toml` does not declare `opengui = "opengui.cli:main"` even though the CLI entry point code already exists
+2. `pyproject.toml` does not declare `Pillow` in the `desktop` extra or `dev` extra even though `guiclaw/backends/desktop.py` imports `PIL` at module import time
+3. `pyproject.toml` does not declare `guiclaw = "guiclaw.cli:main"` even though the CLI entry point code already exists
 
 The cleanest execution split is a single plan with:
 
@@ -102,9 +102,9 @@ Direct inspection of `pyproject.toml` shows:
 
 ### Existing CLI / Backend State
 
-- `opengui/cli.py` already exports `main(argv: list[str] | None = None) -> int`
-- `opengui/__main__.py` already delegates to that CLI
-- `opengui/backends/desktop.py` imports `from PIL import Image` at module import time, so packaging must guarantee `Pillow` is installed when the desktop extra is used
+- `guiclaw/cli.py` already exports `main(argv: list[str] | None = None) -> int`
+- `guiclaw/__main__.py` already delegates to that CLI
+- `guiclaw/backends/desktop.py` imports `from PIL import Image` at module import time, so packaging must guarantee `Pillow` is installed when the desktop extra is used
 
 ---
 
@@ -156,7 +156,7 @@ If the planner decides not to reuse provider-side model normalization, then `06-
 
 The three gaps are small and cross phase boundaries. A dedicated regression file is the cleanest option:
 
-- `tests/test_opengui_p6_wiring.py`
+- `tests/test_guiclaw_p6_wiring.py`
 
 That file should cover:
 
@@ -165,15 +165,15 @@ That file should cover:
 3. `GuiSubagentTool` leaves `_embedding_adapter` as `None` when `embedding_model` is absent
 4. `SkillLibrary` receives the embedding adapter instance when configured
 5. `pyproject.toml` declares `Pillow>=10.0` in both `desktop` and `dev`
-6. `pyproject.toml` declares `opengui = "opengui.cli:main"` in `[project.scripts]`
+6. `pyproject.toml` declares `guiclaw = "guiclaw.cli:main"` in `[project.scripts]`
 
 This is better than scattering assertions across existing Phase 3 / 4 / 5 files because Phase 6 is explicitly a gap-closure pass across those earlier deliverables.
 
 Still, the implementation task should read the existing tests for patterns:
 
-- `tests/test_opengui_p3_nanobot.py`
-- `tests/test_opengui_p4_desktop.py`
-- `tests/test_opengui_p5_cli.py`
+- `tests/test_guiclaw_p3_nanobot.py`
+- `tests/test_guiclaw_p4_desktop.py`
+- `tests/test_guiclaw_p5_cli.py`
 
 ---
 
@@ -194,14 +194,14 @@ That keeps FAISS search opt-in and avoids breaking existing configurations.
 
 ### Pattern 3: Match Existing `numpy.float32` Behavior
 
-`opengui/cli.py` already normalizes embedding vectors into `np.ndarray(dtype=np.float32)`. The nanobot embedding wrapper should match that representation so `MemoryRetriever` / `SkillLibrary` work consistently.
+`guiclaw/cli.py` already normalizes embedding vectors into `np.ndarray(dtype=np.float32)`. The nanobot embedding wrapper should match that representation so `MemoryRetriever` / `SkillLibrary` work consistently.
 
 ### Pattern 4: Treat Packaging Metadata as Product Code
 
 Both packaging fixes are user-visible behavior:
 
 - missing `Pillow` breaks `pip install .[desktop]`
-- missing `opengui` script prevents the CLI from being invoked as an installed command
+- missing `guiclaw` script prevents the CLI from being invoked as an installed command
 
 They need automated regression coverage instead of a one-off manual edit.
 
@@ -233,7 +233,7 @@ Current code imports `PIL` directly. Depending on some other package to happen t
 
 Ship the full Phase 6 gap-closure in one execute plan with two tasks:
 
-- Task 1: add Phase 6 regression coverage (`tests/test_opengui_p6_wiring.py`)
+- Task 1: add Phase 6 regression coverage (`tests/test_guiclaw_p6_wiring.py`)
 - Task 2: implement `GuiConfig.embedding_model`, wire `NanobotEmbeddingAdapter`, and update `pyproject.toml`
 
 This phase is too small to benefit from multiple plans or multiple waves beyond RED/GREEN.
@@ -248,7 +248,7 @@ This phase is too small to benefit from multiple plans or multiple waves beyond 
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio |
 | Config file | `pyproject.toml` `[tool.pytest.ini_options]` |
-| Quick run command | `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py -x -q` |
+| Quick run command | `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py -x -q` |
 | Full suite command | `PATH="$(pwd)/.venv/bin:$PATH" ./.venv/bin/python -m pytest tests/ -x -q` |
 | Estimated runtime | ~10 seconds |
 
@@ -256,28 +256,28 @@ This phase is too small to benefit from multiple plans or multiple waves beyond 
 
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| NANO-03 | `GuiConfig` exposes `embedding_model` with alias support | unit | `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py::test_gui_config_accepts_embedding_model_alias -x -q` | ❌ Wave 0 |
-| NANO-03 | `GuiSubagentTool` creates `NanobotEmbeddingAdapter` when embedding config is present | unit | `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py::test_gui_tool_wires_embedding_adapter_when_configured -x -q` | ❌ Wave 0 |
-| NANO-03 | `GuiSubagentTool` keeps `embedding_provider=None` when embedding config is absent | unit | `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py::test_gui_tool_skips_embedding_adapter_without_config -x -q` | ❌ Wave 0 |
-| BACK-03 | `pyproject.toml` declares `Pillow>=10.0` in desktop and dev extras | packaging | `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py::test_pyproject_declares_pillow_for_desktop_and_dev -x -q` | ❌ Wave 0 |
-| CLI-01 | `pyproject.toml` declares `opengui = "opengui.cli:main"` | packaging | `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py::test_pyproject_declares_opengui_console_script -x -q` | ❌ Wave 0 |
+| NANO-03 | `GuiConfig` exposes `embedding_model` with alias support | unit | `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py::test_gui_config_accepts_embedding_model_alias -x -q` | ❌ Wave 0 |
+| NANO-03 | `GuiSubagentTool` creates `NanobotEmbeddingAdapter` when embedding config is present | unit | `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py::test_gui_tool_wires_embedding_adapter_when_configured -x -q` | ❌ Wave 0 |
+| NANO-03 | `GuiSubagentTool` keeps `embedding_provider=None` when embedding config is absent | unit | `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py::test_gui_tool_skips_embedding_adapter_without_config -x -q` | ❌ Wave 0 |
+| BACK-03 | `pyproject.toml` declares `Pillow>=10.0` in desktop and dev extras | packaging | `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py::test_pyproject_declares_pillow_for_desktop_and_dev -x -q` | ❌ Wave 0 |
+| CLI-01 | `pyproject.toml` declares `guiclaw = "guiclaw.cli:main"` | packaging | `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py::test_pyproject_declares_guiclaw_console_script -x -q` | ❌ Wave 0 |
 
 ### Manual-Only Verifications
 
 | Behavior | Requirement | Why manual | Test instructions |
 |----------|-------------|------------|-------------------|
 | `pip install .[desktop]` succeeds and `python -c "from PIL import Image"` exits 0 | BACK-03 | Requires an actual install transaction in the target environment | Create a clean virtualenv, run `pip install .[desktop]`, then run the import check |
-| installed `opengui --help` resolves the console script entry point | CLI-01 | Requires package installation to validate generated wrapper scripts | Install the package into a clean virtualenv and run `opengui --help` |
+| installed `guiclaw --help` resolves the console script entry point | CLI-01 | Requires package installation to validate generated wrapper scripts | Install the package into a clean virtualenv and run `guiclaw --help` |
 
 ### Sampling Rate
 
-- After every task commit: `./.venv/bin/python -m pytest tests/test_opengui_p6_wiring.py -x -q`
+- After every task commit: `./.venv/bin/python -m pytest tests/test_guiclaw_p6_wiring.py -x -q`
 - After the plan wave: `PATH="$(pwd)/.venv/bin:$PATH" ./.venv/bin/python -m pytest tests/ -x -q`
 - Before verification: the full suite must be green
 
 ### Wave 0 Gaps
 
-- [ ] `tests/test_opengui_p6_wiring.py` for config, embedding wiring, and packaging metadata
+- [ ] `tests/test_guiclaw_p6_wiring.py` for config, embedding wiring, and packaging metadata
 - [ ] `GuiConfig.embedding_model` field
 - [ ] `GuiSubagentTool` embedding wrapper around `litellm.aembedding`
 - [ ] `pyproject.toml` desktop/dev/script metadata fixes
@@ -294,11 +294,11 @@ Local code and installed-package sources inspected:
 - `nanobot/providers/base.py`
 - `nanobot/providers/litellm_provider.py`
 - `nanobot/providers/custom_provider.py`
-- `opengui/backends/desktop.py`
-- `opengui/cli.py`
+- `guiclaw/backends/desktop.py`
+- `guiclaw/cli.py`
 - `pyproject.toml`
-- `tests/test_opengui_p3_nanobot.py`
-- `tests/test_opengui_p4_desktop.py`
-- `tests/test_opengui_p5_cli.py`
+- `tests/test_guiclaw_p3_nanobot.py`
+- `tests/test_guiclaw_p4_desktop.py`
+- `tests/test_guiclaw_p5_cli.py`
 - `.venv/lib/python3.12/site-packages/litellm/utils.py` (`aembedding`)
 - `.venv` installed package metadata for LiteLLM version `1.82.4`

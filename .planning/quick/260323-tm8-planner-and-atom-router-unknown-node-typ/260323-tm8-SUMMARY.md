@@ -42,16 +42,16 @@ Unknown node type: AND
 
 新增回归覆盖：
 
-- `tests/test_opengui_p8_planning.py`
+- `tests/test_guiclaw_p8_planning.py`
   - `test_plan_node_from_dict_normalizes_uppercase_node_types`
-- `tests/test_opengui_agent_loop.py`
+- `tests/test_guiclaw_agent_loop.py`
   - `test_router_executes_uppercase_plan_node_types`
 
 验证结果：
 
 ```bash
-uv run pytest tests/test_opengui_p8_planning.py tests/test_opengui_agent_loop.py -q
-uv run python -m py_compile nanobot/agent/planner.py nanobot/agent/router.py tests/test_opengui_p8_planning.py tests/test_opengui_agent_loop.py
+uv run pytest tests/test_guiclaw_p8_planning.py tests/test_guiclaw_agent_loop.py -q
+uv run python -m py_compile nanobot/agent/planner.py nanobot/agent/router.py tests/test_guiclaw_p8_planning.py tests/test_guiclaw_agent_loop.py
 ```
 
 结果：

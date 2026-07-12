@@ -27,9 +27,9 @@ notes:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|---------|
-| 1 | `pytest tests/` passes with tests covering MemoryStore JSON persistence and MemoryRetriever BM25+FAISS hybrid search | VERIFIED | 13 tests in `test_opengui_p1_memory.py` all pass; `test_memory_store_add_and_reload`, `test_retriever_hybrid_search`, `test_retriever_bm25_only`, `test_retriever_faiss_only` directly cover both areas |
-| 2 | SkillLibrary CRUD, hybrid search, deduplication, SkillExecutor per-step valid_state, and SkillExtractor parsing are each exercised by at least one test | VERIFIED | 18 tests in `test_opengui_p1_skills.py`: 10 library tests, 4 executor tests, 4 extractor tests, all passing |
-| 3 | TrajectoryRecorder event sequencing and TrajectorySummarizer output format are verified by at least one test each | VERIFIED | 8 tests in `test_opengui_p1_trajectory.py`: 6 recorder tests (including event order, phase tracking, error path), 2 summarizer tests, all passing |
+| 1 | `pytest tests/` passes with tests covering MemoryStore JSON persistence and MemoryRetriever BM25+FAISS hybrid search | VERIFIED | 13 tests in `test_guiclaw_p1_memory.py` all pass; `test_memory_store_add_and_reload`, `test_retriever_hybrid_search`, `test_retriever_bm25_only`, `test_retriever_faiss_only` directly cover both areas |
+| 2 | SkillLibrary CRUD, hybrid search, deduplication, SkillExecutor per-step valid_state, and SkillExtractor parsing are each exercised by at least one test | VERIFIED | 18 tests in `test_guiclaw_p1_skills.py`: 10 library tests, 4 executor tests, 4 extractor tests, all passing |
+| 3 | TrajectoryRecorder event sequencing and TrajectorySummarizer output format are verified by at least one test each | VERIFIED | 8 tests in `test_guiclaw_p1_trajectory.py`: 6 recorder tests (including event order, phase tracking, error path), 2 summarizer tests, all passing |
 | 4 | No test requires a live device, real LLM call, or network access (all external I/O is mocked) | VERIFIED | All tests use: `_FakeEmbedder` (deterministic unit vectors), `_ScriptedLLM` (canned responses), `_FakeValidator` (scripted bool list), `DryRunBackend` (no real device). No network calls, no real API |
 
 **Score:** 4/4 success criteria verified
@@ -41,9 +41,9 @@ notes:
 | Artifact | Provided By | Min Lines | Actual Lines | Status | Details |
 |----------|-------------|-----------|--------------|--------|---------|
 | `pyproject.toml` | Plan 01-01 | — | — | VERIFIED | Contains `faiss-cpu>=1.9.0` (line 23) and `numpy>=1.26.0` (line 24) in `[project.dependencies]` |
-| `tests/test_opengui_p1_memory.py` | Plan 01-01 | 80 | 282 | VERIFIED | 13 test functions present, no stubs or TODOs detected |
-| `tests/test_opengui_p1_skills.py` | Plan 01-02 | 150 | 491 | VERIFIED | 18 test functions present, no stubs or TODOs detected |
-| `tests/test_opengui_p1_trajectory.py` | Plan 01-03 | 60 | 186 | VERIFIED | 8 test functions present, no stubs or TODOs detected |
+| `tests/test_guiclaw_p1_memory.py` | Plan 01-01 | 80 | 282 | VERIFIED | 13 test functions present, no stubs or TODOs detected |
+| `tests/test_guiclaw_p1_skills.py` | Plan 01-02 | 150 | 491 | VERIFIED | 18 test functions present, no stubs or TODOs detected |
+| `tests/test_guiclaw_p1_trajectory.py` | Plan 01-03 | 60 | 186 | VERIFIED | 8 test functions present, no stubs or TODOs detected |
 
 ---
 
@@ -51,13 +51,13 @@ notes:
 
 | From | To | Via | Status | Detail |
 |------|----|-----|--------|--------|
-| `tests/test_opengui_p1_memory.py` | `opengui/memory/store.py` | `from opengui.memory.store import` | WIRED | Line 19: `from opengui.memory.store import MemoryStore` |
-| `tests/test_opengui_p1_memory.py` | `opengui/memory/retrieval.py` | `from opengui.memory.retrieval import` | WIRED | Line 18: `from opengui.memory.retrieval import EmbeddingProvider, MemoryRetriever` |
-| `tests/test_opengui_p1_skills.py` | `opengui/skills/library.py` | `from opengui.skills.library import` | WIRED | Line 29: `from opengui.skills.library import SkillLibrary` |
-| `tests/test_opengui_p1_skills.py` | `opengui/skills/executor.py` | `from opengui.skills.executor import` | WIRED | Line 27: `from opengui.skills.executor import ExecutionState, SkillExecutor` |
-| `tests/test_opengui_p1_skills.py` | `opengui/skills/extractor.py` | `from opengui.skills.extractor import` | WIRED | Line 28: `from opengui.skills.extractor import SkillExtractor` |
-| `tests/test_opengui_p1_trajectory.py` | `opengui/trajectory/recorder.py` | `from opengui.trajectory.recorder import` | WIRED | Line 20: `from opengui.trajectory.recorder import ExecutionPhase, TrajectoryRecorder` |
-| `tests/test_opengui_p1_trajectory.py` | `opengui/trajectory/summarizer.py` | `from opengui.trajectory.summarizer import` | WIRED | Line 21: `from opengui.trajectory.summarizer import TrajectorySummarizer` |
+| `tests/test_guiclaw_p1_memory.py` | `guiclaw/memory/store.py` | `from guiclaw.memory.store import` | WIRED | Line 19: `from guiclaw.memory.store import MemoryStore` |
+| `tests/test_guiclaw_p1_memory.py` | `guiclaw/memory/retrieval.py` | `from guiclaw.memory.retrieval import` | WIRED | Line 18: `from guiclaw.memory.retrieval import EmbeddingProvider, MemoryRetriever` |
+| `tests/test_guiclaw_p1_skills.py` | `guiclaw/skills/library.py` | `from guiclaw.skills.library import` | WIRED | Line 29: `from guiclaw.skills.library import SkillLibrary` |
+| `tests/test_guiclaw_p1_skills.py` | `guiclaw/skills/executor.py` | `from guiclaw.skills.executor import` | WIRED | Line 27: `from guiclaw.skills.executor import ExecutionState, SkillExecutor` |
+| `tests/test_guiclaw_p1_skills.py` | `guiclaw/skills/extractor.py` | `from guiclaw.skills.extractor import` | WIRED | Line 28: `from guiclaw.skills.extractor import SkillExtractor` |
+| `tests/test_guiclaw_p1_trajectory.py` | `guiclaw/trajectory/recorder.py` | `from guiclaw.trajectory.recorder import` | WIRED | Line 20: `from guiclaw.trajectory.recorder import ExecutionPhase, TrajectoryRecorder` |
+| `tests/test_guiclaw_p1_trajectory.py` | `guiclaw/trajectory/summarizer.py` | `from guiclaw.trajectory.summarizer import` | WIRED | Line 21: `from guiclaw.trajectory.summarizer import TrajectorySummarizer` |
 
 All 7 key links wired correctly.
 
@@ -67,9 +67,9 @@ All 7 key links wired correctly.
 
 | Requirement | Source Plan | Description | Status | Evidence |
 |-------------|------------|-------------|--------|---------|
-| TEST-02 | 01-01-PLAN.md | Unit tests for memory module (store, retrieval, types) | SATISFIED | `test_opengui_p1_memory.py` — 13 tests covering MemoryStore CRUD/persistence, MemoryEntry round-trip, MemoryRetriever hybrid/BM25/FAISS search, format_context |
-| TEST-03 | 01-02-PLAN.md | Unit tests for skills module (library CRUD, search, dedup, executor, extractor) | SATISFIED | `test_opengui_p1_skills.py` — 18 tests covering all five capability areas explicitly listed in the requirement |
-| TEST-04 | 01-03-PLAN.md | Unit tests for trajectory module (recorder events, summarizer) | SATISFIED | `test_opengui_p1_trajectory.py` — 8 tests covering recorder event sequencing, phase tracking, lifecycle, error path, and summarizer output format |
+| TEST-02 | 01-01-PLAN.md | Unit tests for memory module (store, retrieval, types) | SATISFIED | `test_guiclaw_p1_memory.py` — 13 tests covering MemoryStore CRUD/persistence, MemoryEntry round-trip, MemoryRetriever hybrid/BM25/FAISS search, format_context |
+| TEST-03 | 01-02-PLAN.md | Unit tests for skills module (library CRUD, search, dedup, executor, extractor) | SATISFIED | `test_guiclaw_p1_skills.py` — 18 tests covering all five capability areas explicitly listed in the requirement |
+| TEST-04 | 01-03-PLAN.md | Unit tests for trajectory module (recorder events, summarizer) | SATISFIED | `test_guiclaw_p1_trajectory.py` — 8 tests covering recorder event sequencing, phase tracking, lifecycle, error path, and summarizer output format |
 
 ### Orphaned Requirement Note
 
@@ -111,7 +111,7 @@ P0 regression tests: 8/8 passing (unbroken by Phase 1 changes).
 
 ### 1. FAISS SWIG DeprecationWarnings
 
-**Test:** Run `uv run pytest tests/test_opengui_p1_memory.py -v -W error::DeprecationWarning` and observe which tests fail
+**Test:** Run `uv run pytest tests/test_guiclaw_p1_memory.py -v -W error::DeprecationWarning` and observe which tests fail
 **Expected:** If the warnings are benign, only the SWIG-related ones should appear with `--tb=short` — actual test logic should be unaffected. The hybrid/BM25/FAISS tests all return correctly ranked results.
 **Why human:** Automated verification confirms all 39 tests pass and results are correct. A human should confirm the DeprecationWarnings are from the faiss-cpu SWIG binding and not from the test logic itself, particularly if upgrading faiss-cpu in future.
 

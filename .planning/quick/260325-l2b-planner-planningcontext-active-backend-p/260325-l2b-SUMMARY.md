@@ -17,7 +17,7 @@ key_files:
     - nanobot/agent/loop.py
     - nanobot/agent/planner.py
     - nanobot/agent/router.py
-    - tests/test_opengui_p21_planner_context.py
+    - tests/test_guiclaw_p21_planner_context.py
 decisions:
   - "PlanningContext.active_gui_route carries the session's GUI route_id; empty string means planner uses self-judgment (no regression)"
   - "CapabilityCatalogBuilder.build() accepts gui_backend kwarg; gui_backend='adb' overrides route_id/kind/summary in the loop without changing _ROUTE_SPECS class constant"
@@ -61,7 +61,7 @@ Three layers were updated to propagate backend awareness:
 
 14 tests pass (7 pre-existing + 7 new):
 
-New tests added to `tests/test_opengui_p21_planner_context.py`:
+New tests added to `tests/test_guiclaw_p21_planner_context.py`:
 - `test_capability_catalog_builder_adb_backend_emits_gui_adb_route` - adb backend emits gui.adb not gui.desktop
 - `test_capability_catalog_builder_local_backend_emits_gui_desktop_route` - local backend emits gui.desktop
 - `test_capability_catalog_builder_default_backend_emits_gui_desktop_route` - default (omitted kwarg) emits gui.desktop
@@ -80,7 +80,7 @@ None - plan executed exactly as written.
 - [x] `nanobot/agent/loop.py` - modified, passes gui_backend and active_gui_route
 - [x] `nanobot/agent/planner.py` - modified, injects "Active GUI route" directive
 - [x] `nanobot/agent/router.py` - modified, handles gui.adb sentinel
-- [x] `tests/test_opengui_p21_planner_context.py` - modified, 7 new tests all pass
+- [x] `tests/test_guiclaw_p21_planner_context.py` - modified, 7 new tests all pass
 - [x] Commits 4704cff, 326f00a, b2b7daf exist in git log
-- [x] 14/14 tests pass in test_opengui_p21_planner_context.py
-- [x] Pre-existing test failure (test_gui_tool_builds_memory_retriever_from_default_opengui_dir) confirmed pre-dates this plan, logged as out-of-scope
+- [x] 14/14 tests pass in test_guiclaw_p21_planner_context.py
+- [x] Pre-existing test failure (test_gui_tool_builds_memory_retriever_from_default_guiclaw_dir) confirmed pre-dates this plan, logged as out-of-scope

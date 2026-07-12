@@ -420,7 +420,7 @@ class HdcConfig(Base):
 
 
 class MobileWorldGuiBackendConfig(Base):
-    """MobileWorld HTTP backend configuration for OpenGUI automation."""
+    """MobileWorld HTTP backend configuration for GUIClaw automation."""
 
     base_url: str | None = None
     device: str | None = None
@@ -484,7 +484,7 @@ class GuiConfig(Base):
     #   off           - skip all validation (contracts included)
     # Compact (``compact_extracted``) skills auto-downgrade contracted steps to
     # contract_only under ``strict``; ``optional`` popup steps always keep a guard
-    # unless the mode is ``off``. See opengui/skills/executor.py.
+    # unless the mode is ``off``. See guiclaw/skills/executor.py.
     skill_valid_state_mode: Literal["strict", "contract_only", "off"] = "strict"
     enable_prompt_skill_selection: bool = False
     prompt_skill_top_k: int = 5
@@ -521,7 +521,7 @@ class GuiConfig(Base):
         if value is None:
             return None
 
-        from opengui.agent_profiles import canonicalize_agent_profile
+        from guiclaw.agent_profiles import canonicalize_agent_profile
 
         return canonicalize_agent_profile(value)
 

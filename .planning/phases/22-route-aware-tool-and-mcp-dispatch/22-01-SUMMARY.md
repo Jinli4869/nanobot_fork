@@ -34,7 +34,7 @@ tech-stack:
 
 key-files:
   created:
-    - tests/test_opengui_p22_route_dispatch.py
+    - tests/test_guiclaw_p22_route_dispatch.py
   modified:
     - nanobot/agent/router.py
 
@@ -86,7 +86,7 @@ _Note: TDD tasks had separate RED/GREEN commits. REFACTOR phase not needed — c
 ## Files Created/Modified
 
 - `nanobot/agent/router.py` — Added `_ROUTE_ID_TO_TOOL_NAME`, `_INSTRUCTION_PARAM`, `_resolve_route()`, replaced placeholder `_run_tool`/`_run_mcp`, updated `_dispatch_atom` to pass full node
-- `tests/test_opengui_p22_route_dispatch.py` — 23 tests: 11 resolver, 12 dispatch (tool, MCP, logging, node-passing)
+- `tests/test_guiclaw_p22_route_dispatch.py` — 23 tests: 11 resolver, 12 dispatch (tool, MCP, logging, node-passing)
 
 ## Decisions Made
 

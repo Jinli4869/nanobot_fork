@@ -23,9 +23,9 @@ Expose GuiAgent as a nanobot tool so the main agent can spawn GUI tasks, receive
 - Router gets the result dict directly when awaited — **no bus notification** for GUI results
 
 ### LLM Adapter Bridge
-- **NanobotLLMAdapter** lives in `nanobot/agent/gui_adapter.py` — imports nanobot provider + opengui interfaces, keeps opengui zero-dependency on nanobot
-- Adapter **strips to opengui protocol**: only passes content + tool_calls + raw. Nanobot's reasoning_content, thinking_blocks, finish_reason, usage are dropped
-- Adapter **delegates retry logic** to nanobot's `chat_with_retry` internally — opengui's `chat()` gets a single reliable call, no duplicate retry logic
+- **NanobotLLMAdapter** lives in `nanobot/agent/gui_adapter.py` — imports nanobot provider + guiclaw interfaces, keeps guiclaw zero-dependency on nanobot
+- Adapter **strips to guiclaw protocol**: only passes content + tool_calls + raw. Nanobot's reasoning_content, thinking_blocks, finish_reason, usage are dropped
+- Adapter **delegates retry logic** to nanobot's `chat_with_retry` internally — guiclaw's `chat()` gets a single reliable call, no duplicate retry logic
 - **NanobotEmbeddingAdapter** as a separate small class alongside NanobotLLMAdapter — both created by the tool and passed to GuiAgent
 
 ### Backend Selection
@@ -36,7 +36,7 @@ Expose GuiAgent as a nanobot tool so the main agent can spawn GUI tasks, receive
 
 ### Trajectory & Workspace
 - Trajectory files saved to **`workspace/gui_runs/`** — each run gets a timestamped subdirectory with trace.jsonl + screenshots (e.g., `workspace/gui_runs/2026-03-18_143022/`)
-- This aligns with opengui's existing `artifacts_root` pattern
+- This aligns with guiclaw's existing `artifacts_root` pattern
 
 ### Skill Extraction
 - **Auto-extraction after every GUI run** — GuiSubagentTool automatically calls SkillExtractor on the trajectory. No manual trigger needed from the main agent
@@ -75,15 +75,15 @@ Expose GuiAgent as a nanobot tool so the main agent can spawn GUI tasks, receive
 - `nanobot/agent/tools/spawn.py` — SpawnTool: existing background subagent pattern (reference for async execution)
 
 ### LLM Provider Protocols
-- `opengui/interfaces.py` — opengui LLMProvider protocol (chat method, LLMResponse, ToolCall)
+- `guiclaw/interfaces.py` — guiclaw LLMProvider protocol (chat method, LLMResponse, ToolCall)
 - `nanobot/providers/base.py` — nanobot LLMProvider (chat_with_retry, LLMResponse with reasoning_content/thinking_blocks, ToolCallRequest)
 
 ### GUI Agent
-- `opengui/agent.py` — GuiAgent class, AgentResult dataclass, constructor params (llm, backend, trajectory_recorder, memory_retriever, skill_library, etc.)
-- `opengui/backends/` — DryRunBackend, ADBBackend implementations
-- `opengui/skills/extractor.py` — SkillExtractor for trajectory-to-skill extraction
-- `opengui/skills/library.py` — SkillLibrary with add(), search(), dedup
-- `opengui/trajectory/recorder.py` — TrajectoryRecorder with JSONL output
+- `guiclaw/agent.py` — GuiAgent class, AgentResult dataclass, constructor params (llm, backend, trajectory_recorder, memory_retriever, skill_library, etc.)
+- `guiclaw/backends/` — DryRunBackend, ADBBackend implementations
+- `guiclaw/skills/extractor.py` — SkillExtractor for trajectory-to-skill extraction
+- `guiclaw/skills/library.py` — SkillLibrary with add(), search(), dedup
+- `guiclaw/trajectory/recorder.py` — TrajectoryRecorder with JSONL output
 
 ### Nanobot Agent Infrastructure
 - `nanobot/agent/subagent.py` — SubagentManager (existing background task spawning)
@@ -105,7 +105,7 @@ Expose GuiAgent as a nanobot tool so the main agent can spawn GUI tasks, receive
 - `SpawnTool`: Reference implementation for background subagent execution with asyncio.Task
 - `SubagentManager`: Background task lifecycle management (spawn, cleanup callbacks)
 - `GuiAgent`: Full constructor with all optional components (memory_retriever, skill_library, skill_executor)
-- `SkillExtractor` + `SkillLibrary`: Extraction and dedup already implemented in opengui
+- `SkillExtractor` + `SkillLibrary`: Extraction and dedup already implemented in guiclaw
 - `TrajectoryRecorder`: JSONL recording with ExecutionPhase tracking
 - `_FakeEmbedder` + `_ScriptedLLM`: Test patterns for mocking LLM and embedding in tests
 

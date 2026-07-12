@@ -112,7 +112,7 @@ class TestSkillExecutorWiringDisabled:
                 ),
             ):
                 # Patch run so we don't actually execute the agent.
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -145,7 +145,7 @@ class TestSkillExecutorWiringDisabled:
                     "nanobot.agent.tools.gui.TrajectoryRecorder",
                     return_value=MagicMock(path=None),
                 ),
-                patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run,
+                patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run,
             ):
                 mock_run.return_value = MagicMock(
                     success=True,
@@ -170,7 +170,7 @@ class TestShortcutDiscoveryBackend:
 
     def test_mobileworld_backend_is_not_used_for_runtime_shortcut_discovery(self) -> None:
         from nanobot.agent.tools.gui import GuiSubagentTool
-        from opengui.backends.mobileworld import MobileWorldBackend
+        from guiclaw.backends.mobileworld import MobileWorldBackend
 
         backend = MobileWorldBackend(base_url="http://mobileworld.invalid")
 
@@ -192,7 +192,7 @@ class TestSkillExecutorWiringEnabled:
     """When enable_skill_execution=True, GuiAgent must receive a SkillExecutor instance."""
 
     def test_skill_executor_is_passed_when_enabled(self) -> None:
-        from opengui.skills.executor import SkillExecutor
+        from guiclaw.skills.executor import SkillExecutor
 
         gui_config = _make_gui_config(enable_skill_execution=True)
         tool = _make_tool(gui_config)
@@ -207,7 +207,7 @@ class TestSkillExecutorWiringEnabled:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -229,7 +229,7 @@ class TestSkillExecutorWiringEnabled:
 
     def test_skill_executor_built_with_correct_backend(self) -> None:
         """SkillExecutor.backend must be the active_backend passed to _run_task."""
-        from opengui.skills.executor import SkillExecutor
+        from guiclaw.skills.executor import SkillExecutor
 
         gui_config = _make_gui_config(enable_skill_execution=True)
         tool = _make_tool(gui_config)
@@ -245,7 +245,7 @@ class TestSkillExecutorWiringEnabled:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -268,7 +268,7 @@ class TestSkillExecutorWiringEnabled:
 
     def test_skill_executor_built_with_llm_state_validator(self) -> None:
         """SkillExecutor.state_validator must be an LLMStateValidator backed by the LLM adapter."""
-        from opengui.skills.executor import LLMStateValidator, SkillExecutor
+        from guiclaw.skills.executor import LLMStateValidator, SkillExecutor
 
         gui_config = _make_gui_config(enable_skill_execution=True)
         tool = _make_tool(gui_config)
@@ -283,7 +283,7 @@ class TestSkillExecutorWiringEnabled:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -307,7 +307,7 @@ class TestSkillExecutorWiringEnabled:
         assert skill_executor.state_validator._llm is tool._llm_adapter
 
     def test_skill_executor_and_subgoal_runner_share_live_recorder(self) -> None:
-        from opengui.skills.executor import SkillExecutor
+        from guiclaw.skills.executor import SkillExecutor
 
         gui_config = _make_gui_config(enable_skill_execution=True)
         tool = _make_tool(gui_config)
@@ -320,7 +320,7 @@ class TestSkillExecutorWiringEnabled:
                 patch("nanobot.agent.tools.gui.GuiAgent.__init__", return_value=None) as mock_init,
                 patch("nanobot.agent.tools.gui.TrajectoryRecorder", return_value=recorder),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -343,7 +343,7 @@ class TestSkillExecutorWiringEnabled:
         assert getattr(skill_executor.subgoal_runner, "_trajectory_recorder", None) is recorder
 
     def test_image_scale_ratio_is_forwarded_to_skill_components(self) -> None:
-        from opengui.skills.executor import SkillExecutor
+        from guiclaw.skills.executor import SkillExecutor
 
         gui_config = GuiConfig(
             backend="dry-run",
@@ -362,7 +362,7 @@ class TestSkillExecutorWiringEnabled:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -407,7 +407,7 @@ class TestGuiAgentProfileWiring:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -444,7 +444,7 @@ class TestGuiAgentProfileWiring:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",
@@ -481,7 +481,7 @@ class TestGuiAgentProfileWiring:
                     return_value=MagicMock(path=None),
                 ),
             ):
-                with patch("opengui.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
+                with patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run:
                     mock_run.return_value = MagicMock(
                         success=True,
                         summary="ok",

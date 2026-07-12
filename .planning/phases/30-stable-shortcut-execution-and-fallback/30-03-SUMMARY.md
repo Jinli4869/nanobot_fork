@@ -2,7 +2,7 @@
 phase: 30-stable-shortcut-execution-and-fallback
 plan: "03"
 subsystem: testing
-tags: [pytest, opengui, shortcut-execution, fallback, trajectory]
+tags: [pytest, guiclaw, shortcut-execution, fallback, trajectory]
 requires:
   - phase: 30-01
     provides: shortcut executor wiring and fallback handling in `GuiAgent.run()`
@@ -22,7 +22,7 @@ key-files:
   created:
     - .planning/phases/30-stable-shortcut-execution-and-fallback/30-03-SUMMARY.md
   modified:
-    - tests/test_opengui_p30_stable_shortcut_execution.py
+    - tests/test_guiclaw_p30_stable_shortcut_execution.py
     - .planning/phases/30-stable-shortcut-execution-and-fallback/deferred-items.md
 key-decisions:
   - "Plan 03 stayed test-only because the existing Plan 01 fallback branch already satisfied the new coverage on first verification."
@@ -61,13 +61,13 @@ Each task was committed atomically:
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p30_stable_shortcut_execution.py` - Added fallback and telemetry coverage plus an in-memory trajectory recorder helper.
+- `tests/test_guiclaw_p30_stable_shortcut_execution.py` - Added fallback and telemetry coverage plus an in-memory trajectory recorder helper.
 - `.planning/phases/30-stable-shortcut-execution-and-fallback/30-03-SUMMARY.md` - Recorded execution outcome, verification, and deferred issues context for Plan 03.
 - `.planning/phases/30-stable-shortcut-execution-and-fallback/deferred-items.md` - Logged unrelated full-suite failures discovered during verification.
 
 ## Decisions Made
 
-- Kept `opengui/agent.py` unchanged because the existing Plan 01 fallback branch already met the new assertions.
+- Kept `guiclaw/agent.py` unchanged because the existing Plan 01 fallback branch already met the new assertions.
 - Used task-local fakes for `_run_once()` and trajectory recording so the tests isolate fallback behavior without depending on JSONL artifact parsing.
 
 ## Deviations from Plan
@@ -85,7 +85,7 @@ None - no external service configuration required.
 
 ## Next Phase Readiness
 
-- Phase 30 fallback behavior is now covered by all nine planned Phase 30 tests, and `tests/test_opengui_p30_stable_shortcut_execution.py` is fully green.
+- Phase 30 fallback behavior is now covered by all nine planned Phase 30 tests, and `tests/test_guiclaw_p30_stable_shortcut_execution.py` is fully green.
 - Repo-wide suite cleanup is still needed outside this plan before claiming a globally green test baseline.
 
 ## Self-Check

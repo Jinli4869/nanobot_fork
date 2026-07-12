@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from opengui.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
+from guiclaw.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
 
 
 def _load_validator_module():

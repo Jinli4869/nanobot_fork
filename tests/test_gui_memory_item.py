@@ -18,7 +18,7 @@ import pytest
 
 class TestGuiMemoryItem:
     def test_creation_defaults(self):
-        from opengui.memory.gui_memory_item import GuiMemoryItem
+        from guiclaw.memory.gui_memory_item import GuiMemoryItem
         item = GuiMemoryItem(title="T", description="D", content="C")
         assert item.title == "T"
         assert item.description == "D"
@@ -28,24 +28,24 @@ class TestGuiMemoryItem:
         assert isinstance(item.created_at, float)
 
     def test_creation_explicit_status(self):
-        from opengui.memory.gui_memory_item import GuiMemoryItem
+        from guiclaw.memory.gui_memory_item import GuiMemoryItem
         item = GuiMemoryItem(title="T", description="D", content="C", status="failure")
         assert item.status == "failure"
 
     def test_creation_invalid_status_raises(self):
-        from opengui.memory.gui_memory_item import GuiMemoryItem
+        from guiclaw.memory.gui_memory_item import GuiMemoryItem
         with pytest.raises(ValueError, match="status must be one of"):
             GuiMemoryItem(title="T", description="D", content="C", status="invalid")
 
     def test_repr(self):
-        from opengui.memory.gui_memory_item import GuiMemoryItem
+        from guiclaw.memory.gui_memory_item import GuiMemoryItem
         item = GuiMemoryItem(title="Fix Alarm", description="D", content="C", status="failure")
         r = repr(item)
         assert "Fix Alarm" in r
         assert "failure" in r
 
     def test_to_dict_roundtrip(self):
-        from opengui.memory.gui_memory_item import GuiMemoryItem
+        from guiclaw.memory.gui_memory_item import GuiMemoryItem
         item = GuiMemoryItem(
             title="Navigate Settings",
             description="Use when changing wallpaper",
@@ -66,7 +66,7 @@ class TestGuiMemoryItem:
         assert restored.app == item.app
 
     def test_from_dict_defaults(self):
-        from opengui.memory.gui_memory_item import GuiMemoryItem
+        from guiclaw.memory.gui_memory_item import GuiMemoryItem
         item = GuiMemoryItem.from_dict({
             "title": "Minimal",
             "description": "No extra fields",
@@ -451,7 +451,7 @@ class TestMemoryBankIO:
 
 
 # ---------------------------------------------------------------------------
-# OpenGUI memory store + router retrieval
+# GUIClaw memory store + router retrieval
 # ---------------------------------------------------------------------------
 
 class TestMemoryBankJSONL:
@@ -503,7 +503,7 @@ class TestGuiRouterMemoryRetriever:
         from nanobot.agent.tools.gui import GuiRouterMemoryRetriever
         from scripts.induce_gui_memory import GuiMemoryItem, append_to_memory_bank
 
-        bank_dir = tmp_path / "opengui_memory"
+        bank_dir = tmp_path / "guiclaw_memory"
         bank_dir.mkdir()
         bank_path = bank_dir / "gui_memory_bank.jsonl"
         append_to_memory_bank([
@@ -518,7 +518,7 @@ class TestGuiRouterMemoryRetriever:
                 app="org.joinmastodon.android.mastodon",
             )
         ], bank_path)
-        monkeypatch.setattr(gui_tools, "DEFAULT_OPENGUI_MEMORY_DIR", bank_dir)
+        monkeypatch.setattr(gui_tools, "DEFAULT_GUICLAW_MEMORY_DIR", bank_dir)
 
         retriever = GuiRouterMemoryRetriever(tmp_path / "workspace")
         context = retriever.retrieve(
@@ -528,7 +528,7 @@ class TestGuiRouterMemoryRetriever:
 
         assert any("invite" in item.text.casefold() for item in context.evidence)
         assert any(
-            item.source.startswith("opengui/gui_memory:org.joinmastodon.android.mastodon")
+            item.source.startswith("guiclaw/gui_memory:org.joinmastodon.android.mastodon")
             for item in context.evidence
         )
 
@@ -538,15 +538,15 @@ class TestGuiRouterMemoryRetriever:
         retriever = GuiRouterMemoryRetriever(tmp_path / "workspace")
         chunks = [
             (
-                "opengui/policy:com.google.android.documentsui:mw_file_management_fuzzy_search_first",
+                "guiclaw/policy:com.google.android.documentsui:mw_file_management_fuzzy_search_first",
                 "Generate invite link automation policy for Files search before rename tasks.",
             ),
             (
-                "opengui/policy:mw_adb_shortcuts_when_allowed",
+                "guiclaw/policy:mw_adb_shortcuts_when_allowed",
                 "For GUI automation tasks, adb shell commands can generate results when allowed.",
             ),
             (
-                "opengui/app:org.joinmastodon.android.mastodon:gui_memory_invite",
+                "guiclaw/app:org.joinmastodon.android.mastodon:gui_memory_invite",
                 "Title: Generate invite links\nGuidance: Use server invite controls to generate invite links.",
             ),
         ]
@@ -558,4 +558,4 @@ class TestGuiRouterMemoryRetriever:
         )
 
         sources = [item.source for item in context.evidence]
-        assert sources == ["opengui/app:org.joinmastodon.android.mastodon:gui_memory_invite"]
+        assert sources == ["guiclaw/app:org.joinmastodon.android.mastodon:gui_memory_invite"]

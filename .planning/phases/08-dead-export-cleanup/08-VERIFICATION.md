@@ -42,9 +42,9 @@ re_verification: false
 |----------|----------|--------|---------|
 | `nanobot/agent/tools/gui.py` | TrajectorySummarizer post-run hook | VERIFIED | Contains `_summarize_trajectory()` method (line 227), lazy-imports `TrajectorySummarizer`, called in `execute()` between trace resolution and skill extraction |
 | `nanobot/agent/__init__.py` | Expanded public API exports | VERIFIED | Exports 9 names including `TaskPlanner`, `PlanNode`, `TreeRouter`, `NodeResult`, `RouterContext` in `__all__` |
-| `tests/test_opengui_p8_trajectory.py` | Tests for summarizer wiring and exports | VERIFIED | 246 lines, 4 tests (all pass): `test_summarizer_called_post_run`, `test_summarizer_failure_non_fatal`, `test_summarizer_skipped_when_no_trace`, `test_planner_router_exported_from_agent_package` |
+| `tests/test_guiclaw_p8_trajectory.py` | Tests for summarizer wiring and exports | VERIFIED | 246 lines, 4 tests (all pass): `test_summarizer_called_post_run`, `test_summarizer_failure_non_fatal`, `test_summarizer_skipped_when_no_trace`, `test_planner_router_exported_from_agent_package` |
 | `nanobot/agent/router.py` | Enhanced TreeRouter with parallel AND and prioritized OR | VERIFIED | Contains `import asyncio`, `_CAPABILITY_PRIORITY` dict, `max_concurrency` param, `asyncio.Semaphore`, `asyncio.gather`, `sorted()` on children |
-| `tests/test_opengui_p8_planning.py` | Tests for parallel AND, OR priority, complexity gate | VERIFIED | 595 lines, 14 tests (all pass): 4 AND tests, 4 OR tests, 6 complexity gate/integration tests |
+| `tests/test_guiclaw_p8_planning.py` | Tests for parallel AND, OR priority, complexity gate | VERIFIED | 595 lines, 14 tests (all pass): 4 AND tests, 4 OR tests, 6 complexity gate/integration tests |
 | `nanobot/agent/loop.py` | Complexity gate + plan-and-execute integration | VERIFIED | Contains `_COMPLEXITY_TOOL`, `_needs_planning()`, `_plan_and_execute()`, `_GuiDispatchAdapter`, gate condition, `Decomposed plan:` log |
 
 ---
@@ -53,7 +53,7 @@ re_verification: false
 
 | From | To | Via | Status | Details |
 |------|----|----|--------|---------|
-| `nanobot/agent/tools/gui.py` | `opengui/trajectory/summarizer.py` | lazy import and call `summarize_file()` | WIRED | Line 231: `from opengui.trajectory.summarizer import TrajectorySummarizer`; line 235: `return await summarizer.summarize_file(trace_path)` |
+| `nanobot/agent/tools/gui.py` | `guiclaw/trajectory/summarizer.py` | lazy import and call `summarize_file()` | WIRED | Line 231: `from guiclaw.trajectory.summarizer import TrajectorySummarizer`; line 235: `return await summarizer.summarize_file(trace_path)` |
 | `nanobot/agent/__init__.py` | `nanobot/agent/planner.py` | direct import | WIRED | Line 6: `from nanobot.agent.planner import PlanNode, TaskPlanner` |
 | `nanobot/agent/__init__.py` | `nanobot/agent/router.py` | direct import | WIRED | Line 7: `from nanobot.agent.router import NodeResult, RouterContext, TreeRouter` |
 | `nanobot/agent/router.py` | `nanobot/agent/planner.py` | imports PlanNode for type checking | WIRED | Line 106: `from nanobot.agent.planner import PlanNode` (lazy, inside `execute()`) |

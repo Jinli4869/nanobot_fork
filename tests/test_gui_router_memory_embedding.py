@@ -96,10 +96,10 @@ _INVITE = GuiMemoryItem(
 
 
 def _make_bank(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, items: list[GuiMemoryItem]) -> None:
-    bank_dir = tmp_path / "opengui_memory"
+    bank_dir = tmp_path / "guiclaw_memory"
     bank_dir.mkdir()
     append_to_memory_bank(items, bank_dir / "gui_memory_bank.jsonl")
-    monkeypatch.setattr(gui_tools, "DEFAULT_OPENGUI_MEMORY_DIR", bank_dir)
+    monkeypatch.setattr(gui_tools, "DEFAULT_GUICLAW_MEMORY_DIR", bank_dir)
 
 
 async def test_embedding_ranks_semantic_match_over_lexical_void(tmp_path, monkeypatch):
@@ -113,7 +113,7 @@ async def test_embedding_ranks_semantic_match_over_lexical_void(tmp_path, monkey
     assert context.evidence, "expected GUI-memory evidence"
     top = context.evidence[0]
     assert "pencil" in top.text or "composing" in top.text  # the compose item, ranked first
-    assert top.source.startswith("opengui/gui_memory:com.gmailclone")
+    assert top.source.startswith("guiclaw/gui_memory:com.gmailclone")
 
 
 async def test_no_provider_delegates_to_keyword(tmp_path, monkeypatch):
@@ -140,7 +140,7 @@ async def test_embedding_failure_falls_back_to_keyword(tmp_path, monkeypatch):
 
     assert any("invite" in item.text.casefold() for item in context.evidence)
     assert any(
-        item.source.startswith("opengui/gui_memory:org.joinmastodon.android.mastodon")
+        item.source.startswith("guiclaw/gui_memory:org.joinmastodon.android.mastodon")
         for item in context.evidence
     )
 
@@ -182,7 +182,7 @@ class _RecordingRouter:
         self.queries.append(task)
         return GuiRouterContext(
             app_candidates=(),
-            evidence=(GuiRouterMemoryEvidence(source="opengui/gui_memory:x:success",
+            evidence=(GuiRouterMemoryEvidence(source="guiclaw/gui_memory:x:success",
                                               text=f"hint-for::{task}"),),
         )
 

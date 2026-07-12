@@ -7,7 +7,7 @@ depends_on: []
 files_modified:
   - nanobot/agent/router.py
   - nanobot/agent/loop.py
-  - tests/test_opengui_p22_route_dispatch.py
+  - tests/test_guiclaw_p22_route_dispatch.py
 autonomous: true
 requirements: [SKU-01, SKU-02, SKU-03]
 
@@ -23,7 +23,7 @@ must_haves:
     - path: "nanobot/agent/loop.py"
       provides: "GUI-gated complexity assessment"
       contains: "GUI"
-    - path: "tests/test_opengui_p22_route_dispatch.py"
+    - path: "tests/test_guiclaw_p22_route_dispatch.py"
       provides: "Regression tests for exit code detection"
   key_links:
     - from: "nanobot/agent/router.py"
@@ -52,7 +52,7 @@ Output: Patched router.py and loop.py with regression tests.
 @nanobot/agent/router.py
 @nanobot/agent/loop.py
 @nanobot/agent/tools/shell.py (ExecTool output format reference — line 132-134: "STDERR:\n...\nExit code: {N}")
-@tests/test_opengui_p22_route_dispatch.py
+@tests/test_guiclaw_p22_route_dispatch.py
 
 <interfaces>
 <!-- ExecTool output format (shell.py lines 129-136): -->
@@ -104,7 +104,7 @@ _COMPLEXITY_TOOL: dict[str, Any] = {
 
 <task type="auto" tdd="true">
   <name>Task 1: Fix error detection and AND sequential execution in router.py</name>
-  <files>nanobot/agent/router.py, tests/test_opengui_p22_route_dispatch.py</files>
+  <files>nanobot/agent/router.py, tests/test_guiclaw_p22_route_dispatch.py</files>
   <behavior>
     - Test: ExecTool output "STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127" is detected as failure by _run_tool (direct route, no fallbacks)
     - Test: ExecTool output "STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127" is detected as failure by _dispatch_with_fallback (falls through to next fallback)
@@ -130,14 +130,14 @@ _COMPLEXITY_TOOL: dict[str, Any] = {
    - Remove `max_concurrency` parameter from `__init__` and its docstring references (no longer needed)
    - Update the class docstring to say "AND nodes execute children sequentially" instead of "in parallel via asyncio.gather"
 
-4. **Add regression tests** at the bottom of `tests/test_opengui_p22_route_dispatch.py`:
+4. **Add regression tests** at the bottom of `tests/test_guiclaw_p22_route_dispatch.py`:
    - `test_run_tool_detects_nonzero_exit_code`: registry.execute returns "STDERR:\n/bin/sh: pip: command not found\n\nExit code: 127", assert NodeResult.success is False
    - `test_run_tool_allows_zero_exit_code`: registry.execute returns "some output\n\nExit code: 0", assert NodeResult.success is True
    - `test_dispatch_with_fallback_detects_nonzero_exit_code`: primary route returns exit code 127, fallback route exists, assert fallback is tried
    - `test_execute_and_runs_sequentially`: create 3 ATOM children that append to a shared list with timestamps/ordering markers, assert execution order is 0,1,2 (not interleaved)
   </action>
   <verify>
-    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_opengui_p22_route_dispatch.py -x -q 2>&1 | tail -20</automated>
+    <automated>cd /Users/jinli/Documents/Personal/nanobot_fork && python -m pytest tests/test_guiclaw_p22_route_dispatch.py -x -q 2>&1 | tail -20</automated>
   </verify>
   <done>All existing route dispatch tests still pass. New tests confirm: non-zero exit codes detected as failures in _run_tool, _run_mcp, and _dispatch_with_fallback; exit code 0 passes; AND nodes execute sequentially.</done>
 </task>
@@ -190,7 +190,7 @@ _COMPLEXITY_TOOL: dict[str, Any] = {
 </tasks>
 
 <verification>
-1. All existing tests pass: `python -m pytest tests/test_opengui_p22_route_dispatch.py -x -q`
+1. All existing tests pass: `python -m pytest tests/test_guiclaw_p22_route_dispatch.py -x -q`
 2. New exit-code detection tests pass
 3. AND sequential execution test passes
 4. `_COMPLEXITY_TOOL` description contains "GUI" as primary gate keyword
@@ -202,7 +202,7 @@ _COMPLEXITY_TOOL: dict[str, Any] = {
 - Exit code 0 outputs are NOT treated as failures
 - AND node children execute sequentially (no asyncio.gather)
 - _needs_planning only returns True for GUI tasks, not for pure shell/tool tasks
-- All existing tests in test_opengui_p22_route_dispatch.py remain green
+- All existing tests in test_guiclaw_p22_route_dispatch.py remain green
 </success_criteria>
 
 <output>

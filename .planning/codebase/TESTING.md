@@ -43,7 +43,7 @@ pytest tests/test_file.py::TestClass::test_method  # Run specific test
 
 **File count:** 457 tests across 28+ test files
 - Largest: `test_matrix_channel.py` (1318 lines)
-- Core tests: `test_base_channel.py`, `test_evaluator.py`, `test_opengui.py`, `test_cron_service.py`
+- Core tests: `test_base_channel.py`, `test_evaluator.py`, `test_guiclaw.py`, `test_cron_service.py`
 
 ## Test Structure
 
@@ -87,7 +87,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 **Patching:**
 - Use `patch()` context manager: `with patch("module.path.to.Class") as MockClass:`
 - Monkeypatch for attribute replacement: `monkeypatch.setattr(obj, "attr", value)`
-- Example from `test_opengui.py`:
+- Example from `test_guiclaw.py`:
   ```python
   async def test_adb_backend_resolves_relative_tap(monkeypatch: pytest.MonkeyPatch) -> None:
       backend = AdbBackend()
@@ -105,7 +105,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 **Recording Mocks:**
 - Custom mock classes that track calls: `class _RecordingLLM(_ScriptedLLM):`
 - Capture message history for assertion: `self.calls: list[list[dict]] = []`
-- Example from `test_opengui.py`:
+- Example from `test_guiclaw.py`:
   ```python
   class _RecordingLLM(_ScriptedLLM):
       def __init__(self, responses: list[LLMResponse]) -> None:
@@ -177,7 +177,7 @@ def _make_tool_response(history_entry, memory_update):
 
 **Pytest Fixtures:**
 - Built-in fixtures used: `tmp_path` (temporary directory), `monkeypatch` (attribute patching)
-- Example usage from `test_opengui.py`:
+- Example usage from `test_guiclaw.py`:
   ```python
   @pytest.mark.asyncio
   async def test_agent_failure_keeps_last_trace_path(tmp_path: Path) -> None:

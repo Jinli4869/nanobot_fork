@@ -29,7 +29,7 @@
 
 **Type safety & protocol conformance**
 - BackgroundDesktopBackend satisfies the `DeviceBackend` protocol — implements `observe()`, `execute()`, `preflight()`, `list_apps()` with correct signatures
-- Inner backend typed as `DeviceBackend` (not `object`) using `TYPE_CHECKING` import from `opengui.interfaces`
+- Inner backend typed as `DeviceBackend` (not `object`) using `TYPE_CHECKING` import from `guiclaw.interfaces`
 - Expose `platform` property delegating to `inner.platform` — GuiAgent and prompts read this for OS identification
 - No explicit `class BackgroundDesktopBackend(DeviceBackend)` subclassing — structural conformance via duck typing (consistent with other backends)
 
@@ -60,13 +60,13 @@ None — discussion stayed within phase scope
 
 ## Summary
 
-Phase 10 delivers `BackgroundDesktopBackend` — a thin decorator that wraps any `DeviceBackend` to route GUI actions through a virtual display. A near-complete draft exists in `opengui/backends/background.py` (untracked). The draft correctly implements DISPLAY injection and coordinate offset logic but is missing four key pieces locked by CONTEXT.md decisions: (1) lifecycle guard (`_started`/`_stopped` flags that gate `observe()`/`execute()` with a clear error), (2) async context manager (`__aenter__`/`__aexit__`), (3) save/restore of the original DISPLAY env at preflight/shutdown, and (4) idempotent shutdown with warning log and exception suppression.
+Phase 10 delivers `BackgroundDesktopBackend` — a thin decorator that wraps any `DeviceBackend` to route GUI actions through a virtual display. A near-complete draft exists in `guiclaw/backends/background.py` (untracked). The draft correctly implements DISPLAY injection and coordinate offset logic but is missing four key pieces locked by CONTEXT.md decisions: (1) lifecycle guard (`_started`/`_stopped` flags that gate `observe()`/`execute()` with a clear error), (2) async context manager (`__aenter__`/`__aexit__`), (3) save/restore of the original DISPLAY env at preflight/shutdown, and (4) idempotent shutdown with warning log and exception suppression.
 
-The implementation is entirely in stdlib + existing opengui internals — no new dependencies are required. The `DeviceBackend` protocol in `opengui/interfaces.py` uses `@typing.runtime_checkable` + `typing.Protocol`; BackgroundDesktopBackend must structurally match it without subclassing. `Action` is a frozen dataclass so `dataclasses.replace()` is the correct and only way to produce offset copies.
+The implementation is entirely in stdlib + existing guiclaw internals — no new dependencies are required. The `DeviceBackend` protocol in `guiclaw/interfaces.py` uses `@typing.runtime_checkable` + `typing.Protocol`; BackgroundDesktopBackend must structurally match it without subclassing. `Action` is a frozen dataclass so `dataclasses.replace()` is the correct and only way to produce offset copies.
 
-All four test scenarios (BGND-01 through BGND-04) can be verified with fast unit tests using `AsyncMock` and `unittest.mock` — no real subprocess, no real Xvfb, no real display needed. The Phase 9 tests (`test_opengui_p9_xvfb.py`, `test_opengui_p9_virtual_display.py`) set the template for mock patterns and test file naming.
+All four test scenarios (BGND-01 through BGND-04) can be verified with fast unit tests using `AsyncMock` and `unittest.mock` — no real subprocess, no real Xvfb, no real display needed. The Phase 9 tests (`test_guiclaw_p9_xvfb.py`, `test_guiclaw_p9_virtual_display.py`) set the template for mock patterns and test file naming.
 
-**Primary recommendation:** Refine the existing draft to add the four missing pieces, then write `tests/test_opengui_p10_background.py` following the Phase 9 test style.
+**Primary recommendation:** Refine the existing draft to add the four missing pieces, then write `tests/test_guiclaw_p10_background.py` following the Phase 9 test style.
 
 ---
 
@@ -77,7 +77,7 @@ All four test scenarios (BGND-01 through BGND-04) can be verified with fast unit
 |---------|---------|---------|--------------|
 | Python stdlib `os` | 3.11+ | `os.environ` manipulation for DISPLAY | Only option for process-global env vars pyautogui/mss read |
 | Python stdlib `dataclasses` | 3.11+ | `dataclasses.replace()` for frozen Action copies | Action is frozen; this is the only correct mutation path |
-| Python stdlib `logging` | 3.11+ | Lifecycle event and warning logs | Consistent with project — loguru used by nanobot but opengui uses stdlib logging |
+| Python stdlib `logging` | 3.11+ | Lifecycle event and warning logs | Consistent with project — loguru used by nanobot but guiclaw uses stdlib logging |
 | `typing.TYPE_CHECKING` | 3.11+ | Conditional import of `DeviceBackend` for type annotations | Avoids circular imports at runtime; project pattern in interfaces.py and desktop.py |
 
 ### Supporting
@@ -91,7 +91,7 @@ All four test scenarios (BGND-01 through BGND-04) can be verified with fast unit
 |------------|-----------|----------|
 | `os.environ["DISPLAY"]` | `subprocess.Popen(env=...)` per call | Subprocess env passthrough is not feasible — pyautogui and mss read `os.environ` directly, not subprocess env |
 | `_stopped: bool` flag | `contextlib.AsyncExitStack` | Flag is simpler and explicit; ExitStack adds complexity without benefit here |
-| stdlib `logging` | `loguru` | loguru is used by nanobot but opengui uses stdlib logging for its backend modules; stay consistent |
+| stdlib `logging` | `loguru` | loguru is used by nanobot but guiclaw uses stdlib logging for its backend modules; stay consistent |
 
 **Installation:** No new packages required — all dependencies are stdlib or already present.
 
@@ -101,14 +101,14 @@ All four test scenarios (BGND-01 through BGND-04) can be verified with fast unit
 
 ### Recommended Project Structure
 ```
-opengui/
+guiclaw/
 ├── backends/
 │   ├── background.py        # BackgroundDesktopBackend (this phase)
 │   ├── virtual_display.py   # VirtualDisplayManager protocol, DisplayInfo, NoOpDisplayManager (Phase 9)
 │   └── displays/
 │       └── xvfb.py          # XvfbDisplayManager (Phase 9)
 tests/
-└── test_opengui_p10_background.py   # New test file this phase
+└── test_guiclaw_p10_background.py   # New test file this phase
 ```
 
 ### Pattern 1: Decorator / Wrapper with Lifecycle Guard
@@ -116,7 +116,7 @@ tests/
 **When to use:** Whenever you need to inject cross-cutting setup/teardown around an existing interface without modifying implementations.
 
 ```python
-# Source: opengui/interfaces.py + locked CONTEXT.md decisions
+# Source: guiclaw/interfaces.py + locked CONTEXT.md decisions
 from __future__ import annotations
 
 import dataclasses
@@ -125,12 +125,12 @@ import os
 import pathlib
 from typing import TYPE_CHECKING
 
-from opengui.backends.virtual_display import DisplayInfo, VirtualDisplayManager
+from guiclaw.backends.virtual_display import DisplayInfo, VirtualDisplayManager
 
 if TYPE_CHECKING:
-    from opengui.action import Action
-    from opengui.interfaces import DeviceBackend
-    from opengui.observation import Observation
+    from guiclaw.action import Action
+    from guiclaw.interfaces import DeviceBackend
+    from guiclaw.observation import Observation
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +242,7 @@ elif "DISPLAY" in os.environ:
 **When to use:** Any time you need to adjust fields on `Action` or `DisplayInfo` — direct assignment raises `FrozenInstanceError`.
 
 ```python
-# Source: opengui/action.py (Action is frozen=True)
+# Source: guiclaw/action.py (Action is frozen=True)
 import dataclasses
 adjusted = dataclasses.replace(
     action,
@@ -258,9 +258,9 @@ adjusted = dataclasses.replace(
 **When to use:** Every test — avoids real subprocess, real display, real pyautogui calls.
 
 ```python
-# Source: tests/test_opengui_p9_virtual_display.py pattern
+# Source: tests/test_guiclaw_p9_virtual_display.py pattern
 from unittest.mock import AsyncMock, MagicMock
-from opengui.backends.virtual_display import DisplayInfo, NoOpDisplayManager
+from guiclaw.backends.virtual_display import DisplayInfo, NoOpDisplayManager
 
 def _make_mock_manager(display_id: str = ":99", offset_x: int = 0, offset_y: int = 0):
     mgr = AsyncMock()
@@ -330,8 +330,8 @@ def _make_mock_inner(platform: str = "linux"):
 
 ### Pitfall 5: Draft Uses `inner: object` — Protocol Annotations Lost
 **What goes wrong:** The draft types `inner` as `object` and adds `# type: ignore[union-attr]` comments on every delegation call. This makes mypy and IDEs blind to mismatches.
-**Why it happens:** Circular import avoidance done incorrectly — `DeviceBackend` is in `opengui.interfaces` which imports from `opengui.backends.virtual_display`.
-**How to avoid:** Use the `TYPE_CHECKING` guard: `if TYPE_CHECKING: from opengui.interfaces import DeviceBackend`. Annotate `self._inner: DeviceBackend`. The `# type: ignore` comments can then be dropped.
+**Why it happens:** Circular import avoidance done incorrectly — `DeviceBackend` is in `guiclaw.interfaces` which imports from `guiclaw.backends.virtual_display`.
+**How to avoid:** Use the `TYPE_CHECKING` guard: `if TYPE_CHECKING: from guiclaw.interfaces import DeviceBackend`. Annotate `self._inner: DeviceBackend`. The `# type: ignore` comments can then be dropped.
 **Warning signs:** `type: ignore[union-attr]` on delegation lines in the production code.
 
 ---
@@ -342,7 +342,7 @@ Verified patterns from the existing codebase:
 
 ### DeviceBackend Protocol (the interface BackgroundDesktopBackend must match)
 ```python
-# Source: opengui/interfaces.py
+# Source: guiclaw/interfaces.py
 @typing.runtime_checkable
 class DeviceBackend(typing.Protocol):
     async def observe(self, screenshot_path: pathlib.Path, timeout: float = 5.0) -> Observation: ...
@@ -355,7 +355,7 @@ class DeviceBackend(typing.Protocol):
 
 ### VirtualDisplayManager Protocol and DisplayInfo
 ```python
-# Source: opengui/backends/virtual_display.py
+# Source: guiclaw/backends/virtual_display.py
 @dataclasses.dataclass(frozen=True)
 class DisplayInfo:
     display_id: str   # e.g. ":99"
@@ -400,9 +400,9 @@ elif "DISPLAY" in os.environ:
 
 ### AsyncMock for Display Manager in Tests (Phase 9 pattern)
 ```python
-# Source: tests/test_opengui_p9_xvfb.py pattern
+# Source: tests/test_guiclaw_p9_xvfb.py pattern
 from unittest.mock import AsyncMock
-from opengui.backends.virtual_display import DisplayInfo
+from guiclaw.backends.virtual_display import DisplayInfo
 
 def _make_manager(display_id=":99", offset_x=0, offset_y=0):
     mgr = AsyncMock()
@@ -450,33 +450,33 @@ def _make_manager(display_id=":99", offset_x=0, offset_y=0):
 |----------|-------|
 | Framework | pytest 9.x + pytest-asyncio 1.3.x |
 | Config file | `pyproject.toml` — `[tool.pytest.ini_options]` with `asyncio_mode = "auto"` |
-| Quick run command | `pytest tests/test_opengui_p10_background.py -x -q` |
+| Quick run command | `pytest tests/test_guiclaw_p10_background.py -x -q` |
 | Full suite command | `pytest tests/ -x -q` |
 
 ### Phase Requirements → Test Map
 | Req ID | Behavior | Test Type | Automated Command | File Exists? |
 |--------|----------|-----------|-------------------|-------------|
-| BGND-01 | BackgroundDesktopBackend wraps DeviceBackend and satisfies protocol (`isinstance(wrapper, DeviceBackend)`) | unit | `pytest tests/test_opengui_p10_background.py::test_isinstance_device_backend -x` | ❌ Wave 0 |
-| BGND-01 | `preflight()` calls `display_manager.start()` then `inner.preflight()` in order | unit | `pytest tests/test_opengui_p10_background.py::test_preflight_calls_start_and_inner_preflight -x` | ❌ Wave 0 |
-| BGND-01 | `observe()` and `execute()` before `preflight()` raise `RuntimeError` | unit | `pytest tests/test_opengui_p10_background.py::test_observe_before_preflight_raises -x` | ❌ Wave 0 |
-| BGND-01 | `async with` calls `preflight()` on enter and `shutdown()` on exit | unit | `pytest tests/test_opengui_p10_background.py::test_async_context_manager -x` | ❌ Wave 0 |
-| BGND-02 | After `preflight()`, `DISPLAY` env var equals the `display_id` from `DisplayInfo` | unit | `pytest tests/test_opengui_p10_background.py::test_display_env_set_after_preflight -x` | ❌ Wave 0 |
-| BGND-02 | `DISPLAY` is restored (or deleted) after `shutdown()` | unit | `pytest tests/test_opengui_p10_background.py::test_display_env_restored_after_shutdown -x` | ❌ Wave 0 |
-| BGND-02 | Non-X11 display_id (e.g. "noop") does NOT set `DISPLAY` | unit | `pytest tests/test_opengui_p10_background.py::test_noop_display_does_not_set_display_env -x` | ❌ Wave 0 |
-| BGND-03 | Zero offset (Xvfb default): action coordinates pass through unchanged | unit | `pytest tests/test_opengui_p10_background.py::test_zero_offset_passthrough -x` | ❌ Wave 0 |
-| BGND-03 | Non-zero offset: `x`, `y`, `x2`, `y2` are each incremented by offset | unit | `pytest tests/test_opengui_p10_background.py::test_nonzero_offset_applied -x` | ❌ Wave 0 |
-| BGND-03 | Relative action (`action.relative=True`): offset not applied | unit | `pytest tests/test_opengui_p10_background.py::test_relative_action_offset_skipped -x` | ❌ Wave 0 |
-| BGND-04 | First `shutdown()` calls `display_manager.stop()` exactly once | unit | `pytest tests/test_opengui_p10_background.py::test_shutdown_stops_manager -x` | ❌ Wave 0 |
-| BGND-04 | Second `shutdown()` call is a no-op (stop() not called again) | unit | `pytest tests/test_opengui_p10_background.py::test_shutdown_idempotent -x` | ❌ Wave 0 |
-| BGND-04 | `display_manager.stop()` raising does not propagate from `shutdown()` | unit | `pytest tests/test_opengui_p10_background.py::test_shutdown_suppresses_stop_error -x` | ❌ Wave 0 |
+| BGND-01 | BackgroundDesktopBackend wraps DeviceBackend and satisfies protocol (`isinstance(wrapper, DeviceBackend)`) | unit | `pytest tests/test_guiclaw_p10_background.py::test_isinstance_device_backend -x` | ❌ Wave 0 |
+| BGND-01 | `preflight()` calls `display_manager.start()` then `inner.preflight()` in order | unit | `pytest tests/test_guiclaw_p10_background.py::test_preflight_calls_start_and_inner_preflight -x` | ❌ Wave 0 |
+| BGND-01 | `observe()` and `execute()` before `preflight()` raise `RuntimeError` | unit | `pytest tests/test_guiclaw_p10_background.py::test_observe_before_preflight_raises -x` | ❌ Wave 0 |
+| BGND-01 | `async with` calls `preflight()` on enter and `shutdown()` on exit | unit | `pytest tests/test_guiclaw_p10_background.py::test_async_context_manager -x` | ❌ Wave 0 |
+| BGND-02 | After `preflight()`, `DISPLAY` env var equals the `display_id` from `DisplayInfo` | unit | `pytest tests/test_guiclaw_p10_background.py::test_display_env_set_after_preflight -x` | ❌ Wave 0 |
+| BGND-02 | `DISPLAY` is restored (or deleted) after `shutdown()` | unit | `pytest tests/test_guiclaw_p10_background.py::test_display_env_restored_after_shutdown -x` | ❌ Wave 0 |
+| BGND-02 | Non-X11 display_id (e.g. "noop") does NOT set `DISPLAY` | unit | `pytest tests/test_guiclaw_p10_background.py::test_noop_display_does_not_set_display_env -x` | ❌ Wave 0 |
+| BGND-03 | Zero offset (Xvfb default): action coordinates pass through unchanged | unit | `pytest tests/test_guiclaw_p10_background.py::test_zero_offset_passthrough -x` | ❌ Wave 0 |
+| BGND-03 | Non-zero offset: `x`, `y`, `x2`, `y2` are each incremented by offset | unit | `pytest tests/test_guiclaw_p10_background.py::test_nonzero_offset_applied -x` | ❌ Wave 0 |
+| BGND-03 | Relative action (`action.relative=True`): offset not applied | unit | `pytest tests/test_guiclaw_p10_background.py::test_relative_action_offset_skipped -x` | ❌ Wave 0 |
+| BGND-04 | First `shutdown()` calls `display_manager.stop()` exactly once | unit | `pytest tests/test_guiclaw_p10_background.py::test_shutdown_stops_manager -x` | ❌ Wave 0 |
+| BGND-04 | Second `shutdown()` call is a no-op (stop() not called again) | unit | `pytest tests/test_guiclaw_p10_background.py::test_shutdown_idempotent -x` | ❌ Wave 0 |
+| BGND-04 | `display_manager.stop()` raising does not propagate from `shutdown()` | unit | `pytest tests/test_guiclaw_p10_background.py::test_shutdown_suppresses_stop_error -x` | ❌ Wave 0 |
 
 ### Sampling Rate
-- **Per task commit:** `pytest tests/test_opengui_p10_background.py -x -q`
+- **Per task commit:** `pytest tests/test_guiclaw_p10_background.py -x -q`
 - **Per wave merge:** `pytest tests/ -x -q`
 - **Phase gate:** Full suite green before `/gsd:verify-work`
 
 ### Wave 0 Gaps
-- [ ] `tests/test_opengui_p10_background.py` — covers BGND-01 through BGND-04 (all 13 test cases above)
+- [ ] `tests/test_guiclaw_p10_background.py` — covers BGND-01 through BGND-04 (all 13 test cases above)
 - [ ] No new framework config needed — `asyncio_mode = "auto"` in `pyproject.toml` covers async tests automatically
 
 ---
@@ -484,17 +484,17 @@ def _make_manager(display_id=":99", offset_x=0, offset_y=0):
 ## Sources
 
 ### Primary (HIGH confidence)
-- `opengui/backends/background.py` — Draft implementation (direct code inspection)
-- `opengui/backends/virtual_display.py` — VirtualDisplayManager protocol and DisplayInfo (direct code inspection)
-- `opengui/interfaces.py` — DeviceBackend protocol, `@runtime_checkable` pattern (direct code inspection)
-- `opengui/action.py` — Action frozen dataclass, `dataclasses.replace()` usage (direct code inspection)
-- `opengui/backends/desktop.py` — LocalDesktopBackend reference implementation (direct code inspection)
+- `guiclaw/backends/background.py` — Draft implementation (direct code inspection)
+- `guiclaw/backends/virtual_display.py` — VirtualDisplayManager protocol and DisplayInfo (direct code inspection)
+- `guiclaw/interfaces.py` — DeviceBackend protocol, `@runtime_checkable` pattern (direct code inspection)
+- `guiclaw/action.py` — Action frozen dataclass, `dataclasses.replace()` usage (direct code inspection)
+- `guiclaw/backends/desktop.py` — LocalDesktopBackend reference implementation (direct code inspection)
 - `.planning/phases/10-background-backend-wrapper/10-CONTEXT.md` — All locked decisions (authoritative)
 - `pyproject.toml` — pytest configuration, `asyncio_mode = "auto"`, `desktop` extras (direct inspection)
 
 ### Secondary (MEDIUM confidence)
-- `tests/test_opengui_p9_virtual_display.py` — Test style, AsyncMock patterns, `asyncio_mode = "auto"` confirmed working
-- `tests/test_opengui_p9_xvfb.py` — Mock boundary patterns, `_make_process()` helper style
+- `tests/test_guiclaw_p9_virtual_display.py` — Test style, AsyncMock patterns, `asyncio_mode = "auto"` confirmed working
+- `tests/test_guiclaw_p9_xvfb.py` — Mock boundary patterns, `_make_process()` helper style
 
 ### Tertiary (LOW confidence)
 - None — all findings are grounded in direct codebase inspection or locked CONTEXT.md decisions

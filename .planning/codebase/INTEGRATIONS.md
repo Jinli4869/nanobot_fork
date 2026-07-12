@@ -95,7 +95,7 @@
   - Workspace: `~/.nanobot/workspace/` (default, configurable)
 
 **Memory & State:**
-- JSON file-based persistent store (`opengui/memory/store.py`)
+- JSON file-based persistent store (`guiclaw/memory/store.py`)
   - Path: `{store_dir}/memory.json`
   - Format: Single JSON file with atomic writes via tempfile
   - Features: Append-only message logging, LLM cache optimization

@@ -1,18 +1,18 @@
-# OpenGUI Adapter Patterns
+# GUIClaw Adapter Patterns
 
-`opengui` stays host-agnostic by depending on two small protocols from
-`opengui/interfaces.py`: `LLMProvider` and `DeviceBackend`. A host agent keeps
+`guiclaw` stays host-agnostic by depending on two small protocols from
+`guiclaw/interfaces.py`: `LLMProvider` and `DeviceBackend`. A host agent keeps
 its own runtime, config, and SDK choices on its side of the boundary, then
 adapts into these protocols before constructing `GuiAgent`.
 
 The production reference is `NanobotLLMAdapter` in
 `nanobot/agent/gui_adapter.py`. Treat that file as a reference example for
-adapter authors, not as a runtime dependency for `opengui`.
+adapter authors, not as a runtime dependency for `guiclaw`.
 
 ## LLMProvider
 
 `LLMProvider` is the model-facing side of the contract. Your adapter takes the
-host runtime's chat client, translates OpenGUI messages and tool definitions
+host runtime's chat client, translates GUIClaw messages and tool definitions
 into the host format, calls the host model, then maps the host response back to
 `LLMResponse` and `ToolCall`.
 
@@ -25,11 +25,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from opengui.interfaces import LLMResponse, ToolCall
+from guiclaw.interfaces import LLMResponse, ToolCall
 
 
 class ExampleHostLLMAdapter:
-    """Wrap a host agent's model client with OpenGUI's chat protocol."""
+    """Wrap a host agent's model client with GUIClaw's chat protocol."""
 
     def __init__(self, host_client: Any, model: str) -> None:
         self._host_client = host_client
@@ -76,7 +76,7 @@ If you want a real implementation instead of a starter skeleton, read
 
 `DeviceBackend` is the execution-facing side of the contract. It must provide:
 
-- `observe(...)` to capture a screenshot plus any metadata OpenGUI needs.
+- `observe(...)` to capture a screenshot plus any metadata GUIClaw needs.
 - `execute(...)` to dispatch a single UI action and return a short status
   string.
 - `preflight()` to fail early when the target device or desktop is unavailable.
@@ -92,18 +92,18 @@ your own `DeviceBackend` around the host's automation APIs.
 Keep the dependency direction one-way:
 
 ```text
-your-host-runtime -> opengui
-opengui -/-> your-host-runtime
+your-host-runtime -> guiclaw
+guiclaw -/-> your-host-runtime
 ```
 
 That means:
 
 - The host runtime owns adapter modules such as `ExampleHostLLMAdapter`.
-- `opengui` runtime code should only import protocol types and shared OpenGUI
+- `guiclaw` runtime code should only import protocol types and shared GUIClaw
   modules.
 - Reference adapters like `NanobotLLMAdapter` and
   `nanobot/agent/gui_adapter.py` are documentation inputs, not imports for
-  `opengui`.
+  `guiclaw`.
 
 Typical wiring looks like this:
 
@@ -112,5 +112,5 @@ Typical wiring looks like this:
 3. Choose `AdbBackend`, `LocalDesktopBackend`, or a custom `DeviceBackend`.
 4. Construct `GuiAgent` with the adapted LLM and backend.
 
-This keeps OpenGUI reusable across claw hosts without coupling the core runtime
+This keeps GUIClaw reusable across claw hosts without coupling the core runtime
 to nanobot or any other host-specific framework.

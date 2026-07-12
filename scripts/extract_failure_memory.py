@@ -5,7 +5,7 @@ Usage:
   # Dry-run: inspect trajectories and print suggested memory entries
   python scripts/extract_failure_memory.py --trace-root <path> --dry-run
 
-  # Write entries to ~/.opengui/memory/
+  # Write entries to ~/.guiclaw/memory/
   python scripts/extract_failure_memory.py --trace-root <path> --write
 """
 
@@ -21,17 +21,17 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_TRACE_ROOT = Path.home() / "Project/MobileWorld_fork/traj_logs/nanobot_gui_only_35b_compact_skills_v2"
-DEFAULT_OPENGUI_MEMORY_DIR = Path.home() / ".opengui" / "memory"
+DEFAULT_GUICLAW_MEMORY_DIR = Path.home() / ".guiclaw" / "memory"
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--trace-root", type=Path, default=DEFAULT_TRACE_ROOT)
-    p.add_argument("--memory-dir", type=Path, default=DEFAULT_OPENGUI_MEMORY_DIR)
+    p.add_argument("--memory-dir", type=Path, default=DEFAULT_GUICLAW_MEMORY_DIR)
     p.add_argument("--dry-run", action="store_true", default=True,
                    help="Print suggestions without writing (default)")
     p.add_argument("--write", dest="dry_run", action="store_false",
-                   help="Write entries to opengui memory store")
+                   help="Write entries to guiclaw memory store")
     p.add_argument("--task", action="append", dest="tasks",
                    help="Only process specific task(s)")
     return p.parse_args()
@@ -42,9 +42,9 @@ def parse_args() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 
 # We need to import these lazily so the script works standalone
-def _import_opengui_types():
+def _import_guiclaw_types():
     try:
-        from opengui.memory.types import MemoryEntry, MemoryType
+        from guiclaw.memory.types import MemoryEntry, MemoryType
         return MemoryEntry, MemoryType
     except ImportError:
         # Fallback for environments without nanobot in path
@@ -328,7 +328,7 @@ def _safe_id(name: str) -> str:
 
 def main() -> None:
     args = parse_args()
-    MemoryEntry, MemoryType = _import_opengui_types()
+    MemoryEntry, MemoryType = _import_guiclaw_types()
 
     trace_root = args.trace_root.expanduser()
     task_dirs = (
@@ -358,8 +358,8 @@ def main() -> None:
         print(f"\nDry run — {len(all_suggestions)} suggestion(s) found. Use --write to persist.")
         return 0
 
-    # Write to opengui memory
-    from opengui.memory.store import MemoryStore
+    # Write to guiclaw memory
+    from guiclaw.memory.store import MemoryStore
 
     store = MemoryStore(args.memory_dir)
     written = 0

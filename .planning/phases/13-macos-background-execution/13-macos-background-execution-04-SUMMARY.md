@@ -29,9 +29,9 @@ key-files:
   created:
     - .planning/phases/13-macos-background-execution/13-MANUAL-SMOKE.md
   modified:
-    - opengui/backends/background.py
-    - tests/test_opengui_p11_integration.py
-    - tests/test_opengui_p12_runtime_contracts.py
+    - guiclaw/backends/background.py
+    - tests/test_guiclaw_p11_integration.py
+    - tests/test_guiclaw_p12_runtime_contracts.py
 
 key-decisions:
   - "The closeout wave tightened optional configure_target_display detection so plain mocks do not spuriously behave like target-display-aware backends."
@@ -76,9 +76,9 @@ Each task was committed atomically:
 2. **Task 2: Add the real-host macOS smoke checklist** - `b9b10a9` (`docs`)
 
 ## Files Created/Modified
-- `opengui/backends/background.py` - narrows optional `configure_target_display` detection so plain mocks do not emit false routing hooks
-- `tests/test_opengui_p11_integration.py` - updates Linux background integration expectations to include `backend_name="xvfb"`
-- `tests/test_opengui_p12_runtime_contracts.py` - makes the darwin probe regression deterministic under the Phase 13 macOS contract
+- `guiclaw/backends/background.py` - narrows optional `configure_target_display` detection so plain mocks do not emit false routing hooks
+- `tests/test_guiclaw_p11_integration.py` - updates Linux background integration expectations to include `backend_name="xvfb"`
+- `tests/test_guiclaw_p12_runtime_contracts.py` - makes the darwin probe regression deterministic under the Phase 13 macOS contract
 - `.planning/phases/13-macos-background-execution/13-MANUAL-SMOKE.md` - records the real-host macOS smoke scenarios and expected outcomes
 
 ## Decisions Made
@@ -95,7 +95,7 @@ Each task was committed atomically:
 - **Found during:** Task 1 (full Phase 13 automated regression slice)
 - **Issue:** Existing regression tests still assumed Linux isolated mocks did not need `backend_name`, and Phase 12 darwin coverage still expected the old generic `platform_unsupported` result.
 - **Fix:** Added `backend_name="xvfb"` to the Linux nanobot regression case and changed the darwin runtime-contract test to stub the new macOS probe result explicitly.
-- **Files modified:** `tests/test_opengui_p11_integration.py`, `tests/test_opengui_p12_runtime_contracts.py`
+- **Files modified:** `tests/test_guiclaw_p11_integration.py`, `tests/test_guiclaw_p12_runtime_contracts.py`
 - **Verification:** Full Phase 13 regression slice reran green
 - **Committed in:** `7aaadce`
 
@@ -103,7 +103,7 @@ Each task was committed atomically:
 - **Found during:** Task 1 (full Phase 13 automated regression slice)
 - **Issue:** `BackgroundDesktopBackend` treated dynamically generated mock attributes as callable `configure_target_display` hooks, producing async warnings during the full slice.
 - **Fix:** Added `_resolve_configure_target_display()` to require a real instance/class definition before invoking the hook.
-- **Files modified:** `opengui/backends/background.py`
+- **Files modified:** `guiclaw/backends/background.py`
 - **Verification:** Full Phase 13 regression slice reran green with the targeted warnings removed
 - **Committed in:** `7aaadce`
 
@@ -114,7 +114,7 @@ Each task was committed atomically:
 
 ## Issues Encountered
 
-The first full closeout run failed on two stale expectations and exposed mock-generated `configure_target_display` warnings. All three were resolved in the same wave, and the full validation command then passed with only one unrelated pre-existing warning remaining in `tests/test_opengui_p4_desktop.py`.
+The first full closeout run failed on two stale expectations and exposed mock-generated `configure_target_display` warnings. All three were resolved in the same wave, and the full validation command then passed with only one unrelated pre-existing warning remaining in `tests/test_guiclaw_p4_desktop.py`.
 
 ## User Setup Required
 
@@ -127,9 +127,9 @@ Phase 13 is fully complete: runtime contract, routing, host integration, automat
 ## Self-Check: PASSED
 
 - `.planning/phases/13-macos-background-execution/13-MANUAL-SMOKE.md` - FOUND
-- `opengui/backends/background.py` - FOUND
-- `tests/test_opengui_p11_integration.py` - FOUND
-- `tests/test_opengui_p12_runtime_contracts.py` - FOUND
+- `guiclaw/backends/background.py` - FOUND
+- `tests/test_guiclaw_p11_integration.py` - FOUND
+- `tests/test_guiclaw_p12_runtime_contracts.py` - FOUND
 
 ---
 *Phase: 13-macos-background-execution*

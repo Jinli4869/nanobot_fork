@@ -1,4 +1,4 @@
-# AGENTS.md - nanobot + OpenGUI Codebase Guide
+# AGENTS.md - nanobot + GUIClaw Codebase Guide
 
 This file gives AI coding agents the essential context to work in this repository without wasted exploration.
 
@@ -6,13 +6,13 @@ This file gives AI coding agents the essential context to work in this repositor
 
 nanobot is a lightweight AI agent framework written in Python with a React/TypeScript WebUI. It centers around an async agent loop that receives messages from chat channels, invokes an LLM provider, executes tools, and manages session memory.
 
-The repository also includes OpenGUI, a vision-based GUI automation engine that can run standalone or as a nanobot subagent tool. Both `nanobot` and `opengui` are published as a single package (`nanobot-ai`).
+The repository also includes GUIClaw, a vision-based GUI automation engine that can run standalone or as a nanobot subagent tool. Both `nanobot` and `guiclaw` are published as a single package (`nanobot-ai`).
 
 ## Repository Layout
 
 ```text
 nanobot/        Main agent runtime: channels, providers, tools, sessions, skills, TUI/Gateway
-opengui/        Vision-based GUI automation engine
+guiclaw/        Vision-based GUI automation engine
 bridge/         Native desktop bridge binaries for macOS/Linux/Windows
 tests/          Test suite, with pytest asyncio_mode=auto
 webui/          React/TypeScript WebUI
@@ -26,7 +26,7 @@ uv pip install -e .
 
 # Python tests
 uv run pytest
-uv run pytest tests/test_opengui.py
+uv run pytest tests/test_guiclaw.py
 uv run pytest -k "not adb"
 
 # Python lint
@@ -36,10 +36,10 @@ uv run ruff check nanobot/
 uv run nanobot
 uv run nanobot gateway
 
-# OpenGUI standalone
-uv run opengui "Open browser and go to github.com"
-uv run opengui --backend adb "Open Settings and enable Wi-Fi"
-uv run opengui --dry-run "Click the save button"
+# GUIClaw standalone
+uv run guiclaw "Open browser and go to github.com"
+uv run guiclaw --backend adb "Open Settings and enable Wi-Fi"
+uv run guiclaw --dry-run "Click the save button"
 
 # WebUI
 cd webui && bun run dev
@@ -74,14 +74,14 @@ Messages flow through an async `MessageBus` (`nanobot/bus/queue.py`) that decoup
 - **Skills** (`nanobot/skills/`): Built-in skill definitions loaded into agent context.
 - **Security** (`nanobot/security/`): PTH file guard and related CLI-entry security measures.
 
-## OpenGUI Architecture
+## GUIClaw Architecture
 
 ### Entry Points
 
-OpenGUI can run as a standalone CLI:
+GUIClaw can run as a standalone CLI:
 
 ```bash
-uv run opengui --backend adb "Open Settings and enable Wi-Fi"
+uv run guiclaw --backend adb "Open Settings and enable Wi-Fi"
 ```
 
 It can also run inside nanobot through the `gui` subagent tool. Configure it under `"gui"` in `~/.nanobot/config.json`:
@@ -101,7 +101,7 @@ It can also run inside nanobot through the `gui` subagent tool. Configure it und
 
 ### Vision-Action Loop
 
-`GuiAgent` (`opengui/agent.py`) runs: screenshot -> LLM -> parse action -> execute -> repeat until `done` or `max_steps`.
+`GuiAgent` (`guiclaw/agent.py`) runs: screenshot -> LLM -> parse action -> execute -> repeat until `done` or `max_steps`.
 
 Key types:
 - `StepResult`: one step's output, action, tool result, and next observation.
@@ -109,29 +109,29 @@ Key types:
 
 ### Protocol Boundary
 
-OpenGUI is host-agnostic and depends on two protocols from `opengui/interfaces.py`:
+GUIClaw is host-agnostic and depends on two protocols from `guiclaw/interfaces.py`:
 
 | Protocol | Purpose |
 | --- | --- |
 | `LLMProvider` | `async chat(messages, tools, ...) -> LLMResponse` |
 | `DeviceBackend` | `observe()`, `execute(action)`, `preflight()`, `platform` |
 
-Never import `nanobot` from `opengui` code. Adapters live on the host side, such as `nanobot/agent/gui_adapter.py`.
+Never import `nanobot` from `guiclaw` code. Adapters live on the host side, such as `nanobot/agent/gui_adapter.py`.
 
 ### Backends
 
 | File | Platform |
 | --- | --- |
-| `opengui/backends/adb.py` | Android ADB |
-| `opengui/backends/ios_wda.py` | iOS WebDriverAgent |
-| `opengui/backends/hdc.py` | HarmonyOS HDC |
-| `opengui/backends/desktop.py` | macOS/Linux desktop |
-| `opengui/backends/windows_isolated.py` | Windows background isolation |
-| `opengui/backends/dry_run.py` | Testing and CI |
+| `guiclaw/backends/adb.py` | Android ADB |
+| `guiclaw/backends/ios_wda.py` | iOS WebDriverAgent |
+| `guiclaw/backends/hdc.py` | HarmonyOS HDC |
+| `guiclaw/backends/desktop.py` | macOS/Linux desktop |
+| `guiclaw/backends/windows_isolated.py` | Windows background isolation |
+| `guiclaw/backends/dry_run.py` | Testing and CI |
 
 ### Agent Profiles
 
-Agent profiles in `opengui/agent_profiles.py` handle models that do not support native tool calling:
+Agent profiles in `guiclaw/agent_profiles.py` handle models that do not support native tool calling:
 
 | Profile | Model family |
 | --- | --- |
@@ -144,8 +144,8 @@ Agent profiles in `opengui/agent_profiles.py` handle models that do not support 
 
 ### Skills System
 
-- `opengui/skills/library.py`: BM25 + FAISS hybrid retrieval, per-platform/app buckets, and LLM deduplication.
-- `opengui/skills/executor.py`: Step-by-step execution with valid-state verification and subgoal recovery.
+- `guiclaw/skills/library.py`: BM25 + FAISS hybrid retrieval, per-platform/app buckets, and LLM deduplication.
+- `guiclaw/skills/executor.py`: Step-by-step execution with valid-state verification and subgoal recovery.
 
 ## Configuration Schema
 
@@ -159,7 +159,7 @@ All config keys accept both `camelCase` and `snake_case`. Key sections:
 
 ## Action Types
 
-Valid OpenGUI actions are defined in `opengui/action.py`: `tap`, `long_press`, `double_tap`, `drag`, `swipe`, `scroll`, `input_text`, `hotkey`, `screenshot`, `wait`, `open_app`, `close_app`, `back`, `home`, `enter`, `app_switch`, `done`, and `request_intervention`.
+Valid GUIClaw actions are defined in `guiclaw/action.py`: `tap`, `long_press`, `double_tap`, `drag`, `swipe`, `scroll`, `input_text`, `hotkey`, `screenshot`, `wait`, `open_app`, `close_app`, `back`, `home`, `enter`, `app_switch`, `done`, and `request_intervention`.
 
 Coordinates use a 0-999 relative grid by default. `resolve_coordinate` maps relative coordinates to device pixels.
 
@@ -179,7 +179,7 @@ Coordinates use a 0-999 relative grid by default. `resolve_coordinate` maps rela
 
 ## Key Conventions
 
-- `opengui` must not import from `nanobot`. Dependency direction is `nanobot -> opengui`.
+- `guiclaw` must not import from `nanobot`. Dependency direction is `nanobot -> guiclaw`.
 - All protocol implementations must be async-safe.
 - `Action` and `LLMResponse` are frozen dataclasses.
 - Normalize "no tool calls" to `None`, not `[]`, in `LLMResponse.tool_calls`.
@@ -191,8 +191,8 @@ Coordinates use a 0-999 relative grid by default. `resolve_coordinate` maps rela
 - Provider factory and registry: `nanobot/providers/factory.py`, `nanobot/providers/registry.py`
 - Channel base: `nanobot/channels/base.py`
 - Tool registry: `nanobot/agent/tools/registry.py`
-- OpenGUI action model: `opengui/action.py`
-- OpenGUI agent loop: `opengui/agent.py`
-- OpenGUI nanobot adapter: `nanobot/agent/gui_adapter.py`
+- GUIClaw action model: `guiclaw/action.py`
+- GUIClaw agent loop: `guiclaw/agent.py`
+- GUIClaw nanobot adapter: `nanobot/agent/gui_adapter.py`
 - WebUI dev proxy config: `webui/vite.config.ts`
-- Tests mirror the `nanobot/` and `opengui/` package structure.
+- Tests mirror the `nanobot/` and `guiclaw/` package structure.

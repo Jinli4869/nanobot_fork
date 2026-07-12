@@ -20,7 +20,7 @@ tech-stack:
   patterns: [pause-before-backend-io, fresh-observation-resume, scrub-before-persist]
 key-files:
   created: []
-  modified: [tests/test_opengui_p15_intervention.py, opengui/interfaces.py, opengui/agent.py, pyproject.toml]
+  modified: [tests/test_guiclaw_p15_intervention.py, guiclaw/interfaces.py, guiclaw/agent.py, pyproject.toml]
 key-decisions:
   - "GuiAgent owns the intervention pause boundary so request_intervention stops both execute() and observe() before any backend IO occurs."
   - "Resume always reacquires a brand-new observation at the next step screenshot path before the model continues."
@@ -58,9 +58,9 @@ completed: 2026-03-21
 
 ## Files Created/Modified
 
-- `tests/test_opengui_p15_intervention.py` - Adds the Phase 15 red/green regression slice for intervention pause/resume and scrubbing
-- `opengui/interfaces.py` - Defines the host-facing intervention request/resolution protocol contract
-- `opengui/agent.py` - Implements the intervention pause boundary, explicit resume branch, fresh observation capture, and scrub-before-write logging
+- `tests/test_guiclaw_p15_intervention.py` - Adds the Phase 15 red/green regression slice for intervention pause/resume and scrubbing
+- `guiclaw/interfaces.py` - Defines the host-facing intervention request/resolution protocol contract
+- `guiclaw/agent.py` - Implements the intervention pause boundary, explicit resume branch, fresh observation capture, and scrub-before-write logging
 - `pyproject.toml` - Registers the Phase 15 pytest markers used by the plan verification command
 
 ## Decisions Made
@@ -77,8 +77,8 @@ completed: 2026-03-21
 - **Found during:** Task 2
 - **Issue:** `execution.tool_result` still carried the backend's raw `input_text` echo even after the main trace payload and tool-call arguments were scrubbed.
 - **Fix:** Applied action-aware scrubbing to the execution snapshot before trace and trajectory writes.
-- **Files modified:** `opengui/agent.py`
-- **Verification:** `uv run pytest tests/test_opengui_p15_intervention.py -k "pauses_backend_io or explicit_resume_confirmation or fresh_observation_after_intervention or scrub_sensitive_trace_fields or input_text_is_redacted" -q`
+- **Files modified:** `guiclaw/agent.py`
+- **Verification:** `uv run pytest tests/test_guiclaw_p15_intervention.py -k "pauses_backend_io or explicit_resume_confirmation or fresh_observation_after_intervention or scrub_sensitive_trace_fields or input_text_is_redacted" -q`
 - **Committed in:** `342c8e6` (part of task commit)
 
 **2. [Rule 3 - Blocking] Registered Phase 15 pytest markers so the plan verification command runs cleanly**
@@ -86,7 +86,7 @@ completed: 2026-03-21
 - **Issue:** The plan's `-k` filter relied on Phase 15 marker keywords that pytest treated as unknown markers, adding avoidable warning noise to verification output.
 - **Fix:** Added the five Phase 15 marker registrations to `pyproject.toml`.
 - **Files modified:** `pyproject.toml`
-- **Verification:** `uv run pytest tests/test_opengui_p15_intervention.py -k "pauses_backend_io or explicit_resume_confirmation or fresh_observation_after_intervention or scrub_sensitive_trace_fields or input_text_is_redacted" -q`
+- **Verification:** `uv run pytest tests/test_guiclaw_p15_intervention.py -k "pauses_backend_io or explicit_resume_confirmation or fresh_observation_after_intervention or scrub_sensitive_trace_fields or input_text_is_redacted" -q`
 - **Committed in:** `342c8e6` (part of task commit)
 
 **3. [Rule 3 - Blocking] Repaired stale planning metadata after the state and roadmap update helpers**

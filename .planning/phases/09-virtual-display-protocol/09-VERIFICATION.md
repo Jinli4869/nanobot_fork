@@ -25,7 +25,7 @@ Truths are derived from the ROADMAP.md Success Criteria for Phase 9 (authoritati
 
 | #  | Truth                                                                                                  | Status     | Evidence                                                                              |
 |----|--------------------------------------------------------------------------------------------------------|------------|---------------------------------------------------------------------------------------|
-| 1  | `VirtualDisplayManager` is importable from `opengui.interfaces`, satisfies isinstance checks         | VERIFIED | `from opengui.interfaces import VirtualDisplayManager` + runtime import check passes  |
+| 1  | `VirtualDisplayManager` is importable from `guiclaw.interfaces`, satisfies isinstance checks         | VERIFIED | `from guiclaw.interfaces import VirtualDisplayManager` + runtime import check passes  |
 | 2  | `DisplayInfo` is a frozen dataclass with `display_id`, `width`, `height`, `offset_x`, `offset_y`, `monitor_index` | VERIFIED | Field names exact-matched in `test_display_info_field_names`; frozen confirmed by `test_display_info_frozen` |
 | 3  | `NoOpDisplayManager.start()` returns `DisplayInfo` immediately without spawning any subprocess        | VERIFIED | `test_noop_start_returns_display_info` + `test_noop_start_no_subprocess` both pass    |
 | 4  | `XvfbDisplayManager.start()` launches Xvfb via `asyncio.subprocess`, waits for X11 socket, returns `DisplayInfo` | VERIFIED | `test_xvfb_start_returns_display_info` + `test_xvfb_stderr_is_piped` pass            |
@@ -41,12 +41,12 @@ Verified across all three levels: Exists (L1), Substantive (L2), Wired (L3).
 
 | Artifact                                          | Provides                                               | L1 Exists | L2 Substantive         | L3 Wired                                             | Status     |
 |---------------------------------------------------|--------------------------------------------------------|-----------|------------------------|------------------------------------------------------|------------|
-| `opengui/backends/virtual_display.py`             | `VirtualDisplayManager` protocol, `DisplayInfo` dataclass, `NoOpDisplayManager` | Yes | 54 lines, 3 classes, full implementations | Imported by `opengui/interfaces.py` and `xvfb.py` | VERIFIED |
-| `opengui/interfaces.py`                           | Re-exports for `VirtualDisplayManager` and `DisplayInfo` | Yes | Contains both re-export lines at module end | Imports from `virtual_display.py`; downstream consumers import from here | VERIFIED |
-| `opengui/backends/displays/xvfb.py`               | `XvfbDisplayManager`, `XvfbNotFoundError`, `XvfbCrashedError` | Yes | 197 lines, full implementation with error types, auto-increment, crash detection | Imports `DisplayInfo` from `virtual_display.py`; re-exported from `__init__.py` | VERIFIED |
-| `opengui/backends/displays/__init__.py`           | Convenience re-export of `XvfbDisplayManager`         | Yes | Contains `XvfbDisplayManager as XvfbDisplayManager` re-export | Verified: `from opengui.backends.displays import XvfbDisplayManager` works | VERIFIED |
-| `tests/test_opengui_p9_virtual_display.py`        | 9 unit tests covering VDISP-01, VDISP-02, VDISP-03    | Yes | 102 lines, 9 real test functions (no xfail stubs) | All 9 tests pass (pytest confirms) | VERIFIED |
-| `tests/test_opengui_p9_xvfb.py`                  | 12 unit tests covering VDISP-04                       | Yes | 260 lines, 12 real test functions (no xfail stubs) | All 12 tests pass (pytest confirms) | VERIFIED |
+| `guiclaw/backends/virtual_display.py`             | `VirtualDisplayManager` protocol, `DisplayInfo` dataclass, `NoOpDisplayManager` | Yes | 54 lines, 3 classes, full implementations | Imported by `guiclaw/interfaces.py` and `xvfb.py` | VERIFIED |
+| `guiclaw/interfaces.py`                           | Re-exports for `VirtualDisplayManager` and `DisplayInfo` | Yes | Contains both re-export lines at module end | Imports from `virtual_display.py`; downstream consumers import from here | VERIFIED |
+| `guiclaw/backends/displays/xvfb.py`               | `XvfbDisplayManager`, `XvfbNotFoundError`, `XvfbCrashedError` | Yes | 197 lines, full implementation with error types, auto-increment, crash detection | Imports `DisplayInfo` from `virtual_display.py`; re-exported from `__init__.py` | VERIFIED |
+| `guiclaw/backends/displays/__init__.py`           | Convenience re-export of `XvfbDisplayManager`         | Yes | Contains `XvfbDisplayManager as XvfbDisplayManager` re-export | Verified: `from guiclaw.backends.displays import XvfbDisplayManager` works | VERIFIED |
+| `tests/test_guiclaw_p9_virtual_display.py`        | 9 unit tests covering VDISP-01, VDISP-02, VDISP-03    | Yes | 102 lines, 9 real test functions (no xfail stubs) | All 9 tests pass (pytest confirms) | VERIFIED |
+| `tests/test_guiclaw_p9_xvfb.py`                  | 12 unit tests covering VDISP-04                       | Yes | 260 lines, 12 real test functions (no xfail stubs) | All 12 tests pass (pytest confirms) | VERIFIED |
 
 ---
 
@@ -54,10 +54,10 @@ Verified across all three levels: Exists (L1), Substantive (L2), Wired (L3).
 
 | From                                    | To                                       | Via                           | Status  | Detail                                                                                 |
 |-----------------------------------------|------------------------------------------|-------------------------------|---------|----------------------------------------------------------------------------------------|
-| `opengui/interfaces.py`                 | `opengui/backends/virtual_display.py`    | re-export import              | WIRED   | Line 87-88: `from opengui.backends.virtual_display import DisplayInfo as DisplayInfo` and `VirtualDisplayManager as VirtualDisplayManager` |
-| `opengui/backends/displays/xvfb.py`     | `opengui/backends/virtual_display.py`    | `import DisplayInfo`          | WIRED   | Line 14: `from opengui.backends.virtual_display import DisplayInfo`                   |
-| `opengui/backends/displays/xvfb.py`     | `asyncio.create_subprocess_exec`         | subprocess launch             | WIRED   | Line 139: `self._process = await asyncio.create_subprocess_exec(...)` with `stderr=asyncio.subprocess.PIPE` |
-| `opengui/backends/displays/__init__.py` | `opengui/backends/displays/xvfb.py`     | public re-export              | WIRED   | `from opengui.backends.displays.xvfb import XvfbDisplayManager as XvfbDisplayManager` |
+| `guiclaw/interfaces.py`                 | `guiclaw/backends/virtual_display.py`    | re-export import              | WIRED   | Line 87-88: `from guiclaw.backends.virtual_display import DisplayInfo as DisplayInfo` and `VirtualDisplayManager as VirtualDisplayManager` |
+| `guiclaw/backends/displays/xvfb.py`     | `guiclaw/backends/virtual_display.py`    | `import DisplayInfo`          | WIRED   | Line 14: `from guiclaw.backends.virtual_display import DisplayInfo`                   |
+| `guiclaw/backends/displays/xvfb.py`     | `asyncio.create_subprocess_exec`         | subprocess launch             | WIRED   | Line 139: `self._process = await asyncio.create_subprocess_exec(...)` with `stderr=asyncio.subprocess.PIPE` |
+| `guiclaw/backends/displays/__init__.py` | `guiclaw/backends/displays/xvfb.py`     | public re-export              | WIRED   | `from guiclaw.backends.displays.xvfb import XvfbDisplayManager as XvfbDisplayManager` |
 
 ---
 
@@ -123,7 +123,7 @@ No gaps. All must-haves from the three plan frontmatter declarations are satisfi
 - pytest produces clean results: VERIFIED (21 passed)
 
 **Plan 09-01 must-haves:**
-- `VirtualDisplayManager` importable from `opengui.interfaces`, isinstance passes: VERIFIED
+- `VirtualDisplayManager` importable from `guiclaw.interfaces`, isinstance passes: VERIFIED
 - `DisplayInfo` is a frozen dataclass with all 6 required fields: VERIFIED
 - `NoOpDisplayManager.start()` returns `DisplayInfo` without subprocess: VERIFIED
 - `NoOpDisplayManager.stop()` is idempotent: VERIFIED
