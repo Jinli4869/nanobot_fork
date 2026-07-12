@@ -17,12 +17,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from types import SimpleNamespace
 import platform
 import sys
 from asyncio.subprocess import PIPE
 from pathlib import Path
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
 
 try:
     import mss
@@ -31,8 +30,8 @@ except ImportError:  # pragma: no cover
 from PIL import Image
 
 from guiclaw.action import Action, describe_action, resolve_coordinate
-from guiclaw.observation import Observation
 from guiclaw.backends.virtual_display import DisplayInfo
+from guiclaw.observation import Observation
 
 # pyautogui and pyperclip are optional desktop dependencies.  Import them at
 # module level so that patch("guiclaw.backends.desktop.pyautogui") works in

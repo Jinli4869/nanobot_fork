@@ -45,7 +45,7 @@ pip install -e .
 uv tool install nanobot-ai
 ```
 
-各平台依赖会自动安装。macOS 需要 `pyobjc` 无障碍访问组件，已随包附带，无需额外操作。
+各平台依赖会自动安装。Linux 后台隔离使用 Xvfb，Windows 使用隔离桌面；macOS 当前仅支持前台桌面自动化。
 
 **iOS 后端**需额外安装 `facebook-wda`：
 
@@ -458,8 +458,6 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `agentProfile` | `string \| null` | `null` | GUI 专用模型的 prompt / action profile；不填时默认走原生 tool-calling |
 | `adb.serial` | `string \| null` | `null` | ADB 设备序列号；`null` = 自动检测 |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent 服务器地址 |
-| `ios.mjpegUrl` | `string` | `"http://127.0.0.1:9100"` | demo 使用的 WebDriverAgent MJPEG 实时视频流地址 |
-| `ios.mjpegFrameTimeoutMs` | `int` | `3000` | 等待 iOS MJPEG 帧的超时时间 |
 | `hdc.serial` | `string \| null` | `null` | HDC 设备序列号；`null` = 自动检测 |
 | `artifactsDir` | `string` | `"gui_runs"` | 截图和运行日志目录（相对于 workspace） |
 | `maxSteps` | `int` | `15` | 单次任务最大操作步数 |
@@ -620,9 +618,7 @@ guiclaw --backend dry-run "..."    # 测试
   "gui": {
     "backend": "ios",
     "ios": {
-      "wdaUrl": "http://localhost:8100",
-      "mjpegUrl": "http://127.0.0.1:9100",
-      "mjpegFrameTimeoutMs": 3000
+      "wdaUrl": "http://localhost:8100"
     },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
@@ -640,7 +636,7 @@ guiclaw --backend dry-run "..."    # 测试
 > 6. 验证服务可达：`curl http://localhost:8100/status`
 > 7. 验证实时视频流可达：打开或 curl `http://127.0.0.1:9100`
 >
-> 如果 WDA 或 MJPEG 监听不同的主机或端口，相应修改 `wdaUrl` 和 `mjpegUrl`。
+> 如果 WDA 监听不同的主机或端口，请修改 `wdaUrl`。demo 的 MJPEG 地址不同时，请向 `demo/live_server.py` 传入 `--ios-mjpeg-url`。
 
 #### 鸿蒙 OS — HDC
 
@@ -702,7 +698,7 @@ uv run python demo/live_server.py --port 18880
 打开 `http://127.0.0.1:18880`，选择 live platform 后输入任务。
 
 - **Android**：中间屏幕和 GUI 观察都使用 `py-scrcpy-sdk` 提供的 scrcpy 视频流；GUI 操作使用 `adb` 后端。
-- **iOS**：中间屏幕使用 `gui.ios.mjpegUrl` 指向的 WebDriverAgent MJPEG 流；GUI 执行使用 WDA 的 `ios` 后端。
+- **iOS**：中间屏幕使用 demo server 的 `--ios-mjpeg-url` 参数指向 WebDriverAgent MJPEG 流；GUI 执行使用 WDA 的 `ios` 后端。
 
 iOS live demo 配置示例：
 
@@ -711,9 +707,7 @@ iOS live demo 配置示例：
   "gui": {
     "backend": "ios",
     "ios": {
-      "wdaUrl": "http://localhost:8100",
-      "mjpegUrl": "http://127.0.0.1:9100",
-      "mjpegFrameTimeoutMs": 3000
+      "wdaUrl": "http://localhost:8100"
     }
   }
 }
@@ -725,6 +719,9 @@ iOS 需要先启动 WDA；真机通常需要转发 WDA 的 `8100` 和 MJPEG 的 
 curl http://localhost:8100/status
 curl http://127.0.0.1:9100
 ```
+
+如果 MJPEG 地址或等待超时不同于默认值，启动 demo server 时传入
+`--ios-mjpeg-url` 和 `--ios-mjpeg-frame-timeout-ms`。
 
 ---
 

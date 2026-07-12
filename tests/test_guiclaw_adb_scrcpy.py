@@ -383,7 +383,7 @@ async def test_adb_observe_can_attach_compact_ui_tree_metadata(
     run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
-    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
+    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (320, 640))
 
     observation = await backend.observe(tmp_path / "screen.png")
 
@@ -417,7 +417,7 @@ async def test_adb_observe_writes_raw_ui_tree_xml_sibling_dir(
     run_mock = AsyncMock(side_effect=["", "", "UI hierarchy dumped", xml])
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", AsyncMock(return_value="tv.danmaku.bili"))
-    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (320, 640))
+    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (320, 640))
 
     screenshot = tmp_path / "run" / "screenshots" / "step_000.png"
     observation = await backend.observe(screenshot)
@@ -665,19 +665,15 @@ def test_gui_config_accepts_adb_backend_with_scrcpy_camel_case_fields() -> None:
     assert config.scrcpy.max_frame_age_ms == 500
 
 
-def test_gui_config_accepts_ios_mjpeg_fields() -> None:
+def test_gui_config_accepts_ios_wda_url() -> None:
     config = GuiConfig.model_validate({
         "backend": "ios",
         "ios": {
             "wdaUrl": "http://localhost:8100",
-            "mjpegUrl": "http://127.0.0.1:9100",
-            "mjpegFrameTimeoutMs": 2500,
         },
     })
 
     assert config.ios.wda_url == "http://localhost:8100"
-    assert config.ios.mjpeg_url == "http://127.0.0.1:9100"
-    assert config.ios.mjpeg_frame_timeout_ms == 2500
 
 
 def test_cli_builds_adb_backend_with_scrcpy_capture_config() -> None:

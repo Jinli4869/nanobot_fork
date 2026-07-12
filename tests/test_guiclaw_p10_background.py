@@ -169,13 +169,13 @@ async def test_display_env_restored_after_shutdown() -> None:
             os.environ["DISPLAY"] = original
 
 
-async def test_noop_display_does_not_set_display_env() -> None:
-    """When display_id='noop' (no leading ':'), DISPLAY must not be written."""
+async def test_non_x11_display_does_not_set_display_env() -> None:
+    """A display ID without an X11 prefix must not change DISPLAY."""
     original = os.environ.get("DISPLAY")
     try:
         # Remove DISPLAY so we can detect a spurious write
         os.environ.pop("DISPLAY", None)
-        backend = BackgroundDesktopBackend(_make_mock_inner(), _make_mock_manager(display_id="noop"))
+        backend = BackgroundDesktopBackend(_make_mock_inner(), _make_mock_manager(display_id="desktop"))
         await backend.preflight()
         assert "DISPLAY" not in os.environ, (
             "DISPLAY must not be set when display_id does not start with ':'"

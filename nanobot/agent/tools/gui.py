@@ -17,8 +17,6 @@ from typing import TYPE_CHECKING, Any
 import litellm
 import numpy as np
 
-from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
-from nanobot.agent.tools.base import Tool
 from guiclaw.agent import GuiAgent
 from guiclaw.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
@@ -29,6 +27,8 @@ from guiclaw.skills.normalization import (
     normalize_app_identifier,
 )
 from guiclaw.trajectory.recorder import TrajectoryRecorder
+from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
+from nanobot.agent.tools.base import Tool
 
 if TYPE_CHECKING:
     from nanobot.config.schema import GuiConfig
@@ -1303,7 +1303,7 @@ class GuiSubagentTool(Tool):
                 },
                 "backend": {
                     "type": "string",
-                    "enum": ["adb", "ios", "hdc", "mobileworld", "local", "dry-run"],
+                    "enum": ["adb", "ios", "hdc", "local", "dry-run"],
                     "description": "Optional backend override. Defaults to the configured GUI backend.",
                 },
                 "require_background_isolation": {
@@ -1612,9 +1612,6 @@ class GuiSubagentTool(Tool):
     def _shortcut_discovery_backend(active_backend: Any) -> Any | None:
         """Return a backend suitable for runtime APK shortcut discovery."""
         if not hasattr(active_backend, "_run"):
-            return None
-        module_name = str(getattr(type(active_backend), "__module__", "") or "")
-        if module_name == "guiclaw.backends.mobileworld":
             return None
         return active_backend
 
@@ -1986,19 +1983,6 @@ class GuiSubagentTool(Tool):
 
             return HdcBackend(serial=self._gui_config.hdc.serial)
 
-        if backend_name == "mobileworld":
-            from guiclaw.backends.mobileworld import MobileWorldBackend
-
-            mobileworld_cfg = self._gui_config.mobileworld
-            return MobileWorldBackend(
-                base_url=mobileworld_cfg.base_url,
-                device=mobileworld_cfg.device,
-                xml_mode=mobileworld_cfg.xml_mode,
-                collect_ui_tree=mobileworld_cfg.collect_ui_tree,
-                collect_ui_tree_nodes=mobileworld_cfg.collect_ui_tree_nodes,
-                screenshot_transport=mobileworld_cfg.screenshot_transport,
-            )
-
         if backend_name == "dry-run":
             from guiclaw.backends.dry_run import DryRunBackend
 
@@ -2018,14 +2002,6 @@ class GuiSubagentTool(Tool):
             display_num = self._gui_config.display_num if self._gui_config.display_num is not None else 99
             return XvfbDisplayManager(
                 display_num=display_num,
-                width=self._gui_config.display_width,
-                height=self._gui_config.display_height,
-            )
-
-        if probe.backend_name == "cgvirtualdisplay":
-            from guiclaw.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
-
-            return CGVirtualDisplayManager(
                 width=self._gui_config.display_width,
                 height=self._gui_config.display_height,
             )

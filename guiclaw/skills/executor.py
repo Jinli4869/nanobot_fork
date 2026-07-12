@@ -31,7 +31,6 @@ from pathlib import Path
 from typing import Any
 
 from guiclaw.action import Action, ActionError, parse_action
-from guiclaw.backends.mobileworld import MobileWorldBackend
 from guiclaw.image_utils import normalize_image_scale_ratio, scale_image
 from guiclaw.interfaces import DeviceBackend
 from guiclaw.observation import Observation
@@ -1193,7 +1192,6 @@ class SkillExecutor:
             normalize_adb_app_identifier(action.text)
             if platform == "android"
             and hasattr(self.backend, "_run")
-            and not isinstance(self.backend, MobileWorldBackend)
             else normalize_app_identifier(platform, action.text)
         )
         if resolved == action.text:

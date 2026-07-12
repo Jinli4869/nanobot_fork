@@ -206,9 +206,20 @@ async def test_ios_mjpeg_frame_source_times_out_without_frame() -> None:
 
 def test_live_frame_preview_serves_ios_mjpeg_source() -> None:
     jpeg = _jpeg_bytes(width=4, height=5)
+    source_config: dict[str, Any] = {}
 
     class FakeIosMjpegFrameSource:
-        def __init__(self, *, on_jpeg_frame: Any, **_: Any) -> None:
+        def __init__(
+            self,
+            *,
+            mjpeg_url: str,
+            frame_timeout_ms: int,
+            on_jpeg_frame: Any,
+        ) -> None:
+            source_config.update(
+                mjpeg_url=mjpeg_url,
+                frame_timeout_ms=frame_timeout_ms,
+            )
             self._on_jpeg_frame = on_jpeg_frame
             self.stopped = False
 
@@ -241,6 +252,10 @@ def test_live_frame_preview_serves_ios_mjpeg_source() -> None:
     assert metadata["width"] == 4
     assert metadata["height"] == 5
     assert frame == jpeg
+    assert source_config == {
+        "mjpeg_url": "http://127.0.0.1:9100",
+        "frame_timeout_ms": 3000,
+    }
 
 
 def _jpeg_bytes(*, width: int, height: int) -> bytes:

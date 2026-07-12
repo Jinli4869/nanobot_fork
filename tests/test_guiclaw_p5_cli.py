@@ -1101,202 +1101,6 @@ def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> No
     assert xvfb_init_kwargs[0] == {"display_num": 42, "width": 1920, "height": 1080}
 
 
-def test_run_cli_uses_cgvirtualdisplay_manager_for_macos_isolated_mode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from guiclaw.agent import AgentResult
-    import guiclaw.cli as cli
-    import guiclaw.backends.background_runtime as runtime
-
-    config = cli.CliConfig(
-        provider=cli.ProviderConfig(
-            base_url="http://localhost:1234/v1",
-            model="qwen-gui",
-            api_key="test-key",
-        )
-    )
-    inner_backend = _FakeBackend(platform="macos")
-    wrapped_backend_ref: list[Any] = []
-    agent_backend_ref: list[Any] = []
-    cgvd_init_kwargs: list[dict[str, Any]] = []
-
-    class FakeCGVirtualDisplayManager:
-        def __init__(self, width: int = 1280, height: int = 720) -> None:
-            cgvd_init_kwargs.append({"width": width, "height": height})
-
-    class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
-            self._inner = inner
-            self._manager = manager
-            self._run_metadata = run_metadata
-            self.shutdown_calls = 0
-            wrapped_backend_ref.append(self)
-
-        @property
-        def platform(self) -> str:
-            return self._inner.platform
-
-        async def shutdown(self) -> None:
-            self.shutdown_calls += 1
-
-    class FakeProvider:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
-
-    class FakeRecorder:
-        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
-            self.output_dir = output_dir
-            self.task = task
-            self.platform = platform
-
-    class FakeGuiAgent:
-        def __init__(self, **kwargs: Any) -> None:
-            agent_backend_ref.append(kwargs["backend"])
-
-        async def run(self, task: str, **_: Any) -> AgentResult:
-            return AgentResult(
-                success=True,
-                summary="done",
-                model_summary=None,
-                trace_path=None,
-                steps_taken=1,
-                error=None,
-            )
-
-    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
-        return None, None, None
-
-    monkeypatch.setattr(cli, "load_config", lambda path=None: config)
-    monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
-    monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
-    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
-    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
-    monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
-    monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
-    monkeypatch.setattr(
-        cli,
-        "probe_isolated_background_support",
-        lambda **_: runtime.IsolationProbeResult(
-            supported=True,
-            reason_code="macos_virtual_display_available",
-            retryable=False,
-            host_platform="macos",
-            backend_name="cgvirtualdisplay",
-            sys_platform="darwin",
-        ),
-    )
-    monkeypatch.setattr(sys, "platform", "darwin")
-
-    import guiclaw.backends.displays.cgvirtualdisplay as cgvd_mod
-
-    monkeypatch.setattr(cgvd_mod, "CGVirtualDisplayManager", FakeCGVirtualDisplayManager)
-
-    args = cli.parse_args(["--background", "--width", "1440", "--height", "900", "--task", "open settings"])
-    asyncio.run(cli.run_cli(args))
-
-    assert cgvd_init_kwargs == [{"width": 1440, "height": 900}]
-    assert len(wrapped_backend_ref) == 1
-    assert wrapped_backend_ref[0]._inner is inner_backend
-    assert wrapped_backend_ref[0]._run_metadata == {"owner": "cli", "task": "open settings"}
-    assert wrapped_backend_ref[0].shutdown_calls == 1
-    assert agent_backend_ref == [wrapped_backend_ref[0]]
-
-
-def test_run_cli_logs_macos_permission_remediation_before_agent_start() -> None:
-    from guiclaw.agent import AgentResult
-    import guiclaw.cli as cli
-    import guiclaw.backends.background_runtime as runtime
-
-    config = cli.CliConfig(
-        provider=cli.ProviderConfig(
-            base_url="http://localhost:1234/v1",
-            model="qwen-gui",
-            api_key="test-key",
-        )
-    )
-    inner_backend = _FakeBackend(platform="macos")
-    events: list[str] = []
-    log_messages: list[str] = []
-    cgvd_created: list[str] = []
-
-    class FakeProvider:
-        def __init__(self, *args: Any, **kwargs: Any) -> None:
-            pass
-
-    class FakeRecorder:
-        def __init__(self, output_dir: Path, task: str, platform: str = "unknown") -> None:
-            self.output_dir = output_dir
-            self.task = task
-            self.platform = platform
-
-    class FakeGuiAgent:
-        def __init__(self, **kwargs: Any) -> None:
-            self._backend = kwargs["backend"]
-
-        async def run(self, task: str, **_: Any) -> AgentResult:
-            events.append("agent_started")
-            return AgentResult(
-                success=True,
-                summary=f"Completed {task}",
-                model_summary=None,
-                trace_path=None,
-                steps_taken=1,
-                error=None,
-            )
-
-    class _EventHandler(logging.Handler):
-        def emit(self, record: logging.LogRecord) -> None:
-            if "background runtime resolved:" in record.getMessage():
-                events.append("mode_logged")
-                log_messages.append(record.getMessage())
-
-    async def fake_build_optional_components(*_: Any, **__: Any) -> tuple[Any, Any, Any]:
-        return None, None, None
-
-    probe_result = runtime.IsolationProbeResult(
-        supported=False,
-        reason_code="macos_screen_recording_denied",
-        retryable=True,
-        host_platform="macos",
-        backend_name="cgvirtualdisplay",
-        sys_platform="darwin",
-    )
-
-    handler = _EventHandler()
-    cli_logger = logging.getLogger("guiclaw.cli")
-    cli_logger.addHandler(handler)
-
-    monkeypatch = pytest.MonkeyPatch()
-    try:
-        monkeypatch.setattr(cli, "load_config", lambda path=None: config)
-        monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
-        monkeypatch.setattr(cli, "build_backend", lambda name, cfg: inner_backend)
-        monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
-        monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
-        monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
-        monkeypatch.setattr(cli, "probe_isolated_background_support", lambda **_: probe_result)
-        monkeypatch.setattr(sys, "platform", "darwin")
-
-        import guiclaw.backends.displays.cgvirtualdisplay as cgvd_mod
-
-        monkeypatch.setattr(
-            cgvd_mod,
-            "CGVirtualDisplayManager",
-            lambda *args, **kwargs: cgvd_created.append("created"),
-        )
-
-        asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
-    finally:
-        cli_logger.removeHandler(handler)
-        monkeypatch.undo()
-
-    assert events[:2] == ["mode_logged", "agent_started"]
-    assert "macos_screen_recording_denied" in log_messages[0]
-    assert "System Settings" in log_messages[0]
-    assert "Screen Recording" in log_messages[0]
-    assert cgvd_created == []
-
-
 def test_run_cli_uses_windows_isolated_desktop_backend_for_windows_isolated_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1654,11 +1458,7 @@ def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hos
             monkeypatch.setattr(cli, "TrajectoryRecorder", lambda *args, **kwargs: types.SimpleNamespace(path=None))
             monkeypatch.setattr(sys, "platform", sys_platform)
 
-            if probe_result.backend_name == "cgvirtualdisplay":
-                import guiclaw.backends.displays.cgvirtualdisplay as cgvd_mod
-
-                monkeypatch.setattr(cgvd_mod, "CGVirtualDisplayManager", lambda *args, **kwargs: object())
-            elif probe_result.backend_name == "windows_isolated_desktop":
+            if probe_result.backend_name == "windows_isolated_desktop":
                 import guiclaw.backends.displays.win32desktop as win32_mod
 
                 monkeypatch.setattr(win32_mod, "Win32DesktopManager", lambda *args, **kwargs: object())
@@ -1686,18 +1486,6 @@ def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hos
         argv=["--background", "--require-isolation", "--task", "Open Settings"],
     )
     run_case(
-        sys_platform="darwin",
-        probe_result=runtime.IsolationProbeResult(
-            supported=True,
-            reason_code="macos_virtual_display_available",
-            retryable=False,
-            host_platform="macos",
-            backend_name="cgvirtualdisplay",
-            sys_platform="darwin",
-        ),
-        argv=["--background", "--task", "Open Settings"],
-    )
-    run_case(
         sys_platform="win32",
         probe_result=runtime.IsolationProbeResult(
             supported=False,
@@ -1712,12 +1500,6 @@ def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hos
 
     assert "xvfb_missing" in blocked_error
     assert any("owner=cli" in message and "mode=blocked" in message and "reason=xvfb_missing" in message for message in log_messages)
-    assert any(
-        "owner=cli" in message
-        and "mode=isolated" in message
-        and "reason=macos_virtual_display_available" in message
-        for message in log_messages
-    )
     assert any(
         "owner=cli" in message
         and "mode=fallback" in message

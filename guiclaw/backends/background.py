@@ -209,9 +209,8 @@ class BackgroundDesktopBackend:
     def _apply_offset(self, action: Action) -> Action:
         """Translate absolute coordinates by the virtual display offset.
 
-        For Xvfb the offset is (0, 0) so the action is returned unchanged.
-        For macOS CGVirtualDisplay this shifts coordinates to the virtual
-        monitor region.  Relative actions are always passed through as-is.
+        Xvfb uses offset (0, 0), while managers for positioned surfaces may
+        provide a non-zero global offset. Relative actions pass through as-is.
         """
         info = self._display_info
         if not info or (info.offset_x == 0 and info.offset_y == 0):

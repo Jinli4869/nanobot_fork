@@ -33,6 +33,8 @@ DEMO_ROOT = Path(__file__).resolve().parent
 DEFAULT_LIVE_WORKSPACE = Path(tempfile.gettempdir()) / "nanobot_live_demo_workspace"
 ANDROID_FRAME_SOURCE = "android-scrcpy"
 IOS_FRAME_SOURCE = "ios-mjpeg"
+DEFAULT_IOS_MJPEG_URL = "http://127.0.0.1:9100"
+DEFAULT_IOS_MJPEG_FRAME_TIMEOUT_MS = 3000
 JPEG_SOI = b"\xff\xd8"
 JPEG_EOI = b"\xff\xd9"
 
@@ -387,6 +389,8 @@ def create_app(
     *,
     config_path: Path | None = None,
     ios_mjpeg_source_factory: Callable[..., IosMjpegFrameSource] | None = None,
+    ios_mjpeg_url: str = DEFAULT_IOS_MJPEG_URL,
+    ios_mjpeg_frame_timeout_ms: int = DEFAULT_IOS_MJPEG_FRAME_TIMEOUT_MS,
 ) -> FastAPI:
     app = FastAPI(title="GUIClaw live demo", version="0.1.0")
     manager = LiveRunManager(config_path=config_path)
@@ -457,8 +461,8 @@ def create_app(
 
         if source_name == IOS_FRAME_SOURCE:
             source = (ios_mjpeg_source_factory or IosMjpegFrameSource)(
-                mjpeg_url=gui.ios.mjpeg_url,
-                frame_timeout_ms=gui.ios.mjpeg_frame_timeout_ms,
+                mjpeg_url=ios_mjpeg_url,
+                frame_timeout_ms=ios_mjpeg_frame_timeout_ms,
                 on_jpeg_frame=on_jpeg_frame,
             )
             source_task = asyncio.create_task(source.run(), name="demo-ios-mjpeg-preview")
@@ -546,8 +550,22 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=18880)
     parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--ios-mjpeg-url", default=DEFAULT_IOS_MJPEG_URL)
+    parser.add_argument(
+        "--ios-mjpeg-frame-timeout-ms",
+        type=int,
+        default=DEFAULT_IOS_MJPEG_FRAME_TIMEOUT_MS,
+    )
     args = parser.parse_args()
-    uvicorn.run(create_app(config_path=args.config), host=args.host, port=args.port)
+    uvicorn.run(
+        create_app(
+            config_path=args.config,
+            ios_mjpeg_url=args.ios_mjpeg_url,
+            ios_mjpeg_frame_timeout_ms=args.ios_mjpeg_frame_timeout_ms,
+        ),
+        host=args.host,
+        port=args.port,
+    )
 
 
 if __name__ == "__main__":

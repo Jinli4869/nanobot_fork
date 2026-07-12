@@ -22,24 +22,6 @@ _DEFAULT_REMEDIATION = (
 _REMEDIATIONS = {
     "xvfb_missing": "Install Xvfb to enable isolated background execution.",
     "platform_unsupported": "Run without background isolation on this host until a supported isolated backend exists.",
-    "macos_virtual_display_available": "macOS isolated background execution is available.",
-    "macos_version_unsupported": "Upgrade to macOS 14 or newer to enable isolated background execution.",
-    "macos_pyobjc_missing": (
-        "Install the macOS desktop extras in this environment to enable isolated background execution."
-    ),
-    "macos_virtual_display_api_missing": (
-        "This macOS build does not expose the CGVirtualDisplay runtime APIs required for isolated background execution."
-    ),
-    "macos_screen_recording_denied": (
-        "Grant Screen Recording in System Settings > Privacy & Security > Screen Recording."
-    ),
-    "macos_accessibility_denied": (
-        "Grant Accessibility in System Settings > Privacy & Security > Accessibility."
-    ),
-    "macos_event_post_denied": (
-        "Allow event posting in System Settings > Privacy & Security > Accessibility."
-    ),
-    "windows_isolated_desktop_available": "Windows isolated desktop execution is available.",
     "windows_non_interactive_session": (
         "Sign in to the interactive Windows session and rerun; Session 0 and service contexts "
         "cannot host isolated desktop automation."
@@ -50,10 +32,6 @@ _REMEDIATIONS = {
     ),
     "windows_create_desktop_failed": (
         "Check desktop-creation permissions and close stale GUIClaw desktops before retrying."
-    ),
-    "windows_attach_desktop_failed": (
-        "Retry from the same interactive session; Windows could not attach the worker thread to "
-        "the isolated desktop."
     ),
     "windows_app_class_unsupported": (
         "Use classic Win32/GDI apps on the isolated desktop; UWP, DirectX, and GPU-heavy "
@@ -118,8 +96,6 @@ def probe_isolated_background_support(
             backend_name="xvfb",
             sys_platform=raw_platform,
         )
-    if host_platform == "macos":
-        return _probe_macos_isolated_support(raw_platform)
     if host_platform == "windows":
         return _probe_windows_isolated_support(
             raw_platform,
@@ -218,30 +194,6 @@ class BackgroundRuntimeCoordinator:
 
 
 GLOBAL_BACKGROUND_RUNTIME_COORDINATOR = BackgroundRuntimeCoordinator()
-
-
-def _probe_macos_isolated_support(raw_platform: str) -> IsolationProbeResult:
-    try:
-        from guiclaw.backends.displays.cgvirtualdisplay import probe_macos_virtual_display_support
-    except ImportError:
-        return IsolationProbeResult(
-            supported=False,
-            reason_code="macos_pyobjc_missing",
-            retryable=True,
-            host_platform="macos",
-            backend_name="cgvirtualdisplay",
-            sys_platform=raw_platform,
-        )
-
-    support = probe_macos_virtual_display_support()
-    return IsolationProbeResult(
-        supported=bool(support["supported"]),
-        reason_code=str(support["reason_code"]),
-        retryable=bool(support["retryable"]),
-        host_platform="macos",
-        backend_name="cgvirtualdisplay",
-        sys_platform=raw_platform,
-    )
 
 
 def _probe_windows_isolated_support(

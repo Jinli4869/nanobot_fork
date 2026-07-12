@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import shlex
-import struct
 import tempfile
 import threading
 import time
@@ -36,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from guiclaw.action import Action, describe_action, resolve_coordinate
+from guiclaw.backends import read_png_size
 from guiclaw.backends.adb_command import AdbCommandRunner
 from guiclaw.backends.keycodes import ANDROID_KEYCODE_MAP as _KEYCODE_MAP
 from guiclaw.backends.keycodes import canonical_key_name
@@ -140,27 +140,6 @@ def _annotate_am_start_launch_variant(output: str, variant_name: str) -> str:
 def _am_start_launch_variant_marker(output: str) -> str | None:
     match = re.search(r"\[guiclaw_launch_variant=[A-Za-z0-9_:-]+\]", str(output or ""))
     return match.group(0) if match else None
-
-
-def _read_png_size(path: Path) -> tuple[int, int] | None:
-    """Return PNG image size from *path* without external dependencies."""
-    try:
-        with path.open("rb") as handle:
-            header = handle.read(24)
-    except OSError:
-        return None
-
-    if len(header) < 24:
-        return None
-    if header[:8] != b"\x89PNG\r\n\x1a\n":
-        return None
-    if header[12:16] != b"IHDR":
-        return None
-
-    width, height = struct.unpack(">II", header[16:24])
-    if width <= 0 or height <= 0:
-        return None
-    return width, height
 
 
 @dataclass(frozen=True)
@@ -955,7 +934,7 @@ class AdbBackend:
         await self._run("shell", "screencap", "-p", _DEVICE_SCREENSHOT_PATH, timeout=timeout)
         await self._run("pull", _DEVICE_SCREENSHOT_PATH, str(screenshot_path), timeout=timeout)
 
-        screenshot_size = _read_png_size(screenshot_path)
+        screenshot_size = read_png_size(screenshot_path)
         ui_tree_task = self._collect_ui_tree_extra(timeout, screenshot_path=screenshot_path)
         if screenshot_size is None:
             (width, height), fg_app, extra = await asyncio.gather(

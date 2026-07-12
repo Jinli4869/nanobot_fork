@@ -45,7 +45,7 @@ pip install -e .
 uv tool install nanobot-ai
 ```
 
-**Platform extras** are installed automatically. On macOS the `pyobjc` accessibility stack is required — it ships with the package and requires no manual steps.
+**Platform extras** are installed automatically. Linux background isolation uses Xvfb and Windows uses an isolated desktop; macOS currently supports foreground desktop automation only.
 
 For the **iOS backend**, install the optional `facebook-wda` dependency:
 
@@ -458,8 +458,6 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `agentProfile` | `string \| null` | `null` | Prompt/action profile for GUI-only models; defaults to native tool-calling when omitted |
 | `adb.serial` | `string \| null` | `null` | ADB device serial; `null` = auto-detect |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent server URL |
-| `ios.mjpegUrl` | `string` | `"http://127.0.0.1:9100"` | WebDriverAgent MJPEG live stream URL for the demo |
-| `ios.mjpegFrameTimeoutMs` | `int` | `3000` | Timeout while waiting for an iOS MJPEG frame |
 | `hdc.serial` | `string \| null` | `null` | HDC device serial; `null` = auto-detect |
 | `artifactsDir` | `string` | `"gui_runs"` | Directory for screenshots and run logs (relative to workspace) |
 | `maxSteps` | `int` | `15` | Maximum actions per task before giving up |
@@ -620,9 +618,7 @@ Run `adb devices` to list available serials.
   "gui": {
     "backend": "ios",
     "ios": {
-      "wdaUrl": "http://localhost:8100",
-      "mjpegUrl": "http://127.0.0.1:9100",
-      "mjpegFrameTimeoutMs": 3000
+      "wdaUrl": "http://localhost:8100"
     },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
@@ -640,7 +636,7 @@ Run `adb devices` to list available serials.
 > 6. Verify the server is reachable: `curl http://localhost:8100/status`
 > 7. Verify the live stream is reachable: open or curl `http://127.0.0.1:9100`
 >
-> If WDA or MJPEG listens on a different host/port, update `wdaUrl` and `mjpegUrl` accordingly.
+> If WDA listens on a different host/port, update `wdaUrl`. For a non-default demo MJPEG endpoint, pass `--ios-mjpeg-url` to `demo/live_server.py`.
 
 #### HarmonyOS — HDC
 
@@ -703,8 +699,8 @@ Open `http://127.0.0.1:18880`, choose a live platform, then enter a task.
 
 - **Android**: the center screen and GUI observations use a scrcpy video stream
   through `py-scrcpy-sdk`; GUI actions use the `adb` backend.
-- **iOS**: the center screen uses WebDriverAgent MJPEG from
-  `gui.ios.mjpegUrl`; GUI execution uses the `ios` backend through WDA.
+- **iOS**: the center screen uses WebDriverAgent MJPEG from the demo server's
+  `--ios-mjpeg-url` option; GUI execution uses the `ios` backend through WDA.
 
 Example iOS live-demo config:
 
@@ -713,9 +709,7 @@ Example iOS live-demo config:
   "gui": {
     "backend": "ios",
     "ios": {
-      "wdaUrl": "http://localhost:8100",
-      "mjpegUrl": "http://127.0.0.1:9100",
-      "mjpegFrameTimeoutMs": 3000
+      "wdaUrl": "http://localhost:8100"
     }
   }
 }
@@ -728,6 +722,9 @@ using a real device, then verify:
 curl http://localhost:8100/status
 curl http://127.0.0.1:9100
 ```
+
+Use `--ios-mjpeg-url` and `--ios-mjpeg-frame-timeout-ms` when starting the demo
+server if its MJPEG endpoint or timeout differs from the defaults.
 
 ---
 

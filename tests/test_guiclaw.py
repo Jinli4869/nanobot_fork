@@ -28,7 +28,6 @@ from guiclaw.agent_profiles import (
 from guiclaw.backends.adb import AdbBackend, AdbError
 from guiclaw.backends.dry_run import DryRunBackend
 from guiclaw.backends.hdc import HdcBackend
-from guiclaw.backends.mobileworld import MobileWorldBackend
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
 from guiclaw.skills import deeplink as deeplink_module
@@ -625,81 +624,6 @@ async def test_adb_open_intent_uses_uri_extra_for_stream_payload() -> None:
     assert "--grant-read-uri-permission" in remote_args
     assert "--eu" in remote_args
     assert remote_args[remote_args.index("--eu") + 2] == "file:///sdcard/Download/probe.png"
-
-
-@pytest.mark.asyncio
-async def test_mobileworld_backend_executes_open_intent_through_adb() -> None:
-    backend = MobileWorldBackend(
-        base_url="http://mobileworld.invalid",
-        device="emulator-test",
-    )
-    calls: list[tuple[tuple[str, ...], float]] = []
-
-    async def fake_run(*args: str, timeout: float = 10.0) -> str:
-        calls.append((args, timeout))
-        return "Starting: Intent { act=android.intent.action.SEND }"
-
-    backend._run = fake_run  # type: ignore[method-assign]
-
-    result = await backend.execute(
-        Action(
-            action_type="open_intent",
-            intent_action="android.intent.action.SEND",
-            package="com.google.android.apps.messaging",
-            mime_type="text/plain",
-            extras=(("android.intent.extra.TEXT", "hello world"),),
-        ),
-        timeout=2.0,
-    )
-
-    assert result == "open intent 'android.intent.action.SEND'\n[guiclaw_launch_variant=primary]"
-    assert calls == [
-        (
-            (
-                "shell",
-                "am start -W -a android.intent.action.SEND -t text/plain "
-                "-p com.google.android.apps.messaging --es android.intent.extra.TEXT 'hello world'",
-            ),
-            2.0,
-        )
-    ]
-
-
-@pytest.mark.asyncio
-async def test_mobileworld_backend_executes_open_deeplink_through_adb() -> None:
-    backend = MobileWorldBackend(
-        base_url="http://mobileworld.invalid",
-        device="emulator-test",
-    )
-    calls: list[tuple[str, ...]] = []
-
-    async def fake_run(*args: str, timeout: float = 10.0) -> str:
-        del timeout
-        calls.append(args)
-        return "Starting: Intent { act=android.intent.action.VIEW }"
-
-    backend._run = fake_run  # type: ignore[method-assign]
-
-    result = await backend.execute(
-        Action(
-            action_type="open_deeplink",
-            text="https://example.com/search?q=hello world",
-            package="com.android.chrome",
-        ),
-        timeout=2.0,
-    )
-
-    assert result == (
-        "open deeplink 'https://example.com/search?q=hello world'\n"
-        "[guiclaw_launch_variant=primary]"
-    )
-    assert calls == [
-        (
-            "shell",
-            "am start -W -a android.intent.action.VIEW -d "
-            "'https://example.com/search?q=hello world' -p com.android.chrome",
-        )
-    ]
 
 
 @pytest.mark.asyncio
@@ -1382,7 +1306,7 @@ async def test_adb_backend_observe_prefers_screenshot_size(monkeypatch: pytest.M
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
-    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: (2376, 1080))
+    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: (2376, 1080))
 
     obs = await backend.observe(Path("/tmp/adb-orientation.png"))
 
@@ -1406,7 +1330,7 @@ async def test_adb_backend_observe_falls_back_when_screenshot_size_unavailable(
     monkeypatch.setattr(backend, "_run", run_mock)
     monkeypatch.setattr(backend, "_query_screen_size", screen_size_mock)
     monkeypatch.setattr(backend, "_query_foreground_app", foreground_mock)
-    monkeypatch.setattr(adb_backend_module, "_read_png_size", lambda _path: None)
+    monkeypatch.setattr(adb_backend_module, "read_png_size", lambda _path: None)
 
     obs = await backend.observe(Path("/tmp/adb-orientation-fallback.png"))
 

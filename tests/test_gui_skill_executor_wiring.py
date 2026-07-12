@@ -166,15 +166,7 @@ class TestSkillExecutorWiringDisabled:
 
 
 class TestShortcutDiscoveryBackend:
-    """Shortcut discovery should not run through MobileWorldBackend."""
-
-    def test_mobileworld_backend_is_not_used_for_runtime_shortcut_discovery(self) -> None:
-        from nanobot.agent.tools.gui import GuiSubagentTool
-        from guiclaw.backends.mobileworld import MobileWorldBackend
-
-        backend = MobileWorldBackend(base_url="http://mobileworld.invalid")
-
-        assert GuiSubagentTool._shortcut_discovery_backend(backend) is None
+    """Shortcut discovery requires an ADB-like command runner."""
 
     def test_adb_like_backend_is_still_allowed_for_runtime_shortcut_discovery(self) -> None:
         from nanobot.agent.tools.gui import GuiSubagentTool

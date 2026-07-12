@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import logging
 import os
-import inspect
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -147,16 +147,6 @@ class HdcConfig:
 
 
 @dataclass(slots=True)
-class MobileWorldConfig:
-    base_url: str = "http://localhost:6800"
-    device: str = "emulator-5554"
-    xml_mode: str = "uia"
-    collect_ui_tree: bool = True
-    collect_ui_tree_nodes: bool = True
-    screenshot_transport: str = "download"
-
-
-@dataclass(slots=True)
 class BackgroundConfig:
     """Settings for isolated background displays used with --background."""
 
@@ -173,7 +163,6 @@ class CliConfig:
     scrcpy: ScrcpyConfig = field(default_factory=ScrcpyConfig)
     ios: IosConfig = field(default_factory=IosConfig)
     hdc: HdcConfig = field(default_factory=HdcConfig)
-    mobileworld: MobileWorldConfig = field(default_factory=MobileWorldConfig)
     max_steps: int = 15
     stagnation_limit: int = 0
     image_scale_ratio: float = 0.5
@@ -278,7 +267,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--task", dest="task_flag", help="Task description")
     parser.add_argument(
         "--backend",
-        choices=("adb", "ios", "hdc", "mobileworld", "local", "dry-run"),
+        choices=("adb", "ios", "hdc", "local", "dry-run"),
         default="local",
         help="Execution backend",
     )
@@ -435,18 +424,6 @@ def load_config(path: Path | None = None) -> CliConfig:
         hdc_path=_optional_string(hdc_raw, "hdc_path") or "hdc",
     )
 
-    mobileworld_raw = raw.get("mobileworld") or {}
-    if not isinstance(mobileworld_raw, dict):
-        raise ValueError("mobileworld config must be a mapping")
-    mobileworld = MobileWorldConfig(
-        base_url=_optional_string(mobileworld_raw, "base_url") or "http://localhost:6800",
-        device=_optional_string(mobileworld_raw, "device") or "emulator-5554",
-        xml_mode=_optional_string(mobileworld_raw, "xml_mode") or "uia",
-        collect_ui_tree=bool(mobileworld_raw.get("collect_ui_tree", True)),
-        collect_ui_tree_nodes=bool(mobileworld_raw.get("collect_ui_tree_nodes", True)),
-        screenshot_transport=_optional_string(mobileworld_raw, "screenshot_transport") or "download",
-    )
-
     return CliConfig(
         provider=provider,
         embedding=embedding,
@@ -454,7 +431,6 @@ def load_config(path: Path | None = None) -> CliConfig:
         scrcpy=scrcpy,
         ios=ios,
         hdc=hdc,
-        mobileworld=mobileworld,
         max_steps=_coerce_positive_int(raw.get("max_steps"), default=15),
         stagnation_limit=_coerce_non_negative_int(raw.get("stagnation_limit"), default=0),
         image_scale_ratio=_coerce_image_scale_ratio(raw.get("image_scale_ratio"), default=0.5),
@@ -494,17 +470,6 @@ def build_backend(name: str, config: CliConfig) -> Any:
     if name == "hdc":
         from guiclaw.backends.hdc import HdcBackend
         return HdcBackend(serial=config.hdc.serial, hdc_path=config.hdc.hdc_path or "hdc")
-    if name == "mobileworld":
-        from guiclaw.backends.mobileworld import MobileWorldBackend
-
-        return MobileWorldBackend(
-            base_url=config.mobileworld.base_url,
-            device=config.mobileworld.device,
-            xml_mode=config.mobileworld.xml_mode,
-            collect_ui_tree=config.mobileworld.collect_ui_tree,
-            collect_ui_tree_nodes=config.mobileworld.collect_ui_tree_nodes,
-            screenshot_transport=config.mobileworld.screenshot_transport,
-        )
     if name == "local":
         desktop_backend_cls = LocalDesktopBackend
         if desktop_backend_cls is None:
@@ -769,11 +734,6 @@ def _build_isolated_display_manager(args: argparse.Namespace, probe: Any) -> Any
 
         display_num = args.display_num if args.display_num is not None else 99
         return XvfbDisplayManager(display_num=display_num, width=width, height=height)
-
-    if probe.backend_name == "cgvirtualdisplay":
-        from guiclaw.backends.displays.cgvirtualdisplay import CGVirtualDisplayManager
-
-        return CGVirtualDisplayManager(width=width, height=height)
 
     if probe.backend_name == "windows_isolated_desktop":
         from guiclaw.backends.displays.win32desktop import Win32DesktopManager
