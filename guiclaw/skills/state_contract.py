@@ -29,8 +29,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from guiclaw.skills.static_selector_filter import (
-    filter_static_resource_ids,
-    filter_static_texts,
     selector_is_static,
     static_selector_from_node,
 )
@@ -45,24 +43,6 @@ _SELECTOR_KEYS = frozenset({
 _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
 _STATE_FLAG_SET = frozenset(_STATE_FLAGS)
 _SELECTOR_MATCH_THRESHOLD = 0.72
-_SELECTOR_SOLID_CONFIDENCE = 0.80
-_SELECTOR_SUPPORTED_CONFIDENCE = 0.70
-_EXTRA_HINT_KEYS = frozenset({
-    "visible_text",
-    "content_desc",
-    "resource_ids",
-    "clickable_text",
-    "focused_text",
-    "enabled_text",
-    "class_names",
-    "xpaths",
-    "ui_tree",
-    "ui_tree_node_count",
-    "screen_width",
-    "screen_height",
-    "scrollable_present",
-    "enabled_present",
-})
 
 
 @dataclass(frozen=True)
@@ -78,14 +58,6 @@ class ContractEvalResult:
     unknown_forbidden: list[dict[str, Any]] = field(default_factory=list)
     evidence_coverage: float = 0.0
     reason: str = ""
-
-
-@dataclass(frozen=True)
-class _SelectorCandidate:
-    selector: dict[str, Any]
-    confidence: float
-    support: int = 1
-    method: str = "unknown"
 
 
 def normalize_state_contract(contract: Any) -> dict[str, Any] | None:
@@ -122,86 +94,6 @@ def state_contract_fingerprint(contract: Any) -> str:
     if not normalized:
         return ""
     return str(normalized["fingerprint"])
-
-
-def state_contract_overlap(left: Any, right: Any) -> float:
-    """Return selector overlap in ``[0, 1]`` for version-trigger decisions."""
-    lnorm = normalize_state_contract(left)
-    rnorm = normalize_state_contract(right)
-    if not lnorm or not rnorm:
-        return 0.0
-    if _anchor_key(lnorm.get("anchor")) != _anchor_key(rnorm.get("anchor")):
-        return 0.0
-    left_elements = list(lnorm.get("signature", {}).get("required", []))
-    right_elements = list(rnorm.get("signature", {}).get("required", []))
-    if not left_elements and not right_elements:
-        return 1.0
-    if not left_elements or not right_elements:
-        return 0.0
-    scores: list[float] = []
-    for left_element in left_elements:
-        scores.append(max(
-            (_element_similarity(left_element, right_element) for right_element in right_elements),
-            default=0.0,
-        ))
-    return sum(scores) / max(len(left_elements), len(right_elements))
-
-
-def merge_state_contracts(base: Any, inferred: Any) -> dict[str, Any] | None:
-    """Merge an LLM-provided contract with a rule-inferred supplement."""
-    left = normalize_state_contract(base) or {}
-    right = normalize_state_contract(inferred) or {}
-    if not left:
-        return right or None
-    if not right:
-        return left or None
-
-    anchor: dict[str, Any] = dict(right.get("anchor", {}))
-    anchor.update(left.get("anchor", {}))
-
-    signature = {
-        "required": _dedupe_elements(
-            list(left.get("signature", {}).get("required", []))
-            + list(right.get("signature", {}).get("required", []))
-        ),
-        "forbidden": _dedupe_elements(
-            list(left.get("signature", {}).get("forbidden", []))
-            + list(right.get("signature", {}).get("forbidden", []))
-        ),
-    }
-    mask_rules = _dedupe_mask_rules(
-        list(left.get("mask_rules", [])) + list(right.get("mask_rules", []))
-    )
-    return normalize_state_contract({
-        "anchor": anchor,
-        "signature": signature,
-        "mask_rules": mask_rules,
-    })
-
-
-def score_state_contract(
-    contract: Any,
-    *,
-    observation: Any | None = None,
-    foreground_app: str | None = None,
-    observation_extra: dict[str, Any] | None = None,
-    selector_threshold: float = _SELECTOR_MATCH_THRESHOLD,
-) -> float | None:
-    """Score a contract against the current observation.
-
-    Returns ``None`` when there is not enough structured evidence, ``0.0`` for
-    deterministic mismatch, otherwise a confidence score in ``[0, 1]``.
-    """
-    result = evaluate_state_contract_detail(
-        contract,
-        observation=observation,
-        foreground_app=foreground_app,
-        observation_extra=observation_extra,
-        selector_threshold=selector_threshold,
-    )
-    if result.passed is None:
-        return None
-    return result.score
 
 
 def evaluate_state_contract_detail(
@@ -469,64 +361,6 @@ def infer_interaction_target(action: Any, observation: Any) -> dict[str, Any] | 
     }
 
 
-def infer_state_contract(
-    step_payload: dict[str, Any],
-    *,
-    observation_extra: dict[str, Any] | None = None,
-    trajectory: dict[str, Any] | None = None,
-    app: str | None = None,
-    window: int = 0,
-) -> dict[str, Any] | None:
-    """Infer a conservative canonical contract from observed UI metadata."""
-    action_type = str(step_payload.get("action_type") or "").strip().lower()
-    valid_state = step_payload.get("valid_state")
-    if action_type in {"open_app", "wait", "done", "request_intervention"}:
-        return None
-    if _should_skip_valid_state(valid_state):
-        return None
-
-    clean_app = _clean_string(app)
-    anchor: dict[str, Any] = {}
-    if clean_app and clean_app.lower() not in {"unknown", "app_package_or_name"}:
-        anchor["app_package"] = clean_app
-
-    extras = _inference_extras(
-        step_payload,
-        observation_extra=observation_extra,
-        trajectory=trajectory,
-        window=window,
-    )
-    if not extras:
-        return None
-
-    selector_candidate = _find_selector_for_step(
-        step_payload,
-        extras=extras,
-        action_type=action_type,
-    )
-    required: list[dict[str, Any]] = []
-    if selector_candidate:
-        selector = selector_candidate.selector
-        state = ["visible"]
-        if action_type in {"tap", "long_press", "double_tap"}:
-            state.append("clickable")
-        if action_type == "input_text":
-            state.append("enabled")
-        required.append({
-            "selector": {k: v for k, v in selector.items() if k in _SELECTOR_KEYS},
-            "state": state,
-        })
-
-    if not required:
-        return None
-
-    return normalize_state_contract({
-        "anchor": anchor,
-        "signature": {"required": required, "forbidden": []},
-        "mask_rules": _infer_mask_rules_from_extras(extras),
-    })
-
-
 def infer_focused_input_contract(
     observation_extra: dict[str, Any] | None,
     *,
@@ -777,29 +611,6 @@ def _element_key(element: dict[str, Any]) -> str:
         "selector": element.get("selector", {}),
         "state": element.get("state", []),
     })
-
-
-def _element_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
-    lsel = left.get("selector") if isinstance(left.get("selector"), dict) else {}
-    rsel = right.get("selector") if isinstance(right.get("selector"), dict) else {}
-    selector_score = 0.0
-    for key in ("resource_id", "content_desc", "text", "class", "xpath"):
-        lval = _clean_string(lsel.get(key))
-        rval = _clean_string(rsel.get(key))
-        if lval and rval:
-            selector_score = max(selector_score, _selector_text_score(key, lval, [rval]))
-    lstates = set(left.get("state") or [])
-    rstates = set(right.get("state") or [])
-    state_score = 1.0 if not lstates and not rstates else (
-        len(lstates & rstates) / len(lstates | rstates) if (lstates or rstates) else 0.0
-    )
-    return 0.80 * selector_score + 0.20 * state_score
-
-
-def _anchor_key(anchor: Any) -> tuple[tuple[str, str], ...]:
-    if not isinstance(anchor, dict):
-        return ()
-    return tuple(sorted((str(k), _normalize_text(v)) for k, v in anchor.items() if v))
 
 
 def _element_score(element: dict[str, Any], index: "_UiIndex") -> float | None:
@@ -1072,258 +883,6 @@ def _best_text_score(
     return best
 
 
-def _find_selector_for_step(
-    step_payload: dict[str, Any],
-    *,
-    extras: list[dict[str, Any]],
-    action_type: str,
-) -> _SelectorCandidate | None:
-    target_norm = _normalize_text(step_payload.get("target"))
-    if len(target_norm) < 2:
-        return None
-
-    selector = _rank_selector_candidates(
-        _candidate_selectors(target_norm, extra, action_type)
-        for extra in extras
-    )
-    if selector:
-        return selector
-
-    selector = _rank_selector_candidates(
-        _context_grounded_selectors(step_payload, extra, action_type)
-        for extra in extras
-    )
-    if selector:
-        return selector
-
-    return _rank_selector_candidates(
-        _coordinate_grounded_selectors(step_payload, extra, action_type)
-        for extra in extras
-    )
-
-
-def _find_selector_for_target(
-    target: str,
-    *,
-    trajectory: dict[str, Any],
-    action_type: str,
-) -> dict[str, Any] | None:
-    target_norm = _normalize_text(target)
-    if len(target_norm) < 2:
-        return None
-    candidate = _rank_selector_candidates(
-        _candidate_selectors(target_norm, extra, action_type)
-        for extra in _iter_observation_extras(trajectory)
-    )
-    return candidate.selector if candidate else None
-
-
-def _rank_selector_candidates(selector_groups: Any) -> _SelectorCandidate | None:
-    ranked: dict[tuple[tuple[str, Any], ...], _SelectorCandidate] = {}
-    for selectors in selector_groups:
-        for candidate in selectors:
-            if not selector_is_static(candidate.selector):
-                continue
-            marker = _selector_identity_key(candidate.selector)
-            previous = ranked.get(marker)
-            if previous is None:
-                ranked[marker] = candidate
-                continue
-            ranked[marker] = _SelectorCandidate(
-                selector=previous.selector,
-                confidence=max(previous.confidence, candidate.confidence),
-                support=previous.support + candidate.support,
-                method=previous.method if previous.confidence >= candidate.confidence else candidate.method,
-            )
-
-    accepted = [
-        candidate
-        for candidate in ranked.values()
-        if (
-            candidate.confidence >= _SELECTOR_SOLID_CONFIDENCE - 1e-9
-            or (
-                candidate.support >= 2
-                and candidate.confidence >= _SELECTOR_SUPPORTED_CONFIDENCE - 1e-9
-            )
-        )
-    ]
-    if not accepted:
-        return None
-    accepted.sort(
-        key=lambda item: (
-            -item.confidence,
-            -item.support,
-            -_selector_specificity(item.selector),
-            _selector_key(item.selector),
-        )
-    )
-    return accepted[0]
-
-
-def _candidate_selectors(
-    target_norm: str,
-    extra: dict[str, Any],
-    action_type: str,
-) -> list[_SelectorCandidate]:
-    candidates: list[_SelectorCandidate] = []
-    node_candidates = _node_selectors_for_target(target_norm, extra)
-    if node_candidates:
-        return node_candidates
-    clickable_text = filter_static_texts(extra.get("clickable_text"), limit=80)
-    visible_text = filter_static_texts(extra.get("visible_text"), limit=80)
-    content_desc = filter_static_texts(extra.get("content_desc"), limit=80)
-    resource_ids = filter_static_resource_ids(extra.get("resource_ids"), limit=80)
-
-    resource_match = _exact_target_match(target_norm, resource_ids)
-    if resource_match:
-        return [_selector_candidate({"resource_id": resource_match}, "flat_resource_id_match")]
-
-    content_match = _exact_target_match(target_norm, content_desc)
-    if content_match:
-        return [_selector_candidate({"content_desc": content_match}, "flat_content_desc_match")]
-
-    match = _exact_target_match(target_norm, visible_text)
-    if match:
-        return [_selector_candidate({"text": match}, "flat_text_match")]
-
-    if action_type in {"tap", "long_press", "double_tap"}:
-        clickable_match = _exact_target_match(target_norm, clickable_text)
-        if clickable_match:
-            candidates.append(_selector_candidate({"text": clickable_match}, "flat_clickable_text_match"))
-    return candidates
-
-
-def _context_grounded_selectors(
-    step_payload: dict[str, Any],
-    extra: dict[str, Any],
-    action_type: str,
-) -> list[_SelectorCandidate]:
-    context = _step_context_text(step_payload)
-    if not context:
-        return []
-    selectors: list[_SelectorCandidate] = []
-    for selector, labels in _structured_selector_labels(extra, action_type):
-        if any(_context_mentions_label(context, label) for label in labels):
-            selectors.append(_selector_candidate(selector, "context_grounded_match"))
-    return selectors
-
-
-def _coordinate_grounded_selectors(
-    step_payload: dict[str, Any],
-    extra: dict[str, Any],
-    action_type: str,
-) -> list[_SelectorCandidate]:
-    if action_type not in {"tap", "long_press", "double_tap"}:
-        return []
-    point = _step_point(step_payload, extra)
-    if point is None:
-        return []
-
-    matches: list[tuple[float, dict[str, Any]]] = []
-    for node in extra.get("ui_tree") or []:
-        if not isinstance(node, dict):
-            continue
-        bounds = _parse_bounds(node.get("bounds"))
-        if bounds is None:
-            continue
-        left, top, right, bottom = bounds
-        x, y = point
-        if not (left <= x <= right and top <= y <= bottom):
-            continue
-        selector = _selector_from_node(node)
-        if not selector:
-            continue
-        area = max(1.0, (right - left) * (bottom - top))
-        matches.append((area, selector))
-
-    if not matches:
-        return []
-    matches.sort(key=lambda item: item[0])
-    smallest_area = matches[0][0]
-    smallest = [selector for area, selector in matches if area == smallest_area]
-    if len({_selector_key(selector) for selector in smallest}) != 1:
-        return []
-    return [_selector_candidate(selector, "coordinate_grounded_match") for selector in smallest]
-
-
-def _structured_selector_labels(
-    extra: dict[str, Any],
-    action_type: str,
-) -> list[tuple[dict[str, Any], list[str]]]:
-    selectors: list[tuple[dict[str, Any], list[str]]] = []
-    ui_tree = extra.get("ui_tree")
-    if isinstance(ui_tree, list):
-        for node in ui_tree:
-            if not isinstance(node, dict):
-                continue
-            selector = _selector_from_node(node)
-            labels = _node_labels(node)
-            if selector and labels:
-                selectors.append((selector, labels))
-        if selectors:
-            return selectors
-
-    clickable = action_type in {"tap", "long_press", "double_tap"}
-    clickable_text = filter_static_texts(extra.get("clickable_text"), limit=80)
-    for value in filter_static_resource_ids(extra.get("resource_ids"), limit=80):
-        selectors.append(({"resource_id": value}, [value]))
-    for value in filter_static_texts(extra.get("content_desc"), limit=80):
-        selector = {"content_desc": value}
-        if clickable and value in clickable_text:
-            selector["clickable"] = True
-        selectors.append((selector, [value]))
-    if clickable:
-        for value in clickable_text:
-            selectors.append(({"text": value, "clickable": True}, [value]))
-    for value in filter_static_texts(extra.get("visible_text"), limit=80):
-        selectors.append(({"text": value}, [value]))
-    return selectors
-
-
-def _selector_from_node(node: dict[str, Any]) -> dict[str, Any]:
-    return static_selector_from_node(node) or {}
-
-
-def _node_labels(node: dict[str, Any]) -> list[str]:
-    return _dedupe(
-        value
-        for value in (
-            node.get("resource_id"),
-            node.get("content_desc"),
-            node.get("text"),
-            node.get("xpath"),
-        )
-        if value
-    )
-
-
-def _step_context_text(step_payload: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for key in (
-        "valid_state",
-        "expected_state",
-        "description",
-        "action_summary",
-        "summary",
-        "intent",
-    ):
-        value = step_payload.get(key)
-        if isinstance(value, str):
-            parts.append(value)
-    params = step_payload.get("parameters")
-    if isinstance(params, dict):
-        for key in ("text", "label", "content_desc", "resource_id"):
-            value = params.get(key)
-            if isinstance(value, str):
-                parts.append(value)
-    return "\n".join(parts).casefold()
-
-
-def _context_mentions_label(context: str, label: str) -> bool:
-    text = _clean_string(label).casefold()
-    return bool(text) and text in context
-
-
 def _step_point(step_payload: dict[str, Any], extra: dict[str, Any]) -> tuple[float, float] | None:
     params = step_payload.get("parameters")
     if not isinstance(params, dict):
@@ -1384,162 +943,6 @@ def _float_value(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
-
-def _node_selectors_for_target(target_norm: str, extra: dict[str, Any]) -> list[_SelectorCandidate]:
-    selectors: list[_SelectorCandidate] = []
-    ui_tree = extra.get("ui_tree")
-    if not isinstance(ui_tree, list):
-        return selectors
-    for node in ui_tree:
-        if not isinstance(node, dict):
-            continue
-        text = _clean_string(node.get("text"))
-        content_desc = _clean_string(node.get("content_desc"))
-        resource_id = _clean_string(node.get("resource_id"))
-        xpath = _clean_string(node.get("xpath"))
-        if not any(_normalize_text(value) == target_norm for value in (text, content_desc, resource_id, xpath)):
-            continue
-        selector = _selector_from_node(node)
-        if selector:
-            selectors.append(_selector_candidate(selector, "ui_tree_node_exact"))
-    return selectors
-
-
-def _selector_candidate(selector: dict[str, Any], method: str) -> _SelectorCandidate:
-    return _SelectorCandidate(
-        selector=selector,
-        confidence=_selector_confidence(selector, method),
-        method=method,
-    )
-
-
-def _selector_confidence(selector: dict[str, Any], method: str) -> float:
-    specificity = _selector_specificity(selector)
-    method_bonus = {
-        "ui_tree_node_exact": 0.18,
-        "coordinate_grounded_match": 0.14,
-        "context_grounded_match": 0.10,
-        "flat_resource_id_match": 0.10,
-        "flat_content_desc_match": 0.08,
-        "flat_text_match": 0.12,
-        "flat_clickable_text_match": 0.12,
-    }.get(method, 0.0)
-    return min(0.99, specificity + method_bonus)
-
-
-def _selector_specificity(selector: dict[str, Any]) -> float:
-    score = 0.0
-    if _clean_string(selector.get("resource_id")):
-        score += 0.78
-    if _clean_string(selector.get("content_desc")):
-        score += 0.72
-    if _clean_string(selector.get("text")):
-        score += 0.68
-    if _clean_string(selector.get("xpath")):
-        score += 0.30
-    if _clean_string(selector.get("class")):
-        score += 0.16
-    fields = sum(1 for key in _SELECTOR_KEYS if _clean_string(selector.get(key)))
-    if fields > 1:
-        score += 0.08
-    return min(0.86, score)
-
-
-def _iter_observation_extras(trajectory: dict[str, Any]) -> list[dict[str, Any]]:
-    extras: list[dict[str, Any]] = []
-
-    def add_mapping(value: Any) -> None:
-        extra = _extra_from_mapping(value)
-        if extra:
-            extras.append(extra)
-
-    def add_from_observation(obs: Any) -> None:
-        add_mapping(obs)
-
-    add_mapping(trajectory)
-
-    for step in trajectory.get("agent_phase", []) or []:
-        if isinstance(step, dict):
-            add_from_observation(step.get("observation"))
-
-    skill_phase = trajectory.get("skill_phase")
-    if isinstance(skill_phase, dict):
-        for step in skill_phase.get("steps", []) or []:
-            if isinstance(step, dict):
-                add_from_observation(step.get("observation"))
-                for substep in step.get("subgoal_recovery_attempts", []) or []:
-                    if isinstance(substep, dict):
-                        add_from_observation(substep.get("observation"))
-
-    return extras
-
-
-def _inference_extras(
-    step_payload: dict[str, Any],
-    *,
-    observation_extra: dict[str, Any] | None,
-    trajectory: dict[str, Any] | None,
-    window: int,
-) -> list[dict[str, Any]]:
-    extras: list[dict[str, Any]] = []
-    step_extra = _extra_from_mapping(step_payload.get("observation"))
-    if step_extra:
-        extras.append(step_extra)
-    elif observation_extra:
-        explicit = _extra_from_mapping(observation_extra) or observation_extra
-        if isinstance(explicit, dict):
-            extras.append(explicit)
-
-    if extras or not trajectory or window <= 0:
-        return extras
-
-    trajectory_extras = _iter_observation_extras(trajectory)
-    if not trajectory_extras:
-        return []
-    return trajectory_extras[: max(1, (2 * window) + 1)]
-
-
-def _extra_from_mapping(value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    out: dict[str, Any] = {}
-    nested_extra = value.get("extra")
-    if isinstance(nested_extra, dict):
-        out.update(nested_extra)
-    for key in _EXTRA_HINT_KEYS:
-        if key in value and key != "extra":
-            out[key] = value[key]
-    tree_extra = out.get("ui_tree")
-    if isinstance(tree_extra, dict):
-        out.pop("ui_tree", None)
-        for key, item in tree_extra.items():
-            if key in _EXTRA_HINT_KEYS:
-                out.setdefault(key, item)
-    return out or None
-
-
-def _infer_mask_rules(trajectory: dict[str, Any]) -> list[str]:
-    return _infer_mask_rules_from_extras(_iter_observation_extras(trajectory))
-
-
-def _infer_mask_rules_from_extras(extras: list[dict[str, Any]]) -> list[str]:
-    rules: set[str] = set()
-    for extra in extras:
-        values: list[str] = []
-        for key in ("visible_text", "content_desc", "clickable_text", "focused_text"):
-            values.extend(_string_list(extra.get(key)))
-        for value in values:
-            lower = value.lower()
-            if re.search(r"\b\d{1,2}:\d{2}\b", value):
-                rules.add("timestamp")
-            if re.search(r"\d+", value):
-                rules.add("counter")
-            if any(word in lower for word in ("recommend", "for you", "猜你喜欢", "推荐")):
-                rules.add("temporary_recommendation")
-            if any(word in lower for word in ("personal", "个性化", "为你")):
-                rules.add("personalized_text")
-    return sorted(rules)
 
 
 @dataclass
@@ -1674,25 +1077,6 @@ def _truthy(value: Any) -> bool:
     return bool(value)
 
 
-def _best_target_match(target_norm: str, candidates: list[str]) -> str | None:
-    best: tuple[float, str] | None = None
-    for candidate in candidates:
-        score = _best_text_score(target_norm, [candidate])
-        if score <= 0:
-            continue
-        marker = (score, candidate)
-        if best is None or marker > best:
-            best = marker
-    return best[1] if best else None
-
-
-def _exact_target_match(target_norm: str, candidates: list[str]) -> str | None:
-    for candidate in candidates:
-        if _normalize_text(candidate) == target_norm:
-            return candidate
-    return None
-
-
 def _clean_string(value: Any) -> str:
     if value is None:
         return ""
@@ -1749,10 +1133,6 @@ def _selector_key(selector: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
     return tuple(sorted(selector.items()))
 
 
-def _selector_identity_key(selector: dict[str, Any]) -> tuple[tuple[str, Any], ...]:
-    return tuple(sorted((key, value) for key, value in selector.items() if key in _SELECTOR_KEYS))
-
-
 def _dict_get(value: Any, key: str) -> Any:
     return value.get(key) if isinstance(value, dict) else None
 
@@ -1761,17 +1141,3 @@ def _action_get(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
     return getattr(value, key, None)
-
-
-def _should_skip_valid_state(valid_state: Any) -> bool:
-    text = _normalize_text(valid_state)
-    if not text:
-        return True
-    patterns = (
-        r"^\s*none\s*$",
-        r"^\s*n/?a\s*$",
-        r"\bno need to verify\b",
-        r"\bskip verification\b",
-        r"^\s*return true\s*$",
-    )
-    return any(re.search(pattern, text) for pattern in patterns)

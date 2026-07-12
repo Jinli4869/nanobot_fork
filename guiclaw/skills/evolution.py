@@ -16,8 +16,9 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from guiclaw.skills._merger import cosine_similarity
 from guiclaw.skills.data import Skill, SkillStep
-from guiclaw.skills.flat import FlatSkillLibrary, _cosine_similarity, _skill_search_text
+from guiclaw.skills.flat import FlatSkillLibrary, _skill_search_text
 from guiclaw.skills.normalization import normalize_app_identifier, normalize_skill_app
 from guiclaw.skills.state_contract import infer_focused_input_contract, normalize_state_contract
 from guiclaw.skills.trajectory_codegen import apply_focused_input_contracts
@@ -342,7 +343,7 @@ async def _evolution_rejection_reason(
     )
     if vectors is None or len(vectors) < 2:
         return None
-    similarity = _cosine_similarity(vectors[0], vectors[1])
+    similarity = cosine_similarity(vectors[0], vectors[1])
     if similarity < 0.45:
         return "low_embedding_similarity"
     return None

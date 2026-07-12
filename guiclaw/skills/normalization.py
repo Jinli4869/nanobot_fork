@@ -700,37 +700,6 @@ def _build_ios_aliases() -> dict[str, str]:
 _IOS_APP_ALIASES = _build_ios_aliases()
 
 
-def annotate_ios_apps(bundle_ids: list[str]) -> list[str]:
-    """Annotate iOS bundle IDs with human-readable display names.
-
-    Only bundle IDs with a known display name are included; unmapped entries are
-    silently dropped.  This keeps the system prompt focused on apps the model can
-    name and launch, while ``resolve_ios_bundle()`` handles the lookup at execution time.
-
-    Returns a list like ``["WeChat: com.tencent.xin"]``.
-    """
-    result: list[str] = []
-    for bundle_id in bundle_ids:
-        display = _IOS_BUNDLE_DISPLAY_NAMES.get(bundle_id)
-        if display:
-            result.append(f"{display}: {bundle_id}")
-    return result
-
-
-def resolve_ios_bundle(app_text: str) -> str:
-    """Resolve a human-readable app name to its iOS bundle ID.
-
-    Returns the matching bundle ID if found, otherwise the input unchanged.
-    """
-    cleaned = " ".join((app_text or "").strip().strip("\"'").split())
-    if not cleaned:
-        return app_text or ""
-    lowered = cleaned.lower()
-    if lowered in _IOS_APP_ALIASES:
-        return _IOS_APP_ALIASES[lowered]
-    return cleaned
-
-
 def normalize_app_identifier(platform: str, app: str) -> str:
     cleaned = " ".join((app or "").strip().strip("\"'").split())
     if not cleaned:

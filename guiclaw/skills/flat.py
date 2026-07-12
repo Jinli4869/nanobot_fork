@@ -11,7 +11,6 @@ JSON skill bucket, transition evidence, or legacy store is involved.
 from __future__ import annotations
 
 import ast
-import hashlib
 import json
 import logging
 import os
@@ -32,29 +31,14 @@ from guiclaw.skills._merger import (
     EMBEDDING_CONFLICT_THRESHOLD,
     STOPWORDS,
     STRUCTURAL_CONFLICT_THRESHOLD,
-    SkillConflict as _SkillConflict,
-    _StepSignature,
-    action_signature as _action_signature,
-    action_similarity as _action_similarity,
-    cleanup_same_intent as _cleanup_same_intent,
-    cleanup_superseded_prefixes as _cleanup_superseded_prefixes,
-    cosine_similarity as _cosine_similarity,
-    find_best_conflict as _find_best_conflict,
-    heuristic_merge_decision as _heuristic_merge_decision,
-    is_strict_rich_prefix as _is_strict_rich_prefix,
-    merge_skills as _merge_skills,
-    name_token_similarity as _name_token_similarity,
-    skill_semantic_similarity as _skill_semantic_similarity,
-    stable_json as _stable_json,
-    step_signature as _step_signature,
-    step_similarity as _step_similarity,
-    text_hash as _text_hash,
-    tokens as _tokens,
-    tuple_jaccard as _tuple_jaccard,
-    weighted_tuple_jaccard as _weighted_tuple_jaccard,
 )
-from guiclaw.skills.data import Skill, SkillStep, compute_confidence
-from guiclaw.skills.normalization import annotate_android_apps, normalize_app_identifier, normalize_skill_app
+from guiclaw.skills.data import Skill, SkillStep
+from guiclaw.skills.normalization import (
+    annotate_android_apps,
+    normalize_app_filter,
+    normalize_app_identifier,
+    normalize_skill_app,
+)
 from guiclaw.skills.state_contract import normalize_state_contract
 
 logger = logging.getLogger(__name__)
@@ -342,7 +326,7 @@ class FlatSkillRepository:
         if result.errors:
             logger.warning("Cannot list flat skills: %s", result.errors)
             return []
-        normalized_app = _normalize_app_filter(platform, app)
+        normalized_app = normalize_app_filter(platform, app)
         return [
             skill
             for skill in result.skills
@@ -524,7 +508,7 @@ class FlatSkillLibrary:
         ):
             return {}
         current_keys = {
-            (skill.skill_id, _text_hash(_skill_search_text(skill)))
+            (skill.skill_id, _merger.text_hash(_skill_search_text(skill)))
             for skill in skills
         }
         out: dict[str, np.ndarray] = {}
@@ -541,7 +525,7 @@ class FlatSkillLibrary:
         *,
         incoming_embedding: np.ndarray | None,
         existing_embeddings: dict[str, np.ndarray],
-    ) -> _SkillConflict | None:
+    ) -> _merger.SkillConflict | None:
         return _merger.find_best_conflict(
             incoming, skills,
             incoming_embedding=incoming_embedding,
@@ -549,7 +533,7 @@ class FlatSkillLibrary:
         )
 
     @staticmethod
-    def _heuristic_merge_decision(conflict: _SkillConflict, new: Skill) -> str:
+    def _heuristic_merge_decision(conflict: _merger.SkillConflict, new: Skill) -> str:
         return _merger.heuristic_merge_decision(conflict, new)
 
     @staticmethod
@@ -607,7 +591,7 @@ class FlatSkillLibrary:
         if not query.strip() or top_k <= 0:
             return []
         skills = self.list_all()
-        normalized_app = _normalize_app_filter(platform, app)
+        normalized_app = normalize_app_filter(platform, app)
         candidate_pairs = [
             (index, skill)
             for index, skill in enumerate(skills)
@@ -674,7 +658,7 @@ class FlatSkillLibrary:
         current_records = [
             {
                 "skill_id": skill.skill_id,
-                "search_text_hash": _text_hash(_skill_search_text(skill)),
+                "search_text_hash": _merger.text_hash(_skill_search_text(skill)),
             }
             for skill in skills
         ]
@@ -1322,7 +1306,7 @@ def _skill_search_text(skill_obj: Skill) -> str:
             " ".join(str(v) for v in step.parameters.values()),
             step.expected_state or "",
             step.valid_state or "",
-            _stable_json(step.state_contract),
+            _merger.stable_json(step.state_contract),
         ])
         for step in skill_obj.steps
     )
@@ -1356,12 +1340,6 @@ def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
         (str(record["skill_id"]), str(record["search_text_hash"]))
         for record in records
     ]
-
-
-def _normalize_app_filter(platform: str | None, app: str | None) -> str | None:
-    if app is None:
-        return None
-    return normalize_app_identifier(platform or "unknown", app)
 
 
 def _is_unknown_app(app: str) -> bool:

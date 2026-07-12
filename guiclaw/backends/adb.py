@@ -37,15 +37,11 @@ from typing import Any, Callable, Protocol
 
 from guiclaw.action import Action, describe_action, resolve_coordinate
 from guiclaw.backends.adb_command import AdbCommandRunner
+from guiclaw.backends.keycodes import ANDROID_KEYCODE_MAP as _KEYCODE_MAP
+from guiclaw.backends.keycodes import canonical_key_name
 from guiclaw.observation import Observation
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Keycode mapping
-# ---------------------------------------------------------------------------
-
-from guiclaw.backends.keycodes import ANDROID_KEYCODE_MAP as _KEYCODE_MAP, canonical_key_name  # noqa: E402
 
 _WM_SIZE_RE = re.compile(r"Physical size:\s*(\d+)x(\d+)", re.IGNORECASE)
 _RESUMED_ACTIVITY_RE = re.compile(
@@ -433,12 +429,6 @@ _ADB_TRANSPORT_ERROR_SUBSTRINGS: tuple[str, ...] = (
     "device not found",
     "more than one device/emulator",
 )
-
-
-def _is_adb_transport_error(exc: Exception) -> bool:
-    """Return True when *exc* indicates a device/adb connection problem."""
-    detail = str(exc).lower()
-    return any(marker in detail for marker in _ADB_TRANSPORT_ERROR_SUBSTRINGS)
 
 
 def _is_expected_root_probe_failure(exc: Exception) -> bool:

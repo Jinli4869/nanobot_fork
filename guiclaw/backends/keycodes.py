@@ -1,16 +1,12 @@
 """
 guiclaw.backends.keycodes
 ==========================
-Shared key-name definitions and resolution protocol for device backends.
-
-Each backend (adb, hdc, ios, desktop) implements ``KeyCodeResolver`` to map
-canonical key names to platform-specific codes.
+Shared key-name definitions and platform-specific mappings for device backends.
 """
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
 
 
 class CommonKey(StrEnum):
@@ -37,18 +33,6 @@ class CommonKey(StrEnum):
     DPAD_RIGHT = "right"
     DPAD_UP = "up"
     DPAD_DOWN = "down"
-
-
-@runtime_checkable
-class KeyCodeResolver(Protocol):
-    """Protocol for resolving canonical key names to platform-specific codes.
-
-    Raises ``KeyError`` when a key name is not supported on the platform.
-    """
-
-    def resolve(self, key: str) -> str: ...
-
-
 # ---------------------------------------------------------------------------
 # Cross-platform aliases — canonical name → (canonical_name,)
 # ---------------------------------------------------------------------------

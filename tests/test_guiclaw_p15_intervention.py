@@ -11,12 +11,11 @@ import pytest
 
 from guiclaw.action import ActionError, parse_action
 from guiclaw.agent import GuiAgent
-from guiclaw.backends.dry_run import _TINY_PNG
-from guiclaw.tool_schemas import COMPUTER_USE_TOOL
-from guiclaw.backends.dry_run import DryRunBackend
+from guiclaw.agents.utils.prompts import GENERAL_E2E_PROMPT_TEMPLATE
+from guiclaw.backends.dry_run import _TINY_PNG, DryRunBackend
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
-from guiclaw.prompts.system import build_system_prompt
+from guiclaw.tool_schemas import COMPUTER_USE_TOOL
 from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 
@@ -118,12 +117,18 @@ def test_request_intervention_requires_reason_text() -> None:
         })
 
 
-def test_system_prompt_lists_request_intervention_action() -> None:
-    prompt = build_system_prompt()
+def test_active_general_e2e_prompt_lists_ask_user_action() -> None:
+    prompt = GENERAL_E2E_PROMPT_TEMPLATE.render(
+        tools="",
+        scale_factor=1000,
+        extra_action_rows="",
+        decision_rules="",
+        compact_skill_instructions="",
+    )
 
-    assert '"request_intervention"' in prompt
-    assert "sensitive, blocked, or unsafe state" in prompt
-    assert '{"action_type":"request_intervention","text":"..."}' in prompt
+    assert "`ask_user`" in prompt
+    assert '"action_type":"ask_user"' in prompt
+    assert "no enough information" in prompt
 
 
 def test_agent_tool_schema_lists_request_intervention() -> None:

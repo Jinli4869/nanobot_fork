@@ -14,14 +14,16 @@ from typing import Any
 
 from PIL import Image
 
-from guiclaw.agents.implementations import gelab_agent
-from guiclaw.agents.implementations import general_e2e_agent
-from guiclaw.agents.implementations import gui_owl_1_5
-from guiclaw.agents.implementations import mai_ui_agent
-from guiclaw.agents.implementations import planner_executor
-from guiclaw.agents.implementations import qwen3vl
-from guiclaw.agents.implementations import seed_agent
-from guiclaw.agents.implementations import ui_venus_agent
+from guiclaw.agents.implementations import (
+    gelab_agent,
+    general_e2e_agent,
+    gui_owl_1_5,
+    mai_ui_agent,
+    planner_executor,
+    qwen3vl,
+    seed_agent,
+    ui_venus_agent,
+)
 from guiclaw.agents.runtime.models import (
     ANSWER,
     ASK_USER,
@@ -232,23 +234,6 @@ def build_mobileworld_messages(
             history_image_window=history_image_window,
         )
     raise ValueError(f"Unsupported MobileWorld profile: {profile}")
-
-
-def normalize_profile_response(profile_name: str | None, response: LLMResponse) -> LLMResponse:
-    """Parse a MobileWorld textual response without screen context.
-
-    This compatibility path is used by older helper call sites. The main
-    GuiAgent loop uses ``normalize_profile_response_for_observation`` so
-    MobileWorld parsers can convert coordinates against the actual screenshot.
-    """
-    return normalize_profile_response_for_screen(
-        profile_name,
-        response,
-        screen_width=999,
-        screen_height=999,
-        model_name="",
-        fallback_relative=True,
-    )
 
 
 def normalize_profile_response_for_observation(

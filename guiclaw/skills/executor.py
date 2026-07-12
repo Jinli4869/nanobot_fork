@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
-import io
 import logging
 import re
 import time
@@ -33,6 +32,7 @@ from typing import Any
 
 from guiclaw.action import Action, ActionError, parse_action
 from guiclaw.backends.mobileworld import MobileWorldBackend
+from guiclaw.image_utils import normalize_image_scale_ratio, scale_image
 from guiclaw.interfaces import DeviceBackend
 from guiclaw.observation import Observation
 from guiclaw.skills.data import Skill, SkillStep
@@ -258,15 +258,6 @@ class ScreenshotProvider(typing.Protocol):
         ...
 
 
-@typing.runtime_checkable
-class ObservationProvider(ScreenshotProvider, typing.Protocol):
-    """Provides a full observation with screenshot and structured metadata."""
-
-    async def get_observation(self) -> Observation | None:
-        """Capture and return the current observation."""
-        ...
-
-
 # ---------------------------------------------------------------------------
 # LLM-based state validator
 # ---------------------------------------------------------------------------
@@ -368,16 +359,9 @@ class LLMStateValidator:
         return False
 
 
-from guiclaw.image_utils import (
-    normalize_image_scale_ratio,
-    scale_image,
-    scale_image_half,
-)
-
 # Backward-compatible aliases for callers that import directly from executor
 _normalize_image_scale_ratio = normalize_image_scale_ratio
 _scale_image = scale_image
-_scale_image_half = scale_image_half
 
 
 def _should_skip_validation(valid_state: str | None) -> bool:
@@ -1384,7 +1368,7 @@ class SkillExecutor:
                         return observation, Path(observation.screenshot_path)
                     return observation, None
                 except Exception as exc:
-                    logger.warning("ObservationProvider failed: %s", exc)
+                    logger.warning("Observation retrieval failed: %s", exc)
         return None, await self._get_screenshot()
 
     async def _get_screenshot(self) -> Path | bytes | None:

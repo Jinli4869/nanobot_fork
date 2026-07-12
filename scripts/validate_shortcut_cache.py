@@ -31,7 +31,6 @@ from guiclaw.skills.deeplink import (
 )
 from guiclaw.skills.flat import FlatSkillLibrary
 
-
 VIEW_ACTION = "android.intent.action.VIEW"
 BROWSABLE_CATEGORY = "android.intent.category.BROWSABLE"
 SHORTCUT_SKIP_VALID_STATE = "No need to verify"
@@ -617,7 +616,6 @@ def infer_candidate_capabilities(candidate: Candidate) -> tuple[str, ...]:
 
 def capability_priority(candidate: Candidate, capability: str) -> int:
     score, _ = candidate_priority(candidate)
-    text = candidate_search_text(candidate)
     route_text = " ".join(
         str(item or "")
         for item in (

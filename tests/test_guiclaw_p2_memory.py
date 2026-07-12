@@ -111,7 +111,7 @@ async def test_policy_always_included(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_memory_context_formatted_in_system_prompt(tmp_path: Path) -> None:
-    """Memory context should be formatted and passed to build_system_prompt()."""
+    """Memory context should be formatted into the active agent system message."""
     store = MemoryStore(tmp_path / "mem")
     store.add(_make_entry("g1", "Swipe up from bottom to go home"))
     store.add(_make_entry("g2", "Long press for app info", MemoryType.OS_GUIDE))

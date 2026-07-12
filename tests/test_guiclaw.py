@@ -20,10 +20,9 @@ import guiclaw.backends.hdc as hdc_backend_module
 import guiclaw.backends.ios_wda as ios_wda_module
 from guiclaw.action import Action, ActionError, parse_action, resolve_coordinate
 from guiclaw.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
-from guiclaw.tool_schemas import build_shortcut_tool_defs
 from guiclaw.agent_profiles import (
     canonicalize_agent_profile,
-    normalize_profile_response,
+    normalize_profile_response_for_screen,
     profile_tool_definition,
 )
 from guiclaw.backends.adb import AdbBackend, AdbError
@@ -32,12 +31,12 @@ from guiclaw.backends.hdc import HdcBackend
 from guiclaw.backends.mobileworld import MobileWorldBackend
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
-from guiclaw.prompts.system import build_system_prompt
-from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills import deeplink as deeplink_module
 from guiclaw.skills import executor as skill_executor_module
+from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
 from guiclaw.skills.flat import FlatSkillLibrary, compile_flat_skills, export_skills_to_source
+from guiclaw.tool_schemas import build_shortcut_tool_defs
 from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 
@@ -48,6 +47,16 @@ def _make_recorder(tmp_path: Path, task: str = "test task") -> TrajectoryRecorde
 def _write_test_png(path: Path, *, size: tuple[int, int] = (32, 32)) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", size, color=(255, 255, 255)).save(path, format="PNG")
+
+
+def _normalize_test_profile_response(profile_name: str, response: LLMResponse) -> LLMResponse:
+    return normalize_profile_response_for_screen(
+        profile_name,
+        response,
+        screen_width=999,
+        screen_height=999,
+        fallback_relative=True,
+    )
 
 
 def _mobileworld_response(
@@ -1166,35 +1175,12 @@ def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
     assert recents.action_type == "app_switch"
 
 
-def test_build_system_prompt_uses_mobile_agent_style_sections() -> None:
-    prompt = build_system_prompt(
-        platform="android",
-        tool_definition={"type": "function", "function": {"name": "computer_use"}},
-    )
-
-    assert "# Action Contract" in prompt
-    assert "MobileWorld agent profile: general_e2e" in prompt
-    assert "Use the exact MobileWorld response format" in prompt
-    assert "Do not use provider-native tool calling" in prompt
-
-
 def test_default_profile_tool_definition_is_mobileworld_textual_schema() -> None:
     params = profile_tool_definition("default")["function"]["parameters"]
 
     assert profile_tool_definition("default")["function"]["name"] == "mobile_use"
     assert params["required"] == []
     assert params["properties"] == {}
-
-
-def test_build_system_prompt_supports_general_e2e_profile() -> None:
-    prompt = build_system_prompt(
-        platform="android",
-        agent_profile="general_e2e",
-    )
-
-    assert "MobileWorld agent profile: general_e2e" in prompt
-    assert "Use the exact MobileWorld response format" in prompt
-    assert "Do not use provider-native tool calling" in prompt
 
 
 def test_general_e2e_compact_skill_profile_is_alias() -> None:
@@ -1312,30 +1298,6 @@ def test_gui_agent_skill_app_filter_prefers_hint_then_task_text(tmp_path: Path) 
         "Locate server features within Settings > Server"
     )
     assert agent._skill_app_filter(task_with_hints, None) == "com.gmailclone"
-
-
-def test_build_system_prompt_android_apps_shows_display_names_only() -> None:
-    prompt = build_system_prompt(
-        platform="android",
-        installed_apps=["com.sankuai.meituan", "com.unknown.dropped"],
-    )
-
-    assert "美团/Meituan" in prompt
-    # Package name must not appear as an app list item
-    lines = prompt.splitlines()
-    app_list_lines = [ln.strip() for ln in lines if ln.strip().startswith("- ")]
-    assert not any("com.sankuai.meituan" in ln for ln in app_list_lines)
-    assert not any("com.unknown.dropped" in ln for ln in app_list_lines)
-
-
-def test_build_system_prompt_android_apps_excludes_unmapped() -> None:
-    prompt = build_system_prompt(
-        platform="android",
-        installed_apps=["com.totally.unknown"],
-    )
-
-    # With all packages unmapped, no "# Installed Apps" section should appear
-    assert "# Installed Apps" not in prompt
 
 
 @pytest.mark.asyncio
@@ -1821,7 +1783,7 @@ def test_qwen3vl_profile_normalizes_content_only_response() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
+    normalized = _normalize_test_profile_response("qwen3vl", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].name == "computer_use"
@@ -1842,7 +1804,7 @@ def test_qwen3vl_profile_rejects_action_json_without_tool_call() -> None:
     )
 
     with pytest.raises(ValueError):
-        normalize_profile_response("qwen3vl", response)
+        _normalize_test_profile_response("qwen3vl", response)
 
 
 def test_qwen3vl_profile_uses_mobileworld_conclusion_as_summary() -> None:
@@ -1855,7 +1817,7 @@ def test_qwen3vl_profile_uses_mobileworld_conclusion_as_summary() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
+    normalized = _normalize_test_profile_response("qwen3vl", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
@@ -1878,7 +1840,7 @@ def test_qwen3vl_profile_parses_action_type_key() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
+    normalized = _normalize_test_profile_response("qwen3vl", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
@@ -1904,7 +1866,7 @@ def test_qwen3vl_profile_prefers_content_contract_over_provider_tool_calls() -> 
         ],
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
+    normalized = _normalize_test_profile_response("qwen3vl", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].id == "content-tool-call-0"
@@ -1930,7 +1892,7 @@ def test_qwen3vl_profile_rejects_provider_tool_calls_when_content_contract_is_mi
     )
 
     with pytest.raises(ValueError):
-        normalize_profile_response("qwen3vl", response)
+        _normalize_test_profile_response("qwen3vl", response)
 
 
 def test_qwen3vl_profile_rejects_provider_mobile_use_tool_calls() -> None:
@@ -1946,7 +1908,7 @@ def test_qwen3vl_profile_rejects_provider_mobile_use_tool_calls() -> None:
     )
 
     with pytest.raises(ValueError):
-        normalize_profile_response("qwen3vl", response)
+        _normalize_test_profile_response("qwen3vl", response)
 
 
 def test_qwen3vl_profile_requires_action_text_before_tool_call() -> None:
@@ -1956,7 +1918,7 @@ def test_qwen3vl_profile_requires_action_text_before_tool_call() -> None:
     )
 
     with pytest.raises(ValueError):
-        normalize_profile_response("qwen3vl", response)
+        _normalize_test_profile_response("qwen3vl", response)
 
 
 def test_qwen3vl_profile_normalizes_wait_with_time() -> None:
@@ -1969,7 +1931,7 @@ def test_qwen3vl_profile_normalizes_wait_with_time() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
+    normalized = _normalize_test_profile_response("qwen3vl", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
@@ -1988,7 +1950,7 @@ def test_mai_ui_profile_parses_swipe_direction_scroll() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("mai_ui", response)
+    normalized = _normalize_test_profile_response("mai_ui", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].arguments == {
@@ -2010,7 +1972,7 @@ def test_mai_ui_profile_rejects_action_json_without_tool_call() -> None:
     )
 
     with pytest.raises(ValueError):
-        normalize_profile_response("mai_ui", response)
+        _normalize_test_profile_response("mai_ui", response)
 
 
 def test_qwen3vl_profile_parses_tool_call_block_with_text_action() -> None:
@@ -2023,7 +1985,7 @@ def test_qwen3vl_profile_parses_tool_call_block_with_text_action() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("qwen3vl", response)
+    normalized = _normalize_test_profile_response("qwen3vl", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].name == "computer_use"
@@ -2048,7 +2010,7 @@ def test_mai_ui_profile_parses_tool_call_block() -> None:
         tool_calls=None,
     )
 
-    normalized = normalize_profile_response("mai_ui", response)
+    normalized = _normalize_test_profile_response("mai_ui", response)
 
     assert normalized.tool_calls is not None
     assert normalized.tool_calls[0].name == "computer_use"

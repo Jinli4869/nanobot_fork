@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import base64
-import json
 from io import BytesIO
 from typing import Any
 
@@ -54,7 +53,3 @@ def pretty_print_messages(messages: list[dict[str, Any]], max_messages: int = 10
     del max_messages
     # GUIClaw tracing handles prompt snapshots; this compatibility hook is quiet.
     return None
-
-
-def compact_json(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))

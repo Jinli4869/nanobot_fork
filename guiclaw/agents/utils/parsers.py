@@ -162,37 +162,3 @@ def _parse_json(json_str: str, *, parser: Callable[[str], Any] = parse_partial_j
 
     # Parse the JSON string into a Python dictionary
     return parser(json_str)
-
-
-def parse_and_check_json_markdown(text: str, expected_keys: list[str]) -> dict:
-    """Parse and check a JSON string from a Markdown string.
-
-    Checks that it contains the expected keys.
-
-    Args:
-        text: The Markdown string.
-        expected_keys: The expected keys in the JSON string.
-
-    Returns:
-        The parsed JSON object as a Python dictionary.
-
-    Raises:
-        OutputParserException: If the JSON string is invalid or does not contain
-            the expected keys.
-    """
-    try:
-        json_obj = parse_json_markdown(text)
-    except json.JSONDecodeError as e:
-        msg = f"Got invalid JSON object. Error: {e}"
-        raise json.JSONDecodeError(msg) from e
-    if not isinstance(json_obj, dict):
-        error_message = f"Expected JSON object (dict), but got: {type(json_obj).__name__}. "
-        raise json.JSONDecodeError(error_message, llm_output=text)
-
-    for key in expected_keys:
-        if key not in json_obj:
-            msg = (
-                f"Got invalid return object. Expected key `{key}` to be present, but got {json_obj}"
-            )
-            raise json.JSONDecodeError(msg)
-    return json_obj

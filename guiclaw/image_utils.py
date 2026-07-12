@@ -48,8 +48,3 @@ def scale_image(data: bytes, *, scale_ratio: float = 0.5) -> bytes:
             return buf.getvalue()
     except Exception:
         return data
-
-
-def scale_image_half(data: bytes) -> bytes:
-    """Scale image to 50% — backward-compatible helper."""
-    return scale_image(data, scale_ratio=0.5)

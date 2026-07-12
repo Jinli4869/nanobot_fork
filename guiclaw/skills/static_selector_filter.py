@@ -116,31 +116,6 @@ def filter_static_resource_ids(value: Any, *, limit: int = 40) -> list[str]:
     return out
 
 
-def filter_static_controls(value: Any, *, limit: int = 12) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    out: list[dict[str, Any]] = []
-    seen: set[tuple[str | None, str | None, str | None]] = set()
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        control = static_control_from_node(item)
-        if not control:
-            continue
-        key = (
-            control.get("text"),
-            control.get("content_desc"),
-            control.get("resource_id"),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(control)
-        if len(out) >= limit:
-            break
-    return out
-
-
 def static_control_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
     text = _clean_text(node.get("text"))
     content_desc = _clean_text(node.get("content_desc"))

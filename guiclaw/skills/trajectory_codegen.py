@@ -14,8 +14,8 @@ from PIL import Image
 
 from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.normalization import find_android_app_in_text, normalize_app_identifier
-from guiclaw.skills.static_selector_filter import static_selector_from_node
 from guiclaw.skills.state_contract import infer_focused_input_contract
+from guiclaw.skills.static_selector_filter import static_selector_from_node
 
 _BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 _ACTION_PARAM_KEYS = ("x", "y", "x2", "y2", "text", "key", "pixels", "direction")
@@ -257,15 +257,6 @@ def _first_platform(events: list[dict[str, Any]]) -> str:
         p = obs.get("platform")
         if p:
             return str(p)
-    return ""
-
-
-def _first_foreground_app(events: list[dict[str, Any]]) -> str:
-    for e in events:
-        obs = e.get("observation") or {}
-        app = obs.get("foreground_app") or obs.get("app")
-        if app:
-            return str(app)
     return ""
 
 
