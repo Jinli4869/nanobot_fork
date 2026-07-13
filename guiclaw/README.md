@@ -25,10 +25,9 @@ GUIClaw can be used in two ways:
    - [Platform-specific examples](#platform-specific-examples)
 4. [Live Demo](#live-demo)
 5. [Planner / Router Integration](#planner--router-integration)
-6. [App List Initialization](#app-list-initialization)
-7. [Memory Store](#memory-store)
-8. [Backends](#backends)
-9. [Skills System](#skills-system)
+6. [Memory Store](#memory-store)
+7. [Backends](#backends)
+8. [Skills System](#skills-system)
 
 ---
 
@@ -142,7 +141,6 @@ Options:
   --agent-profile {default,general_e2e,qwen3vl,mai_ui,gelab,seed}
                           Prompt/action profile for GUI-only models
   --config PATH           Config file path (default: ~/.guiclaw/config.yaml)
-  --refresh-apps          Force re-fetch and cache the installed app list
   --background            Run on virtual Xvfb display [Linux only]
   --require-isolation     Fail if isolated background execution is unavailable
   --target-app-class {classic-win32,uwp,directx,gpu-heavy,electron-gpu}
@@ -176,9 +174,6 @@ guiclaw --dry-run "Click the save button"
 
 # Use a non-default GUI profile
 guiclaw --backend adb --agent-profile qwen3vl "Open Settings and enable Wi-Fi"
-
-# Force refresh the installed app list, then run
-guiclaw --backend adb --refresh-apps "Open WeChat"
 
 # Use a custom config file
 guiclaw --config ~/my-config.yaml "Open the calculator"
@@ -771,144 +766,6 @@ The capability catalog shown to the planner also reflects the active backend:
 | `ios` | "Use the GUI subagent to operate apps on the connected iOS device" |
 | `hdc` | "Use the GUI subagent to operate apps on the connected HarmonyOS device" |
 | `local` | "Use the GUI subagent to operate apps on the local desktop" |
-
----
-
-## App List Initialization
-
-GUIClaw caches the list of installed apps so the agent knows which apps are available on the target device or desktop. The cache lives under `~/.guiclaw/apps/` as plain JSON arrays.
-
-**Cache file locations by platform:**
-
-| Platform | Cache file |
-|----------|-----------|
-| Android (default device) | `~/.guiclaw/apps/android_default.json` |
-| Android (specific serial) | `~/.guiclaw/apps/android_R3CN70BAYER.json` |
-| iOS | `~/.guiclaw/apps/ios_default.json` |
-| HarmonyOS (default device) | `~/.guiclaw/apps/harmonyos_default.json` |
-| HarmonyOS (specific serial) | `~/.guiclaw/apps/harmonyos_FMR0223C13000649.json` |
-| macOS | `~/.guiclaw/apps/macos.json` |
-| Linux | `~/.guiclaw/apps/linux.json` |
-| Windows | `~/.guiclaw/apps/windows.json` |
-
-### Auto-population
-
-The app list is fetched automatically on first run and cached. Subsequent runs read from cache (fast). To force a full refresh:
-
-```bash
-guiclaw --refresh-apps --backend adb "Open WeChat"
-guiclaw --refresh-apps --backend ios "Open Settings"
-guiclaw --refresh-apps --backend hdc "Open Settings"
-```
-
-### Manual initialization
-
-You can seed or edit the cache by hand. The format is a JSON array of strings.
-
-**Android** (`~/.guiclaw/apps/android_default.json`):
-
-```json
-[
-  "com.tencent.mm",
-  "com.eg.android.AlipayGphone",
-  "com.taobao.taobao",
-  "com.android.settings",
-  "com.android.chrome",
-  "tv.danmaku.bili",
-  "com.ss.android.ugc.aweme"
-]
-```
-
-> Android entries are **package names**. Find them with:
-> ```bash
-> adb shell pm list packages -3      # third-party apps only
-> adb shell pm list packages          # all packages
-> ```
-
-**iOS** (`~/.guiclaw/apps/ios_default.json`):
-
-```json
-[
-  "com.apple.Preferences",
-  "com.apple.mobilesafari",
-  "com.tencent.xin",
-  "com.alipay.iphoneclient",
-  "com.ss.iphone.ugc.Aweme"
-]
-```
-
-> iOS entries are **bundle IDs**. List installed app bundle IDs with:
-> ```bash
-> ideviceinstaller -l          # requires libimobiledevice
-> ```
-
-**HarmonyOS** (`~/.guiclaw/apps/harmonyos_default.json`):
-
-```json
-[
-  "com.huawei.settings",
-  "com.huawei.browser",
-  "com.tencent.mm",
-  "com.eg.android.AlipayGphone",
-  "com.ss.android.ugc.aweme"
-]
-```
-
-> HarmonyOS entries are **bundle names**. List installed bundles with:
-> ```bash
-> hdc shell bm dump -a          # list all bundles
-> ```
-
-**macOS** (`~/.guiclaw/apps/macos.json`):
-
-```json
-[
-  "Safari",
-  "Google Chrome",
-  "Firefox",
-  "Finder",
-  "Terminal",
-  "Visual Studio Code",
-  "Slack",
-  "Notion"
-]
-```
-
-> macOS entries are the `.app` bundle names **without** the `.app` suffix, as they appear in `/Applications` or `~/Applications`.
-
-**Linux** (`~/.guiclaw/apps/linux.json`):
-
-```json
-[
-  "firefox",
-  "google-chrome",
-  "code",
-  "gnome-terminal",
-  "nautilus",
-  "gedit",
-  "slack"
-]
-```
-
-> Linux entries are `.desktop` file stems from `/usr/share/applications/`. List them with:
-> ```bash
-> ls /usr/share/applications/*.desktop | xargs -I{} basename {} .desktop
-> ```
-
-**Windows** (`~/.guiclaw/apps/windows.json`):
-
-```json
-[
-  "Microsoft Edge",
-  "Google Chrome",
-  "File Explorer",
-  "Notepad",
-  "Visual Studio Code",
-  "Slack"
-]
-```
-
-> Windows entries are human-readable application names used by GUIClaw when locating windows.
 
 ---
 

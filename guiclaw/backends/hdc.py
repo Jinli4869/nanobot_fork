@@ -19,6 +19,8 @@ from pathlib import Path
 
 from guiclaw.action import Action, describe_action, resolve_coordinate
 from guiclaw.backends import read_png_size
+from guiclaw.backends.keycodes import HDC_KEYCODE_MAP as _HDC_KEYCODE_MAP
+from guiclaw.backends.keycodes import canonical_key_name
 from guiclaw.observation import Observation
 
 # ---------------------------------------------------------------------------
@@ -26,9 +28,6 @@ from guiclaw.observation import Observation
 # ---------------------------------------------------------------------------
 
 _DEVICE_SCREENSHOT_PATH = "/data/local/tmp/__guiclaw_cap.jpeg"
-
-# HarmonyOS uitest keyEvent values (numeric codes used by uitest uiInput)
-from guiclaw.backends.keycodes import HDC_KEYCODE_MAP as _HDC_KEYCODE_MAP, canonical_key_name  # noqa: E402
 
 _RENDER_SERVICE_RE = re.compile(r"(\d{3,4})\s*[xX]\s*(\d{3,4})")
 # aa dump -l output looks like: bundle_name #string[com.example.app]  state #FOREGROUND
@@ -76,6 +75,7 @@ def _import_pil_image() -> type:
     """Lazily import PIL.Image with a helpful installation hint on failure."""
     try:
         from PIL import Image  # type: ignore[import-untyped]  # noqa: PLC0415
+
         return Image
     except ImportError as exc:
         raise ImportError(
@@ -136,7 +136,8 @@ class HdcBackend:
                 stderr=asyncio.subprocess.PIPE,
             )
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout,
+                proc.communicate(),
+                timeout=timeout,
             )
         except asyncio.TimeoutError:
             try:
@@ -220,20 +221,28 @@ class HdcBackend:
         # --- Capture screenshot on device ---
         try:
             await self._run(
-                "shell", "screenshot", _DEVICE_SCREENSHOT_PATH,
+                "shell",
+                "screenshot",
+                _DEVICE_SCREENSHOT_PATH,
                 timeout=timeout,
             )
         except (HdcError, TimeoutError):
             # Fallback to snapshot_display on older HarmonyOS builds.
             await self._run(
-                "shell", "snapshot_display", "-f", _DEVICE_SCREENSHOT_PATH,
+                "shell",
+                "snapshot_display",
+                "-f",
+                _DEVICE_SCREENSHOT_PATH,
                 timeout=timeout,
             )
 
         # --- Pull the JPEG to a local temp path ---
         jpeg_path = screenshot_path.with_suffix(".jpeg")
         await self._run(
-            "file", "recv", _DEVICE_SCREENSHOT_PATH, str(jpeg_path),
+            "file",
+            "recv",
+            _DEVICE_SCREENSHOT_PATH,
+            str(jpeg_path),
             timeout=timeout,
         )
 
@@ -273,7 +282,10 @@ class HdcBackend:
         """Query physical screen resolution from RenderService."""
         try:
             output = await self._run(
-                "shell", "hidumper", "-s", "RenderService",
+                "shell",
+                "hidumper",
+                "-s",
+                "RenderService",
                 timeout=max(timeout, 5.0),
             )
             match = _RENDER_SERVICE_RE.search(output)
@@ -288,7 +300,10 @@ class HdcBackend:
         """Parse ``aa dump -l`` output for the FOREGROUND mission bundle name."""
         try:
             output = await self._run(
-                "shell", "aa", "dump", "-l",
+                "shell",
+                "aa",
+                "dump",
+                "-l",
                 timeout=max(timeout, 10.0),
             )
             # Find the mission block that contains "FOREGROUND" state
@@ -313,21 +328,36 @@ class HdcBackend:
         if t == "tap":
             x, y = self._resolve_point(action)
             await self._run(
-                "shell", "uitest", "uiInput", "click", str(x), str(y),
+                "shell",
+                "uitest",
+                "uiInput",
+                "click",
+                str(x),
+                str(y),
                 timeout=timeout,
             )
 
         elif t == "double_tap":
             x, y = self._resolve_point(action)
             await self._run(
-                "shell", "uitest", "uiInput", "doubleClick", str(x), str(y),
+                "shell",
+                "uitest",
+                "uiInput",
+                "doubleClick",
+                str(x),
+                str(y),
                 timeout=timeout,
             )
 
         elif t == "long_press":
             x, y = self._resolve_point(action)
             await self._run(
-                "shell", "uitest", "uiInput", "longClick", str(x), str(y),
+                "shell",
+                "uitest",
+                "uiInput",
+                "longClick",
+                str(x),
+                str(y),
                 timeout=timeout,
             )
 
@@ -336,8 +366,15 @@ class HdcBackend:
             x2, y2 = self._resolve_second_point(action)
             speed = _compute_swipe_speed(x1, y1, x2, y2, action.duration_ms)
             await self._run(
-                "shell", "uitest", "uiInput", "swipe",
-                str(x1), str(y1), str(x2), str(y2), str(speed),
+                "shell",
+                "uitest",
+                "uiInput",
+                "swipe",
+                str(x1),
+                str(y1),
+                str(x2),
+                str(y2),
+                str(speed),
                 timeout=timeout,
             )
 
@@ -352,13 +389,22 @@ class HdcBackend:
                     tx = self._screen_width // 2
                     ty = self._screen_height // 2
                 await self._run(
-                    "shell", "uitest", "uiInput", "inputText",
-                    str(tx), str(ty), text,
+                    "shell",
+                    "uitest",
+                    "uiInput",
+                    "inputText",
+                    str(tx),
+                    str(ty),
+                    text,
                     timeout=timeout,
                 )
             if action.auto_enter:
                 await self._run(
-                    "shell", "uitest", "uiInput", "keyEvent", "2054",
+                    "shell",
+                    "uitest",
+                    "uiInput",
+                    "keyEvent",
+                    "2054",
                     timeout=timeout,
                 )
 
@@ -371,7 +417,11 @@ class HdcBackend:
                         f"Unknown HDC key {k!r}. Supported: {sorted(_HDC_KEYCODE_MAP.keys())}"
                     )
                 await self._run(
-                    "shell", "uitest", "uiInput", "keyEvent", keycode,
+                    "shell",
+                    "uitest",
+                    "uiInput",
+                    "keyEvent",
+                    keycode,
                     timeout=timeout,
                 )
 
@@ -383,13 +433,21 @@ class HdcBackend:
 
         elif t == "back":
             await self._run(
-                "shell", "uitest", "uiInput", "keyEvent", "Back",
+                "shell",
+                "uitest",
+                "uiInput",
+                "keyEvent",
+                "Back",
                 timeout=timeout,
             )
 
         elif t == "home":
             await self._run(
-                "shell", "uitest", "uiInput", "keyEvent", "Home",
+                "shell",
+                "uitest",
+                "uiInput",
+                "keyEvent",
+                "Home",
                 timeout=timeout,
             )
 
@@ -404,7 +462,13 @@ class HdcBackend:
                 else:
                     bundle, ability = spec, "MainAbility"
                 await self._run(
-                    "shell", "aa", "start", "-b", bundle, "-a", ability,
+                    "shell",
+                    "aa",
+                    "start",
+                    "-b",
+                    bundle,
+                    "-a",
+                    ability,
                     timeout=timeout,
                 )
 
@@ -468,8 +532,15 @@ class HdcBackend:
 
         speed = _compute_swipe_speed(x, y, x2, y2, action.duration_ms)
         await self._run(
-            "shell", "uitest", "uiInput", "swipe",
-            str(x), str(y), str(x2), str(y2), str(speed),
+            "shell",
+            "uitest",
+            "uiInput",
+            "swipe",
+            str(x),
+            str(y),
+            str(x2),
+            str(y2),
+            str(speed),
             timeout=timeout,
         )
 

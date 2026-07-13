@@ -10,8 +10,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING, Any, TextIO
 
-from guiclaw.observation import Observation
 from guiclaw.action import parse_action
+from guiclaw.observation import Observation
 
 if TYPE_CHECKING:
     from guiclaw.backends.desktop import LocalDesktopBackend
@@ -43,7 +43,9 @@ def launch_windows_worker(
         control_path,
     ]
     if sys.platform != "win32":
-        raise RuntimeError(f"launch_windows_worker requires Windows (lpDesktop={startupinfo.lpDesktop})")
+        raise RuntimeError(
+            f"launch_windows_worker requires Windows (lpDesktop={startupinfo.lpDesktop})"
+        )
     return subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -58,8 +60,9 @@ def launch_windows_worker(
 def _build_startupinfo(desktop_name: str) -> Any:
     startupinfo_cls = getattr(subprocess, "STARTUPINFO", None)
     if startupinfo_cls is None:
+
         class _StartupInfo:
-            lpDesktop: str | None = None
+            lpDesktop: str | None = None  # noqa: N815 - subprocess API field name
 
         startupinfo = _StartupInfo()
     else:

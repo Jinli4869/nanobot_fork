@@ -1,5 +1,5 @@
 UI_VENUS_USER_PROMPT = """
-**You are a GUI Agent.**  
+**You are a GUI Agent.**
 Your task is to analyze a given user task, review current screenshot and previous actions, and determine the next action to complete the task.
 
 ### User Task

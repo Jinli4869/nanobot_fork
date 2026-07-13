@@ -27,11 +27,32 @@ _EMBEDDING_CONFLICT_THRESHOLD = 0.72
 _STRUCTURAL_CONFLICT_THRESHOLD = 0.70
 _CLEANUP_EMBEDDING_THRESHOLD = 0.72
 
-_STOPWORDS: frozenset[str] = frozenset({
-    "a", "an", "the", "to", "in", "on", "of", "for", "and", "or",
-    "is", "it", "with", "from", "by", "at", "be", "this", "that",
-    "do", "does", "did",
-})
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "to",
+        "in",
+        "on",
+        "of",
+        "for",
+        "and",
+        "or",
+        "is",
+        "it",
+        "with",
+        "from",
+        "by",
+        "at",
+        "be",
+        "this",
+        "that",
+        "do",
+        "does",
+        "did",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Types
@@ -53,6 +74,7 @@ class SkillConflict:
 # Conflict detection
 # ---------------------------------------------------------------------------
 
+
 def find_best_conflict(
     incoming: Skill,
     skills: list[Skill],
@@ -68,7 +90,8 @@ def find_best_conflict(
             continue
         if existing.skill_id == incoming.skill_id:
             return SkillConflict(
-                skill=existing, score=1.0,
+                skill=existing,
+                score=1.0,
                 embedding_similarity=1.0,
                 sequence_similarity=1.0,
                 semantic_similarity=1.0,
@@ -77,9 +100,8 @@ def find_best_conflict(
         existing_signature = action_signature(existing)
         sequence_sim = action_similarity(existing_signature, incoming_signature)
         semantic_sim = skill_semantic_similarity(existing, incoming)
-        if (
-            is_strict_rich_prefix(existing_signature, incoming_signature)
-            or is_strict_rich_prefix(incoming_signature, existing_signature)
+        if is_strict_rich_prefix(existing_signature, incoming_signature) or is_strict_rich_prefix(
+            incoming_signature, existing_signature
         ):
             continue
         embedding_sim: float | None = None
@@ -91,7 +113,8 @@ def find_best_conflict(
 
         if score > best_score:
             best = SkillConflict(
-                skill=existing, score=score,
+                skill=existing,
+                score=score,
                 embedding_similarity=embedding_sim,
                 sequence_similarity=sequence_sim,
                 semantic_similarity=semantic_sim,
@@ -119,6 +142,7 @@ def find_best_conflict(
 # ---------------------------------------------------------------------------
 # Merge decision
 # ---------------------------------------------------------------------------
+
 
 def heuristic_merge_decision(conflict: SkillConflict, new: Skill) -> str:
     old = conflict.skill
@@ -148,7 +172,9 @@ def merge_skills(old: Skill, new: Skill) -> Skill:
     return Skill(
         skill_id=old.skill_id,
         name=old.name if prefer_old_text and old.name else (new.name or old.name),
-        description=old.description if prefer_old_text and old.description else (new.description or old.description),
+        description=old.description
+        if prefer_old_text and old.description
+        else (new.description or old.description),
         app=new.app or old.app,
         platform=new.platform or old.platform,
         steps=steps,
@@ -164,6 +190,7 @@ def merge_skills(old: Skill, new: Skill) -> Skill:
 # Cleanup
 # ---------------------------------------------------------------------------
 
+
 def cleanup_superseded_prefixes(
     skills: list[Skill],
     platform: str,
@@ -173,9 +200,7 @@ def cleanup_superseded_prefixes(
 ) -> list[Skill]:
     normalized_app = app
     candidates = [
-        skill
-        for skill in skills
-        if skill.platform == platform and skill.app == normalized_app
+        skill for skill in skills if skill.platform == platform and skill.app == normalized_app
     ]
     removed: set[str] = set()
     for skill in candidates:
@@ -208,13 +233,16 @@ def cleanup_same_intent(
         left_embedding = embeddings.get(left.skill_id)
         right_embedding = embeddings.get(right.skill_id)
         if left_embedding is not None and right_embedding is not None:
-            return cosine_similarity(left_embedding, right_embedding) >= _CLEANUP_EMBEDDING_THRESHOLD
+            return (
+                cosine_similarity(left_embedding, right_embedding) >= _CLEANUP_EMBEDDING_THRESHOLD
+            )
     return skill_semantic_similarity(left, right) >= 0.20
 
 
 # ---------------------------------------------------------------------------
 # Similarity / signature helpers
 # ---------------------------------------------------------------------------
+
 
 def action_signature(skill_obj: Skill) -> tuple[_StepSignature, ...]:
     return tuple(step_signature(step) for step in skill_obj.steps)
@@ -305,6 +333,7 @@ def cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
 # Low-level token / hash helpers
 # ---------------------------------------------------------------------------
 
+
 def tuple_jaccard(left: tuple[str, ...], right: tuple[str, ...]) -> float:
     if not left and not right:
         return 1.0
@@ -316,7 +345,10 @@ def tuple_jaccard(left: tuple[str, ...], right: tuple[str, ...]) -> float:
 
 
 def weighted_tuple_jaccard(
-    left: tuple[str, ...], right: tuple[str, ...], *, empty_score: float,
+    left: tuple[str, ...],
+    right: tuple[str, ...],
+    *,
+    empty_score: float,
 ) -> float:
     if not left and not right:
         return empty_score
@@ -325,9 +357,7 @@ def weighted_tuple_jaccard(
 
 def tokens(value: Any) -> tuple[str, ...]:
     return tuple(
-        token
-        for token in re.findall(r"\w+", str(value).lower())
-        if token not in _STOPWORDS
+        token for token in re.findall(r"\w+", str(value).lower()) if token not in _STOPWORDS
     )
 
 
@@ -342,10 +372,3 @@ def stable_json(value: Any) -> str:
 
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-# Public aliases for constants shared with flat.py
-STOPWORDS = _STOPWORDS
-EMBEDDING_CONFLICT_THRESHOLD = _EMBEDDING_CONFLICT_THRESHOLD
-STRUCTURAL_CONFLICT_THRESHOLD = _STRUCTURAL_CONFLICT_THRESHOLD
-CLEANUP_EMBEDDING_THRESHOLD = _CLEANUP_EMBEDDING_THRESHOLD

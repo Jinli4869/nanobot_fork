@@ -49,7 +49,6 @@ from pathlib import Path
 
 from guiclaw.memory.types import MemoryEntry, MemoryType
 
-
 # ---------------------------------------------------------------------------
 # Type → filename mapping
 # ---------------------------------------------------------------------------
@@ -151,9 +150,7 @@ def _parse_section(chunk: str) -> MemoryEntry | None:
     app: str | None = app_raw if app_raw else None
 
     tags_raw = meta.get("tags", "")
-    tags: tuple[str, ...] = tuple(
-        t.strip() for t in tags_raw.split(",") if t.strip()
-    )
+    tags: tuple[str, ...] = tuple(t.strip() for t in tags_raw.split(",") if t.strip())
 
     try:
         created_at = float(meta.get("created_at", "0"))

@@ -19,7 +19,6 @@ import logging
 import re
 import time
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +32,7 @@ from guiclaw.agent_profiles import (
     profile_llm_defaults,
     profile_uses_native_tools,
 )
+from guiclaw.image_utils import scale_image
 from guiclaw.interfaces import (
     DeviceBackend,
     InterventionHandler,
@@ -88,6 +88,7 @@ _DONE_FAILURE_HINTS: tuple[str, ...] = (
 # Data containers
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class StepResult:
     """Result of a single vision-action step."""
@@ -101,7 +102,6 @@ class StepResult:
     state_summary: str | None = None
     next_observation: Observation | None = None
     interaction_target: dict[str, Any] | None = None
-    action_debug: dict[str, Any] | None = None
     prompt_snapshot: dict[str, Any] | None = None
     model_snapshot: dict[str, Any] | None = None
     execution_snapshot: dict[str, Any] | None = None
@@ -143,7 +143,6 @@ class AgentResult:
     trace_path: str | None = None
     steps_taken: int = 0
     error: str | None = None
-    attempt_summary: str | None = None
     token_usage: dict[str, int] = dataclasses.field(default_factory=dict)
 
 
@@ -164,24 +163,10 @@ class _StepExecutionError(RuntimeError):
         message: str,
         *,
         model_snapshot: dict[str, Any] | None = None,
-        attempt_summary: str | None = None,
     ) -> None:
         super().__init__(message)
         self.model_snapshot = model_snapshot
-        self.attempt_summary = attempt_summary
 
-
-# ---------------------------------------------------------------------------
-# Agent-side protocol implementations for SkillExecutor
-# ---------------------------------------------------------------------------
-
-from guiclaw.skills.action_grounder import (  # noqa: E402, F401
-    ActionGrounder as _AgentActionGrounder,
-)
-from guiclaw.skills.observation_provider import (  # noqa: E402, F401
-    AgentScreenshotProvider as _AgentScreenshotProvider,
-)
-from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # GuiAgent
@@ -189,12 +174,14 @@ from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner  
 
 
 _SKILL_PARAM_PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
-_ANDROID_LAUNCHER_PACKAGES = frozenset({
-    "com.android.launcher",
-    "com.android.launcher3",
-    "com.google.android.apps.nexuslauncher",
-    "com.miui.home",
-})
+_ANDROID_LAUNCHER_PACKAGES = frozenset(
+    {
+        "com.android.launcher",
+        "com.android.launcher3",
+        "com.google.android.apps.nexuslauncher",
+        "com.miui.home",
+    }
+)
 
 
 def _skill_param_names(skill: Any) -> list[str]:
@@ -347,7 +334,6 @@ class GuiAgent:
         step_timeout: Timeout in seconds for each step (LLM + execute + observe).
         history_image_window: Number of recent screenshot turns kept as full
             image context, including the current screen.
-        include_date_context: Whether to include today's date in the task framing text.
         progress_callback: Optional async callback for progress reporting.
         stagnation_limit: Consecutive unchanged-screen transitions before abort.
     """
@@ -375,19 +361,15 @@ class GuiAgent:
         max_steps: int = 15,
         step_timeout: float = 90.0,
         history_image_window: int = 3,
-        include_date_context: bool = True,
-        history_text_window: int = 8,
         progress_callback: ProgressCallback | None = None,
         memory_retriever: Any = None,
         skill_library: Any = None,
         skill_executor: Any = None,
         memory_top_k: int = 5,
-        installed_apps: list[str] | None = None,
         shortcut_backend: DeviceBackend | None = None,
         shortcut_cache_dir: Path | str | None = None,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
-        memory_store: Any = None,
         agent_profile: str | None = None,
         image_scale_ratio: float = 0.5,
         stagnation_limit: int = 0,
@@ -419,8 +401,6 @@ class GuiAgent:
         self.max_steps = max_steps
         self.step_timeout = step_timeout
         self.history_image_window = max(1, history_image_window)
-        self.history_text_window = max(1, history_text_window)
-        self.include_date_context = include_date_context
         self.progress_callback = progress_callback
         self._trajectory_recorder = trajectory_recorder
         self._memory_retriever = memory_retriever
@@ -428,15 +408,12 @@ class GuiAgent:
         self._skill_library = skill_library
         self._skill_executor = skill_executor
         self._memory_top_k = memory_top_k
-        self._installed_apps = installed_apps
         self._shortcuts: dict[str, AppShortcutProfile] = {}
         self._shortcut_backend = shortcut_backend
         self._shortcut_cache_dir = Path(shortcut_cache_dir) if shortcut_cache_dir else None
         self._shortcut_tools: list[dict[str, Any]] = []
         self._shortcut_action_map: dict[str, tuple[str, str, str, str | None]] = {}
         self._intervention_handler = intervention_handler
-        self._memory_store = memory_store
-        self._active_retry_summaries: tuple[str, ...] = ()
         self._image_scale_ratio = image_scale_ratio
         self._enable_prompt_skill_selection = bool(enable_prompt_skill_selection)
         try:
@@ -451,7 +428,9 @@ class GuiAgent:
         self._skill_app_filter_enabled = bool(skill_app_filter_enabled)
         self._always_on_skill_tags = tuple(
             str(tag)
-            for tag in (always_on_skill_tags if always_on_skill_tags is not None else (ALWAYS_ON_SKILL_TAG,))
+            for tag in (
+                always_on_skill_tags if always_on_skill_tags is not None else (ALWAYS_ON_SKILL_TAG,)
+            )
             if str(tag)
         )
         self._prompt_skills_by_id: dict[str, Any] = {}
@@ -472,7 +451,10 @@ class GuiAgent:
         app = str(foreground_app or "").strip()
         if not app or not self._shortcut_cache_dir or not self._shortcut_backend:
             return
-        if str(getattr(self._shortcut_backend, "platform", self.backend.platform)).lower() != "android":
+        if (
+            str(getattr(self._shortcut_backend, "platform", self.backend.platform)).lower()
+            != "android"
+        ):
             return
         app = normalize_adb_app_identifier(app)
         if not app or app == "unknown":
@@ -483,7 +465,9 @@ class GuiAgent:
         cache_file = self._shortcut_cache_dir / f"{app}.json"
         try:
             if cache_file.exists():
-                profile = AppShortcutProfile.from_dict(json.loads(cache_file.read_text(encoding="utf-8")))
+                profile = AppShortcutProfile.from_dict(
+                    json.loads(cache_file.read_text(encoding="utf-8"))
+                )
             else:
                 from guiclaw.skills.deeplink import extract_app_shortcuts
 
@@ -517,7 +501,9 @@ class GuiAgent:
 
         self._shortcuts[app] = profile
         if profile.deep_links or profile.deep_intents:
-            self._shortcut_tools, self._shortcut_action_map = build_shortcut_tool_defs(self._shortcuts)
+            self._shortcut_tools, self._shortcut_action_map = build_shortcut_tool_defs(
+                self._shortcuts
+            )
 
     # ------------------------------------------------------------------
     # Public API
@@ -542,7 +528,6 @@ class GuiAgent:
         # 2. Retrieve memory context (once)
         memory_context = await self._retrieve_memory(task)
 
-        skill_context: str | None = None
         skill_app_filter = self._skill_app_filter(task, app_hint)
         prompt_skill_parts: CompactPromptParts | None = None
         if self._enable_prompt_skill_selection:
@@ -558,101 +543,88 @@ class GuiAgent:
         last_trace_path: str | None = None
         last_steps_taken = 0
         result: AgentResult | None = None
-        retry_summaries: list[str] = []
         total_usage: dict[str, int] = {}
 
-        try:
-            for attempt in range(max_retries):
-                self._active_retry_summaries = tuple(retry_summaries)
-                run_dir = self._make_run_dir(task, attempt)
-                last_trace_path = str(run_dir)
+        for attempt in range(max_retries):
+            run_dir = self._make_run_dir(task, attempt)
+            last_trace_path = str(run_dir)
 
+            await self._log_attempt_event(
+                run_dir,
+                "attempt_start",
+                attempt=attempt,
+                max_retries=max_retries,
+                task=task,
+            )
+            try:
+                result = await self._run_once(
+                    task,
+                    run_dir=run_dir,
+                    memory_context=memory_context,
+                    prompt_skill_parts=prompt_skill_parts,
+                )
+                for k, v in result.token_usage.items():
+                    total_usage[k] = total_usage.get(k, 0) + v
                 await self._log_attempt_event(
                     run_dir,
-                    "attempt_start",
+                    "attempt_result",
                     attempt=attempt,
-                    max_retries=max_retries,
-                    task=task,
+                    success=result.success,
+                    summary=result.summary,
+                    model_summary=result.model_summary,
+                    error=result.error,
+                    steps_taken=result.steps_taken,
+                    trace_path=result.trace_path,
                 )
-                try:
-                    result = await self._run_once(
-                        task, app_hint=app_hint, run_dir=run_dir,
-                        memory_context=memory_context,
-                        skill_context=skill_context,
-                        prompt_skill_parts=prompt_skill_parts,
-                    )
-                    for k, v in result.token_usage.items():
-                        total_usage[k] = total_usage.get(k, 0) + v
+                if result.success:
+                    last_error = None
+                    break
+                last_error = result.error
+                last_model_summary = result.model_summary
+                last_trace_path = result.trace_path or last_trace_path
+                last_steps_taken = result.steps_taken
+                if result.error and (
+                    result.error.startswith("intervention_cancelled")
+                    or result.error == "stagnation_detected"
+                ):
+                    break
+                if attempt < max_retries - 1:
                     await self._log_attempt_event(
                         run_dir,
-                        "attempt_result",
+                        "retry",
                         attempt=attempt,
-                        success=result.success,
-                        summary=result.summary,
-                        model_summary=result.model_summary,
-                        error=result.error,
-                        steps_taken=result.steps_taken,
-                        trace_path=result.trace_path,
+                        next_attempt=attempt + 1,
+                        reason=result.error or result.summary,
                     )
-                    if result.success:
-                        break
-                    last_error = result.error
-                    last_model_summary = result.model_summary
-                    last_trace_path = result.trace_path or last_trace_path
-                    last_steps_taken = result.steps_taken
-                    attempt_summary = result.attempt_summary or self._build_attempt_summary(
-                        failure_reason=result.error or result.summary,
-                        result_summary=result.summary,
-                        model_summary=result.model_summary,
-                        action_summaries=(),
-                    )
-                    retry_summaries.append(attempt_summary)
-                    if result.error and (
-                        result.error.startswith("intervention_cancelled")
-                        or result.error == "stagnation_detected"
-                    ):
-                        break
-                    if attempt < max_retries - 1:
-                        await self._log_attempt_event(
-                            run_dir,
-                            "retry",
-                            attempt=attempt,
-                            next_attempt=attempt + 1,
-                            reason=result.error or result.summary,
-                        )
-                except Exception as exc:
-                    last_error = f"{type(exc).__name__}: {exc}"
-                    model_snapshot = getattr(exc, "model_snapshot", None)
-                    attempt_summary = getattr(exc, "attempt_summary", None) or self._build_attempt_summary(
-                        failure_reason=last_error,
-                        result_summary="Attempt ended with an exception before completion.",
-                        action_summaries=(),
-                    )
-                    retry_summaries.append(attempt_summary)
+            except Exception as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                model_snapshot = getattr(exc, "model_snapshot", None)
+                await self._log_attempt_event(
+                    run_dir,
+                    "attempt_exception",
+                    attempt=attempt,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                    model_response=model_snapshot,
+                )
+                if attempt < max_retries - 1:
                     await self._log_attempt_event(
                         run_dir,
-                        "attempt_exception",
+                        "retry",
                         attempt=attempt,
-                        error_type=type(exc).__name__,
-                        error_message=str(exc),
-                        model_response=model_snapshot,
+                        next_attempt=attempt + 1,
+                        reason=last_error,
                     )
-                    if attempt < max_retries - 1:
-                        await self._log_attempt_event(
-                            run_dir,
-                            "retry",
-                            attempt=attempt,
-                            next_attempt=attempt + 1,
-                            reason=last_error,
-                        )
-        finally:
-            self._active_retry_summaries = ()
-
         if result is None:
-            status = "blocked" if last_error and any(
-                keyword in last_error.lower()
-                for keyword in ("stagnation", "intervention", "preflight")
-            ) else "partial"
+            status = (
+                "blocked"
+                if last_error
+                and any(
+                    keyword in last_error.lower()
+                    for keyword in ("stagnation", "intervention", "preflight")
+                )
+                else "partial"
+            )
             result = AgentResult(
                 success=False,
                 summary=self._build_state_note(
@@ -672,7 +644,7 @@ class GuiAgent:
                 result,
                 token_usage=total_usage,
                 trace_path=last_trace_path or result.trace_path,
-                error=last_error or result.error,
+                error=result.error if result.success else last_error or result.error,
             )
 
         # 6. Finish trajectory
@@ -692,10 +664,8 @@ class GuiAgent:
         self,
         task: str,
         *,
-        app_hint: str | None,
         run_dir: Path,
         memory_context: str | None = None,
-        skill_context: str | None = None,
         prompt_skill_parts: CompactPromptParts | None = None,
     ) -> AgentResult:
         """Execute one full attempt of the task."""
@@ -738,7 +708,6 @@ class GuiAgent:
                 current_observation=obs,
                 history=history,
                 memory_context=memory_context,
-                skill_context=skill_context,
                 prompt_skill_parts=prompt_skill_parts,
             )
             prompt_snapshot = self._snapshot_step_prompt(
@@ -761,10 +730,14 @@ class GuiAgent:
                     timeout=self.step_timeout * 3,
                 )
             except asyncio.TimeoutError:
-                await self._write_trace(run_dir / "trace.jsonl", {
-                    "event": "timeout", "step_index": step_index,
-                    "timestamp": time.time(),
-                })
+                await self._write_trace(
+                    run_dir / "trace.jsonl",
+                    {
+                        "event": "timeout",
+                        "step_index": step_index,
+                        "timestamp": time.time(),
+                    },
+                )
                 return AgentResult(
                     success=False,
                     summary=self._build_state_note(
@@ -777,27 +750,12 @@ class GuiAgent:
                     trace_path=str(run_dir),
                     steps_taken=step_index,
                     error="step_timeout",
-                    attempt_summary=self._build_attempt_summary(
-                        failure_reason="step_timeout",
-                        result_summary=self._build_state_note(
-                            status="partial",
-                            history=history,
-                            current_observation=obs,
-                            error="step_timeout",
-                        ),
-                        action_summaries=tuple(turn.action_summary for turn in history),
-                    ),
                     token_usage=total_usage,
                 )
             except _StepExecutionError as exc:
                 raise _StepExecutionError(
                     str(exc),
                     model_snapshot=exc.model_snapshot,
-                    attempt_summary=self._build_attempt_summary(
-                        failure_reason=f"{type(exc).__name__}: {exc}",
-                        result_summary="Attempt ended with an exception before completion.",
-                        action_summaries=tuple(turn.action_summary for turn in history),
-                    ),
                 ) from exc
 
             steps_taken = step_index
@@ -868,10 +826,6 @@ class GuiAgent:
                         or result.state_summary
                         or result.action_summary
                     )
-                    scrubbed_action_summary = (
-                        self._scrub_text_for_artifact_action(result.action_summary, result.action)
-                        or result.action_summary
-                    )
                     await self._log_attempt_event(
                         run_dir,
                         "intervention_cancelled",
@@ -892,122 +846,19 @@ class GuiAgent:
                         },
                     )
                     summary_history = history + [
-                        HistoryTurn(
+                        self._history_turn_from_step(
                             step_index=step_index,
                             observation=obs,
-                            assistant_message=self._scrub_assistant_message_for_log(
-                                result.assistant_message,
-                                result.action,
-                            ),
-                            tool_result_message={
-                                "role": "tool",
-                                "tool_call_id": result.tool_call_id,
-                                "content": self._scrub_text_for_action(
-                                    result.tool_result,
-                                    result.action,
-                                ),
-                            },
-                            action_summary=(
-                                self._scrub_text_for_action(
-                                    result.action_summary,
-                                    result.action,
-                                )
-                                or result.action_summary
-                            ),
-                            action_intent=(
-                                self._scrub_text_for_action(
-                                    result.action_intent,
-                                    result.action,
-                                )
-                                or result.action_intent
-                            ),
-                            state_summary=(
-                                self._scrub_text_for_action(
-                                    result.state_summary,
-                                    result.action,
-                                )
-                                or result.state_summary
-                            ),
-                            raw_response_content=(
-                                result.model_snapshot.get("raw_content")
-                                if isinstance(result.model_snapshot, dict)
-                                else None
-                            ),
+                            result=result,
                         )
                     ]
                     summary_observation = result.next_observation or obs
 
-            # Write trace entry
-            await self._write_trace(
-                run_dir / "trace.jsonl",
-                self._scrub_for_artifact({
-                    "event": "step",
-                    "step_index": step_index,
-                    "prompt": result.prompt_snapshot,
-                    "model_output": result.model_snapshot,
-                    "execution": result.execution_snapshot,
-                    "action": self._serialize_action(result.action),
-                    "action_summary": self._scrub_text_for_artifact_action(result.action_summary, result.action),
-                    "action_intent": self._scrub_text_for_artifact_action(result.action_intent, result.action),
-                    "state_summary": self._scrub_text_for_artifact_action(result.state_summary, result.action),
-                    "screenshot_path": (
-                        result.next_observation.screenshot_path
-                        if result.next_observation and result.next_observation.screenshot_path
-                        else obs.screenshot_path
-                    ),
-                    "done": result.done,
-                    "timestamp": time.time(),
-                }),
-            )
-            self._write_mobileworld_traj(
+            await self._record_completed_step(
                 run_dir=run_dir,
-                task=task,
                 step_index=step_index,
-                result=result,
                 current_observation=obs,
-                total_usage=total_usage,
-            )
-
-            # Record trajectory step
-            self._trajectory_recorder.record_step(
-                action=self._scrub_for_artifact(self._serialize_action(result.action)),
-                model_output=(
-                    self._scrub_text_for_artifact_action(
-                        result.action_intent or result.action_summary,
-                        result.action,
-                    )
-                    or ""
-                ),
-                screenshot_path=(
-                    str(result.next_observation.screenshot_path)
-                    if result.next_observation and result.next_observation.screenshot_path
-                    else obs.screenshot_path
-                ),
-                foreground_app=(
-                    result.next_observation.foreground_app
-                    if result.next_observation else obs.foreground_app
-                ),
-                screen_width=(
-                    result.next_observation.screen_width
-                    if result.next_observation else obs.screen_width
-                ),
-                screen_height=(
-                    result.next_observation.screen_height
-                    if result.next_observation else obs.screen_height
-                ),
-                platform=(
-                    result.next_observation.platform
-                    if result.next_observation else obs.platform
-                ),
-                observation_extra=(
-                    self._scrub_for_artifact(result.next_observation.extra)
-                    if result.next_observation else self._scrub_for_artifact(obs.extra)
-                ),
-                interaction_target=self._scrub_for_artifact(result.interaction_target),
-                token_usage=(result.event_usage or result.step_usage) or None,
-                duration_s=result.duration_s or None,
-                chat_latency_s=result.chat_latency_s,
-                ttft_s=result.ttft_s,
+                result=result,
             )
 
             if intervention_cancelled:
@@ -1030,14 +881,6 @@ class GuiAgent:
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=f"intervention_cancelled: {scrubbed_cancellation_note}",
-                    attempt_summary=self._build_attempt_summary(
-                        failure_reason=f"intervention_cancelled: {scrubbed_cancellation_note}",
-                        result_summary=result_summary,
-                        model_summary=scrubbed_intervention_summary,
-                        action_summaries=tuple(
-                            list(turn.action_summary for turn in history) + [scrubbed_action_summary]
-                        ),
-                    ),
                     token_usage=total_usage,
                 )
 
@@ -1056,20 +899,6 @@ class GuiAgent:
                     trace_path=str(run_dir),
                     steps_taken=steps_taken,
                     error=None if success else result.tool_result,
-                    attempt_summary=None if success else self._build_attempt_summary(
-                        failure_reason=result.tool_result,
-                        result_summary=self._build_state_note(
-                            status="blocked",
-                            history=history,
-                            current_observation=obs,
-                            current_action_summary=result.state_summary or result.action_summary,
-                            error=result.tool_result,
-                        ),
-                        model_summary=result.state_summary or result.action_summary,
-                        action_summaries=tuple(
-                            list(turn.action_summary for turn in history) + [result.action_summary]
-                        ),
-                    ),
                     token_usage=total_usage,
                 )
 
@@ -1078,7 +907,10 @@ class GuiAgent:
                 if (
                     previous_fingerprint is not None
                     and current_fingerprint is not None
-                    and (previous_action_type is None or previous_action_type == result.action.action_type)
+                    and (
+                        previous_action_type is None
+                        or previous_action_type == result.action.action_type
+                    )
                     and self._is_same_screen(previous_fingerprint, current_fingerprint)
                 ):
                     stagnation_streak += 1
@@ -1089,52 +921,13 @@ class GuiAgent:
 
                 if stagnation_streak >= self.stagnation_limit:
                     app_label = (
-                        result.next_observation.foreground_app
-                        or obs.foreground_app
-                        or "unknown"
+                        result.next_observation.foreground_app or obs.foreground_app or "unknown"
                     )
                     history_with_current_step = history + [
-                        HistoryTurn(
+                        self._history_turn_from_step(
                             step_index=step_index,
                             observation=obs,
-                            assistant_message=self._scrub_assistant_message_for_log(
-                                result.assistant_message,
-                                result.action,
-                            ),
-                            tool_result_message={
-                                "role": "tool",
-                                "tool_call_id": result.tool_call_id,
-                                "content": self._scrub_text_for_action(
-                                    result.tool_result,
-                                    result.action,
-                                ),
-                            },
-                            action_summary=(
-                                self._scrub_text_for_action(
-                                    result.action_summary,
-                                    result.action,
-                                )
-                                or result.action_summary
-                            ),
-                            action_intent=(
-                                self._scrub_text_for_action(
-                                    result.action_intent,
-                                    result.action,
-                                )
-                                or result.action_intent
-                            ),
-                            state_summary=(
-                                self._scrub_text_for_action(
-                                    result.state_summary,
-                                    result.action,
-                                )
-                                or result.state_summary
-                            ),
-                            raw_response_content=(
-                                result.model_snapshot.get("raw_content")
-                                if isinstance(result.model_snapshot, dict)
-                                else None
-                            ),
+                            result=result,
                         )
                     ]
                     termination_summary = await self._generate_termination_summary(
@@ -1157,7 +950,8 @@ class GuiAgent:
                     )
                     return AgentResult(
                         success=False,
-                        summary=termination_summary or self._build_state_note(
+                        summary=termination_summary
+                        or self._build_state_note(
                             status="blocked",
                             history=history_with_current_step,
                             current_observation=result.next_observation or obs,
@@ -1167,52 +961,14 @@ class GuiAgent:
                         trace_path=str(run_dir),
                         steps_taken=steps_taken,
                         error="stagnation_detected",
-                        attempt_summary=self._build_attempt_summary(
-                            failure_reason="stagnation_detected",
-                            result_summary=self._build_state_note(
-                                status="blocked",
-                                history=history_with_current_step,
-                                current_observation=result.next_observation or obs,
-                                error="stagnation_detected",
-                            ),
-                            model_summary=result.state_summary or result.action_summary,
-                            action_summaries=tuple(
-                                list(turn.action_summary for turn in history) + [result.action_summary]
-                            ),
-                        ),
                         token_usage=total_usage,
                     )
 
             history.append(
-                HistoryTurn(
+                self._history_turn_from_step(
                     step_index=step_index,
                     observation=obs,
-                    assistant_message=self._scrub_assistant_message_for_log(
-                        result.assistant_message,
-                        result.action,
-                    ),
-                    tool_result_message={
-                        "role": "tool",
-                        "tool_call_id": result.tool_call_id,
-                        "content": self._scrub_text_for_action(result.tool_result, result.action),
-                    },
-                    action_summary=(
-                        self._scrub_text_for_action(result.action_summary, result.action)
-                        or result.action_summary
-                    ),
-                    action_intent=(
-                        self._scrub_text_for_action(result.action_intent, result.action)
-                        or result.action_intent
-                    ),
-                    state_summary=(
-                        self._scrub_text_for_action(result.state_summary, result.action)
-                        or result.state_summary
-                    ),
-                    raw_response_content=(
-                        result.model_snapshot.get("raw_content")
-                        if isinstance(result.model_snapshot, dict)
-                        else None
-                    ),
+                    result=result,
                 )
             )
 
@@ -1227,7 +983,8 @@ class GuiAgent:
         )
         return AgentResult(
             success=False,
-            summary=termination_summary or self._build_state_note(
+            summary=termination_summary
+            or self._build_state_note(
                 status="partial",
                 history=history,
                 current_observation=obs,
@@ -1237,22 +994,131 @@ class GuiAgent:
             trace_path=str(run_dir),
             steps_taken=steps_taken,
             error="max_steps_exceeded",
-            attempt_summary=self._build_attempt_summary(
-                failure_reason="max_steps_exceeded",
-                result_summary=self._build_state_note(
-                    status="partial",
-                    history=history,
-                    current_observation=obs,
-                    error="max_steps_exceeded",
-                ),
-                action_summaries=tuple(turn.action_summary for turn in history),
-            ),
             token_usage=total_usage,
+        )
+
+    def _history_turn_from_step(
+        self,
+        *,
+        step_index: int,
+        observation: Observation,
+        result: StepResult,
+    ) -> HistoryTurn:
+        return HistoryTurn(
+            step_index=step_index,
+            observation=observation,
+            assistant_message=self._scrub_assistant_message_for_log(
+                result.assistant_message,
+                result.action,
+            ),
+            tool_result_message={
+                "role": "tool",
+                "tool_call_id": result.tool_call_id,
+                "content": self._scrub_text_for_action(
+                    result.tool_result,
+                    result.action,
+                ),
+            },
+            action_summary=(
+                self._scrub_text_for_action(result.action_summary, result.action)
+                or result.action_summary
+            ),
+            action_intent=(
+                self._scrub_text_for_action(result.action_intent, result.action)
+                or result.action_intent
+            ),
+            state_summary=(
+                self._scrub_text_for_action(result.state_summary, result.action)
+                or result.state_summary
+            ),
+            raw_response_content=(
+                result.model_snapshot.get("raw_content")
+                if isinstance(result.model_snapshot, dict)
+                else None
+            ),
+        )
+
+    async def _record_completed_step(
+        self,
+        *,
+        run_dir: Path,
+        step_index: int,
+        current_observation: Observation,
+        result: StepResult,
+    ) -> None:
+        recorded_observation = result.next_observation or current_observation
+        screenshot_path = (
+            result.next_observation.screenshot_path
+            if result.next_observation and result.next_observation.screenshot_path
+            else current_observation.screenshot_path
+        )
+        await self._write_trace(
+            run_dir / "trace.jsonl",
+            self._scrub_for_artifact(
+                {
+                    "event": "step",
+                    "step_index": step_index,
+                    "prompt": result.prompt_snapshot,
+                    "model_output": result.model_snapshot,
+                    "execution": result.execution_snapshot,
+                    "action": self._serialize_action(result.action),
+                    "action_summary": self._scrub_text_for_artifact_action(
+                        result.action_summary, result.action
+                    ),
+                    "action_intent": self._scrub_text_for_artifact_action(
+                        result.action_intent, result.action
+                    ),
+                    "state_summary": self._scrub_text_for_artifact_action(
+                        result.state_summary, result.action
+                    ),
+                    "screenshot_path": screenshot_path,
+                    "done": result.done,
+                    "timestamp": time.time(),
+                }
+            ),
+        )
+        self._trajectory_recorder.record_step(
+            action=self._scrub_for_artifact(self._serialize_action(result.action)),
+            model_output=(
+                self._scrub_text_for_artifact_action(
+                    result.action_intent or result.action_summary,
+                    result.action,
+                )
+                or ""
+            ),
+            screenshot_path=str(screenshot_path) if screenshot_path else None,
+            foreground_app=recorded_observation.foreground_app,
+            screen_width=recorded_observation.screen_width,
+            screen_height=recorded_observation.screen_height,
+            platform=recorded_observation.platform,
+            observation_extra=self._scrub_for_artifact(recorded_observation.extra),
+            interaction_target=self._scrub_for_artifact(result.interaction_target),
+            token_usage=(result.event_usage or result.step_usage) or None,
+            duration_s=result.duration_s or None,
+            chat_latency_s=result.chat_latency_s,
+            ttft_s=result.ttft_s,
         )
 
     # ------------------------------------------------------------------
     # Single step
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _finalize_step_result(
+        result: StepResult,
+        *,
+        step_usage: dict[str, int],
+        step_start: float,
+        step_chat_latency_s: float,
+        step_ttft_s: float | None,
+    ) -> StepResult:
+        return replace(
+            result,
+            step_usage=step_usage,
+            duration_s=time.monotonic() - step_start,
+            chat_latency_s=step_chat_latency_s or None,
+            ttft_s=step_ttft_s,
+        )
 
     def _skipped_step_result(
         self,
@@ -1275,24 +1141,26 @@ class GuiAgent:
         ``stagnation_limit``.
         """
         note = f"Step skipped: {reason}"
-        return StepResult(
-            action=Action(action_type="wait"),
-            tool_call_id="skipped",
-            tool_result=note,
-            assistant_message={"role": "assistant", "content": ""},
-            action_summary=note,
-            next_observation=current_observation,
-            prompt_snapshot=prompt_snapshot,
-            model_snapshot=model_snapshot,
-            execution_snapshot={
-                "tool_result": note,
-                "next_observation": None,
-                "done": False,
-            },
+        return self._finalize_step_result(
+            StepResult(
+                action=Action(action_type="wait"),
+                tool_call_id="skipped",
+                tool_result=note,
+                assistant_message={"role": "assistant", "content": ""},
+                action_summary=note,
+                next_observation=current_observation,
+                prompt_snapshot=prompt_snapshot,
+                model_snapshot=model_snapshot,
+                execution_snapshot={
+                    "tool_result": note,
+                    "next_observation": None,
+                    "done": False,
+                },
+            ),
             step_usage=step_usage,
-            duration_s=time.monotonic() - step_start,
-            chat_latency_s=step_chat_latency_s or None,
-            ttft_s=step_ttft_s,
+            step_start=step_start,
+            step_chat_latency_s=step_chat_latency_s,
+            step_ttft_s=step_ttft_s,
         )
 
     async def _run_step(
@@ -1384,13 +1252,19 @@ class GuiAgent:
                 )
 
             tool_call = response.tool_calls[0]
-            if native_tools_enabled and tool_call.name != "computer_use" and tool_call.name not in self._shortcut_action_map:
+            if (
+                native_tools_enabled
+                and tool_call.name != "computer_use"
+                and tool_call.name not in self._shortcut_action_map
+            ):
                 if retries_left > 0:
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": f"Error: unexpected tool '{tool_call.name}'.",
-                    })
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"Error: unexpected tool '{tool_call.name}'.",
+                        }
+                    )
                     continue
                 raise _StepExecutionError(
                     f"LLM called unexpected tool '{tool_call.name}'.",
@@ -1412,19 +1286,24 @@ class GuiAgent:
                 tool_call = replace(tool_call, arguments=arguments)
             action_intent, state_summary = self._tool_call_semantics(tool_call)
 
-            special_action_type = str(
-                (tool_call.arguments or {}).get("action_type")
-                or (tool_call.arguments or {}).get("action")
-                or ""
-            ).strip().lower()
-            if special_action_type == "use_skill" or special_action_type in self._prompt_composite_aliases:
+            special_action_type = (
+                str(
+                    (tool_call.arguments or {}).get("action_type")
+                    or (tool_call.arguments or {}).get("action")
+                    or ""
+                )
+                .strip()
+                .lower()
+            )
+            if (
+                special_action_type == "use_skill"
+                or special_action_type in self._prompt_composite_aliases
+            ):
                 try:
                     return await self._dispatch_prompt_special_action(
                         tool_call=tool_call,
                         response=response,
-                        assistant_message=assistant_msg,
                         prompt_snapshot=prompt_snapshot,
-                        assistant_snapshot=assistant_snapshot,
                         current_observation=current_observation,
                         step_index=step_index,
                         step_usage=step_usage,
@@ -1494,49 +1373,53 @@ class GuiAgent:
                 if action.status != done_status:
                     action = replace(action, status=done_status)
                 tool_result = f"Task terminated with status: {done_status}"
-                return StepResult(
-                    action=action,
-                    tool_call_id=tool_call.id,
-                    tool_result=tool_result,
-                    assistant_message=assistant_message,
-                    action_summary=action_summary,
-                    action_intent=action_summary,
-                    state_summary=state_summary,
-                    prompt_snapshot=prompt_snapshot,
-                    model_snapshot=model_snapshot,
-                    execution_snapshot={
-                        "tool_result": tool_result,
-                        "next_observation": None,
-                        "done": True,
-                    },
-                    done=True,
+                return self._finalize_step_result(
+                    StepResult(
+                        action=action,
+                        tool_call_id=tool_call.id,
+                        tool_result=tool_result,
+                        assistant_message=assistant_message,
+                        action_summary=action_summary,
+                        action_intent=action_summary,
+                        state_summary=state_summary,
+                        prompt_snapshot=prompt_snapshot,
+                        model_snapshot=model_snapshot,
+                        execution_snapshot={
+                            "tool_result": tool_result,
+                            "next_observation": None,
+                            "done": True,
+                        },
+                        done=True,
+                    ),
                     step_usage=step_usage,
-                    duration_s=time.monotonic() - _step_start,
-                    chat_latency_s=step_chat_latency_s or None,
-                    ttft_s=step_ttft_s,
+                    step_start=_step_start,
+                    step_chat_latency_s=step_chat_latency_s,
+                    step_ttft_s=step_ttft_s,
                 )
 
             if action.action_type == "request_intervention":
-                return StepResult(
-                    action=action,
-                    tool_call_id=tool_call.id,
-                    tool_result="intervention_requested",
-                    assistant_message=assistant_message,
-                    action_summary=action_summary,
-                    action_intent=action_summary,
-                    state_summary=state_summary,
-                    prompt_snapshot=prompt_snapshot,
-                    model_snapshot=model_snapshot,
-                    execution_snapshot={
-                        "tool_result": "intervention_requested",
-                        "next_observation": None,
-                        "done": False,
-                    },
-                    intervention_requested=True,
+                return self._finalize_step_result(
+                    StepResult(
+                        action=action,
+                        tool_call_id=tool_call.id,
+                        tool_result="intervention_requested",
+                        assistant_message=assistant_message,
+                        action_summary=action_summary,
+                        action_intent=action_summary,
+                        state_summary=state_summary,
+                        prompt_snapshot=prompt_snapshot,
+                        model_snapshot=model_snapshot,
+                        execution_snapshot={
+                            "tool_result": "intervention_requested",
+                            "next_observation": None,
+                            "done": False,
+                        },
+                        intervention_requested=True,
+                    ),
                     step_usage=step_usage,
-                    duration_s=time.monotonic() - _step_start,
-                    chat_latency_s=step_chat_latency_s or None,
-                    ttft_s=step_ttft_s,
+                    step_start=_step_start,
+                    step_chat_latency_s=step_chat_latency_s,
+                    step_ttft_s=step_ttft_s,
                 )
 
             # Normalize app identifiers for mobile open/close actions.
@@ -1570,34 +1453,36 @@ class GuiAgent:
             # Observe next state
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
             next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
-            next_observation, _observe_error = await self._observe_after_action(
+            next_observation = await self._observe_after_action(
                 next_screenshot,
                 previous_observation=current_observation,
                 action=action,
                 timeout=self.step_timeout,
             )
 
-            return StepResult(
-                action=action,
-                tool_call_id=tool_call.id,
-                tool_result=result_text,
-                assistant_message=assistant_message,
-                action_summary=action_summary,
-                action_intent=action_summary,
-                state_summary=state_summary,
-                next_observation=next_observation,
-                interaction_target=interaction_target,
-                prompt_snapshot=prompt_snapshot,
-                model_snapshot=model_snapshot,
-                execution_snapshot={
-                    "tool_result": self._scrub_text_for_action(result_text, action),
-                    "next_observation": self._serialize_observation(next_observation),
-                    "done": False,
-                },
+            return self._finalize_step_result(
+                StepResult(
+                    action=action,
+                    tool_call_id=tool_call.id,
+                    tool_result=result_text,
+                    assistant_message=assistant_message,
+                    action_summary=action_summary,
+                    action_intent=action_summary,
+                    state_summary=state_summary,
+                    next_observation=next_observation,
+                    interaction_target=interaction_target,
+                    prompt_snapshot=prompt_snapshot,
+                    model_snapshot=model_snapshot,
+                    execution_snapshot={
+                        "tool_result": self._scrub_text_for_action(result_text, action),
+                        "next_observation": self._serialize_observation(next_observation),
+                        "done": False,
+                    },
+                ),
                 step_usage=step_usage,
-                duration_s=time.monotonic() - _step_start,
-                chat_latency_s=step_chat_latency_s or None,
-                ttft_s=step_ttft_s,
+                step_start=_step_start,
+                step_chat_latency_s=step_chat_latency_s,
+                step_ttft_s=step_ttft_s,
             )
 
         raise RuntimeError("GUI model did not return a valid computer_use call after retries.")
@@ -1607,9 +1492,7 @@ class GuiAgent:
         *,
         tool_call: ToolCall,
         response: LLMResponse,
-        assistant_message: dict[str, Any],
         prompt_snapshot: dict[str, Any] | None,
-        assistant_snapshot: dict[str, Any],
         current_observation: Observation,
         step_index: int,
         step_usage: dict[str, int],
@@ -1619,9 +1502,10 @@ class GuiAgent:
         action_intent: str | None,
         state_summary: str | None,
     ) -> StepResult:
-        del assistant_message, assistant_snapshot
         arguments = tool_call.arguments or {}
-        action_type = str(arguments.get("action_type") or arguments.get("action") or "").strip().lower()
+        action_type = (
+            str(arguments.get("action_type") or arguments.get("action") or "").strip().lower()
+        )
         if action_type == "use_skill":
             return await self._execute_prompt_skill_action(
                 tool_call=tool_call,
@@ -1680,7 +1564,9 @@ class GuiAgent:
         raw_params = arguments.get("arguments") or arguments.get("params") or {}
         if not isinstance(raw_params, dict):
             raise ActionError("use_skill 'arguments' must be an object.")
-        params = {str(key): self._stringify_skill_argument(value) for key, value in raw_params.items()}
+        params = {
+            str(key): self._stringify_skill_argument(value) for key, value in raw_params.items()
+        }
         action = Action(action_type="use_skill", text=skill_id)
         skill_name = str(getattr(skill, "name", "") or skill_id)
         summary = f"use_skill {skill_name}"
@@ -1773,7 +1659,9 @@ class GuiAgent:
         if next_observation is None:
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
             next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
-            next_observation = await self.backend.observe(next_screenshot, timeout=self.step_timeout)
+            next_observation = await self.backend.observe(
+                next_screenshot, timeout=self.step_timeout
+            )
 
         succeeded = getattr(getattr(skill_result, "state", None), "value", "") == "succeeded"
         result_text = getattr(skill_result, "execution_summary", "") or ""
@@ -1789,33 +1677,35 @@ class GuiAgent:
             action_intent=rich_action_intent,
             state_summary=result_text,
         )
-        return StepResult(
-            action=action,
-            tool_call_id=tool_call.id,
-            tool_result=result_text,
-            assistant_message=assistant_message,
-            action_summary=action_summary,
-            action_intent=rich_action_intent,
-            state_summary=result_text,
-            next_observation=next_observation,
-            prompt_snapshot=prompt_snapshot,
-            model_snapshot=model_snapshot,
-            execution_snapshot={
-                "tool_result": self._scrub_text_for_action(result_text, action),
-                "skill": {
-                    "skill_id": skill_id,
-                    "skill_name": skill_name,
-                    "state": getattr(getattr(skill_result, "state", None), "value", None),
-                    "error": getattr(skill_result, "error", None),
+        return self._finalize_step_result(
+            StepResult(
+                action=action,
+                tool_call_id=tool_call.id,
+                tool_result=result_text,
+                assistant_message=assistant_message,
+                action_summary=action_summary,
+                action_intent=rich_action_intent,
+                state_summary=result_text,
+                next_observation=next_observation,
+                prompt_snapshot=prompt_snapshot,
+                model_snapshot=model_snapshot,
+                execution_snapshot={
+                    "tool_result": self._scrub_text_for_action(result_text, action),
+                    "skill": {
+                        "skill_id": skill_id,
+                        "skill_name": skill_name,
+                        "state": getattr(getattr(skill_result, "state", None), "value", None),
+                        "error": getattr(skill_result, "error", None),
+                    },
+                    "next_observation": self._serialize_observation(next_observation),
+                    "done": False,
                 },
-                "next_observation": self._serialize_observation(next_observation),
-                "done": False,
-            },
+                event_usage=dict(step_usage),
+            ),
             step_usage=merged_usage,
-            event_usage=dict(step_usage),
-            duration_s=time.monotonic() - step_start,
-            chat_latency_s=step_chat_latency_s or None,
-            ttft_s=step_ttft_s,
+            step_start=step_start,
+            step_chat_latency_s=step_chat_latency_s,
+            step_ttft_s=step_ttft_s,
         )
 
     async def _prompt_skill_exception_result(
@@ -1851,32 +1741,34 @@ class GuiAgent:
             action_intent=rich_action_intent,
             state_summary=result_text,
         )
-        return StepResult(
-            action=action,
-            tool_call_id=tool_call.id,
-            tool_result=result_text,
-            assistant_message=assistant_message,
-            action_summary=action_summary,
-            action_intent=rich_action_intent,
-            state_summary=result_text,
-            next_observation=next_observation,
-            prompt_snapshot=prompt_snapshot,
-            model_snapshot=model_snapshot,
-            execution_snapshot={
-                "tool_result": self._scrub_text_for_action(result_text, action),
-                "skill": {
-                    "skill_id": skill_id,
-                    "skill_name": skill_name,
-                    "state": "failed",
-                    "error": str(exc),
+        return self._finalize_step_result(
+            StepResult(
+                action=action,
+                tool_call_id=tool_call.id,
+                tool_result=result_text,
+                assistant_message=assistant_message,
+                action_summary=action_summary,
+                action_intent=rich_action_intent,
+                state_summary=result_text,
+                next_observation=next_observation,
+                prompt_snapshot=prompt_snapshot,
+                model_snapshot=model_snapshot,
+                execution_snapshot={
+                    "tool_result": self._scrub_text_for_action(result_text, action),
+                    "skill": {
+                        "skill_id": skill_id,
+                        "skill_name": skill_name,
+                        "state": "failed",
+                        "error": str(exc),
+                    },
+                    "next_observation": self._serialize_observation(next_observation),
+                    "done": False,
                 },
-                "next_observation": self._serialize_observation(next_observation),
-                "done": False,
-            },
+            ),
             step_usage=step_usage,
-            duration_s=time.monotonic() - step_start,
-            chat_latency_s=step_chat_latency_s or None,
-            ttft_s=step_ttft_s,
+            step_start=step_start,
+            step_chat_latency_s=step_chat_latency_s,
+            step_ttft_s=step_ttft_s,
         )
 
     async def _execute_prompt_composite_action(
@@ -1917,7 +1809,9 @@ class GuiAgent:
             if index > 0:
                 await asyncio.sleep(self._POST_ACTION_SETTLE_SECONDS)
             try:
-                result_lines.append(await self.backend.execute(inner_action, timeout=self.step_timeout))
+                result_lines.append(
+                    await self.backend.execute(inner_action, timeout=self.step_timeout)
+                )
             except Exception as exc:
                 result_lines.append(f"Action failed: {exc}")
                 break
@@ -1925,7 +1819,7 @@ class GuiAgent:
         await asyncio.sleep(self._POST_ACTION_SETTLE_SECONDS)
         run_dir = Path(current_observation.screenshot_path or ".").parent.parent
         next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
-        next_observation, _observe_error = await self._observe_after_action(
+        next_observation = await self._observe_after_action(
             next_screenshot,
             previous_observation=current_observation,
             action=action,
@@ -1942,30 +1836,32 @@ class GuiAgent:
             action_intent=rich_action_intent,
             state_summary=state_summary,
         )
-        return StepResult(
-            action=action,
-            tool_call_id=tool_call.id,
-            tool_result=result_text,
-            assistant_message=assistant_message,
-            action_summary=action_summary,
-            action_intent=rich_action_intent,
-            state_summary=state_summary,
-            next_observation=next_observation,
-            interaction_target={"composite_action": alias},
-            prompt_snapshot=prompt_snapshot,
-            model_snapshot=model_snapshot,
-            execution_snapshot={
-                "tool_result": self._scrub_text_for_action(result_text, action),
-                "inner_actions": [
-                    self._serialize_action(inner_action) for inner_action in executed_actions
-                ],
-                "next_observation": self._serialize_observation(next_observation),
-                "done": False,
-            },
+        return self._finalize_step_result(
+            StepResult(
+                action=action,
+                tool_call_id=tool_call.id,
+                tool_result=result_text,
+                assistant_message=assistant_message,
+                action_summary=action_summary,
+                action_intent=rich_action_intent,
+                state_summary=state_summary,
+                next_observation=next_observation,
+                interaction_target={"composite_action": alias},
+                prompt_snapshot=prompt_snapshot,
+                model_snapshot=model_snapshot,
+                execution_snapshot={
+                    "tool_result": self._scrub_text_for_action(result_text, action),
+                    "inner_actions": [
+                        self._serialize_action(inner_action) for inner_action in executed_actions
+                    ],
+                    "next_observation": self._serialize_observation(next_observation),
+                    "done": False,
+                },
+            ),
             step_usage=step_usage,
-            duration_s=time.monotonic() - step_start,
-            chat_latency_s=step_chat_latency_s or None,
-            ttft_s=step_ttft_s,
+            step_start=step_start,
+            step_chat_latency_s=step_chat_latency_s,
+            step_ttft_s=step_ttft_s,
         )
 
     def _build_composite_actions(
@@ -2099,7 +1995,9 @@ class GuiAgent:
             return action
         if not self._model_uses_relative_grid():
             return action
-        coords = [value for value in (action.x, action.y, action.x2, action.y2) if value is not None]
+        coords = [
+            value for value in (action.x, action.y, action.x2, action.y2) if value is not None
+        ]
         if coords and all(0 <= value <= 999 for value in coords):
             return replace(action, relative=True)
         return action
@@ -2118,7 +2016,7 @@ class GuiAgent:
         previous_observation: Observation | None = None,
         action: Action | None = None,
         timeout: float,
-    ) -> tuple[Observation | None, str | None]:
+    ) -> Observation | None:
         # Wait for the UI to reach a short stable state before returning the
         # observation used by the next planner turn.
         max_attempts = self._POST_ACTION_STABILITY_MAX_ATTEMPTS
@@ -2143,7 +2041,6 @@ class GuiAgent:
         )
         stable_count = 0
         stable_required = self._POST_ACTION_STABILITY_FRAMES_REQUIRED
-        last_error: str | None = None
         last_observation: Observation | None = None
         deadline = time.monotonic() + window_seconds
 
@@ -2168,16 +2065,16 @@ class GuiAgent:
                     stable_count = min(stable_count + 1, stable_required)
 
                 if stable_count >= stable_required:
-                    return observation, None
-            except Exception as exc:
-                last_error = str(exc)
+                    return observation
+            except Exception:
+                pass
 
             if max_attempts > 1 and time.monotonic() < deadline:
                 await asyncio.sleep(poll_interval)
 
         if last_observation is not None:
-            return last_observation, last_error
-        return None, last_error
+            return last_observation
+        return None
 
     def _build_screen_fingerprint(self, observation: Observation) -> _ScreenFingerprint | None:
         screenshot = observation.screenshot_path
@@ -2262,10 +2159,13 @@ class GuiAgent:
 
         previous_variance = sum((value - previous_mean) ** 2 for value in previous_values) / n
         current_variance = sum((value - current_mean) ** 2 for value in current_values) / n
-        covariance = sum(
-            (previous_value - previous_mean) * (current_value - current_mean)
-            for previous_value, current_value in zip(previous_values, current_values)
-        ) / n
+        covariance = (
+            sum(
+                (previous_value - previous_mean) * (current_value - current_mean)
+                for previous_value, current_value in zip(previous_values, current_values)
+            )
+            / n
+        )
 
         c1 = (0.01 * 255) ** 2
         c2 = (0.03 * 255) ** 2
@@ -2301,20 +2201,11 @@ class GuiAgent:
         current_observation: Observation,
         history: list[HistoryTurn],
         memory_context: str | None = None,
-        skill_context: str | None = None,
         prompt_skill_parts: CompactPromptParts | None = None,
     ) -> list[dict[str, Any]]:
         task_context: list[str] = [task]
         if memory_context:
             task_context.extend(["", "Relevant Knowledge:", memory_context])
-        if skill_context:
-            task_context.extend([
-                "",
-                "Previous skill execution (already completed):",
-                skill_context,
-                "",
-                "Check the current screen. If the task is now complete, report completion; otherwise continue with any remaining steps.",
-            ])
         return build_mobileworld_messages(
             self.agent_profile,
             task="\n".join(task_context),
@@ -2323,94 +2214,6 @@ class GuiAgent:
             model_name=self.model,
             history_image_window=self.history_image_window,
             compact_prompt_parts=prompt_skill_parts,
-        )
-
-    def _build_instruction_prompt(
-        self,
-        *,
-        task: str,
-        current_observation: Observation,
-        history: list[HistoryTurn],
-        app_hint: str | None,
-        skill_context: str | None = None,
-    ) -> str:
-        """Build the text prompt that frames the current step."""
-        recent_intents = self._format_recent_intents(
-            history,
-            window=self.history_text_window,
-        )
-        latest_summary = self._latest_state_summary(history)
-        lines = [
-            "Please generate the next move according to the UI screenshot, instruction and recent progress context.",
-            "",
-        ]
-
-        if self.include_date_context:
-            lines.append(f"Today's date is: {datetime.now().strftime('%Y-%m-%d %A')}.")
-
-        lines.append(f"Instruction: {task}")
-        lines.append(f"Platform: {self.backend.platform}")
-
-        app_name = app_hint or current_observation.foreground_app
-        if app_name:
-            lines.append(f"Foreground app hint: {app_name}")
-
-        retry_summaries = self._format_retry_attempt_summaries(self._active_retry_summaries)
-        if retry_summaries:
-            lines.extend([
-                "",
-                "Previous attempt summaries:",
-                retry_summaries,
-                "",
-                "Continue from the current screen state. Reuse the progress above and avoid blindly repeating the same failed action sequence.",
-            ])
-
-        lines.extend([
-            "",
-            "Recent intents:",
-            recent_intents,
-        ])
-        if latest_summary:
-            lines.extend([
-                "",
-                f"Latest state summary: {latest_summary}",
-            ])
-
-        if skill_context:
-            lines.extend([
-                "",
-                "Previous skill execution (already completed):",
-                skill_context,
-                "",
-                "Check the current screen. If the task is now complete, call "
-                "done(status=\"success\"). Otherwise, continue with any remaining steps.",
-            ])
-        return "\n".join(lines)
-
-    @staticmethod
-    def _format_recent_intents(history: list[HistoryTurn], *, window: int = 8) -> str:
-        if not history:
-            return "None"
-        recent_history = history[-max(1, window):]
-        return "\n".join(
-            f"Step {turn.step_index}: {turn.action_intent or turn.action_summary}"
-            for turn in recent_history
-        )
-
-    @staticmethod
-    def _latest_state_summary(history: list[HistoryTurn]) -> str | None:
-        for turn in reversed(history):
-            if turn.state_summary and turn.state_summary.strip():
-                return turn.state_summary.strip()
-        return None
-
-    @staticmethod
-    def _format_retry_attempt_summaries(attempt_summaries: tuple[str, ...]) -> str:
-        if not attempt_summaries:
-            return ""
-        return "\n\n".join(
-            f"Attempt {index}:\n{summary}"
-            for index, summary in enumerate(attempt_summaries, start=1)
         )
 
     @staticmethod
@@ -2431,7 +2234,9 @@ class GuiAgent:
         )
 
     @staticmethod
-    def _summarize_progress(history: list[HistoryTurn], current_action_summary: str | None = None) -> str:
+    def _summarize_progress(
+        history: list[HistoryTurn], current_action_summary: str | None = None
+    ) -> str:
         summaries = [
             (turn.state_summary or turn.action_summary).strip()
             for turn in history
@@ -2501,20 +2306,26 @@ class GuiAgent:
         run_dir: Path,
     ) -> str | None:
         """Ask the LLM for a brief state note when the task terminates abnormally."""
-        steps_text = "\n".join(
-            f"  {i}. {turn.action_summary}" for i, turn in enumerate(history, 1)
-        ) or "  (no steps completed)"
-        fallback_status = "blocked" if any(
-            keyword in termination_reason.lower()
-            for keyword in ("interrupted", "cancel", "loop")
-        ) else "partial"
+        steps_text = (
+            "\n".join(f"  {i}. {turn.action_summary}" for i, turn in enumerate(history, 1))
+            or "  (no steps completed)"
+        )
+        fallback_status = (
+            "blocked"
+            if any(
+                keyword in termination_reason.lower()
+                for keyword in ("interrupted", "cancel", "loop")
+            )
+            else "partial"
+        )
         observation: Observation | None = None
         try:
             # Take a fresh screenshot for the summary
             screenshot_path = run_dir / "screenshots" / "termination_summary.png"
             screenshot_path.parent.mkdir(parents=True, exist_ok=True)
             observation = await self.backend.observe(
-                screenshot_path, timeout=self.step_timeout,
+                screenshot_path,
+                timeout=self.step_timeout,
             )
             prompt_text = (
                 "Return a compact GUI state note for the terminated task.\n\n"
@@ -2554,100 +2365,6 @@ class GuiAgent:
         )
 
     @staticmethod
-    def _build_attempt_summary(
-        *,
-        failure_reason: str,
-        result_summary: str | None,
-        action_summaries: tuple[str, ...],
-        model_summary: str | None = None,
-    ) -> str:
-        lines = [f"Failure reason: {failure_reason}"]
-        if result_summary and result_summary != failure_reason:
-            lines.append(f"Attempt result: {result_summary}")
-        if model_summary:
-            lines.append(f"Latest model summary: {model_summary}")
-
-        if action_summaries:
-            lines.append("Completed GUI actions before the failure:")
-            trimmed_actions = action_summaries[-6:]
-            omitted_count = len(action_summaries) - len(trimmed_actions)
-            if omitted_count > 0:
-                lines.append(f"- ... {omitted_count} earlier step(s) omitted")
-            start_index = len(action_summaries) - len(trimmed_actions) + 1
-            for step_offset, action_summary in enumerate(trimmed_actions, start=start_index):
-                lines.append(f"- Step {step_offset}: {action_summary}")
-        else:
-            lines.append("No completed GUI actions were recorded before the failure.")
-
-        lines.append(
-            "Retry guidance: Continue from the current screen state. Reuse the progress above and avoid blindly repeating the same failed action sequence."
-        )
-        return "\n".join(lines)
-
-    def _history_user_message(
-        self,
-        observation: Observation,
-        prompt_text: str | None = None,
-    ) -> dict[str, Any]:
-        content: list[dict[str, Any]] = []
-        if prompt_text:
-            content.append({"type": "text", "text": prompt_text})
-        if observation.screenshot_path and Path(observation.screenshot_path).exists():
-            content.append(self._image_block(Path(observation.screenshot_path)))
-        return {"role": "user", "content": content}
-
-    @staticmethod
-    def _history_image_prompt(turn: HistoryTurn) -> str:
-        return (
-            f"Historical screen before Step {turn.step_index}. "
-            "The next assistant message summarizes the action taken from this screen."
-        )
-
-    @staticmethod
-    def _history_assistant_message(turn: HistoryTurn) -> dict[str, Any]:
-        lines = [f"Step {turn.step_index}: {turn.action_intent or turn.action_summary}"]
-        if turn.state_summary and turn.state_summary.strip():
-            lines.append(f"State summary: {turn.state_summary.strip()}")
-        tool_result = turn.tool_result_message.get("content")
-        if isinstance(tool_result, str) and tool_result.strip():
-            lines.append(f"Tool result: {tool_result.strip()}")
-        return {"role": "assistant", "content": "\n".join(lines)}
-
-    def _current_user_message(
-        self,
-        observation: Observation,
-        *,
-        task: str,
-        step_index: int,
-        app_hint: str | None,
-        prompt_text: str | None = None,
-    ) -> dict[str, Any]:
-        if self._coordinate_mode() == "relative_999":
-            coord_inst = (
-                "Use relative coordinates in [0, 999] for both x and y, "
-                "and set relative=true."
-            )
-        else:
-            coord_inst = "Prefer absolute pixel coordinates."
-
-        content: list[dict[str, Any]] = []
-        if prompt_text:
-            content.append({"type": "text", "text": prompt_text})
-        content.append({
-            "type": "text",
-            "text": observation.to_user_text(
-                task,
-                step_index=step_index,
-                app_hint=app_hint,
-                coordinate_instruction=coord_inst,
-                include_extra=False,
-            ),
-        })
-        if observation.screenshot_path and Path(observation.screenshot_path).exists():
-            content.append(self._image_block(Path(observation.screenshot_path)))
-        return {"role": "user", "content": content}
-
-    @staticmethod
     def _build_assistant_message(
         response: LLMResponse,
         *,
@@ -2669,7 +2386,8 @@ class GuiAgent:
                     "function": {
                         "name": tc.name,
                         "arguments": json.dumps(tc.arguments)
-                        if isinstance(tc.arguments, dict) else str(tc.arguments),
+                        if isinstance(tc.arguments, dict)
+                        else str(tc.arguments),
                     },
                 }
                 for tc in response.tool_calls
@@ -2742,10 +2460,14 @@ class GuiAgent:
                 }
                 for tool_call in (response.tool_calls or [])
             ],
-            "assistant_message": self._scrub_assistant_message_for_artifact(assistant_message, action),
+            "assistant_message": self._scrub_assistant_message_for_artifact(
+                assistant_message, action
+            ),
             "parsed_action": self._scrub_for_artifact(self._serialize_action(action)),
             "action_text": self._scrub_text_for_artifact_action(action_text, action),
-            "action_summary": self._scrub_text_for_artifact_action(self._action_summary(action_text), action),
+            "action_summary": self._scrub_text_for_artifact_action(
+                self._action_summary(action_text), action
+            ),
             "action_intent": self._scrub_text_for_artifact_action(action_intent, action),
             "state_summary": self._scrub_text_for_artifact_action(state_summary, action),
         }
@@ -2793,11 +2515,6 @@ class GuiAgent:
         return f"Action: {describe_action(action)}"
 
     @staticmethod
-    def _tool_call_summary(tool_call: ToolCall) -> str | None:
-        intent, summary = GuiAgent._tool_call_semantics(tool_call)
-        return intent or summary
-
-    @staticmethod
     def _tool_call_semantics(tool_call: ToolCall) -> tuple[str | None, str | None]:
         arguments = tool_call.arguments or {}
         intent = GuiAgent._clean_action_summary(arguments.get("intent"))
@@ -2837,9 +2554,8 @@ class GuiAgent:
 
     def _image_block(self, path: Path) -> dict[str, Any]:
         """Create a base64 image content block for an LLM message."""
-        from guiclaw.skills.executor import _scale_image
         b64 = base64.b64encode(
-            _scale_image(path.read_bytes(), scale_ratio=self._image_scale_ratio)
+            scale_image(path.read_bytes(), scale_ratio=self._image_scale_ratio)
         ).decode()
         return {
             "type": "image_url",
@@ -2880,7 +2596,9 @@ class GuiAgent:
     def _scrub_value(value: Any, *, redact_input_text: bool) -> Any:
         if isinstance(value, dict):
             scrubbed: dict[str, Any] = {}
-            action_type = value.get("action_type") if isinstance(value.get("action_type"), str) else None
+            action_type = (
+                value.get("action_type") if isinstance(value.get("action_type"), str) else None
+            )
             intervention_text = (
                 value.get("text")
                 if action_type == "request_intervention" and isinstance(value.get("text"), str)
@@ -2893,7 +2611,10 @@ class GuiAgent:
                     scrubbed[key] = "<redacted:input_text>"
                 elif (action_type == "request_intervention" and key == "text") or key == "reason":
                     scrubbed[key] = "<redacted:intervention_reason>"
-                elif any(token in key.lower() for token in ("password", "secret", "token", "otp", "credential")):
+                elif any(
+                    token in key.lower()
+                    for token in ("password", "secret", "token", "otp", "credential")
+                ):
                     scrubbed[key] = "<redacted:sensitive_field>"
                 elif intervention_text and isinstance(item, str):
                     scrubbed[key] = GuiAgent._scrub_sensitive_text(item).replace(
@@ -2904,7 +2625,9 @@ class GuiAgent:
                     scrubbed[key] = GuiAgent._scrub_value(item, redact_input_text=redact_input_text)
             return scrubbed
         if isinstance(value, list):
-            return [GuiAgent._scrub_value(item, redact_input_text=redact_input_text) for item in value]
+            return [
+                GuiAgent._scrub_value(item, redact_input_text=redact_input_text) for item in value
+            ]
         if isinstance(value, str):
             return GuiAgent._scrub_sensitive_text(value)
         return value
@@ -2918,7 +2641,9 @@ class GuiAgent:
         return GuiAgent._scrub_text(text, action, redact_input_text=False)
 
     @staticmethod
-    def _scrub_text(text: str | None, action: Action | None, *, redact_input_text: bool) -> str | None:
+    def _scrub_text(
+        text: str | None, action: Action | None, *, redact_input_text: bool
+    ) -> str | None:
         if text is None:
             return None
         scrubbed = GuiAgent._scrub_sensitive_text(text)
@@ -2991,7 +2716,9 @@ class GuiAgent:
                     ensure_ascii=False,
                 )
             except json.JSONDecodeError:
-                function_payload["arguments"] = cls._scrub_text_for_artifact_action(arguments, action)
+                function_payload["arguments"] = cls._scrub_text_for_artifact_action(
+                    arguments, action
+                )
         return scrubbed
 
     # ------------------------------------------------------------------
@@ -3015,109 +2742,6 @@ class GuiAgent:
         with open(path, "a", encoding="utf-8") as f:
             f.write(line)
 
-    @classmethod
-    def _write_mobileworld_traj(
-        cls,
-        *,
-        run_dir: Path,
-        task: str,
-        step_index: int,
-        result: StepResult,
-        current_observation: Observation,
-        total_usage: dict[str, int],
-    ) -> None:
-        """Write an inspectable MobileWorld-style trajectory snapshot."""
-        traj_path = run_dir / "traj.json"
-        task_id = "0"
-        if traj_path.exists():
-            try:
-                log_data = json.loads(traj_path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                log_data = {}
-        else:
-            log_data = {}
-
-        task_log = log_data.setdefault(task_id, {"tools": None, "traj": []})
-        marked_screenshot = cls._write_marked_screenshot(
-            run_dir=run_dir,
-            step_index=step_index,
-            action=result.action,
-            screenshot_path=current_observation.screenshot_path,
-        )
-        step_payload = {
-            "task_goal": task,
-            "step": step_index,
-            "prediction": result.model_snapshot.get("action_text") or result.action_summary,
-            "action": cls._scrub_for_artifact(cls._serialize_action(result.action)),
-            "intent": cls._scrub_text_for_artifact_action(result.action_intent, result.action),
-            "summary": cls._scrub_text_for_artifact_action(result.state_summary, result.action),
-            "action_summary": cls._scrub_text_for_artifact_action(result.action_summary, result.action),
-            "tool_call": _first_tool_call(result.model_snapshot),
-            "tool_result": cls._scrub_text_for_artifact_action(result.tool_result, result.action),
-            "done": result.done,
-            "screenshot": _relative_path(current_observation.screenshot_path, run_dir),
-            "next_screenshot": _relative_path(
-                result.next_observation.screenshot_path
-                if result.next_observation else None,
-                run_dir,
-            ),
-            "marked_screenshot": marked_screenshot,
-            "observation": cls._serialize_observation(current_observation),
-            "next_observation": (
-                cls._serialize_observation(result.next_observation)
-                if result.next_observation else None
-            ),
-            "duration_s": round(result.duration_s, 3),
-            "token_usage": result.step_usage or None,
-        }
-        task_log["traj"].append(cls._scrub_for_artifact(step_payload))
-        task_log["token_usage"] = dict(total_usage)
-
-        traj_path.write_text(
-            json.dumps(log_data, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
-
-    @staticmethod
-    def _write_marked_screenshot(
-        *,
-        run_dir: Path,
-        step_index: int,
-        action: Action,
-        screenshot_path: str | None,
-    ) -> str | None:
-        if action.action_type not in {"tap", "double_tap", "long_press", "drag", "swipe"}:
-            return None
-        if not screenshot_path or action.x is None or action.y is None:
-            return None
-        source = Path(screenshot_path)
-        if not source.exists():
-            return None
-        marked_dir = run_dir / "marked_screenshots"
-        marked_dir.mkdir(parents=True, exist_ok=True)
-        target = marked_dir / f"marked-step_{step_index:03d}.png"
-        try:
-            from PIL import Image, ImageDraw
-
-            with Image.open(source) as image:
-                image = image.convert("RGB")
-                width, height = image.size
-                draw = ImageDraw.Draw(image)
-                x1, y1 = _image_point(action.x, action.y, width, height, relative=action.relative)
-                radius = max(4, min(width, height) // 50)
-                if action.action_type in {"drag", "swipe"} and action.x2 is not None and action.y2 is not None:
-                    x2, y2 = _image_point(action.x2, action.y2, width, height, relative=action.relative)
-                    draw.line((x1, y1, x2, y2), fill="blue", width=max(2, radius // 2))
-                    draw.ellipse((x1 - radius, y1 - radius, x1 + radius, y1 + radius), fill="green")
-                    draw.ellipse((x2 - radius, y2 - radius, x2 + radius, y2 + radius), fill="red")
-                else:
-                    draw.ellipse((x1 - radius, y1 - radius, x1 + radius, y1 + radius), fill="red")
-                image.save(target)
-        except Exception as exc:
-            logger.debug("Could not write marked screenshot %s: %s", target, exc)
-            return None
-        return target.relative_to(run_dir).as_posix()
-
     async def _log_attempt_event(
         self,
         run_dir: Path,
@@ -3125,11 +2749,14 @@ class GuiAgent:
         **payload: Any,
     ) -> None:
         scrubbed_payload = self._scrub_for_log(payload)
-        await self._write_trace(run_dir / "trace.jsonl", {
-            "event": event,
-            "timestamp": time.time(),
-            **scrubbed_payload,
-        })
+        await self._write_trace(
+            run_dir / "trace.jsonl",
+            {
+                "event": event,
+                "timestamp": time.time(),
+                **scrubbed_payload,
+            },
+        )
         self._trajectory_recorder.record_event(event, **scrubbed_payload)
 
     # ------------------------------------------------------------------
@@ -3165,7 +2792,9 @@ class GuiAgent:
 
         # Also fetch all POLICY entries separately (they must always be included)
         policy_results = await self._memory_retriever.search(
-            task, memory_type=MemoryType.POLICY, top_k=50,
+            task,
+            memory_type=MemoryType.POLICY,
+            top_k=50,
         )
         # Merge: add any POLICY entries not already in the list
         seen_ids = {e.entry_id for e, _ in policies}
@@ -3335,45 +2964,3 @@ class GuiAgent:
             return True
         skill_app = str(getattr(skill, "app", "") or "").strip()
         return skill_app in {"", "*", "any", "unknown"} or skill_app == app
-
-def _first_tool_call(model_snapshot: dict[str, Any]) -> dict[str, Any] | None:
-    tool_calls = model_snapshot.get("tool_calls")
-    if isinstance(tool_calls, list) and tool_calls:
-        first = tool_calls[0]
-        if isinstance(first, dict):
-            return first
-    return None
-
-
-def _relative_path(path: str | None, root: Path) -> str | None:
-    if not path:
-        return None
-    target = Path(path)
-    try:
-        return target.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return str(path)
-
-
-def _image_point(
-    x: float,
-    y: float,
-    width: int,
-    height: int,
-    *,
-    relative: bool,
-) -> tuple[int, int]:
-    return (
-        _image_coordinate(x, width, relative=relative),
-        _image_coordinate(y, height, relative=relative),
-    )
-
-
-def _image_coordinate(value: float, extent: int, *, relative: bool) -> int:
-    if extent <= 1:
-        return 0
-    if relative:
-        pixel = round(float(value) / 999 * (extent - 1))
-    else:
-        pixel = round(float(value))
-    return max(0, min(pixel, extent - 1))

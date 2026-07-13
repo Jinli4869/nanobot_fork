@@ -19,13 +19,7 @@ import numpy as np
 import yaml
 from openai import AsyncOpenAI
 
-from guiclaw.agent import (
-    AgentResult,
-    GuiAgent,
-    _AgentActionGrounder,
-    _AgentScreenshotProvider,
-    _AgentSubgoalRunner,
-)
+from guiclaw.agent import AgentResult, GuiAgent
 from guiclaw.agent_profiles import SUPPORTED_AGENT_PROFILES
 from guiclaw.backends.adb import AdbBackend
 from guiclaw.backends.dry_run import DryRunBackend
@@ -38,8 +32,11 @@ from guiclaw.interfaces import (
 )
 from guiclaw.memory.retrieval import MemoryRetriever
 from guiclaw.memory.store import MemoryStore
+from guiclaw.skills.action_grounder import ActionGrounder as _AgentActionGrounder
 from guiclaw.skills.executor import LLMStateValidator, SkillExecutor
 from guiclaw.skills.flat import FlatSkillLibrary
+from guiclaw.skills.observation_provider import AgentScreenshotProvider as _AgentScreenshotProvider
+from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner
 from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 LocalDesktopBackend = None
@@ -57,54 +54,9 @@ _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
 DEFAULT_CONFIG_PATH = Path.home() / ".guiclaw" / "config.yaml"
 DEFAULT_MEMORY_DIR = Path.home() / ".guiclaw" / "memory"
 DEFAULT_SKILLS_DIR = Path.home() / ".guiclaw" / "skills"
-DEFAULT_APPS_DIR = Path.home() / ".guiclaw" / "apps"
 DEFAULT_RUNS_DIR = Path("guiclaw_runs")
 _EMBEDDING_BATCH_SIZE = 10
 WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
-
-
-class AppCache:
-    """Read/write cached app lists under ``~/.guiclaw/apps/``."""
-
-    def __init__(self, cache_dir: Path = DEFAULT_APPS_DIR) -> None:
-        self._dir = cache_dir
-
-    @staticmethod
-    def cache_key(backend: Any) -> str:
-        """Derive a unique filename stem from a backend instance.
-
-        - AdbBackend  → ``android_{serial}`` or ``android_default``
-        - WdaBackend  → ``ios_default``
-        - Desktop     → ``macos`` / ``linux`` / ``windows``
-        - DryRun      → ``dry-run``
-        """
-        platform = getattr(backend, "platform", "unknown")
-        if platform == "android":
-            serial = getattr(backend, "_serial", None) or "default"
-            return f"android_{serial}"
-        if platform == "ios":
-            return "ios_default"
-        if platform == "harmonyos":
-            serial = getattr(backend, "_serial", None) or "default"
-            return f"harmonyos_{serial}"
-        return platform
-
-    def load(self, key: str) -> list[str] | None:
-        path = self._dir / f"{key}.json"
-        if not path.exists():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, list) and all(isinstance(s, str) for s in data):
-                return data
-        except (json.JSONDecodeError, OSError):
-            pass
-        return None
-
-    def save(self, key: str, apps: list[str]) -> None:
-        self._dir.mkdir(parents=True, exist_ok=True)
-        path = self._dir / f"{key}.json"
-        path.write_text(json.dumps(apps, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 @dataclass(slots=True)
@@ -252,7 +204,7 @@ class OpenAICompatibleEmbeddingProvider:
 
         vectors: list[list[float]] = []
         for start in range(0, len(texts), _EMBEDDING_BATCH_SIZE):
-            batch = texts[start:start + _EMBEDDING_BATCH_SIZE]
+            batch = texts[start : start + _EMBEDDING_BATCH_SIZE]
             response = await self._client.embeddings.create(
                 model=self._model,
                 input=batch,
@@ -280,11 +232,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--json", dest="json_output", action="store_true", help="Emit JSON output")
     parser.add_argument("--config", type=Path, help="Config file path")
-    parser.add_argument(
-        "--refresh-apps",
-        action="store_true",
-        help="Force re-fetch and cache the installed app list from the device",
-    )
     parser.add_argument(
         "--background",
         action="store_true",
@@ -351,7 +298,9 @@ def resolve_backend_name(args: argparse.Namespace) -> str:
     return args.backend
 
 
-def resolve_target_app_class(args: argparse.Namespace, *, sys_platform: str | None = None) -> str | None:
+def resolve_target_app_class(
+    args: argparse.Namespace, *, sys_platform: str | None = None
+) -> str | None:
     if not getattr(args, "background", False):
         return None
     if resolve_backend_name(args) != "local":
@@ -457,18 +406,19 @@ def build_backend(name: str, config: CliConfig) -> Any:
         kwargs = {**base_kwargs}
         try:
             signature = inspect.signature(AdbBackend.__init__)
-            kwargs.update({
-                key: value for key, value in extra_kwargs.items()
-                if key in signature.parameters
-            })
+            kwargs.update(
+                {key: value for key, value in extra_kwargs.items() if key in signature.parameters}
+            )
         except (TypeError, ValueError):
             pass
         return AdbBackend(**kwargs)
     if name == "ios":
         from guiclaw.backends.ios_wda import WdaBackend
+
         return WdaBackend(wda_url=config.ios.wda_url)
     if name == "hdc":
         from guiclaw.backends.hdc import HdcBackend
+
         return HdcBackend(serial=config.hdc.serial, hdc_path=config.hdc.hdc_path or "hdc")
     if name == "local":
         desktop_backend_cls = LocalDesktopBackend
@@ -565,20 +515,6 @@ async def _execute_agent(
         artifacts_root=run_root,
     )
 
-    # Resolve installed apps: read from cache, or fetch and cache
-    app_cache = AppCache()
-    cache_key = AppCache.cache_key(backend)
-    installed_apps: list[str] | None = None
-    if not args.refresh_apps:
-        installed_apps = app_cache.load(cache_key)
-    if installed_apps is None and hasattr(backend, "list_apps"):
-        try:
-            installed_apps = await backend.list_apps()
-            if installed_apps:
-                app_cache.save(cache_key, installed_apps)
-        except Exception:
-            installed_apps = None
-
     recorder = TrajectoryRecorder(output_dir=run_root, task=task, platform=backend.platform)
     if skill_executor is not None:
         skill_executor.trajectory_recorder = recorder
@@ -595,7 +531,6 @@ async def _execute_agent(
         memory_retriever=memory_retriever,
         skill_library=skill_library,
         skill_executor=skill_executor,
-        installed_apps=installed_apps,
         intervention_handler=_build_intervention_handler(backend),
         agent_profile=args.agent_profile or config.agent_profile,
         image_scale_ratio=config.image_scale_ratio,
@@ -675,7 +610,9 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
                     )
 
                     backend_cls = ImportedBackgroundDesktopBackend
-                wrapped_backend = backend_cls(backend, mgr, run_metadata={"owner": "cli", "task": task})
+                wrapped_backend = backend_cls(
+                    backend, mgr, run_metadata={"owner": "cli", "task": task}
+                )
             try:
                 return await _execute_agent(args, config, wrapped_backend, provider, task)
             finally:
@@ -784,11 +721,7 @@ def _resolve_intervention_target(backend: Any, request: InterventionRequest) -> 
         backend_target = get_target() or {}
         if isinstance(backend_target, dict):
             target.update(backend_target)
-    return {
-        key: value
-        for key, value in target.items()
-        if key in _SAFE_INTERVENTION_TARGET_KEYS
-    }
+    return {key: value for key, value in target.items() if key in _SAFE_INTERVENTION_TARGET_KEYS}
 
 
 def _scrub_intervention_payload(payload: dict[str, Any]) -> dict[str, Any]:

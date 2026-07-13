@@ -13,9 +13,6 @@ from loguru import logger
 from PIL import Image
 
 from guiclaw.agents.base import BaseAgent
-from guiclaw.agents.utils.helpers import pil_to_base64
-from guiclaw.agents.utils.prompts.ui_venus import UI_VENUS_15_PROMPT
-from guiclaw.agents.utils.helpers import pretty_print_messages
 from guiclaw.agents.runtime.models import (
     ANSWER,
     CLICK,
@@ -31,6 +28,8 @@ from guiclaw.agents.runtime.models import (
     WAIT,
     JSONAction,
 )
+from guiclaw.agents.utils.helpers import pil_to_base64, pretty_print_messages
+from guiclaw.agents.utils.prompts.ui_venus import UI_VENUS_15_PROMPT
 
 SCALE = 1000
 

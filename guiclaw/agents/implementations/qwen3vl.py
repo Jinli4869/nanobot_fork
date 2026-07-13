@@ -7,16 +7,16 @@ from typing import Any
 from loguru import logger
 
 from guiclaw.agents.base import MCPAgent
+from guiclaw.agents.runtime.models import ENV_FAIL, MCP, JSONAction
 from guiclaw.agents.utils.agent_mapping import QWENVL2AW_ACTION_MAP
 from guiclaw.agents.utils.helpers import (
     pil_to_base64,
+    pretty_print_messages,
 )
 from guiclaw.agents.utils.prompts import (
     MOBILE_QWEN3VL_PROMPT_WITH_ASK_USER,
     MOBILE_QWEN3VL_USER_TEMPLATE,
 )
-from guiclaw.agents.utils.helpers import pretty_print_messages
-from guiclaw.agents.runtime.models import ENV_FAIL, MCP, JSONAction
 
 SCALE_FACTOR = 999
 

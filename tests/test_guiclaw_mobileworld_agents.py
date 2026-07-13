@@ -226,7 +226,6 @@ async def test_gui_agent_uses_mobileworld_messages_and_raw_history(tmp_path: Pat
         TrajectoryRecorder(output_dir=tmp_path / "traj", task="mobileworld agent"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
         agent_profile="default",
     )
 

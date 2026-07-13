@@ -8,6 +8,7 @@ Covers three wiring seams left broken after Phases 3-5:
 These tests are intentionally self-contained: they do not import helpers or
 fixtures from other Phase test files.
 """
+
 from __future__ import annotations
 
 import tomllib
@@ -19,7 +20,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. GuiConfig camelCase alias for embedding_model
 # ---------------------------------------------------------------------------
@@ -29,12 +29,14 @@ def test_gui_config_accepts_embedding_model_alias() -> None:
     """GuiConfig must deserialise the camelCase alias 'embeddingModel'."""
     from nanobot.config.schema import Config
 
-    config = Config(gui={
-        "backend": "dry-run",
-        "embeddingModel": "text-embedding-3-small",
-        "embeddingApiKey": "embed-key",
-        "embeddingApiBase": "https://embed.example/v1",
-    })
+    config = Config(
+        gui={
+            "backend": "dry-run",
+            "embeddingModel": "text-embedding-3-small",
+            "embeddingApiKey": "embed-key",
+            "embeddingApiBase": "https://embed.example/v1",
+        }
+    )
     assert config.gui is not None
     assert config.gui.embedding_model == "text-embedding-3-small"
     assert config.gui.embedding_api_key == "embed-key"
@@ -178,12 +180,14 @@ async def test_gui_tool_embedding_endpoint_overrides_gui_provider_client(
     monkeypatch.setattr(litellm, "aembedding", aembedding_mock)
 
     provider = _FakeCustomLikeProvider(SimpleNamespace(data=[]))
-    config = Config(gui={
-        "backend": "dry-run",
-        "embeddingModel": "openai/text-embedding-v4",
-        "embeddingApiKey": "embed-key",
-        "embeddingApiBase": "https://embed.example/v1",
-    })
+    config = Config(
+        gui={
+            "backend": "dry-run",
+            "embeddingModel": "openai/text-embedding-v4",
+            "embeddingApiKey": "embed-key",
+            "embeddingApiBase": "https://embed.example/v1",
+        }
+    )
     assert config.gui is not None
 
     tool = GuiSubagentTool(
@@ -249,10 +253,7 @@ async def test_gui_tool_batches_direct_embedding_requests_in_chunks_of_ten(
     async def _fake_create(*, model: str, input: list[str]) -> Any:
         assert model == "text-embedding-v4"
         return SimpleNamespace(
-            data=[
-                SimpleNamespace(embedding=[float(text.rsplit("-", 1)[1])])
-                for text in input
-            ]
+            data=[SimpleNamespace(embedding=[float(text.rsplit("-", 1)[1])]) for text in input]
         )
 
     provider = _FakeCustomLikeProvider(SimpleNamespace(data=[]))
@@ -399,62 +400,6 @@ async def test_gui_tool_builds_memory_retriever_from_default_guiclaw_dir(
     assert retriever_cls.call_args.kwargs["embedding_provider"] is tool._embedding_adapter
     assert retriever_cls.call_args.kwargs["top_k"] == 5
     retriever_instance.index.assert_awaited_once_with(indexed_entries)
-
-
-@pytest.mark.asyncio
-async def test_gui_tool_passes_memory_store_to_gui_agent(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from guiclaw.agent import AgentResult
-
-    from nanobot.agent.tools.gui import GuiSubagentTool
-    from nanobot.config.schema import Config
-
-    provider = _FakeProvider()
-    config = Config(gui={"backend": "dry-run", "embeddingModel": "embed-model"})
-    assert config.gui is not None
-
-    tool = GuiSubagentTool(
-        gui_config=config.gui,
-        provider=provider,  # type: ignore[arg-type]
-        model="test-model",
-        workspace=tmp_path,
-    )
-
-    captured_kwargs: dict[str, Any] = {}
-
-    class FakeGuiAgent:
-        def __init__(self, **kwargs: Any) -> None:
-            captured_kwargs.update(kwargs)
-
-        async def run(self, task: str) -> AgentResult:
-            del task
-            recorder = captured_kwargs["trajectory_recorder"]
-            recorder.start()
-            trace_path = recorder.finish(success=True)
-            return AgentResult(
-                success=True,
-                summary="done",
-                model_summary=None,
-                trace_path=str(trace_path),
-                steps_taken=0,
-                error=None,
-            )
-
-    memory_store = object()
-    monkeypatch.setattr("nanobot.agent.tools.gui.GuiAgent", FakeGuiAgent)
-    monkeypatch.setattr(
-        type(tool),
-        "_load_policy_context_and_memory_store",
-        lambda *_args, **_kwargs: (None, memory_store),
-    )
-    monkeypatch.setattr(tool._postprocessor, "schedule", lambda *args, **kwargs: None)
-
-    result = await tool._run_task(tool._backend, "Open notification shade")
-
-    assert '"success": true' in result
-    assert captured_kwargs["memory_store"] is memory_store
 
 
 # ---------------------------------------------------------------------------

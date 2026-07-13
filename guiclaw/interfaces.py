@@ -118,6 +118,3 @@ class InterventionHandler(typing.Protocol):
 
 
 ProgressCallback = typing.Callable[[str], typing.Awaitable[None]]
-
-from guiclaw.backends.virtual_display import DisplayInfo as DisplayInfo  # noqa: F401
-from guiclaw.backends.virtual_display import VirtualDisplayManager as VirtualDisplayManager  # noqa: F401

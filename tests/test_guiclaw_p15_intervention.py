@@ -97,10 +97,12 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 
 
 def test_parse_action_accepts_request_intervention() -> None:
-    action = parse_action({
-        "action_type": "request_intervention",
-        "text": "Need the user to complete a login challenge.",
-    })
+    action = parse_action(
+        {
+            "action_type": "request_intervention",
+            "text": "Need the user to complete a login challenge.",
+        }
+    )
 
     assert action.action_type == "request_intervention"
     assert action.text == "Need the user to complete a login challenge."
@@ -111,10 +113,12 @@ def test_request_intervention_requires_reason_text() -> None:
         parse_action({"action_type": "request_intervention"})
 
     with pytest.raises(ActionError, match="requires a non-empty 'text' field"):
-        parse_action({
-            "action_type": "request_intervention",
-            "text": "   ",
-        })
+        parse_action(
+            {
+                "action_type": "request_intervention",
+                "text": "   ",
+            }
+        )
 
 
 def test_active_general_e2e_prompt_lists_ask_user_action() -> None:
@@ -140,34 +144,42 @@ def test_agent_tool_schema_lists_request_intervention() -> None:
 @pytest.mark.asyncio
 @pytest.mark.pauses_backend_io
 async def test_intervention_request_pauses_backend_execute_and_observe(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: request intervention for login",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={
-                    "action_type": "request_intervention",
-                    "text": "Need the user to finish the OTP login challenge.",
-                },
-            )],
-        ),
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
-    backend = _BackendDouble([
-        {
-            "foreground_app": "Secure Login",
-            "extra": {"display_id": "bg-desktop-1", "window_title": "Bank Login"},
-        },
-        {"foreground_app": "Bank Dashboard"},
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: request intervention for login",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "request_intervention",
+                            "text": "Need the user to finish the OTP login challenge.",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
+    backend = _BackendDouble(
+        [
+            {
+                "foreground_app": "Secure Login",
+                "extra": {"display_id": "bg-desktop-1", "window_title": "Bank Login"},
+            },
+            {"foreground_app": "Bank Dashboard"},
+        ]
+    )
     handler = AsyncMock()
 
     async def _handle(request) -> SimpleNamespace:
@@ -187,7 +199,6 @@ async def test_intervention_request_pauses_backend_execute_and_observe(tmp_path:
         intervention_handler=handler,
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Complete the secure login", max_retries=1)
@@ -201,31 +212,39 @@ async def test_intervention_request_pauses_backend_execute_and_observe(tmp_path:
 @pytest.mark.asyncio
 @pytest.mark.explicit_resume_confirmation
 async def test_intervention_waits_for_explicit_resume_confirmation(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: request intervention",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={
-                    "action_type": "request_intervention",
-                    "text": "The user must approve a payment step.",
-                },
-            )],
-        ),
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
-    backend = _BackendDouble([
-        {"foreground_app": "Payment Approval"},
-        {"foreground_app": "Payment Complete"},
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: request intervention",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "request_intervention",
+                            "text": "The user must approve a payment step.",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
+    backend = _BackendDouble(
+        [
+            {"foreground_app": "Payment Approval"},
+            {"foreground_app": "Payment Complete"},
+        ]
+    )
     entered = asyncio.Event()
     release = asyncio.Event()
 
@@ -243,7 +262,6 @@ async def test_intervention_waits_for_explicit_resume_confirmation(tmp_path: Pat
         intervention_handler=_Handler(),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     task = asyncio.create_task(agent.run("Approve the payment", max_retries=1))
@@ -264,31 +282,39 @@ async def test_intervention_waits_for_explicit_resume_confirmation(tmp_path: Pat
 @pytest.mark.asyncio
 @pytest.mark.fresh_observation_after_intervention
 async def test_resume_uses_fresh_observation_after_intervention(tmp_path: Path) -> None:
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: request intervention",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={
-                    "action_type": "request_intervention",
-                    "text": "User must complete MFA before continuing.",
-                },
-            )],
-        ),
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
-    backend = _BackendDouble([
-        {"foreground_app": "Login Screen"},
-        {"foreground_app": "Authenticated Workspace"},
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: request intervention",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "request_intervention",
+                            "text": "User must complete MFA before continuing.",
+                        },
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
+    backend = _BackendDouble(
+        [
+            {"foreground_app": "Login Screen"},
+            {"foreground_app": "Authenticated Workspace"},
+        ]
+    )
 
     class _Handler:
         async def request_intervention(self, request) -> SimpleNamespace:
@@ -302,7 +328,6 @@ async def test_resume_uses_fresh_observation_after_intervention(tmp_path: Path) 
         intervention_handler=_Handler(),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Resume after MFA", max_retries=1)
@@ -316,31 +341,39 @@ async def test_resume_uses_fresh_observation_after_intervention(tmp_path: Path) 
 @pytest.mark.scrub_sensitive_trace_fields
 async def test_trace_and_trajectory_scrub_sensitive_intervention_fields(tmp_path: Path) -> None:
     reason = "Need the user to enter OTP 123456 for the payroll login."
-    llm = _RecordingLLM([
-        LLMResponse(
-            content="Action: request intervention",
-            tool_calls=[ToolCall(
-                id="call-1",
-                name="computer_use",
-                arguments={"action_type": "request_intervention", "text": reason},
-            )],
-        ),
-        LLMResponse(
-            content="Action: done",
-            tool_calls=[ToolCall(
-                id="call-2",
-                name="computer_use",
-                arguments={"action_type": "done", "status": "success"},
-            )],
-        ),
-    ])
-    backend = _BackendDouble([
-        {
-            "foreground_app": "Payroll Login",
-            "extra": {"display_id": "desk-2", "session_token": "secret-session-token"},
-        },
-        {"foreground_app": "Payroll Home"},
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(
+                content="Action: request intervention",
+                tool_calls=[
+                    ToolCall(
+                        id="call-1",
+                        name="computer_use",
+                        arguments={"action_type": "request_intervention", "text": reason},
+                    )
+                ],
+            ),
+            LLMResponse(
+                content="Action: done",
+                tool_calls=[
+                    ToolCall(
+                        id="call-2",
+                        name="computer_use",
+                        arguments={"action_type": "done", "status": "success"},
+                    )
+                ],
+            ),
+        ]
+    )
+    backend = _BackendDouble(
+        [
+            {
+                "foreground_app": "Payroll Login",
+                "extra": {"display_id": "desk-2", "session_token": "secret-session-token"},
+            },
+            {"foreground_app": "Payroll Home"},
+        ]
+    )
     recorder = _make_recorder(tmp_path, "scrub intervention")
 
     class _Handler:
@@ -355,7 +388,6 @@ async def test_trace_and_trajectory_scrub_sensitive_intervention_fields(tmp_path
         intervention_handler=_Handler(),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Handle the payroll OTP screen", max_retries=1)
@@ -375,29 +407,34 @@ async def test_input_text_is_preserved_in_trace_artifacts(tmp_path: Path) -> Non
     typed_secret = "Sup3rS3cret OTP 123456"
     recorder = _make_recorder(tmp_path, "type secret")
     agent = GuiAgent(
-        _RecordingLLM([
-            LLMResponse(
-                content="Action: input the code",
-                tool_calls=[ToolCall(
-                    id="call-1",
-                    name="computer_use",
-                    arguments={"action_type": "input_text", "text": typed_secret},
-                )],
-            ),
-            LLMResponse(
-                content="Action: done",
-                tool_calls=[ToolCall(
-                    id="call-2",
-                    name="computer_use",
-                    arguments={"action_type": "done", "status": "success"},
-                )],
-            ),
-        ]),
+        _RecordingLLM(
+            [
+                LLMResponse(
+                    content="Action: input the code",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-1",
+                            name="computer_use",
+                            arguments={"action_type": "input_text", "text": typed_secret},
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="Action: done",
+                    tool_calls=[
+                        ToolCall(
+                            id="call-2",
+                            name="computer_use",
+                            arguments={"action_type": "done", "status": "success"},
+                        )
+                    ],
+                ),
+            ]
+        ),
         DryRunBackend(),
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Enter the temporary code", max_retries=1)

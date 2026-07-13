@@ -26,12 +26,6 @@ import numpy as np
 
 import guiclaw.skills._merger as _merger
 from guiclaw.action import normalize_action_type
-from guiclaw.skills._merger import (
-    CLEANUP_EMBEDDING_THRESHOLD,
-    EMBEDDING_CONFLICT_THRESHOLD,
-    STOPWORDS,
-    STRUCTURAL_CONFLICT_THRESHOLD,
-)
 from guiclaw.skills.data import Skill, SkillStep, collect_placeholder_names
 from guiclaw.skills.normalization import (
     annotate_android_apps,
@@ -59,10 +53,6 @@ _SELECTOR_KEYS = ("text", "content_desc", "resource_id", "class", "xpath")
 _R_ALLOWED_KEYS = frozenset((*_STATE_FLAGS, *_SELECTOR_KEYS, "class_"))
 _C_ALLOWED_KEYS = frozenset(("required", "forbidden", "app", "activity"))
 _PLACEHOLDER_RE = re.compile(r"\{\{([^{}]+)\}\}")
-_STOPWORDS = STOPWORDS
-_EMBEDDING_CONFLICT_THRESHOLD = EMBEDDING_CONFLICT_THRESHOLD
-_STRUCTURAL_CONFLICT_THRESHOLD = STRUCTURAL_CONFLICT_THRESHOLD
-_CLEANUP_EMBEDDING_THRESHOLD = CLEANUP_EMBEDDING_THRESHOLD
 
 
 def _store_lock(store_dir: Path) -> threading.RLock:
@@ -145,13 +135,15 @@ def C(  # noqa: N802
         anchor["app_package"] = app
     if activity:
         anchor["activity_class"] = activity
-    return normalize_state_contract({
-        "anchor": anchor,
-        "signature": {
-            "required": list(required or ()),
-            "forbidden": list(forbidden or ()),
-        },
-    })
+    return normalize_state_contract(
+        {
+            "anchor": anchor,
+            "signature": {
+                "required": list(required or ()),
+                "forbidden": list(forbidden or ()),
+            },
+        }
+    )
 
 
 def _contract_from_dict(contract: dict[str, Any]) -> dict[str, Any] | None:
@@ -327,7 +319,9 @@ class FlatSkillRepository:
         return skill_obj.skill_id
 
     def replace_all(self, skills: list[Skill] | tuple[Skill, ...]) -> None:
-        self._write_atomic(export_skills_to_source([normalize_skill_app(skill) for skill in skills]))
+        self._write_atomic(
+            export_skills_to_source([normalize_skill_app(skill) for skill in skills])
+        )
 
     def update(self, skill_id: str, updated_skill: Skill) -> bool:
         skills = self.list_all()
@@ -422,7 +416,9 @@ class FlatSkillLibrary:
             embeddings = self._cached_skill_embedding_map(skills)
             if incoming_embedding is not None:
                 embeddings[skill_obj.skill_id] = incoming_embedding
-            existing_same_id = next((skill for skill in skills if skill.skill_id == skill_obj.skill_id), None)
+            existing_same_id = next(
+                (skill for skill in skills if skill.skill_id == skill_obj.skill_id), None
+            )
             if existing_same_id is not None:
                 updated = self._replace_in_list(skills, existing_same_id.skill_id, skill_obj)
                 updated = _merger.cleanup_superseded_prefixes(
@@ -457,24 +453,32 @@ class FlatSkillLibrary:
                     updated, merged.platform, merged.app, embeddings=embeddings
                 )
                 self._write_skills(updated)
-                self._merge_feedback_records(source_skill_id=skill_obj.skill_id, target_skill_id=merged.skill_id)
+                self._merge_feedback_records(
+                    source_skill_id=skill_obj.skill_id, target_skill_id=merged.skill_id
+                )
                 self._prune_feedback_for_skills(updated)
                 return "MERGE", merged.skill_id
             if decision == "KEEP_NEW":
                 updated = [
-                    self._normalize_skill(skill_obj) if skill.skill_id == conflict.skill.skill_id else skill
+                    self._normalize_skill(skill_obj)
+                    if skill.skill_id == conflict.skill.skill_id
+                    else skill
                     for skill in skills
                 ]
                 updated = _merger.cleanup_superseded_prefixes(
                     updated, skill_obj.platform, skill_obj.app, embeddings=embeddings
                 )
                 self._write_skills(updated)
-                self._merge_feedback_records(source_skill_id=conflict.skill.skill_id, target_skill_id=skill_obj.skill_id)
+                self._merge_feedback_records(
+                    source_skill_id=conflict.skill.skill_id, target_skill_id=skill_obj.skill_id
+                )
                 self._prune_feedback_for_skills(updated)
                 return "KEEP_NEW", skill_obj.skill_id
             return "KEEP_OLD", conflict.skill.skill_id
 
-    async def _embed_skill_for_conflict(self, skill_obj: Skill, existing: list[Skill]) -> np.ndarray | None:
+    async def _embed_skill_for_conflict(
+        self, skill_obj: Skill, existing: list[Skill]
+    ) -> np.ndarray | None:
         if self.embedding_provider is None:
             return None
         if existing:
@@ -493,8 +497,7 @@ class FlatSkillLibrary:
         ):
             return {}
         current_keys = {
-            (skill.skill_id, _merger.text_hash(_skill_search_text(skill)))
-            for skill in skills
+            (skill.skill_id, _merger.text_hash(_skill_search_text(skill))) for skill in skills
         }
         out: dict[str, np.ndarray] = {}
         for record in cached_meta["records"]:
@@ -582,7 +585,10 @@ class FlatSkillLibrary:
         return results
 
     async def _embedding_scores(
-        self, query: str, skills: list[Skill], candidate_positions: list[int],
+        self,
+        query: str,
+        skills: list[Skill],
+        candidate_positions: list[int],
     ) -> np.ndarray:
         import faiss
 
@@ -637,7 +643,9 @@ class FlatSkillLibrary:
             missing_texts.append(_skill_search_text(skill))
 
         if missing_texts:
-            embedded = np.asarray(await self.embedding_provider.embed(missing_texts), dtype=np.float32)
+            embedded = np.asarray(
+                await self.embedding_provider.embed(missing_texts), dtype=np.float32
+            )
             for row_index, position in enumerate(missing_positions):
                 rows[position] = embedded[row_index]
 
@@ -654,8 +662,7 @@ class FlatSkillLibrary:
                 "version": SKILL_EMBEDDINGS_CACHE_VERSION,
                 "embedding_signature": self.embedding_signature,
                 "records": [
-                    {**record, "embedding_row": row}
-                    for row, record in enumerate(current_records)
+                    {**record, "embedding_row": row} for row, record in enumerate(current_records)
                 ],
             }
             self._write_skill_embedding_cache(embeddings, meta)
@@ -828,10 +835,17 @@ class FlatSkillLibrary:
             counts[str(key)] = int(counts.get(str(key), 0)) + int(value or 0)
         if counts:
             target["failure_counts"] = counts
-        for key in ("last_failure_case", "last_failure_at", "last_evolution_status", "last_updated_at"):
+        for key in (
+            "last_failure_case",
+            "last_failure_at",
+            "last_evolution_status",
+            "last_updated_at",
+        ):
             if source.get(key) is not None:
                 target[key] = source[key]
-        target["evolution_count"] = int(target.get("evolution_count") or 0) + int(source.get("evolution_count") or 0)
+        target["evolution_count"] = int(target.get("evolution_count") or 0) + int(
+            source.get("evolution_count") or 0
+        )
         skills[target_skill_id] = target
         self._write_feedback(feedback)
 
@@ -985,12 +999,14 @@ def _extract_steps(
             continue
         callee = functions.get(call_name)
         if isinstance(callee, ast.AsyncFunctionDef):
-            steps.extend(_extract_steps(
-                callee,
-                functions,
-                stack=(*stack, func.name),
-                bindings=_bind_call_arguments(callee, call, bindings),
-            ))
+            steps.extend(
+                _extract_steps(
+                    callee,
+                    functions,
+                    stack=(*stack, func.name),
+                    bindings=_bind_call_arguments(callee, call, bindings),
+                )
+            )
     return tuple(steps)
 
 
@@ -1051,9 +1067,7 @@ def _contract_from_ast(node: ast.AST, bindings: dict[str, ast.AST]) -> dict[str,
     if any(kw.arg is None for kw in node.keywords):
         raise UnsupportedSkillSourceError("C() does not support **kwargs")
     unsupported = tuple(
-        str(kw.arg)
-        for kw in node.keywords
-        if kw.arg is not None and kw.arg not in _C_ALLOWED_KEYS
+        str(kw.arg) for kw in node.keywords if kw.arg is not None and kw.arg not in _C_ALLOWED_KEYS
     )
     if unsupported:
         raise UnsupportedSkillSourceError(f"unsupported C() field: {', '.join(unsupported)}")
@@ -1061,11 +1075,15 @@ def _contract_from_ast(node: ast.AST, bindings: dict[str, ast.AST]) -> dict[str,
     required = _selector_list_from_ast(kwargs.get("required"), bindings)
     forbidden = _selector_list_from_ast(kwargs.get("forbidden"), bindings)
     app = _literal_or_placeholder(kwargs["app"], bindings) if "app" in kwargs else None
-    activity = _literal_or_placeholder(kwargs["activity"], bindings) if "activity" in kwargs else None
+    activity = (
+        _literal_or_placeholder(kwargs["activity"], bindings) if "activity" in kwargs else None
+    )
     return C(required=required, forbidden=forbidden, app=app, activity=activity)
 
 
-def _selector_list_from_ast(node: ast.AST | None, bindings: dict[str, ast.AST]) -> list[dict[str, Any]]:
+def _selector_list_from_ast(
+    node: ast.AST | None, bindings: dict[str, ast.AST]
+) -> list[dict[str, Any]]:
     if node is None:
         return []
     if not isinstance(node, (ast.List, ast.Tuple)):
@@ -1083,7 +1101,11 @@ def _selector_list_from_ast(node: ast.AST | None, bindings: dict[str, ast.AST]) 
 def _selector_from_r_call(call: ast.Call, bindings: dict[str, ast.AST]) -> dict[str, Any]:
     if any(kw.arg is None for kw in call.keywords):
         raise UnsupportedSkillSourceError("R() does not support **kwargs")
-    unsupported = tuple(str(kw.arg) for kw in call.keywords if kw.arg is not None and str(kw.arg) not in _R_ALLOWED_KEYS)
+    unsupported = tuple(
+        str(kw.arg)
+        for kw in call.keywords
+        if kw.arg is not None and str(kw.arg) not in _R_ALLOWED_KEYS
+    )
     if unsupported:
         raise UnsupportedSkillSourceError(f"unsupported R() field: {', '.join(unsupported)}")
     kwargs = {
@@ -1097,7 +1119,9 @@ def _selector_from_r_call(call: ast.Call, bindings: dict[str, ast.AST]) -> dict[
         raise UnsupportedSkillSourceError(str(exc)) from exc
 
 
-def _anchor_skill_step_contracts(steps: tuple[SkillStep, ...], *, app: str | None) -> tuple[SkillStep, ...]:
+def _anchor_skill_step_contracts(
+    steps: tuple[SkillStep, ...], *, app: str | None
+) -> tuple[SkillStep, ...]:
     if not app:
         return steps
     anchored_steps: list[SkillStep] = []
@@ -1122,10 +1146,7 @@ def _literal_or_placeholder(
         if node.id in bindings and node.id not in seen:
             return _literal_or_placeholder(bindings[node.id], bindings, seen=seen | {node.id})
         return f"{{{{{node.id}}}}}"
-    if (
-        isinstance(node, ast.BinOp)
-        and isinstance(node.op, ast.Add)
-    ):
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         left = _literal_or_placeholder(node.left, bindings, seen=seen)
         right = _literal_or_placeholder(node.right, bindings, seen=seen)
         if isinstance(left, str) and isinstance(right, str):
@@ -1170,9 +1191,7 @@ def _decorator_kwargs(func: ast.AsyncFunctionDef | ast.FunctionDef, name: str) -
     for decorator in func.decorator_list:
         if isinstance(decorator, ast.Call) and _call_name(decorator.func) == name:
             return {
-                kw.arg: _literal_value(kw.value)
-                for kw in decorator.keywords
-                if kw.arg is not None
+                kw.arg: _literal_value(kw.value) for kw in decorator.keywords if kw.arg is not None
             }
     return {}
 
@@ -1203,45 +1222,55 @@ def _attribute_root(node: ast.Attribute) -> str:
     return ""
 
 
-def _used_step_parameters(func: ast.AsyncFunctionDef, steps: tuple[SkillStep, ...]) -> tuple[str, ...]:
+def _used_step_parameters(
+    func: ast.AsyncFunctionDef, steps: tuple[SkillStep, ...]
+) -> tuple[str, ...]:
     declared = tuple(arg.arg for arg in func.args.args[1:])
     if not declared:
         return ()
-    used = collect_placeholder_names([
-        {
-            "target": step.target,
-            "parameters": step.parameters,
-            "valid_state": step.valid_state,
-            "state_contract": step.state_contract,
-            "fixed_values": step.fixed_values,
-        }
-        for step in steps
-    ])
+    used = collect_placeholder_names(
+        [
+            {
+                "target": step.target,
+                "parameters": step.parameters,
+                "valid_state": step.valid_state,
+                "state_contract": step.state_contract,
+                "fixed_values": step.fixed_values,
+            }
+            for step in steps
+        ]
+    )
     return tuple(name for name in declared if name in used)
 
 
 def _skill_search_text(skill_obj: Skill) -> str:
-    app_alias_text = " ".join(annotate_android_apps([skill_obj.app])) if skill_obj.platform == "android" else ""
+    app_alias_text = (
+        " ".join(annotate_android_apps([skill_obj.app])) if skill_obj.platform == "android" else ""
+    )
     step_text = " ".join(
-        " ".join([
-            step.action_type,
-            step.target,
-            " ".join(str(k) for k in step.parameters.keys()),
-            " ".join(str(v) for v in step.parameters.values()),
-            step.valid_state or "",
-            _merger.stable_json(step.state_contract),
-        ])
+        " ".join(
+            [
+                step.action_type,
+                step.target,
+                " ".join(str(k) for k in step.parameters.keys()),
+                " ".join(str(v) for v in step.parameters.values()),
+                step.valid_state or "",
+                _merger.stable_json(step.state_contract),
+            ]
+        )
         for step in skill_obj.steps
     )
-    base_text = " ".join([
-        skill_obj.name,
-        skill_obj.description,
-        skill_obj.app,
-        app_alias_text,
-        skill_obj.platform,
-        " ".join(skill_obj.tags),
-        step_text,
-    ])
+    base_text = " ".join(
+        [
+            skill_obj.name,
+            skill_obj.description,
+            skill_obj.app,
+            app_alias_text,
+            skill_obj.platform,
+            " ".join(skill_obj.tags),
+            step_text,
+        ]
+    )
     return " ".join([base_text, _retrieval_alias_text(base_text)])
 
 
@@ -1258,10 +1287,7 @@ def _retrieval_alias_text(text: str) -> str:
 
 
 def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
-    return [
-        (str(record["skill_id"]), str(record["search_text_hash"]))
-        for record in records
-    ]
+    return [(str(record["skill_id"]), str(record["search_text_hash"])) for record in records]
 
 
 def _is_unknown_app(app: str) -> bool:
@@ -1368,7 +1394,7 @@ def _template_literal(value: Any, placeholder_map: dict[str, str]) -> str:
         cursor = 0
         for match in _PLACEHOLDER_RE.finditer(value):
             if match.start() > cursor:
-                parts.append(_code_literal(value[cursor:match.start()]))
+                parts.append(_code_literal(value[cursor : match.start()]))
             name = match.group(1)
             replacement = placeholder_map.get(name)
             if replacement is None:

@@ -25,10 +25,9 @@ GUIClaw 有两种使用方式：
    - [各平台配置示例](#各平台配置示例)
 4. [实时 Demo](#实时-demo)
 5. [Planner / Router 路由集成](#planner--router-路由集成)
-6. [App 列表初始化](#app-列表初始化)
-7. [记忆库](#记忆库)
-8. [后端](#后端)
-9. [技能系统](#技能系统)
+6. [记忆库](#记忆库)
+7. [后端](#后端)
+8. [技能系统](#技能系统)
 
 ---
 
@@ -142,7 +141,6 @@ guiclaw [任务描述] [选项]
   --agent-profile {default,general_e2e,qwen3vl,mai_ui,gelab,seed}
                           GUI 专用模型的 prompt / action profile
   --config PATH           配置文件路径（默认：~/.guiclaw/config.yaml）
-  --refresh-apps          强制重新获取并缓存已安装 App 列表
   --background            使用 Xvfb 虚拟显示运行（仅 Linux）
   --require-isolation     若无法使用隔离后端则报错退出
   --target-app-class {classic-win32,uwp,directx,gpu-heavy,electron-gpu}
@@ -176,9 +174,6 @@ guiclaw --dry-run "点击保存按钮"
 
 # 使用非默认 GUI profile
 guiclaw --backend adb --agent-profile qwen3vl "打开设置，开启 Wi-Fi"
-
-# 强制刷新 App 列表后执行任务
-guiclaw --backend adb --refresh-apps "打开微信"
 
 # 使用自定义配置文件
 guiclaw --config ~/my-config.yaml "打开计算器"
@@ -767,144 +762,6 @@ Planner 看到的能力目录摘要也会随后端动态变化：
 | `ios` | "使用 GUI 子智能体操作已连接的 iOS 设备上的应用" |
 | `hdc` | "使用 GUI 子智能体操作已连接的鸿蒙 OS 设备上的应用" |
 | `local` | "使用 GUI 子智能体操作本地桌面上的应用" |
-
----
-
-## App 列表初始化
-
-GUIClaw 会缓存已安装的 App 列表，方便智能体了解目标设备或桌面上有哪些应用可用。缓存位于 `~/.guiclaw/apps/`，格式为 JSON 字符串数组。
-
-**各平台缓存文件路径：**
-
-| 平台 | 缓存文件 |
-|------|---------|
-| Android（默认设备） | `~/.guiclaw/apps/android_default.json` |
-| Android（指定序列号） | `~/.guiclaw/apps/android_R3CN70BAYER.json` |
-| iOS | `~/.guiclaw/apps/ios_default.json` |
-| 鸿蒙 OS（默认设备） | `~/.guiclaw/apps/harmonyos_default.json` |
-| 鸿蒙 OS（指定序列号） | `~/.guiclaw/apps/harmonyos_FMR0223C13000649.json` |
-| macOS | `~/.guiclaw/apps/macos.json` |
-| Linux | `~/.guiclaw/apps/linux.json` |
-| Windows | `~/.guiclaw/apps/windows.json` |
-
-### 自动生成
-
-首次运行时会自动获取 App 列表并缓存，后续直接读取缓存（速度更快）。强制刷新：
-
-```bash
-guiclaw --refresh-apps --backend adb "打开微信"
-guiclaw --refresh-apps --backend ios "打开设置"
-guiclaw --refresh-apps --backend hdc "打开设置"
-```
-
-### 手动初始化
-
-可直接编辑缓存文件。格式为 JSON 字符串数组。
-
-**Android**（`~/.guiclaw/apps/android_default.json`）：
-
-```json
-[
-  "com.tencent.mm",
-  "com.eg.android.AlipayGphone",
-  "com.taobao.taobao",
-  "com.android.settings",
-  "com.android.chrome",
-  "tv.danmaku.bili",
-  "com.ss.android.ugc.aweme"
-]
-```
-
-> Android 填写**包名**（Package Name）。查询方式：
-> ```bash
-> adb shell pm list packages -3      # 仅列出第三方应用
-> adb shell pm list packages          # 列出所有应用
-> ```
-
-**iOS**（`~/.guiclaw/apps/ios_default.json`）：
-
-```json
-[
-  "com.apple.Preferences",
-  "com.apple.mobilesafari",
-  "com.tencent.xin",
-  "com.alipay.iphoneclient",
-  "com.ss.iphone.ugc.Aweme"
-]
-```
-
-> iOS 填写 **Bundle ID**。查询方式：
-> ```bash
-> ideviceinstaller -l          # 需安装 libimobiledevice
-> ```
-
-**鸿蒙 OS**（`~/.guiclaw/apps/harmonyos_default.json`）：
-
-```json
-[
-  "com.huawei.settings",
-  "com.huawei.browser",
-  "com.tencent.mm",
-  "com.eg.android.AlipayGphone",
-  "com.ss.android.ugc.aweme"
-]
-```
-
-> 鸿蒙 OS 填写 **Bundle Name**（应用包名）。查询方式：
-> ```bash
-> hdc shell bm dump -a          # 列出所有已安装包
-> ```
-
-**macOS**（`~/.guiclaw/apps/macos.json`）：
-
-```json
-[
-  "Safari",
-  "Google Chrome",
-  "Firefox",
-  "Finder",
-  "Terminal",
-  "Visual Studio Code",
-  "Slack",
-  "Notion"
-]
-```
-
-> macOS 填写 `.app` 包的**名称**（去掉 `.app` 后缀），即 `/Applications` 或 `~/Applications` 中的应用名。
-
-**Linux**（`~/.guiclaw/apps/linux.json`）：
-
-```json
-[
-  "firefox",
-  "google-chrome",
-  "code",
-  "gnome-terminal",
-  "nautilus",
-  "gedit",
-  "slack"
-]
-```
-
-> Linux 填写 `/usr/share/applications/` 下 `.desktop` 文件的文件名（去掉 `.desktop`）。查询方式：
-> ```bash
-> ls /usr/share/applications/*.desktop | xargs -I{} basename {} .desktop
-> ```
-
-**Windows**（`~/.guiclaw/apps/windows.json`）：
-
-```json
-[
-  "Microsoft Edge",
-  "Google Chrome",
-  "File Explorer",
-  "Notepad",
-  "Visual Studio Code",
-  "Slack"
-]
-```
-
-> Windows 填写应用的可读名称，GUIClaw 用它来查找并定位窗口。
 
 ---
 

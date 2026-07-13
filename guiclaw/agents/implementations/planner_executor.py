@@ -7,14 +7,12 @@ from typing import Any
 from loguru import logger
 
 from guiclaw.agents.base import MCPAgent
-from guiclaw.agents.utils.helpers import mask_api_key
-GROUNDING_MODELS = {}
-from guiclaw.agents.utils.helpers import pil_to_base64
-from guiclaw.agents.utils.prompts import PLANNER_EXECUTOR_PROMPT_TEMPLATE
-from guiclaw.agents.utils.helpers import pretty_print_messages
 from guiclaw.agents.runtime.models import JSONAction
+from guiclaw.agents.utils.helpers import mask_api_key, pil_to_base64, pretty_print_messages
 from guiclaw.agents.utils.parsers import parse_json_markdown
+from guiclaw.agents.utils.prompts import PLANNER_EXECUTOR_PROMPT_TEMPLATE
 
+GROUNDING_MODELS = {}
 ACTION_ALIASES = {
     "click": ["tap", "press", "touch"],
     "long_press": ["long tap", "long press", "hold"],

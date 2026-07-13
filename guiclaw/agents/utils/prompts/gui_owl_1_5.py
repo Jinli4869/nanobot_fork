@@ -1,8 +1,8 @@
 from jinja2 import Template
 
+GUI_OWL_1_5_SYSTEM_PROMPT_TEMPLATE = Template(
+    """# Tools
 
-GUI_OWL_1_5_SYSTEM_PROMPT_TEMPLATE = Template("""# Tools
-                                 
 You may call one or more functions to assist with the user query.
 
 You are provided with function signatures within <tools></tools> XML tags:
@@ -28,7 +28,8 @@ Rules:
 - Output exactly in the order: Action, <tool_call>.
 - Be brief: one for Action.
 - Do not output anything else outside those two parts.
-- If finishing, use mobile_use with action=terminate in the tool call.""".strip())
+- If finishing, use mobile_use with action=terminate in the tool call.""".strip()
+)
 
 GUI_OWL_1_5_USER_PROMPT_TEMPLATE = """
 Please generate the next move according to the UI screenshot, instruction and previous actions.
@@ -41,10 +42,9 @@ Please generate the next move according to the UI screenshot, instruction and pr
 
 Instruction: {instruction}
 
-Previous actions: 
+Previous actions:
 {previous_steps}
 """.strip()
-
 
 
 if __name__ == "__main__":

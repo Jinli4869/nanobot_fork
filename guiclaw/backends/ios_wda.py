@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from guiclaw.action import Action, describe_action, resolve_coordinate
+from guiclaw.backends.keycodes import IOS_KEYCODE_MAP as _IOS_KEYCODE_MAP
+from guiclaw.backends.keycodes import canonical_key_name
 from guiclaw.observation import Observation
 
 logger = logging.getLogger(__name__)
@@ -28,18 +30,13 @@ def _import_wda() -> Any:
     """Lazily import the ``wda`` package with a helpful error on failure."""
     try:
         import wda  # type: ignore[import-untyped]  # noqa: PLC0415
+
         return wda
     except ImportError as exc:
         raise ImportError(
             "The 'facebook-wda' package is required for iOS backend. "
             "Install it with: pip install facebook-wda"
         ) from exc
-
-# ---------------------------------------------------------------------------
-# iOS key mapping (limited hardware vs. Android)
-# ---------------------------------------------------------------------------
-
-from guiclaw.backends.keycodes import IOS_KEYCODE_MAP as _IOS_KEYCODE_MAP, canonical_key_name  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -97,23 +94,21 @@ class WdaBackend:
         try:
             status = await self._wda_call(self._client.status)
         except Exception as exc:
-            raise WdaError(
-                f"Cannot reach WDA at {self._wda_url!r}: {exc}", cause=exc
-            ) from exc
+            raise WdaError(f"Cannot reach WDA at {self._wda_url!r}: {exc}", cause=exc) from exc
 
         # Log device / OS information when available.
         if isinstance(status, dict):
             build = status.get("build") or {}
             info = status.get("value") or {}
             product_version = (
-                build.get("productVersion")
-                or info.get("os", {}).get("version")
-                or "unknown"
+                build.get("productVersion") or info.get("os", {}).get("version") or "unknown"
             )
             model = info.get("model") or build.get("productType") or "unknown"
             logger.info(
                 "WDA preflight OK — model=%s OS=%s url=%s",
-                model, product_version, self._wda_url,
+                model,
+                product_version,
+                self._wda_url,
             )
         else:
             logger.info("WDA preflight OK — url=%s", self._wda_url)
@@ -179,7 +174,9 @@ class WdaBackend:
             height = int(window_size.get("height", self._screen_height))
         else:
             width, height = self._screen_width, self._screen_height
-            logger.warning("Unexpected window_size format %r; using cached %dx%d", window_size, width, height)
+            logger.warning(
+                "Unexpected window_size format %r; using cached %dx%d", window_size, width, height
+            )
 
         if screenshot_size is not None:
             shot_w, shot_h = screenshot_size

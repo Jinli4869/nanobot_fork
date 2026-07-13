@@ -9,9 +9,6 @@ from loguru import logger
 from PIL import Image
 
 from guiclaw.agents.base import MCPAgent
-from guiclaw.agents.utils.helpers import pil_to_base64, reverse_swipe_direction
-from guiclaw.agents.utils.prompts import MAI_MOBILE_SYS_PROMPT_ASK_USER_MCP
-from guiclaw.agents.utils.helpers import pretty_print_messages
 from guiclaw.agents.runtime.models import (
     ANSWER,
     ASK_USER,
@@ -31,6 +28,12 @@ from guiclaw.agents.runtime.models import (
     WAIT,
     JSONAction,
 )
+from guiclaw.agents.utils.helpers import (
+    pil_to_base64,
+    pretty_print_messages,
+    reverse_swipe_direction,
+)
+from guiclaw.agents.utils.prompts import MAI_MOBILE_SYS_PROMPT_ASK_USER_MCP
 
 SCALE_FACTOR = 999
 

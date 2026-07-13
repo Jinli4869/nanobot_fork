@@ -4,6 +4,7 @@ Requirements covered:
   VDISP-01: VirtualDisplayManager protocol (importable, isinstance, async methods)
   VDISP-02: DisplayInfo frozen dataclass (fields, defaults, immutability)
 """
+
 from __future__ import annotations
 
 import dataclasses
@@ -11,7 +12,7 @@ import inspect
 
 import pytest
 
-from guiclaw.interfaces import DisplayInfo, VirtualDisplayManager
+from guiclaw.backends.virtual_display import DisplayInfo, VirtualDisplayManager
 
 
 class _FakeDisplayManager:
@@ -20,6 +21,7 @@ class _FakeDisplayManager:
 
     async def stop(self) -> None:
         pass
+
 
 # ---------------------------------------------------------------------------
 # VDISP-01: protocol importability and async shape

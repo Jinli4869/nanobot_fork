@@ -7,14 +7,9 @@ from typing import Any
 from loguru import logger
 
 from guiclaw.agents.base import MCPAgent
-from guiclaw.agents.utils.agent_mapping import GUIOWL2AW_ACTION_MAP
-from guiclaw.agents.utils.helpers import (
-    pil_to_base64, add_period_robustly
-)
-
-from guiclaw.agents.utils.helpers import pretty_print_messages
 from guiclaw.agents.runtime.models import ENV_FAIL, MCP, JSONAction
-
+from guiclaw.agents.utils.agent_mapping import GUIOWL2AW_ACTION_MAP
+from guiclaw.agents.utils.helpers import add_period_robustly, pil_to_base64, pretty_print_messages
 from guiclaw.agents.utils.prompts import (
     GUI_OWL_1_5_SYSTEM_PROMPT_TEMPLATE,
     GUI_OWL_1_5_USER_PROMPT_TEMPLATE,
@@ -260,9 +255,11 @@ class GUIOWL15AgentMCP(MCPAgent):
         self.thoughts: list[str] = []
         self.actions: list[dict] = []
         self.conclusions: list[str] = []
-        self.history_images: list[str] = []          # base64-encoded strings
-        self.history_responses: list[str] = []       # raw assistant text (excludes current)
-        self.history_user_content: list[tuple] = []  # (encoded_string, tool_call, ask_user_response)
+        self.history_images: list[str] = []  # base64-encoded strings
+        self.history_responses: list[str] = []  # raw assistant text (excludes current)
+        self.history_user_content: list[
+            tuple
+        ] = []  # (encoded_string, tool_call, ask_user_response)
 
         # Frequently used hyper-parameters
         self.temperature = self.runtime_conf.pop("temperature", 0.0)
@@ -319,14 +316,10 @@ class GUIOWL15AgentMCP(MCPAgent):
             step_info = f"Step{step_num}: {conclusion}"
 
             tool_call_res = (
-                self.history_user_content[i][1]
-                if i < len(self.history_user_content)
-                else None
+                self.history_user_content[i][1] if i < len(self.history_user_content) else None
             )
             ask_user_res = (
-                self.history_user_content[i][2]
-                if i < len(self.history_user_content)
-                else None
+                self.history_user_content[i][2] if i < len(self.history_user_content) else None
             )
 
             if tool_call_res is not None:
@@ -344,9 +337,7 @@ class GUIOWL15AgentMCP(MCPAgent):
     # Main prediction method
     # ------------------------------------------------------------------
 
-    def predict(
-        self, observation: dict[str, Any]
-    ) -> tuple[list, str, str, str, str, JSONAction]:
+    def predict(self, observation: dict[str, Any]) -> tuple[list, str, str, str, str, JSONAction]:
         """Predict the next action based on the current observation."""
 
         assert len(self.actions) == len(self.thoughts) == len(self.conclusions), (
@@ -373,9 +364,7 @@ class GUIOWL15AgentMCP(MCPAgent):
 
         # ── System prompt ──────────────────────────────────────────────
         system_prompt = GUI_OWL_1_5_SYSTEM_PROMPT_TEMPLATE.render(
-            tools="\n".join(
-                [json.dumps(tool, ensure_ascii=False) for tool in self.tools]
-            )
+            tools="\n".join([json.dumps(tool, ensure_ascii=False) for tool in self.tools])
         )
 
         # ── History windowing ──────────────────────────────────────────
@@ -416,9 +405,7 @@ class GUIOWL15AgentMCP(MCPAgent):
             first_user_content.append(
                 {
                     "type": "text",
-                    "text": GUI_OWL_1_5_USER_PROMPT_TEMPLATE.format(
-                        instruction=self.instruction
-                    ),
+                    "text": GUI_OWL_1_5_USER_PROMPT_TEMPLATE.format(instruction=self.instruction),
                 }
             )
 
@@ -448,13 +435,11 @@ class GUIOWL15AgentMCP(MCPAgent):
             # User message for turn i+1 (tool response + screenshot)
             next_img_idx = i + 1
             if next_img_idx < len(self.history_user_content):
-                next_encoded, tool_call_res, ask_user_response_res = (
-                    self.history_user_content[next_img_idx]
-                )
+                next_encoded, tool_call_res, ask_user_response_res = self.history_user_content[
+                    next_img_idx
+                ]
                 messages.append(
-                    self._get_user_message(
-                        next_encoded, tool_call_res, ask_user_response_res
-                    )
+                    self._get_user_message(next_encoded, tool_call_res, ask_user_response_res)
                 )
 
         logger.debug(
@@ -499,7 +484,6 @@ class GUIOWL15AgentMCP(MCPAgent):
         # ── Parse failure fallback ─────────────────────────────────────
         if parsed_response is None:
             return "llm parse error after multiple retries", JSONAction(action_type=ENV_FAIL)
-            
 
         # ── Update state ───────────────────────────────────────────────
         self.history_responses.append(prediction)
@@ -515,7 +499,10 @@ class GUIOWL15AgentMCP(MCPAgent):
             )
             self.actions.append(json_action_dict)
 
-            return prediction, JSONAction(**json_action_dict),
+            return (
+                prediction,
+                JSONAction(**json_action_dict),
+            )
         else:
             mcp_action = {
                 "action_name": parsed_response["action_name"],
@@ -523,13 +510,11 @@ class GUIOWL15AgentMCP(MCPAgent):
             }
             self.actions.append(mcp_action)
 
-            return prediction,JSONAction(
-                    action_type=MCP,
-                    action_json=parsed_response["action_json"],
-                    action_name=parsed_response["action_name"],
-                )
-               
-                
+            return prediction, JSONAction(
+                action_type=MCP,
+                action_json=parsed_response["action_json"],
+                action_name=parsed_response["action_name"],
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle

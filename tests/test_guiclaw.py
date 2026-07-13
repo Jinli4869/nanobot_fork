@@ -21,7 +21,7 @@ import guiclaw.backends.ios_wda as ios_wda_module
 import guiclaw.skills.deeplink as deeplink_module
 import guiclaw.skills.executor as skill_executor_module
 from guiclaw.action import Action, ActionError, parse_action, resolve_coordinate
-from guiclaw.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
+from guiclaw.agent import GuiAgent, StepResult
 from guiclaw.agent_profiles import (
     canonicalize_agent_profile,
     normalize_profile_response_for_screen,
@@ -30,11 +30,14 @@ from guiclaw.agent_profiles import (
 from guiclaw.backends.adb import AdbBackend, AdbError
 from guiclaw.backends.dry_run import DryRunBackend
 from guiclaw.backends.hdc import HdcBackend
+from guiclaw.image_utils import scale_image
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
+from guiclaw.skills.action_grounder import ActionGrounder as _AgentActionGrounder
 from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
 from guiclaw.skills.flat import FlatSkillLibrary, compile_flat_skills, export_skills_to_source
+from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner
 from guiclaw.tool_schemas import build_shortcut_tool_defs
 from guiclaw.trajectory.recorder import TrajectoryRecorder
 
@@ -283,17 +286,19 @@ async def test_prompt_skill_selection_injects_and_dispatches_use_skill(tmp_path:
     library.add(shortcut_skill)
     library.add(composite_skill)
     executor = _FakePromptSkillExecutor()
-    llm = _RecordingLLM([
-        _mobileworld_response(
-            {
-                "action_type": "use_skill",
-                "skill_id": "shortcut:dl:dry:search",
-                "skill_name": "dry_search",
-                "arguments": {"query": "cats"},
-            }
-        ),
-        _mobileworld_response({"action_type": "status", "goal_status": "complete"}),
-    ])
+    llm = _RecordingLLM(
+        [
+            _mobileworld_response(
+                {
+                    "action_type": "use_skill",
+                    "skill_id": "shortcut:dl:dry:search",
+                    "skill_name": "dry_search",
+                    "arguments": {"query": "cats"},
+                }
+            ),
+            _mobileworld_response({"action_type": "status", "goal_status": "complete"}),
+        ]
+    )
     agent = GuiAgent(
         llm,
         _SkillTestBackend(),
@@ -335,16 +340,18 @@ async def test_prompt_composite_action_executes_without_skill_executor(tmp_path:
         )
     )
     backend = _SkillTestBackend()
-    llm = _RecordingLLM([
-        _mobileworld_response(
-            {
-                "action_type": "click_then_type",
-                "coordinate": [500, 400],
-                "text": "hello",
-            }
-        ),
-        _mobileworld_response({"action_type": "status", "goal_status": "complete"}),
-    ])
+    llm = _RecordingLLM(
+        [
+            _mobileworld_response(
+                {
+                    "action_type": "click_then_type",
+                    "coordinate": [500, 400],
+                    "text": "hello",
+                }
+            ),
+            _mobileworld_response({"action_type": "status", "goal_status": "complete"}),
+        ]
+    )
     agent = GuiAgent(
         llm,
         backend,
@@ -826,16 +833,18 @@ def test_shortcut_agent_tool_names_do_not_collide() -> None:
 
 
 def test_validated_deeplink_promotes_to_concise_flat_skill() -> None:
-    skill = deeplink_module.validated_shortcut_to_skill({
-        "package": "com.taobao.taobao",
-        "kind": "deeplink",
-        "status": "page_validated",
-        "description": "淘宝搜索商品",
-        "name": "taobao_search",
-        "uri_template": "taobao://search?q={{query}}",
-        "component": "com.taobao.taobao/.RouterActivity",
-        "valid_state": "淘宝搜索结果页已打开",
-    })
+    skill = deeplink_module.validated_shortcut_to_skill(
+        {
+            "package": "com.taobao.taobao",
+            "kind": "deeplink",
+            "status": "page_validated",
+            "description": "淘宝搜索商品",
+            "name": "taobao_search",
+            "uri_template": "taobao://search?q={{query}}",
+            "component": "com.taobao.taobao/.RouterActivity",
+            "valid_state": "淘宝搜索结果页已打开",
+        }
+    )
 
     assert skill is not None
     assert skill.app == "com.taobao.taobao"
@@ -870,7 +879,9 @@ async def test_validated_intent_promotes_through_flat_library_add_or_merge(tmp_p
     }
 
     decision, skill_id = await deeplink_module.add_validated_shortcut_skill(library, record)
-    decision_again, skill_id_again = await deeplink_module.add_validated_shortcut_skill(library, record)
+    decision_again, skill_id_again = await deeplink_module.add_validated_shortcut_skill(
+        library, record
+    )
 
     assert decision == "ADD"
     assert decision_again == "KEEP_NEW"
@@ -886,13 +897,15 @@ async def test_validated_intent_promotes_through_flat_library_add_or_merge(tmp_p
 
 
 def test_validated_shortcut_skips_unvalidated_record() -> None:
-    skill = deeplink_module.validated_shortcut_to_skill({
-        "package": "com.example.app",
-        "kind": "deeplink",
-        "status": "launchable",
-        "description": "打开示例页面",
-        "uri_template": "example://home",
-    })
+    skill = deeplink_module.validated_shortcut_to_skill(
+        {
+            "package": "com.example.app",
+            "kind": "deeplink",
+            "status": "launchable",
+            "description": "打开示例页面",
+            "uri_template": "example://home",
+        }
+    )
 
     assert skill is None
 
@@ -983,21 +996,17 @@ def test_parse_action_unwraps_duplicated_stringified_y_list() -> None:
 def test_scale_image_accepts_custom_ratio() -> None:
     from PIL import Image
 
-    from guiclaw.skills.executor import _scale_image
-
     buf = io.BytesIO()
     Image.new("RGB", (120, 80), color=(255, 0, 0)).save(buf, format="PNG")
 
-    scaled = _scale_image(buf.getvalue(), scale_ratio=0.25)
+    scaled = scale_image(buf.getvalue(), scale_ratio=0.25)
     with Image.open(io.BytesIO(scaled)) as img:
         assert img.size == (30, 20)
 
 
 def test_scale_image_ratio_one_keeps_original_bytes() -> None:
-    from guiclaw.skills.executor import _scale_image
-
     raw = b"not-an-image"
-    assert _scale_image(raw, scale_ratio=1.0) == raw
+    assert scale_image(raw, scale_ratio=1.0) == raw
 
 
 def test_parse_swipe_splits_all_coordinates_from_x_list() -> None:
@@ -1183,7 +1192,10 @@ def test_gui_agent_skill_app_filter_prefers_hint_then_task_text(tmp_path: Path) 
         artifacts_root=tmp_path / "runs",
     )
 
-    assert agent._skill_app_filter("In YouTube, search for a video.", None) == "com.google.android.youtube"
+    assert (
+        agent._skill_app_filter("In YouTube, search for a video.", None)
+        == "com.google.android.youtube"
+    )
     assert agent._skill_app_filter("Search for a video.", "B站") == "tv.danmaku.bili"
     assert agent._skill_app_filter("Search for a video.", None) is None
     task_with_hints = (
@@ -2035,11 +2047,13 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
 async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal-failure.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([
-        LLMResponse(content="No valid tool call", tool_calls=None),
-        LLMResponse(content="Still invalid", tool_calls=None),
-        LLMResponse(content="Invalid again", tool_calls=None),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(content="No valid tool call", tool_calls=None),
+            LLMResponse(content="Still invalid", tool_calls=None),
+            LLMResponse(content="Invalid again", tool_calls=None),
+        ]
+    )
     recorder = _make_recorder(tmp_path, "subgoal trace failure")
     recorder.start()
     runner = _AgentSubgoalRunner(
@@ -2068,13 +2082,15 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
 async def test_agent_subgoal_runner_retries_parse_without_consuming_step(tmp_path: Path) -> None:
     screenshot = tmp_path / "subgoal-retry.png"
     _write_test_png(screenshot, size=(1000, 1000))
-    llm = _RecordingLLM([
-        LLMResponse(content="No valid action", tool_calls=None),
-        _mobileworld_response(
-            {"action_type": "status", "goal_status": "complete"},
-            thought="The target state is already visible.",
-        ),
-    ])
+    llm = _RecordingLLM(
+        [
+            LLMResponse(content="No valid action", tool_calls=None),
+            _mobileworld_response(
+                {"action_type": "status", "goal_status": "complete"},
+                thought="The target state is already visible.",
+            ),
+        ]
+    )
     runner = _AgentSubgoalRunner(
         llm=llm,
         backend=_SkillTestBackend(),
@@ -2253,16 +2269,145 @@ async def test_agent_post_action_observe_allows_ui_tree_timeout_budget(
         step_timeout=30.0,
     )
 
-    observation, error = await agent._observe_after_action(
+    observation = await agent._observe_after_action(
         tmp_path / "runs" / "screenshots" / "step_001.png",
         action=Action(action_type="tap", x=10, y=20),
         timeout=30.0,
     )
 
-    assert observation is not None
-    assert error is None
+    assert isinstance(observation, Observation)
     assert observe_timeouts
     assert set(observe_timeouts) == {8.0}
+
+
+def test_agent_builds_history_turn_from_step_result(tmp_path: Path) -> None:
+    observation = Observation(
+        screenshot_path=str(tmp_path / "screen.png"),
+        screen_width=100,
+        screen_height=200,
+        foreground_app="Settings",
+        platform="android",
+    )
+    action = Action(action_type="tap", x=10, y=20)
+    result = StepResult(
+        action=action,
+        tool_call_id="call-1",
+        tool_result="tap complete",
+        assistant_message={"role": "assistant", "content": "Action: tap Settings"},
+        action_summary="tap Settings",
+        action_intent="Open Settings",
+        state_summary="Settings visible",
+        model_snapshot={"raw_content": "raw model response"},
+    )
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "history helper"),
+    )
+
+    turn = agent._history_turn_from_step(
+        step_index=3,
+        observation=observation,
+        result=result,
+    )
+
+    assert turn.step_index == 3
+    assert turn.observation is observation
+    assert turn.assistant_message["content"] == "Action: tap Settings"
+    assert turn.tool_result_message == {
+        "role": "tool",
+        "tool_call_id": "call-1",
+        "content": "tap complete",
+    }
+    assert turn.action_summary == "tap Settings"
+    assert turn.action_intent == "Open Settings"
+    assert turn.state_summary == "Settings visible"
+    assert turn.raw_response_content == "raw model response"
+
+
+@pytest.mark.asyncio
+async def test_agent_records_completed_step_to_both_trajectory_outputs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    screenshot = run_dir / "screenshots" / "step_001.png"
+    _write_test_png(screenshot)
+    observation = Observation(
+        screenshot_path=str(screenshot),
+        screen_width=32,
+        screen_height=32,
+        foreground_app="Settings",
+        platform="android",
+        extra={"activity": "MainActivity"},
+    )
+    recorder = _make_recorder(tmp_path, "record completed step")
+    recorder.start()
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=recorder,
+    )
+    result = StepResult(
+        action=Action(action_type="tap", x=10, y=20),
+        tool_call_id="call-1",
+        tool_result="tap complete",
+        assistant_message={"role": "assistant", "content": "Action: tap Settings"},
+        action_summary="tap Settings",
+        action_intent="Open Settings",
+        state_summary="Settings visible",
+        next_observation=observation,
+        prompt_snapshot={"step_index": 1},
+        model_snapshot={"raw_content": "raw model response"},
+        execution_snapshot={"tool_result": "tap complete", "done": False},
+        step_usage={"total_tokens": 4},
+        duration_s=0.25,
+    )
+
+    await agent._record_completed_step(
+        run_dir=run_dir,
+        step_index=1,
+        current_observation=observation,
+        result=result,
+    )
+
+    trace_event = json.loads((run_dir / "trace.jsonl").read_text(encoding="utf-8"))
+    assert trace_event["event"] == "step"
+    assert trace_event["action"]["action_type"] == "tap"
+    assert recorder.path is not None
+    recorder_events = [
+        json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert recorder_events[-1]["type"] == "step"
+    assert recorder_events[-1]["action"]["action_type"] == "tap"
+    assert recorder_events[-1]["token_usage"] == {"total_tokens": 4}
+
+
+def test_agent_finalizes_step_result_with_shared_metrics(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "step result helper"),
+    )
+    result = StepResult(
+        action=Action(action_type="wait"),
+        tool_call_id="call-1",
+        tool_result="waited",
+        assistant_message={"role": "assistant", "content": "Action: wait"},
+        action_summary="wait",
+        event_usage={"total_tokens": 2},
+    )
+
+    finalized = agent._finalize_step_result(
+        result,
+        step_usage={"total_tokens": 5},
+        step_start=0.0,
+        step_chat_latency_s=0.0,
+        step_ttft_s=0.2,
+    )
+
+    assert finalized.step_usage == {"total_tokens": 5}
+    assert finalized.event_usage == {"total_tokens": 2}
+    assert finalized.duration_s > 0
+    assert finalized.chat_latency_s is None
+    assert finalized.ttft_s == 0.2
 
 
 @pytest.mark.asyncio
@@ -2335,7 +2480,6 @@ async def test_agent_runs_with_qwen3vl_content_only_profile(tmp_path: Path) -> N
         trajectory_recorder=_make_recorder(tmp_path, "qwen profile"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
         agent_profile="qwen3vl",
     )
 
@@ -2367,7 +2511,6 @@ async def test_agent_runs_with_qwen3vl_mobileworld_coordinates(
         trajectory_recorder=_make_recorder(tmp_path, "qwen provider stringified coords"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
         agent_profile="qwen3vl",
     )
 
@@ -2393,7 +2536,6 @@ async def test_qwen_profile_history_assistant_has_no_tool_calls(tmp_path: Path) 
         trajectory_recorder=_make_recorder(tmp_path, "qwen profile history tool calls"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
         agent_profile="qwen3vl",
     )
 
@@ -2422,7 +2564,6 @@ async def test_agent_runs_with_qwen3vl_provider_mobile_use_tool_call(tmp_path: P
         trajectory_recorder=_make_recorder(tmp_path, "qwen provider tool"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
-        include_date_context=False,
         agent_profile="qwen3vl",
     )
 
@@ -2451,7 +2592,6 @@ async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> 
         trajectory_recorder=_make_recorder(tmp_path, "done without status success"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
-        include_date_context=False,
     )
 
     result = await agent.run("Finish", max_retries=1)
@@ -2479,7 +2619,6 @@ async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_pat
         trajectory_recorder=_make_recorder(tmp_path, "done without status failure"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
-        include_date_context=False,
     )
 
     result = await agent.run("Finish", max_retries=1)
@@ -2513,7 +2652,6 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Open Settings", max_retries=1)
@@ -3324,7 +3462,6 @@ async def test_agent_success_uses_compact_state_note(tmp_path: Path) -> None:
         trajectory_recorder=_make_recorder(tmp_path, "completed note"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("complete the task", max_retries=1)
@@ -3361,7 +3498,6 @@ async def test_agent_intervention_cancelled_returns_blocked_note(tmp_path: Path)
         trajectory_recorder=_make_recorder(tmp_path, "intervention note"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
-        include_date_context=False,
     )
 
     result = await agent.run("pause for review", max_retries=1)
@@ -3755,6 +3891,7 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
     result = await agent.run("retry task", max_retries=2)
 
     assert result.success
+    assert result.error is None
     assert recorder.path is not None
     events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     types = [event["type"] for event in events]
@@ -3876,7 +4013,6 @@ async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
         trajectory_recorder=_make_recorder(tmp_path, "retry summary max steps"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
-        include_date_context=False,
     )
 
     result = await agent.run("Open Settings", max_retries=2)
@@ -3918,7 +4054,6 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
         trajectory_recorder=_make_recorder(tmp_path, "retry summary exception"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
-        include_date_context=False,
     )
 
     result = await agent.run("retry malformed tool call", max_retries=2)
@@ -3972,7 +4107,6 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
         artifacts_root=tmp_path / "runs",
         max_steps=3,
         history_image_window=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Open Settings")
@@ -4041,7 +4175,6 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
         artifacts_root=tmp_path / "runs",
         max_steps=2,
         history_image_window=1,
-        include_date_context=False,
     )
 
     result = await agent.run("Open Login")
@@ -4071,23 +4204,6 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
         "Thought: Action: Finish task"
     )
 
-    mobileworld_trace_path = trace_path.with_name("traj.json")
-    mobileworld_trace = json.loads(mobileworld_trace_path.read_text(encoding="utf-8"))
-    traj = mobileworld_trace["0"]["traj"]
-    assert traj[0]["task_goal"] == "Open Login"
-    assert traj[0]["step"] == 1
-    assert traj[0]["prediction"].startswith("Action: Thought: Action: Tap login button")
-    assert traj[0]["action"]["action_type"] == "tap"
-    assert traj[0]["intent"].startswith("Thought: Action: Tap login button")
-    assert traj[0]["summary"].startswith("Thought: Action: Tap login button")
-    assert traj[0]["tool_call"]["name"] == "computer_use"
-    assert traj[0]["tool_call"]["arguments"]["intent"].startswith(
-        "Thought: Action: Tap login button"
-    )
-    assert traj[0]["screenshot"].startswith("screenshots/")
-    assert traj[0]["marked_screenshot"].startswith("marked_screenshots/")
-    assert (trace_path.parent / traj[0]["marked_screenshot"]).exists()
-
 
 @pytest.mark.asyncio
 async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> None:
@@ -4114,7 +4230,6 @@ async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> N
         artifacts_root=tmp_path / "runs",
         max_steps=10,
         history_image_window=1,
-        include_date_context=False,
     )
 
     result = await agent.run("Open Settings")
@@ -4185,7 +4300,6 @@ async def test_agent_waits_for_ui_to_settle_before_observing(
         trajectory_recorder=_make_recorder(tmp_path, "settle"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        include_date_context=False,
     )
 
     result = await agent.run("Tap once")

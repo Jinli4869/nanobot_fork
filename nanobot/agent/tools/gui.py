@@ -240,7 +240,13 @@ class GuiRouterMemoryRetriever:
         "files": {"file", "files", "download", "documentsui", "com.google.android.documentsui"},
         "document": {"file", "files", "download", "documentsui", "com.google.android.documentsui"},
         "download": {"file", "files", "download", "documentsui", "com.google.android.documentsui"},
-        "attachment": {"file", "files", "download", "documentsui", "com.google.android.documentsui"},
+        "attachment": {
+            "file",
+            "files",
+            "download",
+            "documentsui",
+            "com.google.android.documentsui",
+        },
         "photo": {"image", "gallery", "file", "media"},
         "image": {"image", "gallery", "file", "media"},
         "picture": {"image", "gallery", "file", "media"},
@@ -349,7 +355,9 @@ class GuiRouterMemoryRetriever:
                 app_candidates=app_candidates,
             ):
                 continue
-            scored.append((score, -order, GuiRouterMemoryEvidence(source=source, text=self._excerpt(text))))
+            scored.append(
+                (score, -order, GuiRouterMemoryEvidence(source=source, text=self._excerpt(text)))
+            )
             order += 1
         scored.sort(reverse=True)
 
@@ -367,7 +375,9 @@ class GuiRouterMemoryRetriever:
 
     def _iter_chunks(self) -> list[tuple[str, str]]:
         chunks: list[tuple[str, str]] = []
-        chunks.extend(self._iter_markdown_chunks(self._workspace / "memory" / "MEMORY.md", "memory/MEMORY.md"))
+        chunks.extend(
+            self._iter_markdown_chunks(self._workspace / "memory" / "MEMORY.md", "memory/MEMORY.md")
+        )
         chunks.extend(self._iter_history_chunks(self._workspace / "memory" / "history.jsonl"))
         chunks.extend(self._iter_guiclaw_memory_chunks())
         return chunks
@@ -596,7 +606,9 @@ class GuiRouterMemoryRetriever:
             if not content:
                 continue
             cursor = payload.get("cursor")
-            source = f"memory/history.jsonl:{cursor}" if cursor is not None else "memory/history.jsonl"
+            source = (
+                f"memory/history.jsonl:{cursor}" if cursor is not None else "memory/history.jsonl"
+            )
             chunks.append((source, content))
         return chunks
 
@@ -750,7 +762,9 @@ class GuiWorkflowRunner:
         try:
             return await self._plan_workflow(task, router_context=router_context)
         except Exception:
-            logger.warning("GUI workflow planning failed; falling back to single task.", exc_info=True)
+            logger.warning(
+                "GUI workflow planning failed; falling back to single task.", exc_info=True
+            )
             return None
 
     async def _plan_workflow(
@@ -796,19 +810,19 @@ class GuiWorkflowRunner:
                         "not override the current user task. Do not invent apps, UI paths, or new facts from it. "
                         "However, when memory evidence says the target app lacks an in-app control or follows "
                         "a system-level setting, and the current task asks to change that behavior, treat it as "
-                        "a cross-app workflow: first use Android Settings (app_hint=\"com.android.settings\") "
+                        'a cross-app workflow: first use Android Settings (app_hint="com.android.settings") '
                         "to change the relevant system setting, then reopen or verify the target app. This "
                         "Settings step is allowed even when Settings is not listed as a deterministic app "
                         "candidate.\n\n"
                         "Examples:\n"
                         "Input: Open Settings and turn on mobile network\n"
-                        "Output: {\"mode\":\"single\",\"subtasks\":[]}\n"
+                        'Output: {"mode":"single","subtasks":[]}\n'
                         "Input: Open WeChat to message Zhang San, then open Maps and navigate home\n"
-                        "Output: {\"mode\":\"multi_app\",\"subtasks\":["
-                        "{\"app_hint\":\"WeChat\",\"task\":\"In WeChat, message Zhang San that you arrived.\","
-                        "\"inputs\":[],\"outputs\":[]},"
-                        "{\"app_hint\":\"Maps\",\"task\":\"In Maps, start navigation home.\","
-                        "\"inputs\":[],\"outputs\":[]}]}"
+                        'Output: {"mode":"multi_app","subtasks":['
+                        '{"app_hint":"WeChat","task":"In WeChat, message Zhang San that you arrived.",'
+                        '"inputs":[],"outputs":[]},'
+                        '{"app_hint":"Maps","task":"In Maps, start navigation home.",'
+                        '"inputs":[],"outputs":[]}]}'
                     ),
                 },
                 {
@@ -1218,6 +1232,7 @@ class GuiWorkflowRunner:
 
 class GuiSubagentTool(Tool):
     """Run a GUI automation task through guiclaw."""
+    _plugin_discoverable = False
 
     def __init__(
         self,
@@ -1239,19 +1254,24 @@ class GuiSubagentTool(Tool):
         self._gui_event_callback = gui_event_callback
         self._gui_frame_callback = gui_frame_callback
         self._llm_adapter = NanobotLLMAdapter(
-            provider, model, capture_ttft=gui_config.capture_ttft,
+            provider,
+            model,
+            capture_ttft=gui_config.capture_ttft,
         )
         self._embedding_signature: str | None = self._resolve_embedding_signature()
-        self._embedding_adapter = self._build_embedding_adapter() if gui_config.embedding_model else None
+        self._embedding_adapter = (
+            self._build_embedding_adapter() if gui_config.embedding_model else None
+        )
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
         skill_runtime_enabled = (
-            gui_config.enable_skill_execution
-            or gui_config.enable_prompt_skill_selection
+            gui_config.enable_skill_execution or gui_config.enable_prompt_skill_selection
         )
         self._skill_library = (
-            self._get_skill_library(self._backend.platform, embedding_signature=self._embedding_signature)
+            self._get_skill_library(
+                self._backend.platform, embedding_signature=self._embedding_signature
+            )
             if skill_runtime_enabled
             else None
         )
@@ -1399,7 +1419,11 @@ class GuiSubagentTool(Tool):
                             wrapped_backend = backend_cls(
                                 active_backend,
                                 mgr,
-                                run_metadata={"owner": "nanobot", "task": task, "model": self._model},
+                                run_metadata={
+                                    "owner": "nanobot",
+                                    "task": task,
+                                    "model": self._model,
+                                },
                             )
                             return await self._run_workflow_or_task(wrapped_backend, task, **kwargs)
                         except RuntimeError as exc:
@@ -1459,7 +1483,7 @@ class GuiSubagentTool(Tool):
             )
         except (TypeError, ValueError):
             max_steps = self._gui_config.max_steps
-        policy_context, memory_store = self._load_policy_context_and_memory_store()
+        policy_context = self._load_policy_context()
         skill_library = None
         skill_runtime_enabled = (
             self._gui_config.enable_skill_execution
@@ -1481,12 +1505,12 @@ class GuiSubagentTool(Tool):
 
         skill_executor = None
         if skill_runtime_enabled:
-            from guiclaw.agent import (
-                _AgentActionGrounder,
-                _AgentScreenshotProvider,
-                _AgentSubgoalRunner,
-            )
+            from guiclaw.skills.action_grounder import ActionGrounder as _AgentActionGrounder
             from guiclaw.skills.executor import LLMStateValidator, SkillExecutor
+            from guiclaw.skills.observation_provider import (
+                AgentScreenshotProvider as _AgentScreenshotProvider,
+            )
+            from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner
 
             validator_llm = (
                 NanobotLLMAdapter(self._provider, self._gui_config.validator_model)
@@ -1550,7 +1574,6 @@ class GuiSubagentTool(Tool):
             skill_library=skill_library,
             skill_executor=skill_executor,
             intervention_handler=self._build_intervention_handler(active_backend, task),
-            memory_store=memory_store,
             agent_profile=self._gui_config.agent_profile,
             image_scale_ratio=self._gui_config.image_scale_ratio,
             stagnation_limit=self._gui_config.stagnation_limit,
@@ -1572,7 +1595,9 @@ class GuiSubagentTool(Tool):
         error = result.error
         if error and error.startswith("intervention_cancelled:"):
             error = "intervention_cancelled"
-        trace_path = self._resolve_trace_path(recorder_path=recorder.path, agent_trace_path=result.trace_path)
+        trace_path = self._resolve_trace_path(
+            recorder_path=recorder.path, agent_trace_path=result.trace_path
+        )
         post_run_state = self._build_post_run_state(
             trace_path=trace_path,
             success=result.success,
@@ -1588,7 +1613,9 @@ class GuiSubagentTool(Tool):
             or result.token_usage
             or {}
         )
-        self._postprocessor.schedule(trace_path, is_success=result.success, platform=active_backend.platform, task=task)
+        self._postprocessor.schedule(
+            trace_path, is_success=result.success, platform=active_backend.platform, task=task
+        )
 
         return json.dumps(
             {
@@ -1599,7 +1626,9 @@ class GuiSubagentTool(Tool):
                 "steps_taken": result.steps_taken,
                 "error": error,
                 "post_run_state": post_run_state,
-                "metrics_path": str(metrics_path) if metrics_path is not None and metrics_path.exists() else None,
+                "metrics_path": str(metrics_path)
+                if metrics_path is not None and metrics_path.exists()
+                else None,
                 "duration_s": total_duration_s,
                 "token_usage": total_token_usage,
                 "total_duration_s": total_duration_s,
@@ -1634,7 +1663,9 @@ class GuiSubagentTool(Tool):
         if latest_screenshot_path is None and observation:
             latest_screenshot_path = self._string_or_none(observation.get("screenshot_path"))
 
-        foreground_app = self._string_or_none(observation.get("foreground_app")) if observation else None
+        foreground_app = (
+            self._string_or_none(observation.get("foreground_app")) if observation else None
+        )
         platform = self._string_or_none(observation.get("platform")) if observation else None
         resolution = self._format_resolution(observation)
         current_state = self._describe_current_state(
@@ -1680,7 +1711,9 @@ class GuiSubagentTool(Tool):
                     if isinstance(event, dict) and event.get("type") == "step":
                         latest_step = event
         except OSError:
-            logger.warning("Could not read GUI trace for post-run state: %s", trace_path, exc_info=True)
+            logger.warning(
+                "Could not read GUI trace for post-run state: %s", trace_path, exc_info=True
+            )
         return latest_step
 
     @staticmethod
@@ -1733,7 +1766,11 @@ class GuiSubagentTool(Tool):
         if note:
             return note
 
-        parts = ["GUI task completed successfully." if success else "GUI task did not complete successfully."]
+        parts = [
+            "GUI task completed successfully."
+            if success
+            else "GUI task did not complete successfully."
+        ]
         if error:
             parts.append(f"Error: {error}.")
         if foreground_app:
@@ -1777,10 +1814,6 @@ class GuiSubagentTool(Tool):
             return None
 
     def _load_policy_context(self) -> str | None:
-        policy_context, _ = GuiSubagentTool._load_policy_context_and_memory_store(self)
-        return policy_context
-
-    def _load_policy_context_and_memory_store(self) -> tuple[str | None, Any | None]:
         """Load all POLICY entries as raw text for direct injection into the GUI agent system prompt.
 
         Policies must always be present regardless of task relevance, so they are loaded
@@ -1793,12 +1826,12 @@ class GuiSubagentTool(Tool):
             memory_store = MemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
             policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
             if not policy_entries:
-                return None, memory_store
+                return None
             lines = [f"- {entry.content}" for entry in policy_entries]
-            return "\n".join(lines), memory_store
+            return "\n".join(lines)
         except Exception:
             logger.warning("Failed to load GUI policy memory", exc_info=True)
-            return None, None
+            return None
 
     def _build_embedding_adapter(self) -> NanobotEmbeddingAdapter:
         """Build a NanobotEmbeddingAdapter backed by litellm.aembedding.
@@ -1815,7 +1848,9 @@ class GuiSubagentTool(Tool):
         use_independent_endpoint = bool(
             self._gui_config.embedding_api_key or self._gui_config.embedding_api_base
         )
-        direct_client = None if use_independent_endpoint else getattr(self._provider, "_client", None)
+        direct_client = (
+            None if use_independent_endpoint else getattr(self._provider, "_client", None)
+        )
         if direct_client is not None and hasattr(direct_client, "embeddings"):
             direct_model = self._normalize_direct_embedding_model(embedding_model)
 
@@ -1845,7 +1880,9 @@ class GuiSubagentTool(Tool):
                 api_key = self._gui_config.embedding_api_key or getattr(provider, "api_key", None)
                 if api_key:
                     kwargs["api_key"] = api_key
-                api_base = self._gui_config.embedding_api_base or getattr(provider, "api_base", None)
+                api_base = self._gui_config.embedding_api_base or getattr(
+                    provider, "api_base", None
+                )
                 if not api_base:
                     api_base = self._default_embedding_api_base(resolved_model)
                 if api_base:
@@ -1884,11 +1921,7 @@ class GuiSubagentTool(Tool):
         # DashScope's compatible-mode endpoint is OpenAI-style under LiteLLM.
         # When users configure bare model names like "text-embedding-v4", normalize
         # to "openai/<model>" so provider routing is deterministic.
-        if (
-            isinstance(resolved, str)
-            and "/" not in resolved
-            and self._embedding_uses_dashscope()
-        ):
+        if isinstance(resolved, str) and "/" not in resolved and self._embedding_uses_dashscope():
             return f"openai/{resolved}"
         return resolved
 
@@ -1901,7 +1934,9 @@ class GuiSubagentTool(Tool):
         use_independent_endpoint = bool(
             self._gui_config.embedding_api_key or self._gui_config.embedding_api_base
         )
-        direct_client = None if use_independent_endpoint else getattr(self._provider, "_client", None)
+        direct_client = (
+            None if use_independent_endpoint else getattr(self._provider, "_client", None)
+        )
         if direct_client is not None and hasattr(direct_client, "embeddings"):
             resolved_model = self._normalize_direct_embedding_model(resolved_model)
 
@@ -1999,7 +2034,9 @@ class GuiSubagentTool(Tool):
         if probe.backend_name == "xvfb":
             from guiclaw.backends.displays.xvfb import XvfbDisplayManager
 
-            display_num = self._gui_config.display_num if self._gui_config.display_num is not None else 99
+            display_num = (
+                self._gui_config.display_num if self._gui_config.display_num is not None else 99
+            )
             return XvfbDisplayManager(
                 display_num=display_num,
                 width=self._gui_config.display_width,
@@ -2065,7 +2102,9 @@ class GuiSubagentTool(Tool):
                 continue
 
     @staticmethod
-    def _resolve_trace_path(recorder_path: Path | None, agent_trace_path: str | None) -> Path | None:
+    def _resolve_trace_path(
+        recorder_path: Path | None, agent_trace_path: str | None
+    ) -> Path | None:
         if recorder_path is not None and recorder_path.exists():
             return recorder_path
 
@@ -2163,9 +2202,7 @@ class _GuiToolInterventionHandler:
             if isinstance(backend_target, dict):
                 target.update(backend_target)
         return {
-            key: value
-            for key, value in target.items()
-            if key in _SAFE_INTERVENTION_TARGET_KEYS
+            key: value for key, value in target.items() if key in _SAFE_INTERVENTION_TARGET_KEYS
         }
 
     @staticmethod

@@ -48,7 +48,9 @@ _POST_ACTION_SETTLE_SECONDS: float = 0.50
 _OPEN_APP_SETTLE_SECONDS: float = 5.00
 _OPEN_DEEPLINK_POST_VALIDATE_ATTEMPTS: int = 3
 _OPEN_DEEPLINK_POST_VALIDATE_RETRY_SECONDS: float = 1.00
-_NO_SETTLE_ACTIONS: frozenset[str] = frozenset({"wait", "done", "request_intervention", "adb_command"})
+_NO_SETTLE_ACTIONS: frozenset[str] = frozenset(
+    {"wait", "done", "request_intervention", "adb_command"}
+)
 _VALID_STATE_OPTIONAL_ACTIONS: frozenset[str] = frozenset(
     {
         "open_app",
@@ -276,7 +278,7 @@ class LLMStateValidator:
 
     def __init__(self, llm: LLMProvider, image_scale_ratio: float = 0.5) -> None:
         self._llm = llm
-        self._image_scale_ratio = _normalize_image_scale_ratio(image_scale_ratio)
+        self._image_scale_ratio = normalize_image_scale_ratio(image_scale_ratio)
         self._usage_accum: dict[str, int] = {}
         self._ttft_samples: list[float] = []
         self._latency_samples: list[float] = []
@@ -314,7 +316,7 @@ class LLMStateValidator:
 
         raw = screenshot.read_bytes() if isinstance(screenshot, Path) else screenshot
         image_data = base64.b64encode(
-            _scale_image(raw, scale_ratio=self._image_scale_ratio)
+            scale_image(raw, scale_ratio=self._image_scale_ratio)
         ).decode()
         content: list[dict[str, Any]] = [
             {"type": "text", "text": prompt},
@@ -356,11 +358,6 @@ class LLMStateValidator:
         if "true" in lowered or "yes" in lowered or "match" in lowered:
             return True
         return False
-
-
-# Backward-compatible aliases for callers that import directly from executor
-_normalize_image_scale_ratio = normalize_image_scale_ratio
-_scale_image = scale_image
 
 
 def _should_skip_validation(valid_state: str | None) -> bool:
@@ -571,10 +568,12 @@ def _lenient_action_from_payload(payload: dict[str, Any]) -> Action:
         if key in payload:
             kwargs[key] = float(payload[key])
     if "points" in payload:
-        kwargs["points"] = parse_action({
-            "action_type": "click_multi",
-            "points": payload["points"],
-        }).points
+        kwargs["points"] = parse_action(
+            {
+                "action_type": "click_multi",
+                "points": payload["points"],
+            }
+        ).points
     if "text" in payload:
         kwargs["text"] = str(payload["text"])
     elif "direction" in payload:
@@ -1190,8 +1189,7 @@ class SkillExecutor:
 
         resolved = (
             normalize_adb_app_identifier(action.text)
-            if platform == "android"
-            and hasattr(self.backend, "_run")
+            if platform == "android" and hasattr(self.backend, "_run")
             else normalize_app_identifier(platform, action.text)
         )
         if resolved == action.text:

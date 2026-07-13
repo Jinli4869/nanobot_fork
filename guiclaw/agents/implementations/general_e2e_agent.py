@@ -9,11 +9,15 @@ from typing import Any
 from loguru import logger
 
 from guiclaw.agents.base import MCPAgent
-from guiclaw.agents.utils.helpers import pil_adaptive_resize, pil_to_base64
-from guiclaw.agents.utils.prompts import GENERAL_E2E_PROMPT_TEMPLATE
-from guiclaw.agents.utils.helpers import mask_api_key, pretty_print_messages
 from guiclaw.agents.runtime.models import JSONAction
+from guiclaw.agents.utils.helpers import (
+    mask_api_key,
+    pil_adaptive_resize,
+    pil_to_base64,
+    pretty_print_messages,
+)
 from guiclaw.agents.utils.parsers import parse_json_markdown
+from guiclaw.agents.utils.prompts import GENERAL_E2E_PROMPT_TEMPLATE
 
 ACTION_ALIASES = {
     "click": ["tap", "press", "touch"],
@@ -67,14 +71,14 @@ def parse_action(plan_output: str) -> tuple[str, str]:
         else:
             thought = thought_part
 
-        action = plan_output[match.end():].strip()
+        action = plan_output[match.end() :].strip()
         # Keep only the first JSON object, discarding any trailing (runaway)
         # Thought/Action pairs appended past end-of-turn.
         brace = action.find("{")
         if brace != -1:
             try:
                 _obj, end = json.JSONDecoder().raw_decode(action[brace:])
-                action = action[brace:brace + end]
+                action = action[brace : brace + end]
             except json.JSONDecodeError:
                 pass  # fall back to the full remainder (handled downstream)
 

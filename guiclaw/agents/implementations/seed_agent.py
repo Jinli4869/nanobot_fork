@@ -14,9 +14,6 @@ from loguru import logger
 from PIL import Image
 
 from guiclaw.agents.base import MCPAgent
-from guiclaw.agents.utils.helpers import pil_to_base64
-from guiclaw.agents.utils.prompts import SEED_PROMPT
-from guiclaw.agents.utils.helpers import pretty_print_messages
 from guiclaw.agents.runtime.models import (
     ANSWER,
     ASK_USER,
@@ -33,6 +30,8 @@ from guiclaw.agents.runtime.models import (
     WAIT,
     JSONAction,
 )
+from guiclaw.agents.utils.helpers import pil_to_base64, pretty_print_messages
+from guiclaw.agents.utils.prompts import SEED_PROMPT
 
 # Special action words
 FINISH_WORD = "finished"
