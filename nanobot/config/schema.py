@@ -461,6 +461,7 @@ class GuiConfig(Base):
     capture_ttft: bool = False
     reasoning_effort: str | None = None  # low / medium / high / adaptive - enables GUI LLM thinking mode
     enable_skill_extraction: bool = False
+    enable_memory_extraction: bool = False
     enable_skill_execution: bool = False
     enable_planner: bool = True  # run complexity gate + TaskPlanner decomposition
     enable_router: bool = True   # run TreeRouter to dispatch plan atoms (requires enable_planner)

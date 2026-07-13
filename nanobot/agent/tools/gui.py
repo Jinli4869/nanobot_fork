@@ -1288,6 +1288,7 @@ class GuiSubagentTool(Tool):
             embedding_signature=self._embedding_signature,
             skill_store_root=get_gui_skill_store_root(self._workspace),
             enable_skill_extraction=gui_config.enable_skill_extraction,
+            enable_memory_extraction=gui_config.enable_memory_extraction,
             evaluation=EvaluationConfig(
                 enabled=gui_config.evaluation.enabled,
                 judge_model=gui_config.evaluation.judge_model,

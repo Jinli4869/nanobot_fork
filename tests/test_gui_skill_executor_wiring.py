@@ -12,11 +12,15 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from nanobot.config.schema import GuiConfig
+
+if TYPE_CHECKING:
+    from nanobot.agent.tools.gui import GuiSubagentTool
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +70,26 @@ class TestGuiConfigSkillExtractionField:
         assert config.enable_skill_extraction is True
 
 
+class TestGuiConfigMemoryExtractionField:
+    """GuiConfig.enable_memory_extraction must be independently opt-in."""
+
+    def test_defaults_to_false(self) -> None:
+        config = GuiConfig()
+        assert config.enable_memory_extraction is False
+
+    def test_accepts_true(self) -> None:
+        config = GuiConfig(enable_memory_extraction=True)
+        assert config.enable_memory_extraction is True
+
+    def test_accepts_camel_case_key(self) -> None:
+        config = GuiConfig.model_validate({"enableMemoryExtraction": True})
+        assert config.enable_memory_extraction is True
+
+    def test_is_wired_to_postprocessor(self) -> None:
+        tool = _make_tool(GuiConfig(backend="dry-run", enable_memory_extraction=True))
+        assert tool._postprocessor._enable_memory_extraction is True
+
+
 # ---------------------------------------------------------------------------
 # GuiSubagentTool wiring tests
 # ---------------------------------------------------------------------------
@@ -75,7 +99,7 @@ def _make_gui_config(enable_skill_execution: bool) -> GuiConfig:
     return GuiConfig(backend="dry-run", enable_skill_execution=enable_skill_execution)
 
 
-def _make_tool(gui_config: GuiConfig) -> "GuiSubagentTool":  # type: ignore[name-defined]
+def _make_tool(gui_config: GuiConfig) -> "GuiSubagentTool":
     """Build a GuiSubagentTool with mocked provider/model/workspace."""
     from nanobot.agent.tools.gui import GuiSubagentTool
 

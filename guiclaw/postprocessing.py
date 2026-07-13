@@ -119,6 +119,7 @@ class PostRunProcessor:
         embedding_signature: str | None = None,
         skill_store_root: Path | None = None,
         enable_skill_extraction: bool = False,
+        enable_memory_extraction: bool = False,
         evaluation: EvaluationConfig | None = None,
     ) -> None:
         self._llm = llm
@@ -127,6 +128,7 @@ class PostRunProcessor:
         self._embedding_signature = embedding_signature
         self._skill_store_root = skill_store_root
         self._enable_skill_extraction = enable_skill_extraction
+        self._enable_memory_extraction = enable_memory_extraction
         self._evaluation = evaluation or EvaluationConfig()
         self._pending: set[asyncio.Task[None]] = set()
 
