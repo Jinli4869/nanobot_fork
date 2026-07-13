@@ -337,6 +337,105 @@ async def test_prompt_skill_selection_injects_and_dispatches_use_skill(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_default_prompt_skill_selection_dispatches_native_use_skill(
+    tmp_path: Path,
+) -> None:
+    skill_id = "compact:dry.app:search"
+    library = FlatSkillLibrary(store_dir=tmp_path / "skills")
+    skill = Skill(
+        skill_id=skill_id,
+        name="dry_search",
+        description="Search videos by query",
+        app="dry.app",
+        platform="dry-run",
+        tags=("compact", "compact_extracted"),
+        parameters=("query",),
+        steps=(
+            SkillStep(
+                action_type="open_app",
+                target="dry.app",
+                fixed=True,
+                fixed_values={"text": "dry.app"},
+            ),
+        ),
+    )
+    library.add(skill)
+    executor = _FakePromptSkillExecutor()
+
+    class RecordingNativeLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+            self.responses = [
+                LLMResponse(
+                    content="Action: Run the matching search skill",
+                    tool_calls=[
+                        ToolCall(
+                            id="skill-1",
+                            name="computer_use",
+                            arguments={
+                                "action_type": "use_skill",
+                                "skill_id": skill_id,
+                                "arguments": {"query": "cats"},
+                                "intent": "Use the matching search shortcut",
+                                "summary": "A matching retrieved skill is available",
+                            },
+                        )
+                    ],
+                ),
+                LLMResponse(
+                    content="Action: Finish the completed task",
+                    tool_calls=[
+                        ToolCall(
+                            id="done-1",
+                            name="computer_use",
+                            arguments={
+                                "action_type": "done",
+                                "status": "success",
+                                "text": "Search completed",
+                                "intent": "Finish",
+                                "summary": "The skill completed the task",
+                            },
+                        )
+                    ],
+                ),
+            ]
+
+        async def chat(self, **kwargs: Any) -> LLMResponse:
+            self.calls.append(copy.deepcopy(kwargs))
+            return self.responses.pop(0)
+
+    llm = RecordingNativeLLM()
+    agent = GuiAgent(
+        llm,
+        _SkillTestBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "native prompt skill"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=2,
+        skill_library=library,
+        skill_executor=executor,
+        enable_prompt_skill_selection=True,
+        prompt_skill_top_k=3,
+        prompt_shortcut_only=False,
+        agent_profile="default",
+    )
+
+    result = await agent.run("Search videos by query cats", max_retries=1)
+
+    assert result.success
+    assert len(executor.calls) == 1
+    executed_skill, executed_params = executor.calls[0]
+    assert executed_skill.skill_id == skill_id
+    assert executed_params == {"query": "cats"}
+    first_call = llm.calls[0]
+    first_prompt = _messages_text(first_call["messages"])
+    assert skill_id in first_prompt
+    parameters = first_call["tools"][0]["function"]["parameters"]
+    assert "use_skill" in parameters["properties"]["action_type"]["enum"]
+    assert "skill_id" in parameters["properties"]
+    assert "arguments" in parameters["properties"]
+
+
+@pytest.mark.asyncio
 async def test_prompt_composite_action_executes_without_skill_executor(tmp_path: Path) -> None:
     library = FlatSkillLibrary(store_dir=tmp_path / "skills")
     library.add(

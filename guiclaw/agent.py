@@ -60,7 +60,7 @@ from guiclaw.skills.normalization import (
     normalize_app_identifier,
 )
 from guiclaw.skills.state_contract import evaluate_state_contract, infer_interaction_target
-from guiclaw.tool_schemas import COMPUTER_USE_TOOL, build_shortcut_tool_defs
+from guiclaw.tool_schemas import build_computer_use_tool, build_shortcut_tool_defs
 from guiclaw.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from guiclaw.trajectory.summarizer import build_state_note, is_state_note
 
@@ -442,7 +442,9 @@ class GuiAgent:
         self.stagnation_limit = max(0, parsed_stagnation_limit)
 
     def _build_tools_list(self) -> list[dict[str, Any]]:
-        tools = [COMPUTER_USE_TOOL]
+        tools = [
+            build_computer_use_tool(allow_use_skill=bool(self._prompt_skills_by_id))
+        ]
         tools.extend(self._shortcut_tools)
         return tools
 

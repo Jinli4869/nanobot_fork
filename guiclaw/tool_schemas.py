@@ -11,6 +11,7 @@ them without creating circular dependencies.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import re
 from io import BytesIO
@@ -161,6 +162,25 @@ COMPUTER_USE_TOOL: dict[str, Any] = {
 }
 
 
+def build_computer_use_tool(*, allow_use_skill: bool = False) -> dict[str, Any]:
+    """Return the native GUI tool schema, conditionally enabling prompt skills."""
+    if not allow_use_skill:
+        return COMPUTER_USE_TOOL
+
+    tool = copy.deepcopy(COMPUTER_USE_TOOL)
+    properties = tool["function"]["parameters"]["properties"]
+    properties["action_type"]["enum"].append("use_skill")
+    properties["skill_id"] = {
+        "type": "string",
+        "description": "Exact skill_id copied from the prompt-visible skill catalog.",
+    }
+    properties["arguments"] = {
+        "type": "object",
+        "description": "Arguments for the selected prompt-visible skill.",
+    }
+    return tool
+
+
 def image_dimensions(raw: bytes) -> tuple[int, int]:
     with Image.open(BytesIO(raw)) as image:
         return image.size
@@ -178,6 +198,7 @@ def _shortcut_slug(value: str, *, max_len: int = 40) -> str:
 
 __all__ = [
     "COMPUTER_USE_TOOL",
+    "build_computer_use_tool",
     "build_shortcut_tool_defs",
     "image_dimensions",
     "minimal_tool_schema",

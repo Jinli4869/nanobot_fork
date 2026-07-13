@@ -18,6 +18,7 @@ from guiclaw.agent_profiles import (
 from guiclaw.backends.dry_run import DryRunBackend
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
+from guiclaw.skills.compact_prompt import CompactPromptParts
 from guiclaw.tool_schemas import COMPUTER_USE_TOOL
 from guiclaw.trajectory.recorder import TrajectoryRecorder
 
@@ -114,6 +115,30 @@ def test_default_qwen_prompt_describes_relative_grid(tmp_path: Path) -> None:
 
     assert "1000x1000 relative coordinate grid" in messages[0]["content"]
     assert "relative=true" in messages[0]["content"]
+
+
+def test_default_prompt_includes_retrieved_skill_contract(tmp_path: Path) -> None:
+    skill_id = "compact:md.obsidian:create_obsidian_note"
+    messages = build_profile_messages(
+        "default",
+        task="Create an Obsidian note",
+        current_observation=_observation(tmp_path / "skill.png"),
+        history=[],
+        model_name="gpt-4.1",
+        history_image_window=3,
+        compact_prompt_parts=CompactPromptParts(
+            compact_skill_instructions=(
+                "# Optional Compact GUI Skills\n"
+                f"- skill_id={skill_id}; name=create_obsidian_note"
+            ),
+            skill_ids=(skill_id,),
+            catalog=f"- skill_id={skill_id}; name=create_obsidian_note",
+        ),
+    )
+
+    system_prompt = messages[0]["content"]
+    assert skill_id in system_prompt
+    assert '"use_skill"' in system_prompt
 
 
 def test_default_normalization_preserves_native_call_with_text() -> None:

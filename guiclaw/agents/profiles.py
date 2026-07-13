@@ -56,7 +56,7 @@ from guiclaw.skills.compact_prompt import (
     USE_SKILL_ACTION_TYPE,
     format_seed_skill_instructions,
 )
-from guiclaw.tool_schemas import COMPUTER_USE_TOOL
+from guiclaw.tool_schemas import COMPUTER_USE_TOOL, build_computer_use_tool
 
 SUPPORTED_AGENT_PROFILES: tuple[str, ...] = (
     "default",
@@ -167,6 +167,7 @@ def build_profile_messages(
             current_observation=current_observation,
             history=history,
             model_name=model_name,
+            compact_prompt_parts=compact_prompt_parts,
         )
     if _is_general_e2e_profile(profile):
         return _build_general_e2e_messages(
@@ -352,9 +353,17 @@ def _build_default_messages(
     current_observation: Observation,
     history: list[Any],
     model_name: str,
+    compact_prompt_parts: Any | None = None,
 ) -> list[dict[str, Any]]:
     contract = prompt_contract_for_profile("default")
-    tool_schema = json.dumps(COMPUTER_USE_TOOL, ensure_ascii=False)
+    skill_ids = tuple(getattr(compact_prompt_parts, "skill_ids", ()) or ())
+    skill_instructions = str(
+        getattr(compact_prompt_parts, "compact_skill_instructions", "") or ""
+    ).strip()
+    tool_schema = json.dumps(
+        build_computer_use_tool(allow_use_skill=bool(skill_ids)),
+        ensure_ascii=False,
+    )
     if coordinate_mode_for_profile("default", model_name) == "relative_999":
         coordinate_rules = (
             "- The screen uses a 1000x1000 relative coordinate grid.",
@@ -388,14 +397,20 @@ def _build_default_messages(
         "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
         "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
         *coordinate_rules,
-        "",
-        "# Response format",
-        "",
-        *contract["format"],
-        "",
-        "Rules:",
-        *contract["rules"],
     ]
+    if skill_instructions:
+        system_lines.extend(["", "# Available Skills", "", skill_instructions])
+    system_lines.extend(
+        [
+            "",
+            "# Response format",
+            "",
+            *contract["format"],
+            "",
+            "Rules:",
+            *contract["rules"],
+        ]
+    )
     progress = [
         text
         for turn in history[-3:]
