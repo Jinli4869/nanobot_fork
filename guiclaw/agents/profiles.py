@@ -1,10 +1,4 @@
-"""MobileWorld-aligned agent profile registry for GUIClaw.
-
-The prompt, parser, action-space, and history behavior in this module mirrors
-the vendored MobileWorld agents under :mod:`guiclaw.agents.implementations`.
-GeneralE2E is copied from MobileWorld itself; several other MobileWorld agents
-retain their upstream-origin comments in the vendored implementation files.
-"""
+"""Agent profile registry, prompt construction, and response normalization."""
 
 from __future__ import annotations
 
@@ -132,14 +126,31 @@ def _is_general_e2e_profile(profile_name: str | None) -> bool:
 
 def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str, ...]]:
     profile = canonicalize_agent_profile(profile_name)
+    if profile == "default":
+        return {
+            "environment": (),
+            "format": (
+                "1) `Action:` followed by one short imperative describing the next UI move.",
+                "2) Call an available native tool exactly once using the provider's native tool-calling mechanism.",
+            ),
+            "rules": (
+                "- Output exactly one short `Action:` line in assistant text.",
+                "- Put structured arguments only in the native tool call, not in assistant text.",
+                "- Execute one action per step.",
+                "- Set the tool-call `intent` argument to one short natural-language description of why this next action is selected now; do not include raw coordinates.",
+                "- Set the tool-call `summary` argument to one short natural-language description of the current task progress and visible UI state before the action.",
+                "- If the task is complete, call `computer_use` with `action_type=\"done\"`, the appropriate status, and a brief completion summary in `text`.",
+                "- If the task reaches a sensitive, blocked, or unsafe state, call `computer_use` with `action_type=\"request_intervention\"` and a short reason.",
+            ),
+        }
     return {
-        "environment": (f"- MobileWorld agent profile: {profile}.",),
-        "format": ("Use the exact MobileWorld response format for this profile.",),
-        "rules": ("Do not use provider-native tool calling for MobileWorld profiles.",),
+        "environment": (f"- GUI agent profile: {profile}.",),
+        "format": ("Use the exact response format required by this profile.",),
+        "rules": ("Do not use provider-native tool calling for text-output profiles.",),
     }
 
 
-def build_mobileworld_messages(
+def build_profile_messages(
     profile_name: str | None,
     *,
     task: str,
@@ -150,6 +161,12 @@ def build_mobileworld_messages(
     compact_prompt_parts: Any | None = None,
 ) -> list[dict[str, Any]]:
     profile = canonicalize_agent_profile(profile_name)
+    if profile == "default":
+        return _build_default_messages(
+            task=task,
+            current_observation=current_observation,
+            history=history,
+        )
     if _is_general_e2e_profile(profile):
         return _build_general_e2e_messages(
             task=task,
@@ -197,7 +214,7 @@ def build_mobileworld_messages(
             history=history,
             history_image_window=history_image_window,
         )
-    raise ValueError(f"Unsupported MobileWorld profile: {profile}")
+    raise ValueError(f"Unsupported agent profile: {profile}")
 
 
 def normalize_profile_response_for_observation(
@@ -226,11 +243,13 @@ def normalize_profile_response_for_screen(
     fallback_relative: bool = False,
 ) -> LLMResponse:
     profile = canonicalize_agent_profile(profile_name)
+    if profile == "default":
+        return response
     content = response.content or ""
     if not content.strip() and response.tool_calls:
         return response
     try:
-        payload = parse_mobileworld_action(
+        payload = parse_profile_action(
             profile,
             content,
             screen_width=screen_width,
@@ -258,7 +277,7 @@ def normalize_profile_response_for_screen(
     )
 
 
-def parse_mobileworld_action(
+def parse_profile_action(
     profile_name: str | None,
     content: str,
     *,
@@ -323,7 +342,60 @@ def parse_mobileworld_action(
         return _to_guiclaw_payload(
             action, summary=_between(content, "<conclusion>", "</conclusion>") or content
         )
-    raise ValueError(f"Unsupported MobileWorld profile: {profile}")
+    raise ValueError(f"Unsupported agent profile: {profile}")
+
+
+def _build_default_messages(
+    *,
+    task: str,
+    current_observation: Observation,
+    history: list[Any],
+) -> list[dict[str, Any]]:
+    contract = prompt_contract_for_profile("default")
+    tool_schema = json.dumps(COMPUTER_USE_TOOL, ensure_ascii=False)
+    system_lines = [
+        "# Tools",
+        "",
+        "You may call one function to assist with the user query.",
+        "",
+        "You are provided with function signatures within <tools></tools> XML tags:",
+        "<tools>",
+        tool_schema,
+        "</tools>",
+        "",
+        "# Environment",
+        "",
+        "- You are operating on a GUI screen and can only act through the available native tools.",
+        "- Some actions may take time to complete, so you may need to wait and observe again.",
+        "- Use the latest screenshot as the source of truth.",
+        "- Click the center of the intended UI element unless the task clearly requires an edge.",
+        "- After opening an app, verify that the foreground page belongs to the target app.",
+        "",
+        "# Response format",
+        "",
+        *contract["format"],
+        "",
+        "Rules:",
+        *contract["rules"],
+    ]
+    progress = [
+        turn.action_summary.strip()
+        for turn in history[-3:]
+        if str(getattr(turn, "action_summary", "")).strip()
+    ]
+    user_lines = [f"Instruction: {task}"]
+    if progress:
+        user_lines.extend(["", "Recent progress:", *(f"- {item}" for item in progress)])
+    return [
+        {"role": "system", "content": "\n".join(system_lines)},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "\n".join(user_lines)},
+                _image_content(current_observation),
+            ],
+        },
+    ]
 
 
 def _build_general_e2e_messages(

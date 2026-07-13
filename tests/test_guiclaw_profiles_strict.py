@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from PIL import Image
 
 from guiclaw.agent_profiles import (
     SUPPORTED_AGENT_PROFILES,
+    build_profile_messages,
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
+    normalize_profile_response_for_screen,
     profile_tool_definition,
     profile_uses_native_tools,
 )
+from guiclaw.interfaces import LLMResponse, ToolCall
+from guiclaw.observation import Observation
 from guiclaw.tool_schemas import COMPUTER_USE_TOOL
-
 
 EXPECTED_PROFILES = (
     "default",
@@ -62,3 +68,61 @@ def test_default_coordinate_mode_preserves_opencua_model_hints() -> None:
     assert coordinate_mode_for_profile("default", "qwen-vl-max") == "relative_999"
     assert coordinate_mode_for_profile("default", "gemini-2.5-pro") == "relative_999"
     assert coordinate_mode_for_profile("general_e2e", "qwen-vl-max") == "absolute"
+
+
+def _observation(path: Path) -> Observation:
+    Image.new("RGB", (8, 12), "white").save(path)
+    return Observation(
+        screenshot_path=str(path),
+        screen_width=8,
+        screen_height=12,
+        foreground_app="Settings",
+        platform="android",
+    )
+
+
+def test_default_messages_use_native_opencua_contract(tmp_path: Path) -> None:
+    messages = build_profile_messages(
+        "default",
+        task="Open Settings",
+        current_observation=_observation(tmp_path / "screen.png"),
+        history=[],
+        model_name="gpt-4.1",
+        history_image_window=3,
+    )
+
+    assert messages[0]["role"] == "system"
+    assert "native tool-calling mechanism" in messages[0]["content"]
+    assert "computer_use" in messages[0]["content"]
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"][0]["text"] == "Instruction: Open Settings"
+    assert messages[1]["content"][-1]["type"] == "image_url"
+
+
+def test_default_normalization_preserves_native_call_with_text() -> None:
+    response = LLMResponse(
+        content="Action: Tap Settings",
+        tool_calls=[
+            ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={
+                    "action_type": "tap",
+                    "x": 100,
+                    "y": 200,
+                    "intent": "Open Settings",
+                    "summary": "Settings icon is visible",
+                },
+            )
+        ],
+    )
+
+    assert (
+        normalize_profile_response_for_screen(
+            "default",
+            response,
+            screen_width=1080,
+            screen_height=1920,
+        )
+        is response
+    )
