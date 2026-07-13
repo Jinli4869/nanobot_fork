@@ -186,7 +186,9 @@ guiclaw --config ~/my-config.yaml "打开计算器"
 | Profile | 适用场景 | 期望的动作格式 |
 |---------|----------|----------------|
 | `default` | 原生 OpenAI-style tool calling | 原生 `computer_use` tool call |
-| `general_e2e` | MobileWorld `general_e2e` / `planner_executor` 风格 agent | 纯文本里的 `Action: { ... }` JSON |
+| `general_e2e` | GeneralE2E 风格 GUI agent | 纯文本里的 `Action: { ... }` JSON |
+| `gui_owl` | GUI-Owl 1.5 agent | GUI-Owl 标签化动作输出 |
+| `venus` | UI-Venus 导航 agent | `<action>...</action>` 标签输出 |
 | `qwen3vl` | Qwen3VL 风格 GUI agent | `<tool_call>...</tool_call>` JSON 块 |
 | `mai_ui` | MAI-UI 风格 GUI agent | `<tool_call>...</tool_call>` JSON 块 |
 | `gelab` | Gelab 风格 GUI agent | 推理后输出 tab 分隔动作行 |
@@ -194,8 +196,7 @@ guiclaw --config ~/my-config.yaml "打开计算器"
 
 说明：
 
-- 优先使用上表中的 canonical profile 名称。
-- `planner_executor` 在配置驱动的路径里会被当作 `general_e2e` 的别名处理，但 CLI 参数请直接写 `general_e2e`。
+- 只接受上表中的八个 canonical profile 名称；旧名称和别名会直接报错。
 - 如果不填写 profile，GUIClaw 默认使用 `default`，也就是原生 tool calling。
 
 ### 在独立 GUIClaw 中设置 profile
@@ -346,7 +347,7 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 >
 > **关于 `gui.model` / `gui.provider`：** 这是仅对 GUI 任务生效的覆盖项。不填写时，GUI 子智能体会继承 `agents.defaults.model` 和 `agents.defaults.provider`。
 >
-> **关于 `gui.agentProfile`：** 当 GUI 模型使用非默认的 prompt / action 契约时，请在这里指定 profile。当前支持 `default`、`general_e2e`、`qwen3vl`、`mai_ui`、`gelab`、`seed`。
+> **关于 `gui.agentProfile`：** 当 GUI 模型使用非默认的 prompt / action 契约时，请在这里指定 profile。当前支持 `default`、`general_e2e`、`gui_owl`、`venus`、`seed`、`qwen3vl`、`mai_ui`、`gelab`。
 >
 > **关于 `gui.evaluation.judgeModel`：** 这个模型只用于 GUI 任务结束后的可选评测，不会影响真正执行 GUI 操作的模型。
 >
@@ -371,7 +372,7 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 
 - JSON 里请使用 camelCase 的 `agentProfile`。
 - 在 Python 代码或内部配置对象里，也可以使用 `agent_profile`。
-- 对于配置文件，`planner_executor` 也会被接受并归一化为 `general_e2e`，但文档和 CLI 推荐直接使用 canonical 名称。
+- Profile 使用严格白名单；旧名称和别名不会再被归一化。
 
 ### 如何为 GUI 任务单独指定 provider / model
 

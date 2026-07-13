@@ -430,11 +430,11 @@ def test_gui_config_validation() -> None:
 
     assert GuiConfig(backend="dry-run").backend == "dry-run"
     assert GuiConfig(backend="ios").backend == "ios"
+    assert GuiConfig(agent_profile="default").agent_profile == "default"
+    assert GuiConfig(agent_profile="gui_owl").agent_profile == "gui_owl"
     assert GuiConfig(agent_profile="qwen3vl").agent_profile == "qwen3vl"
-    assert (
-        GuiConfig(agent_profile="mobileworld_general_e2e_compact_skill").agent_profile
-        == "mobileworld_general_e2e_compact_skill"
-    )
+    with pytest.raises(ValidationError, match="Unsupported agent profile"):
+        GuiConfig(agent_profile="mobileworld_general_e2e_compact_skill")
     assert GuiConfig.model_validate({"agentProfile": "gelab"}).agent_profile == "gelab"
     assert GuiConfig.model_validate({"imageScaleRatio": 0.25}).image_scale_ratio == pytest.approx(
         0.25

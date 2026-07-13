@@ -186,7 +186,9 @@ Use a profile when your GUI model does not speak OpenAI-style native tool callin
 | Profile | Best for | Expected action format |
 |---------|----------|------------------------|
 | `default` | OpenAI-style native tool calling | Native `computer_use` tool call |
-| `general_e2e` | MobileWorld `general_e2e` / `planner_executor` style agents | `Action: { ... }` JSON in plain text |
+| `general_e2e` | GeneralE2E-style GUI agents | `Action: { ... }` JSON in plain text |
+| `gui_owl` | GUI-Owl 1.5 agents | GUI-Owl tagged action output |
+| `venus` | UI-Venus navigation agents | `<action>...</action>` tagged output |
 | `qwen3vl` | Qwen3VL-style GUI agents | `<tool_call>...</tool_call>` JSON block |
 | `mai_ui` | MAI-UI-style GUI agents | `<tool_call>...</tool_call>` JSON block |
 | `gelab` | Gelab-style GUI agents | Tab-separated action line after reasoning |
@@ -194,8 +196,7 @@ Use a profile when your GUI model does not speak OpenAI-style native tool callin
 
 Notes:
 
-- Prefer the canonical profile names shown above.
-- `planner_executor` is treated as an alias of `general_e2e` in config-driven code paths, but the CLI flag should use `general_e2e`.
+- Only the eight canonical profile names shown above are accepted; legacy aliases are rejected.
 - If you omit the profile, GUIClaw defaults to `default`, which expects native tool calling.
 
 ### Setting the profile in standalone GUIClaw
@@ -346,7 +347,7 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
 >
 > **Note on `gui.model` / `gui.provider`:** These are optional overrides for GUI tasks only. If omitted, the GUI subagent inherits `agents.defaults.model` and `agents.defaults.provider`.
 >
-> **Note on `gui.agentProfile`:** Use this when your GUI model expects a non-default action/prompt contract. Supported values are `default`, `general_e2e`, `qwen3vl`, `mai_ui`, `gelab`, and `seed`.
+> **Note on `gui.agentProfile`:** Use this when your GUI model expects a non-default action/prompt contract. Supported values are `default`, `general_e2e`, `gui_owl`, `venus`, `seed`, `qwen3vl`, `mai_ui`, and `gelab`.
 >
 > **Note on `gui.evaluation.judgeModel`:** This judge model is only used for optional post-run evaluation. It does not change the model that actually performs the GUI task.
 >
@@ -371,7 +372,7 @@ Notes:
 
 - In JSON, use camelCase: `agentProfile`.
 - In Python or internally generated config objects, `agent_profile` is also accepted.
-- For config files, `planner_executor` is accepted as an alias and normalized to `general_e2e`, but using the canonical value is clearer.
+- Profile values use a strict whitelist; legacy names and aliases are rejected.
 
 ### Using a different provider/model for GUI tasks
 
