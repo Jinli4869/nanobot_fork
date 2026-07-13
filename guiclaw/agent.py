@@ -24,7 +24,7 @@ from typing import Any
 
 from guiclaw.action import Action, ActionError, describe_action, parse_action
 from guiclaw.agent_profiles import (
-    build_mobileworld_messages,
+    build_profile_messages,
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
     general_e2e_scale_factor,
@@ -2191,7 +2191,7 @@ class GuiAgent:
         task_context: list[str] = [task]
         if memory_context:
             task_context.extend(["", "Relevant Knowledge:", memory_context])
-        return build_mobileworld_messages(
+        return build_profile_messages(
             self.agent_profile,
             task="\n".join(task_context),
             current_observation=current_observation,

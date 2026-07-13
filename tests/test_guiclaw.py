@@ -191,7 +191,8 @@ class _ScriptedLLM:
     async def chat(self, messages, tools=None, tool_choice=None) -> LLMResponse:
         if not self._responses:
             raise AssertionError("No scripted responses left.")
-        return _coerce_mobileworld_response(self._responses.pop(0))
+        response = self._responses.pop(0)
+        return response if tools else _coerce_mobileworld_response(response)
 
 
 class _RecordingLLM(_ScriptedLLM):
@@ -319,6 +320,7 @@ async def test_prompt_skill_selection_injects_and_dispatches_use_skill(tmp_path:
         enable_prompt_skill_selection=True,
         prompt_skill_top_k=3,
         prompt_shortcut_only=True,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Search videos by query cats", max_retries=1)
@@ -370,6 +372,7 @@ async def test_prompt_composite_action_executes_without_skill_executor(tmp_path:
         skill_library=library,
         enable_prompt_skill_selection=True,
         prompt_skill_top_k=0,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Tap the field and type hello", max_retries=1)
@@ -1091,20 +1094,17 @@ def test_parse_action_accepts_mobileworld_navigation_aliases() -> None:
     assert recents.action_type == "app_switch"
 
 
-def test_default_profile_tool_definition_is_mobileworld_textual_schema() -> None:
+def test_default_profile_tool_definition_uses_native_computer_schema() -> None:
     params = profile_tool_definition("default")["function"]["parameters"]
 
-    assert profile_tool_definition("default")["function"]["name"] == "mobile_use"
-    assert params["required"] == []
-    assert params["properties"] == {}
+    assert profile_tool_definition("default")["function"]["name"] == "computer_use"
+    assert params["required"] == ["action_type", "intent", "summary"]
+    assert "action_type" in params["properties"]
 
 
-def test_general_e2e_compact_skill_profile_is_alias() -> None:
-    assert canonicalize_agent_profile("general_e2e_compact_skill") == "general_e2e"
-    assert (
-        canonicalize_agent_profile("mobileworld_general_e2e_compact_skill")
-        == "mobileworld_general_e2e_compact_skill"
-    )
+def test_general_e2e_compact_skill_profile_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported agent profile"):
+        canonicalize_agent_profile("general_e2e_compact_skill")
 
 
 def test_annotate_android_apps_filters_unmapped_packages() -> None:
@@ -1661,12 +1661,14 @@ def test_agent_uses_absolute_coordinates_for_mobileworld_profiles(tmp_path: Path
         DryRunBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "qwen"),
         model="qwen-vl-max",
+        agent_profile="general_e2e",
     )
     gemini_agent = GuiAgent(
         _ScriptedLLM([]),
         DryRunBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "gemini"),
         model="gemini-2.5-pro",
+        agent_profile="general_e2e",
     )
 
     action = parse_action({"action_type": "tap", "x": 500, "y": 250})
@@ -2032,6 +2034,7 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
         model="test-model",
         artifacts_root=tmp_path / "artifacts",
         trajectory_recorder=recorder,
+        agent_profile="general_e2e",
     )
 
     result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=2)
@@ -2106,6 +2109,7 @@ async def test_agent_subgoal_runner_retries_parse_without_consuming_step(tmp_pat
         state_validator=_RecordingValidator([]),
         model="test-model",
         artifacts_root=tmp_path / "artifacts-retry",
+        agent_profile="general_e2e",
     )
 
     result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
@@ -2189,6 +2193,7 @@ async def test_subgoal_runner_normalizes_relative_coordinates_for_gemini(tmp_pat
         state_validator=validator,
         model="gemini-2.0-flash",
         artifacts_root=tmp_path / "artifacts",
+        agent_profile="general_e2e",
     )
 
     result = await runner.run_subgoal("Tap the target button", screenshot, max_steps=2)
@@ -2234,6 +2239,7 @@ async def test_subgoal_runner_uses_configured_step_timeout(tmp_path: Path) -> No
         model="test-model",
         artifacts_root=tmp_path / "artifacts",
         step_timeout=42.0,
+        agent_profile="general_e2e",
     )
 
     await runner.run_subgoal("Confirm timeout propagation", screenshot, max_steps=2)
@@ -2438,6 +2444,7 @@ async def test_subgoal_runner_settle_behavior(
         state_validator=_RecordingValidator([]),
         model="test-model",
         artifacts_root=tmp_path / "artifacts",
+        agent_profile="general_e2e",
     )
 
     result = await runner.run_subgoal("Settle behavior check", screenshot, max_steps=3)
@@ -2587,6 +2594,7 @@ async def test_agent_done_without_status_defaults_to_success(tmp_path: Path) -> 
         trajectory_recorder=_make_recorder(tmp_path, "done without status success"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Finish", max_retries=1)
@@ -2614,6 +2622,7 @@ async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_pat
         trajectory_recorder=_make_recorder(tmp_path, "done without status failure"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Finish", max_retries=1)
@@ -2647,6 +2656,7 @@ async def test_agent_trajectory_records_only_compact_step_details(tmp_path: Path
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=2,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Open Settings", max_retries=1)
@@ -3869,6 +3879,7 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("retry task", max_retries=2)
@@ -3916,6 +3927,7 @@ async def test_agent_retries_profile_parse_error_three_times_within_step(tmp_pat
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("retry malformed profile response", max_retries=1)
@@ -3957,6 +3969,7 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
         trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("retry malformed tool call", max_retries=2)
@@ -3968,7 +3981,7 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
 
 
 @pytest.mark.asyncio
-async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
+async def test_retry_uses_clean_default_prompt_after_max_steps(
     tmp_path: Path,
 ) -> None:
     llm = _RecordingLLM(
@@ -4011,7 +4024,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_max_steps(
     # calls[0]=attempt1 step, calls[1]=termination summary, calls[2]=attempt2 step
     second_attempt = llm.calls[2]
     retry_text = _last_user_message_text(second_attempt)
-    assert retry_text == "Open Settings"
+    assert retry_text == "Instruction: Open Settings"
 
 
 @pytest.mark.asyncio
@@ -4044,6 +4057,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
         trajectory_recorder=_make_recorder(tmp_path, "retry summary exception"),
         artifacts_root=tmp_path / "runs",
         max_steps=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("retry malformed tool call", max_retries=2)
@@ -4055,7 +4069,7 @@ async def test_retry_uses_clean_mobileworld_prompt_after_exception(
 
 
 @pytest.mark.asyncio
-async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path) -> None:
+async def test_default_agent_uses_compact_history_and_current_image(tmp_path: Path) -> None:
     llm = _RecordingLLM(
         [
             LLMResponse(
@@ -4105,31 +4119,14 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
     assert len(llm.calls) == 3
 
     third_call = llm.calls[2]
-    assert "# Role: Android Phone Operator AI" in third_call[0]["content"]
-    assert [message["role"] for message in third_call] == [
-        "system",
-        "user",
-        "assistant",
-        "user",
-        "assistant",
-        "user",
-    ]
+    assert "native tool-calling mechanism" in third_call[0]["content"]
+    assert [message["role"] for message in third_call] == ["system", "user"]
 
-    first_user_text = _message_text(third_call[1])
-    assert first_user_text.startswith("Open Settings")
-    assert "(Previous turn, screen not shown)" in first_user_text
-    first_history_assistant = third_call[2]
-    assert first_history_assistant["content"][0]["text"] == (
-        'Thought: wait briefly\nAction: {"action_type": "wait"}'
-    )
-    second_history_assistant = third_call[4]
-    assert second_history_assistant["content"][0]["text"] == (
-        'Thought: wait again\nAction: {"action_type": "wait"}'
-    )
-    assert "Tool call result: [dry-run] wait" in _message_text(third_call[3])
-    assert "Tool call result: [dry-run] wait" in _message_text(third_call[5])
-    assert "tool_calls" not in first_history_assistant
-    assert "tool_calls" not in second_history_assistant
+    user_text = _message_text(third_call[1])
+    assert user_text.startswith("Instruction: Open Settings")
+    assert "Recent progress:" in user_text
+    assert "wait briefly" in user_text
+    assert "wait again" in user_text
 
     image_blocks = [
         block
@@ -4137,7 +4134,7 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
         for block in (message.get("content") if isinstance(message.get("content"), list) else [])
         if isinstance(block, dict) and block.get("type") == "image_url"
     ]
-    assert len(image_blocks) == 2
+    assert len(image_blocks) == 1
 
 
 @pytest.mark.asyncio
@@ -4168,6 +4165,7 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_compact_trace
         artifacts_root=tmp_path / "runs",
         max_steps=2,
         history_image_window=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Open Login")
@@ -4213,6 +4211,7 @@ async def test_agent_prompt_replays_mobileworld_raw_history(tmp_path: Path) -> N
         artifacts_root=tmp_path / "runs",
         max_steps=10,
         history_image_window=1,
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Open Settings")

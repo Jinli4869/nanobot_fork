@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 from guiclaw.action import Action, ActionError, parse_action
 from guiclaw.agent_profiles import (
-    build_mobileworld_messages,
+    build_profile_messages,
     canonicalize_agent_profile,
     coordinate_mode_for_profile,
     normalize_profile_response_for_observation,
@@ -103,7 +103,7 @@ class SubgoalRunner:
 
         for i in range(max_steps):
             substep_start = time.monotonic()
-            messages = build_mobileworld_messages(
+            messages = build_profile_messages(
                 self._agent_profile,
                 task=task,
                 current_observation=current_observation,

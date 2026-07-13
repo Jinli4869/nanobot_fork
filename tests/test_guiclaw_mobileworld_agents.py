@@ -8,7 +8,7 @@ from PIL import Image
 from guiclaw.action import parse_action
 from guiclaw.agent import GuiAgent
 from guiclaw.agent_profiles import (
-    build_mobileworld_messages,
+    build_profile_messages,
     canonicalize_agent_profile,
     normalize_profile_response_for_screen,
 )
@@ -48,24 +48,14 @@ def _observation(path: Path) -> Observation:
     )
 
 
-def test_default_profile_aliases_mobileworld_general_e2e() -> None:
-    assert canonicalize_agent_profile(None) == "general_e2e"
-    assert canonicalize_agent_profile("default") == "general_e2e"
-    assert canonicalize_agent_profile("mobileworld_general_e2e") == "mobileworld_general_e2e"
-    assert canonicalize_agent_profile("mobileworld-general-e2e") == "mobileworld_general_e2e"
-    assert (
-        canonicalize_agent_profile("mobileworld_general_e2e_compact_skill")
-        == "mobileworld_general_e2e_compact_skill"
-    )
-    assert (
-        canonicalize_agent_profile("mw-general-e2e-compact-skill")
-        == "mobileworld_general_e2e_compact_skill"
-    )
-    assert canonicalize_agent_profile("planner_executor") == "planner_executor"
+def test_default_and_general_e2e_are_distinct_profiles() -> None:
+    assert canonicalize_agent_profile(None) == "default"
+    assert canonicalize_agent_profile("default") == "default"
+    assert canonicalize_agent_profile("general_e2e") == "general_e2e"
 
 
 def test_general_e2e_messages_use_mobileworld_prompt(tmp_path: Path) -> None:
-    messages = build_mobileworld_messages(
+    messages = build_profile_messages(
         "general_e2e",
         task="Open Settings",
         current_observation=_observation(tmp_path / "screen.png"),
@@ -100,25 +90,6 @@ def test_general_e2e_parse_uses_real_screen_dimensions() -> None:
     assert normalized.tool_calls[0].arguments["x"] == 540
     assert normalized.tool_calls[0].arguments["y"] == 480
     assert "relative" not in normalized.tool_calls[0].arguments
-
-
-def test_mobileworld_general_e2e_compact_skill_uses_general_e2e_parser() -> None:
-    response = LLMResponse(
-        content='Thought: tap it\nAction: {"action_type":"click","coordinate":[500,250]}',
-        tool_calls=None,
-    )
-
-    normalized = normalize_profile_response_for_screen(
-        "mobileworld_general_e2e_compact_skill",
-        response,
-        screen_width=1080,
-        screen_height=1920,
-    )
-
-    assert normalized.tool_calls is not None
-    assert normalized.tool_calls[0].arguments["action_type"] == "tap"
-    assert normalized.tool_calls[0].arguments["x"] == 540
-    assert normalized.tool_calls[0].arguments["y"] == 480
 
 
 def test_general_e2e_parse_uses_first_action_when_model_outputs_multiple_actions() -> None:
@@ -211,7 +182,7 @@ def test_qwen3vl_parse_uses_real_screen_dimensions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_gui_agent_uses_mobileworld_messages_and_raw_history(tmp_path: Path) -> None:
+async def test_gui_agent_general_e2e_uses_text_messages_and_raw_history(tmp_path: Path) -> None:
     first_response = 'Thought: wait\nAction: {"action_type":"wait"}'
     second_response = 'Thought: done\nAction: {"action_type":"status","goal_status":"complete"}'
     llm = _RecordingLLM(
@@ -226,7 +197,7 @@ async def test_gui_agent_uses_mobileworld_messages_and_raw_history(tmp_path: Pat
         TrajectoryRecorder(output_dir=tmp_path / "traj", task="mobileworld agent"),
         artifacts_root=tmp_path / "runs",
         max_steps=2,
-        agent_profile="default",
+        agent_profile="general_e2e",
     )
 
     result = await agent.run("Wait once and finish", max_retries=1)

@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from guiclaw.agent import GuiAgent
 from guiclaw.agent_profiles import (
     SUPPORTED_AGENT_PROFILES,
     build_profile_messages,
@@ -14,9 +15,11 @@ from guiclaw.agent_profiles import (
     profile_tool_definition,
     profile_uses_native_tools,
 )
+from guiclaw.backends.dry_run import DryRunBackend
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
 from guiclaw.tool_schemas import COMPUTER_USE_TOOL
+from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 EXPECTED_PROFILES = (
     "default",
@@ -126,3 +129,46 @@ def test_default_normalization_preserves_native_call_with_text() -> None:
         )
         is response
     )
+
+
+@pytest.mark.asyncio
+async def test_gui_agent_default_uses_required_native_tool_call(tmp_path: Path) -> None:
+    class RecordingLLM:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def chat(self, **kwargs):  # noqa: ANN003, ANN202
+            self.calls.append(kwargs)
+            return LLMResponse(
+                content="Action: Finish the completed task",
+                tool_calls=[
+                    ToolCall(
+                        id="done-1",
+                        name="computer_use",
+                        arguments={
+                            "action_type": "done",
+                            "status": "success",
+                            "text": "Task completed",
+                            "intent": "Finish",
+                            "summary": "Task is complete",
+                        },
+                    )
+                ],
+            )
+
+    llm = RecordingLLM()
+    agent = GuiAgent(
+        llm,
+        DryRunBackend(),
+        TrajectoryRecorder(output_dir=tmp_path / "traj", task="native default"),
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
+        agent_profile="default",
+    )
+
+    result = await agent.run("Finish", max_retries=1)
+
+    assert result.success is True
+    assert llm.calls[0]["tool_choice"] == "required"
+    assert llm.calls[0]["tools"][0]["function"]["name"] == "computer_use"
+    assert "native tool-calling mechanism" in llm.calls[0]["messages"][0]["content"]
