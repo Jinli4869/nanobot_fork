@@ -18,6 +18,8 @@ from PIL import Image
 import guiclaw.backends.adb as adb_backend_module
 import guiclaw.backends.hdc as hdc_backend_module
 import guiclaw.backends.ios_wda as ios_wda_module
+import guiclaw.skills.deeplink as deeplink_module
+import guiclaw.skills.executor as skill_executor_module
 from guiclaw.action import Action, ActionError, parse_action, resolve_coordinate
 from guiclaw.agent import GuiAgent, _AgentActionGrounder, _AgentSubgoalRunner
 from guiclaw.agent_profiles import (
@@ -30,8 +32,6 @@ from guiclaw.backends.dry_run import DryRunBackend
 from guiclaw.backends.hdc import HdcBackend
 from guiclaw.interfaces import LLMResponse, ToolCall
 from guiclaw.observation import Observation
-from guiclaw.skills import deeplink as deeplink_module
-from guiclaw.skills import executor as skill_executor_module
 from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
 from guiclaw.skills.flat import FlatSkillLibrary, compile_flat_skills, export_skills_to_source
@@ -778,30 +778,7 @@ def test_static_shortcut_extraction_parses_deep_intent_mime_type() -> None:
     assert "not page-validated" in intents[0].description
 
 
-@pytest.mark.asyncio
-async def test_probe_deep_link_resolve_does_not_bind_component() -> None:
-    calls: list[tuple[str, ...]] = []
-
-    class Backend:
-        async def _run(self, *args: str, timeout: float = 5.0) -> str:
-            del timeout
-            calls.append(args)
-            return "com.example.app/.Router"
-
-    link = DeepLink(
-        uri_template="example://home",
-        scheme="example",
-        host="home",
-        path=None,
-        component="com.example.app/.Router",
-        description="Static Android deep link candidate",
-    )
-
-    assert await deeplink_module.probe_deep_link(Backend(), link) is True
-    assert "-n" not in calls[0]
-
-
-def test_shortcut_skill_ids_and_agent_tool_names_do_not_collide() -> None:
+def test_shortcut_agent_tool_names_do_not_collide() -> None:
     profile = AppShortcutProfile(
         package="com.example.app",
         deep_links=(
@@ -839,9 +816,6 @@ def test_shortcut_skill_ids_and_agent_tool_names_do_not_collide() -> None:
             ),
         ),
     )
-
-    skills = deeplink_module.profile_to_skills(profile)
-    assert len({skill.skill_id for skill in skills}) == len(skills)
 
     tools, action_map = build_shortcut_tool_defs({"com.example.app": profile})
     names = [tool["function"]["name"] for tool in tools]
@@ -1125,13 +1099,12 @@ def test_annotate_android_apps_filters_unmapped_packages() -> None:
     assert not any("com.unknown.xyz" in entry for entry in result)
 
 
-def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
+def test_android_normalization_supports_common_chinese_and_english_aliases() -> None:
     from guiclaw.skills.normalization import (
         find_android_app_in_text,
         find_android_apps_in_text,
         normalize_adb_app_identifier,
         normalize_app_identifier,
-        resolve_android_package,
     )
 
     cases = {
@@ -1165,7 +1138,6 @@ def test_resolve_android_package_common_chinese_and_english_aliases() -> None:
     }
 
     for alias, package in cases.items():
-        assert resolve_android_package(alias) == package
         assert normalize_app_identifier("android", alias) == package
 
     adb_cases = {

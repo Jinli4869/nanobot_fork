@@ -18,7 +18,12 @@ def test_disconnected_compatibility_packages_are_removed(module_name: str) -> No
     ("module_name", "symbol"),
     (
         ("guiclaw.skills.static_selector_filter", "filter_static_controls"),
+        ("guiclaw.skills.static_selector_filter", "filter_static_texts"),
+        ("guiclaw.skills.static_selector_filter", "filter_static_resource_ids"),
         ("guiclaw.skills.trajectory_codegen", "_first_foreground_app"),
+        ("guiclaw.skills.deeplink", "profile_to_skills"),
+        ("guiclaw.skills.deeplink", "probe_deep_link"),
+        ("guiclaw.skills.deeplink", "probe_deep_intent"),
         ("guiclaw.agents.utils.helpers", "compact_json"),
         ("guiclaw.agents.utils.parsers", "parse_and_check_json_markdown"),
         ("guiclaw.backends.adb", "_is_adb_transport_error"),
@@ -56,6 +61,7 @@ def test_disconnected_compatibility_packages_are_removed(module_name: str) -> No
         ("guiclaw.skills.state_contract", "_should_skip_valid_state"),
         ("guiclaw.skills.normalization", "resolve_ios_bundle"),
         ("guiclaw.skills.normalization", "annotate_ios_apps"),
+        ("guiclaw.skills.normalization", "resolve_android_package"),
         ("guiclaw.agents.profiles", "normalize_profile_response"),
         ("guiclaw.agent_profiles", "normalize_profile_response"),
     ),
@@ -71,6 +77,40 @@ def test_flat_skill_library_uses_only_shared_app_filter_normalization() -> None:
 
     assert hasattr(normalization, "normalize_app_filter")
     assert not hasattr(flat, "_normalize_app_filter")
+
+
+def test_skills_package_has_no_eager_compatibility_exports() -> None:
+    skills = importlib.import_module("guiclaw.skills")
+
+    assert not hasattr(skills, "SkillLibrary")
+    assert not hasattr(skills, "Skill")
+    assert not hasattr(skills, "SkillExecutor")
+
+
+def test_skill_extractor_has_no_step_dict_compatibility_api() -> None:
+    extractor = importlib.import_module("guiclaw.skills.extractor")
+
+    assert not hasattr(extractor.SkillExtractor, "extract_from_steps")
+    assert not hasattr(extractor.SkillExtractor, "extract_from_steps_multi")
+    assert not hasattr(extractor, "_codegen_from_step_dicts")
+
+
+def test_legacy_skill_schema_fields_and_deserializers_are_removed() -> None:
+    data = importlib.import_module("guiclaw.skills.data")
+
+    assert not hasattr(data.Skill, "from_dict")
+    assert not hasattr(data.SkillStep, "from_dict")
+    assert "preconditions" not in data.Skill.__dataclass_fields__
+    assert "success_streak" not in data.Skill.__dataclass_fields__
+    assert "failure_streak" not in data.Skill.__dataclass_fields__
+    assert "expected_state" not in data.SkillStep.__dataclass_fields__
+
+
+def test_flat_tag_compatibility_decorator_is_removed() -> None:
+    flat = importlib.import_module("guiclaw.skills.flat")
+
+    assert not hasattr(flat, "tag")
+    assert "tag" not in flat.CODE_HEADER
 
 
 @pytest.mark.parametrize(

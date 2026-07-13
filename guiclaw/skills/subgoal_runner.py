@@ -17,7 +17,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from guiclaw.action import Action, ActionError, parse_action
 from guiclaw.agent_profiles import (

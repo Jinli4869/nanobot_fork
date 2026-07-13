@@ -20,11 +20,8 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 from typing import Any
-
-from PIL import Image
 
 from guiclaw.action import Action, ActionError, describe_action, parse_action
 from guiclaw.agent_profiles import (
@@ -33,10 +30,8 @@ from guiclaw.agent_profiles import (
     coordinate_mode_for_profile,
     general_e2e_scale_factor,
     normalize_profile_response_for_observation,
-    normalize_profile_response_for_screen,
     profile_llm_defaults,
     profile_uses_native_tools,
-    prompt_contract_for_profile,
 )
 from guiclaw.interfaces import (
     DeviceBackend,
@@ -65,12 +60,7 @@ from guiclaw.skills.normalization import (
     normalize_app_identifier,
 )
 from guiclaw.skills.state_contract import evaluate_state_contract, infer_interaction_target
-from guiclaw.tool_schemas import (
-    COMPUTER_USE_TOOL,
-    build_shortcut_tool_defs,
-    image_dimensions,
-    minimal_tool_schema,
-)
+from guiclaw.tool_schemas import COMPUTER_USE_TOOL, build_shortcut_tool_defs
 from guiclaw.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
 from guiclaw.trajectory.summarizer import build_state_note, is_state_note
 
@@ -185,10 +175,13 @@ class _StepExecutionError(RuntimeError):
 # Agent-side protocol implementations for SkillExecutor
 # ---------------------------------------------------------------------------
 
-from guiclaw.skills.action_grounder import ActionGrounder as _AgentActionGrounder  # noqa: E402
-from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner  # noqa: E402
-from guiclaw.skills.observation_provider import AgentScreenshotProvider as _AgentScreenshotProvider  # noqa: E402
-
+from guiclaw.skills.action_grounder import (  # noqa: E402, F401
+    ActionGrounder as _AgentActionGrounder,
+)
+from guiclaw.skills.observation_provider import (  # noqa: E402, F401
+    AgentScreenshotProvider as _AgentScreenshotProvider,
+)
+from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner  # noqa: E402, F401
 
 # ---------------------------------------------------------------------------
 # GuiAgent
@@ -3308,7 +3301,7 @@ class GuiAgent:
                 app=app,
                 top_k=search_k,
             )
-            for skill, score in results:
+            for skill, _score in results:
                 if is_always_on_skill(skill, self._always_on_skill_tags):
                     continue
                 if self._prompt_shortcut_only and not is_shortcut_skill(skill):
@@ -3317,7 +3310,7 @@ class GuiAgent:
                 if not skill_id:
                     continue
                 self._prompt_skills_by_id[skill_id] = skill
-                retrieved_infos.append(skill_info_from_flat_skill(skill, score=score))
+                retrieved_infos.append(skill_info_from_flat_skill(skill))
                 if len(retrieved_infos) >= self._prompt_skill_top_k:
                     break
 

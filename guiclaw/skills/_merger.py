@@ -153,13 +153,10 @@ def merge_skills(old: Skill, new: Skill) -> Skill:
         platform=new.platform or old.platform,
         steps=steps,
         parameters=tuple(sorted(set(old.parameters) | set(new.parameters))),
-        preconditions=tuple(sorted(set(old.preconditions) | set(new.preconditions))),
         tags=tuple(sorted(set(old.tags) | set(new.tags))),
         created_at=old.created_at,
         success_count=old.success_count + new.success_count,
         failure_count=old.failure_count + new.failure_count,
-        success_streak=max(old.success_streak, new.success_streak),
-        failure_streak=max(old.failure_streak, new.failure_streak),
     )
 
 
@@ -228,7 +225,7 @@ def step_signature(step: SkillStep) -> _StepSignature:
         step.action_type,
         tokens(step.target),
         tokens(" ".join([*map(str, step.parameters.keys()), *map(str, step.parameters.values())])),
-        tokens(" ".join(filter(None, (step.expected_state, step.valid_state)))),
+        tokens(step.valid_state or ""),
         tokens(stable_json(step.state_contract)),
     )
 

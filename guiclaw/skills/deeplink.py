@@ -7,12 +7,12 @@ import json
 import re
 import tempfile
 import xml.etree.ElementTree as ET
-
-from guiclaw.skills.state_contract import _clean_string
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+from guiclaw.skills.data import collect_placeholder_names
 
 _ANDROID_NS = "http://schemas.android.com/apk/res/android"
 
@@ -165,7 +165,7 @@ async def extract_app_shortcuts(backend: Any, package: str) -> AppShortcutProfil
 
     manifest_root = _parse_manifest(apk_path)
     Path(apk_path).unlink(missing_ok=True)
-    manifest_package = _clean_string(manifest_root.get("package")) or app
+    manifest_package = _clean_text(manifest_root.get("package")) or app
     filters = _extract_all_filters(manifest_root, manifest_package)
 
     aliases: list[tuple[str, str]] = []
@@ -184,54 +184,6 @@ async def extract_app_shortcuts(backend: Any, package: str) -> AppShortcutProfil
         activity_aliases=tuple(dict.fromkeys(aliases)),
         manifest_meta={"apk_path": apk_path, "filter_count": len(filters)},
     )
-
-
-def profile_to_skills(profile: AppShortcutProfile) -> list[Any]:
-    """Convert each shortcut in *profile* to a 1-step Skill for the skill library."""
-    from guiclaw.skills.data import Skill, SkillStep
-
-    skills: list[Any] = []
-    for dl in profile.deep_links:
-        step = SkillStep(
-            action_type="open_deeplink",
-            target=dl.uri_template,
-            parameters={"text": dl.uri_template, "component": dl.component},
-        )
-        raw = f"{profile.package}|{dl.component}|{dl.uri_template}|{dl.path_kind or ''}"
-        skills.append(
-            Skill(
-                name=_shortcut_skill_name(dl),
-                app=profile.package,
-                platform="android",
-                description=dl.description,
-                steps=(step,),
-                tags=("shortcut", "deeplink"),
-                skill_id=f"shortcut:dl:{profile.package}:{_stable_short_hash(raw)}",
-            )
-        )
-    for di in profile.deep_intents:
-        step = SkillStep(
-            action_type="open_intent",
-            target=di.action,
-            parameters={
-                "intent_action": di.action,
-                "component": di.component,
-                "mime_type": di.mime_type or "",
-            },
-        )
-        raw = f"{profile.package}|{di.component}|{di.action}|{di.mime_type or ''}"
-        skills.append(
-            Skill(
-                name=_shortcut_skill_name(di),
-                app=profile.package,
-                platform="android",
-                description=di.description,
-                steps=(step,),
-                tags=("shortcut", "intent"),
-                skill_id=f"shortcut:di:{profile.package}:{_stable_short_hash(raw)}",
-            )
-        )
-    return skills
 
 
 def validated_shortcut_to_skill(
@@ -326,7 +278,6 @@ def validated_shortcut_to_skill(
         parameters=_shortcut_parameters(record, step),
         tags=tags,
         success_count=1,
-        success_streak=1,
     )
 
 
@@ -343,14 +294,6 @@ async def add_validated_shortcut_skill(
     if skill_obj is None:
         return "SKIP_UNVALIDATED", None
     return await library.add_or_merge(skill_obj)
-
-
-def _shortcut_skill_name(shortcut: DeepLink | DeepIntent) -> str:
-    if isinstance(shortcut, DeepLink):
-        return f"open_{_slug('_'.join(x for x in (shortcut.scheme, shortcut.host or '', shortcut.path or '') if x))}"
-    suffix = shortcut.action.split(".")[-1].lower()
-    label = "_".join(x for x in (suffix, shortcut.mime_type or "") if x)
-    return f"open_{_slug(label)}"
 
 
 async def _pull_apk(backend: Any, package: str) -> str | None:
@@ -534,36 +477,6 @@ def _classify_deep_intents(filters: list[ManifestIntentFilter]) -> list[DeepInte
     return results
 
 
-async def probe_deep_link(backend: Any, dl: DeepLink) -> bool:
-    args = [
-        "shell",
-        "cmd",
-        "package",
-        "resolve-activity",
-        "--brief",
-        "-a",
-        "android.intent.action.VIEW",
-        "-c",
-        "android.intent.category.BROWSABLE",
-        "-d",
-        dl.uri_template,
-    ]
-    output = await backend._run(*args, timeout=5.0)
-    text = str(output).strip()
-    return bool(text and "No activity found" not in text)
-
-
-async def probe_deep_intent(backend: Any, di: DeepIntent) -> bool:
-    args = ["shell", "cmd", "package", "resolve-activity", "--brief", "-a", di.action]
-    if di.mime_type:
-        args.extend(["-t", di.mime_type])
-    if di.component:
-        args.extend(["-n", di.component])
-    output = await backend._run(*args, timeout=5.0)
-    text = str(output).strip()
-    return bool(text and "No activity found" not in text)
-
-
 def _local_tag(tag: str) -> str:
     text = str(tag)
     if "}" in text:
@@ -579,12 +492,12 @@ def _android_attr(element: ET.Element, name: str) -> str:
         value = element.get(f"android:{name}")
     if value is None:
         value = element.get(name)
-    return _clean_string(value)
+    return _clean_text(value)
 
 
 def _normalize_component_name(package: str, name: str) -> str:
     app = _clean_app(package)
-    text = _clean_string(name)
+    text = _clean_text(name)
     if not app or not text:
         return ""
     if text.startswith("."):
@@ -647,7 +560,7 @@ def _normalize_str_tuple(raw: Any) -> tuple[str, ...]:
 
 
 def _clean_shortcut_description(description: str, package: str) -> str:
-    text = re.sub(r"\s+", " ", _clean_string(description)).strip()
+    text = re.sub(r"\s+", " ", _clean_text(description)).strip()
     lowered = text.lower()
     if (
         not text
@@ -671,26 +584,9 @@ def _validated_skill_name(package: str, kind: str, description: str) -> str:
 
 def _shortcut_parameters(record: ValidatedShortcut, step: Any) -> tuple[str, ...]:
     names = set(record.parameters)
-    names.update(_placeholder_names(step.target))
-    names.update(_placeholder_names(step.parameters))
+    names.update(collect_placeholder_names(step.target))
+    names.update(collect_placeholder_names(step.parameters))
     return tuple(sorted(name for name in names if name))
-
-
-def _placeholder_names(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {match.group(1) for match in re.finditer(r"\{\{(\w+)\}\}", value)}
-    if isinstance(value, dict):
-        names: set[str] = set()
-        for key, item in value.items():
-            names.update(_placeholder_names(key))
-            names.update(_placeholder_names(item))
-        return names
-    if isinstance(value, (list, tuple, set)):
-        names: set[str] = set()
-        for item in value:
-            names.update(_placeholder_names(item))
-        return names
-    return set()
 
 
 def _stable_json(value: Any) -> str:
@@ -707,6 +603,10 @@ def _slug(value: str, *, max_len: int = 80) -> str:
 
 
 def _clean_app(value: Any) -> str:
+    return _clean_text(value)
+
+
+def _clean_text(value: Any) -> str:
     return str(value or "").strip()
 
 

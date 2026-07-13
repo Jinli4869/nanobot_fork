@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from guiclaw.skills.data import Skill, SkillStep
+from guiclaw.skills.data import Skill, SkillStep, collect_placeholder_names
 from guiclaw.skills.flat import C, R
-
 from scripts.induce_compact_skills import (
     _has_terminal_action,
-    _placeholder_names,
     cluster_compact_skills,
     compactify_skill,
     merge_into_output,
@@ -128,10 +126,10 @@ class TestCompactifySkill:
 
 class TestPlaceholderNames:
     def test_extracts_from_nested_structures(self):
-        assert _placeholder_names("{{to}}") == frozenset({"to"})
-        assert _placeholder_names({"text": "{{a}}", "k": "{{b}}"}) == frozenset({"a", "b"})
-        assert _placeholder_names(["{{x}}", {"y": "{{y}}"}]) == frozenset({"x", "y"})
-        assert _placeholder_names("literal") == frozenset()
+        assert collect_placeholder_names("{{to}}") == {"to"}
+        assert collect_placeholder_names({"text": "{{a}}", "k": "{{b}}"}) == {"a", "b"}
+        assert collect_placeholder_names(["{{x}}", {"y": "{{y}}"}]) == {"x", "y"}
+        assert collect_placeholder_names("literal") == set()
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +155,6 @@ class TestClustering:
         clustered = cluster_compact_skills(_succ(*[s for s in skills if s]), min_support=1)
         assert len(clustered) == 1
         assert clustered[0].success_count == 2
-        assert clustered[0].success_streak == 2
 
     def test_min_support_filters_singletons(self):
         skill = compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1)

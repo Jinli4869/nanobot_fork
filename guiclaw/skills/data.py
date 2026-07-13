@@ -6,10 +6,30 @@ Skill and SkillStep dataclasses — the atomic unit of reusable GUI knowledge.
 
 from __future__ import annotations
 
+import re
 import time
-import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+_PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+
+
+def collect_placeholder_names(value: Any) -> set[str]:
+    """Collect ``{{name}}`` placeholders nested inside a skill value."""
+    if isinstance(value, str):
+        return set(_PLACEHOLDER_RE.findall(value))
+    if isinstance(value, dict):
+        names: set[str] = set()
+        for key, item in value.items():
+            names.update(collect_placeholder_names(key))
+            names.update(collect_placeholder_names(item))
+        return names
+    if isinstance(value, (list, tuple, set, frozenset)):
+        names: set[str] = set()
+        for item in value:
+            names.update(collect_placeholder_names(item))
+        return names
+    return set()
 
 
 @dataclass(frozen=True)
@@ -26,7 +46,6 @@ class SkillStep:
     action_type: str
     target: str
     parameters: dict[str, Any] = field(default_factory=dict)
-    expected_state: str | None = None
     valid_state: str | None = None
     state_contract: dict[str, Any] | None = field(
         default=None,
@@ -50,8 +69,6 @@ class SkillStep:
         }
         if self.parameters:
             d["parameters"] = self.parameters
-        if self.expected_state is not None:
-            d["expected_state"] = self.expected_state
         if self.valid_state is not None:
             d["valid_state"] = self.valid_state
         if self.state_contract:
@@ -64,20 +81,6 @@ class SkillStep:
             d["fixed_values"] = self.fixed_values
         return d
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> SkillStep:
-        return cls(
-            action_type=data["action_type"],
-            target=data.get("target", ""),
-            parameters=data.get("parameters", {}),
-            expected_state=data.get("expected_state"),
-            valid_state=data.get("valid_state"),
-            state_contract=data.get("state_contract"),
-            fixed=data.get("fixed", False),
-            fixed_values=data.get("fixed_values", {}),
-        )
-
-
 @dataclass(frozen=True)
 class Skill:
     """A reusable, parameterized GUI skill extracted from trajectories.
@@ -85,9 +88,6 @@ class Skill:
     Parameters use ``{{param_name}}`` placeholders in step targets/parameters
     that are grounded at execution time.
 
-    ``success_streak`` and ``failure_streak`` track consecutive run outcomes
-    and are used by the agent loop for adaptive confidence-based skill
-    selection.
     """
 
     skill_id: str
@@ -97,13 +97,10 @@ class Skill:
     platform: str
     steps: tuple[SkillStep, ...] = ()
     parameters: tuple[str, ...] = ()
-    preconditions: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     created_at: float = field(default_factory=time.time)
     success_count: int = 0
     failure_count: int = 0
-    success_streak: int = 0
-    failure_streak: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -114,33 +111,11 @@ class Skill:
             "platform": self.platform,
             "steps": [s.to_dict() for s in self.steps],
             "parameters": list(self.parameters),
-            "preconditions": list(self.preconditions),
             "tags": list(self.tags),
             "created_at": self.created_at,
             "success_count": self.success_count,
             "failure_count": self.failure_count,
-            "success_streak": self.success_streak,
-            "failure_streak": self.failure_streak,
         }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Skill:
-        return cls(
-            skill_id=data.get("skill_id", str(uuid.uuid4())),
-            name=data["name"],
-            description=data.get("description", ""),
-            app=data.get("app", ""),
-            platform=data.get("platform", "unknown"),
-            steps=tuple(SkillStep.from_dict(s) for s in data.get("steps", [])),
-            parameters=tuple(data.get("parameters", ())),
-            preconditions=tuple(data.get("preconditions", ())),
-            tags=tuple(data.get("tags", ())),
-            created_at=data.get("created_at", time.time()),
-            success_count=data.get("success_count", 0),
-            failure_count=data.get("failure_count", 0),
-            success_streak=data.get("success_streak", 0),
-            failure_streak=data.get("failure_streak", 0),
-        )
 
 
 def compute_confidence(skill: Skill) -> float:

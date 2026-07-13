@@ -100,14 +100,7 @@ class SkillInfo:
     description: str
     skill_id: str | None = None
     app: str = ""
-    platform: str = ""
-    tags: tuple[str, ...] = ()
     parameters: tuple[str, ...] = ()
-    score: float | None = None
-    first_action_type: str = ""
-    first_action_target: str = ""
-    first_action_parameters: dict[str, Any] | None = None
-    first_valid_state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -115,7 +108,6 @@ class CompositeActionInfo:
     alias: str
     description: str
     example: str
-    source_skill_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -131,24 +123,13 @@ class CompactPromptParts:
     catalog: str = ""
 
 
-def skill_info_from_flat_skill(skill: Any, *, score: float | None = None) -> SkillInfo:
-    first_step = skill.steps[0] if getattr(skill, "steps", ()) else None
-    first_action_parameters: dict[str, Any] | None = None
-    if first_step is not None:
-        first_action_parameters = dict(getattr(first_step, "parameters", {}) or {})
+def skill_info_from_flat_skill(skill: Any) -> SkillInfo:
     return SkillInfo(
         function_name=str(getattr(skill, "name", "") or getattr(skill, "skill_id", "")),
         description=str(getattr(skill, "description", "") or ""),
         skill_id=str(getattr(skill, "skill_id", "") or ""),
         app=str(getattr(skill, "app", "") or ""),
-        platform=str(getattr(skill, "platform", "") or ""),
-        tags=tuple(str(tag) for tag in (getattr(skill, "tags", ()) or ())),
         parameters=tuple(str(param) for param in (getattr(skill, "parameters", ()) or ())),
-        score=score,
-        first_action_type=str(getattr(first_step, "action_type", "") or "") if first_step else "",
-        first_action_target=str(getattr(first_step, "target", "") or "") if first_step else "",
-        first_action_parameters=first_action_parameters,
-        first_valid_state=str(getattr(first_step, "valid_state", "") or "") if first_step else None,
     )
 
 
@@ -193,7 +174,6 @@ def composite_action_infos_from_skills(
                 alias=alias,
                 description=description,
                 example=example,
-                source_skill_id=str(getattr(skill, "skill_id", "") or "") or None,
             )
         )
         seen.add(alias)

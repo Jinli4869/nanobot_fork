@@ -14,12 +14,13 @@ from guiclaw.action import Action
 from guiclaw.backends.dry_run import DryRunBackend
 from guiclaw.interfaces import LLMResponse
 from guiclaw.observation import Observation
-from guiclaw.skills import Skill, SkillStep
+from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.executor import ExecutionState, SkillExecutor, SubgoalResult
 from guiclaw.skills.extractor import SkillExtractor
 from guiclaw.skills.flat import FlatSkillLibrary, compile_flat_skills
+from guiclaw.skills.normalization import normalize_app_identifier
 from guiclaw.skills.state_contract import infer_focused_input_contract, infer_interaction_target
-from guiclaw.skills.trajectory_codegen import codegen_trajectory
+from guiclaw.skills.trajectory_codegen import CodegenResult, CodeStep, codegen_trajectory
 
 
 class _ScriptedLLM:
@@ -147,8 +148,6 @@ def _make_skill(
     steps: tuple[SkillStep, ...] | None = None,
     success_count: int = 0,
     failure_count: int = 0,
-    success_streak: int = 0,
-    failure_streak: int = 0,
 ) -> Skill:
     return Skill(
         skill_id=skill_id,
@@ -167,8 +166,6 @@ def _make_skill(
         created_at=1_700_000_000.0,
         success_count=success_count,
         failure_count=failure_count,
-        success_streak=success_streak,
-        failure_streak=failure_streak,
     )
 
 
@@ -194,12 +191,103 @@ def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
     )
 
 
-def test_guiclaw_skills_module_exports_flat_core_types() -> None:
-    import guiclaw.skills as skills_pkg
+def _codegen_result_from_steps(steps: list[dict[str, Any]]) -> CodegenResult:
+    """Build focused extractor input without a production test-compat API."""
+    first = steps[0]
+    first_observation = first.get("observation") or {}
+    platform = str(first_observation.get("platform") or "unknown")
+    app = normalize_app_identifier(
+        platform,
+        str(first_observation.get("foreground_app") or first_observation.get("app") or ""),
+    )
+    app_candidates: list[str] = []
+    for item in steps:
+        action = item.get("action") or {}
+        observation = item.get("observation") or {}
+        raw_candidates = [
+            action.get("text") if action.get("action_type") == "open_app" else None,
+            observation.get("foreground_app") or observation.get("app"),
+        ]
+        for raw in raw_candidates:
+            if not raw:
+                continue
+            candidate = normalize_app_identifier(platform, str(raw))
+            if candidate not in {"", "unknown", "app"} and candidate not in app_candidates:
+                app_candidates.append(candidate)
+    if app in {"", "unknown", "app"} and app_candidates:
+        app = app_candidates[0]
 
-    exported = set(skills_pkg.__all__)
-    assert {"Skill", "SkillStep", "SkillExecutor", "SkillExtractor", "SkillLibrary"} <= exported
-    assert skills_pkg.SkillLibrary is FlatSkillLibrary
+    code_steps: list[CodeStep] = []
+    for index, item in enumerate(steps):
+        action = item.get("action") or {}
+        action_type = str(action.get("action_type") or "")
+        code_steps.append(CodeStep(
+            step_index=index,
+            app=app,
+            intent=str(item.get("action_intent") or item.get("action_summary") or action_type),
+            action_type=action_type,
+            action_params={
+                key: action[key]
+                for key in ("x", "y", "x2", "y2", "text", "key", "pixels")
+                if key in action and action[key] is not None
+            },
+            control_info="",
+            contract_json="",
+            screenshot_b64="",
+        ))
+
+    core_steps = [
+        step for step in code_steps
+        if step.action_type not in {
+            "wait", "screenshot", "home", "back", "enter", "done", "app_switch",
+            "request_intervention",
+        }
+    ]
+    if len(core_steps) < 2:
+        code_steps.append(CodeStep(
+            step_index=len(code_steps),
+            app=app,
+            intent="continue reusable workflow",
+            action_type="tap",
+            action_params={"x": 1, "y": 1},
+            control_info="",
+            contract_json="",
+            screenshot_b64="",
+        ))
+
+    return CodegenResult(
+        task=str(first.get("task") or "test task"),
+        platform=platform,
+        app=app,
+        app_candidates=tuple(app_candidates or (app,)),
+        steps=code_steps,
+        screenshots_b64=[],
+    )
+
+
+async def _extract_from_steps(
+    extractor: SkillExtractor,
+    steps: list[dict[str, Any]],
+    *,
+    is_success: bool = True,
+) -> Skill | None:
+    skills = await extractor.extract_from_codegen_result_multi(
+        _codegen_result_from_steps(steps),
+        is_success=is_success,
+    )
+    return skills[0] if skills else None
+
+
+async def _extract_many_from_steps(
+    extractor: SkillExtractor,
+    steps: list[dict[str, Any]],
+    *,
+    is_success: bool = True,
+) -> list[Skill]:
+    return await extractor.extract_from_codegen_result_multi(
+        _codegen_result_from_steps(steps),
+        is_success=is_success,
+    )
 
 
 def test_compile_flat_skills_supports_helpers_contracts_and_parameters() -> None:
@@ -463,7 +551,6 @@ async def test_flat_skill_library_keeps_proven_old_skill_for_weaker_unproven_con
         "Open settings",
         steps=(SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),),
         success_count=3,
-        success_streak=2,
     )
     lib.add(old)
 
@@ -498,7 +585,6 @@ async def test_flat_skill_library_replaces_unproven_old_when_new_has_success(tmp
         "Open messages",
         steps=(SkillStep(action_type="tap", target="Messages", valid_state="Messages visible"),),
         success_count=2,
-        success_streak=2,
     ))
 
     assert decision == "KEEP_NEW"
@@ -506,39 +592,6 @@ async def test_flat_skill_library_replaces_unproven_old_when_new_has_success(tmp
     reloaded = FlatSkillLibrary(store_dir=store)
     assert reloaded.get("old") is None
     assert reloaded.get("new") is not None
-
-
-@pytest.mark.asyncio
-async def test_flat_skill_library_merge_preserves_streaks(tmp_path: Path) -> None:
-    steps = (SkillStep(action_type="tap", target="Messages", valid_state="Messages visible"),)
-    lib = FlatSkillLibrary(store_dir=tmp_path / "skills")
-    lib.add(_make_skill(
-        "old",
-        "open_messages",
-        "Open messages",
-        steps=steps,
-        success_count=1,
-        failure_count=1,
-        success_streak=2,
-    ))
-
-    decision, skill_id = await lib.add_or_merge(_make_skill(
-        "new",
-        "open_messages_again",
-        "Open messages",
-        steps=steps,
-        success_count=1,
-        failure_count=2,
-        failure_streak=3,
-    ))
-
-    assert decision == "MERGE"
-    merged = FlatSkillLibrary(store_dir=tmp_path / "skills").get(skill_id or "")
-    assert merged is not None
-    assert merged.success_count == 2
-    assert merged.failure_count == 3
-    assert merged.success_streak == 2
-    assert merged.failure_streak == 3
 
 
 @pytest.mark.asyncio
@@ -748,20 +801,17 @@ async def test_postprocessor_evolves_failed_reused_skill_instead_of_extracting_n
         "app": "com.example.app",
         "platform": "android",
         "parameters": [],
-        "preconditions": [],
         "steps": [
             {
                 "action_type": "tap",
                 "target": "Close",
                 "parameters": {"optional": True},
                 "valid_state": "popup close button is visible",
-                "expected_state": "popup dismissed",
             },
             {
                 "action_type": "tap",
                 "target": "Messages",
                 "valid_state": "Messages tab visible",
-                "expected_state": "messages page is open",
             },
         ],
     })
@@ -847,7 +897,6 @@ async def test_postprocessor_evolution_injects_focused_input_contract(
         "app": "com.zhihu.android",
         "platform": "android",
         "parameters": ["query"],
-        "preconditions": [],
         "steps": [
             {
                 "action_type": "input_text",
@@ -942,7 +991,6 @@ async def test_postprocessor_rejects_evolved_skill_that_drifts_from_original(
         "app": "com.example.app",
         "platform": "android",
         "parameters": [],
-        "preconditions": [],
         "steps": [
             {
                 "action_type": "tap",
@@ -1238,7 +1286,7 @@ async def test_skill_executor_ignores_center_close_after_open_app(monkeypatch: p
 
 @pytest.mark.asyncio
 async def test_skill_extractor_parses_llm_json_response() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.android.settings", platform="android", name="open_settings", description="Open settings")
 async def open_settings(device):
@@ -1247,7 +1295,7 @@ async def open_settings(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps(
+    skill = await _extract_from_steps(extractor,
         [
             {
                 "action": {"action_type": "open_app", "text": "com.android.settings"},
@@ -1269,7 +1317,7 @@ async def open_settings(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_prompt_requests_stable_targets_and_generic_description() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="tv.danmaku.bili", platform="android", name="search_bilibili", description="In Bilibili, search for a video and start playback through the search results.")
 async def search_bilibili(device, query):
@@ -1279,7 +1327,7 @@ async def search_bilibili(device, query):
     llm = _ScriptedLLM([response])
     extractor = SkillExtractor(llm)
 
-    await extractor.extract_from_steps([
+    await _extract_from_steps(extractor, [
         {
             "action": {"action_type": "open_app", "text": "tv.danmaku.bili"},
             "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
@@ -1310,7 +1358,7 @@ async def search_bilibili(device, query):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_fills_missing_valid_state_for_interactive_steps() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="search_example", description="Search in Example")
 async def search_example(device, query):
@@ -1320,7 +1368,7 @@ async def search_example(device, query):
     llm = _ScriptedLLM([response])
     extractor = SkillExtractor(llm)
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "tap", "x": 100, "y": 200}, "observation": {"platform": "android", "foreground_app": "com.example"}},
         {"action": {"action_type": "input_text", "text": "query"}, "observation": {"platform": "android", "foreground_app": "com.example"}},
     ])
@@ -1333,13 +1381,13 @@ async def search_example(device, query):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_retries_when_required_target_is_missing() -> None:
-    bad_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    bad_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
 async def open_details(device):
     await action("tap", fixed=True, fixed_values={"x": 150, "y": 230})
 """
-    fixed_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    fixed_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
 async def open_details(device):
@@ -1348,7 +1396,7 @@ async def open_details(device):
     llm = _ScriptedLLM([bad_response, fixed_response])
     extractor = SkillExtractor(llm)
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
     ])
 
@@ -1361,7 +1409,7 @@ async def open_details(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_drops_skill_when_retry_still_has_missing_target() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
 async def open_details(device):
@@ -1369,7 +1417,7 @@ async def open_details(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response, response]))
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
     ])
 
@@ -1378,13 +1426,13 @@ async def open_details(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_retries_when_fixed_action_is_invalid() -> None:
-    bad_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    bad_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_search", description="Open search")
 async def open_search(device):
     await action("tap", target="Search", fixed=True, fixed_values={"text": "Search"}, valid_state="Search button is visible")
 """
-    fixed_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    fixed_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_search", description="Open search")
 async def open_search(device):
@@ -1393,7 +1441,7 @@ async def open_search(device):
     llm = _ScriptedLLM([bad_response, fixed_response])
     extractor = SkillExtractor(llm)
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
     ])
 
@@ -1406,13 +1454,13 @@ async def open_search(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_retries_when_flat_code_does_not_compile() -> None:
-    bad_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    bad_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
 async def open_details(device, item_name):
     await action("tap", target=f"{item_name} details", valid_state="details button is visible")
 """
-    fixed_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    fixed_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
 async def open_details(device, item_name):
@@ -1421,7 +1469,7 @@ async def open_details(device, item_name):
     llm = _ScriptedLLM([bad_response, fixed_response])
     extractor = SkillExtractor(llm)
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
     ])
 
@@ -1435,7 +1483,7 @@ async def open_details(device, item_name):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_generalizes_narrow_description_terms() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.google.android.youtube", platform="android", name="search_youtube", description="Opens YouTube, searches for a specific video query, selects the top result, and skips ads.")
 async def search_youtube(device, query):
@@ -1444,7 +1492,7 @@ async def search_youtube(device, query):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {
             "action": {"action_type": "open_app", "text": "YouTube"},
             "observation": {"platform": "android", "foreground_app": "com.google.android.youtube"},
@@ -1461,7 +1509,7 @@ async def search_youtube(device, query):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_splits_segments_by_foreground_app() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.netease.cloudmusic", platform="android", name="open_netease", description="Open Netease")
 async def open_netease(device):
@@ -1470,7 +1518,7 @@ async def open_netease(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await extractor.extract_from_steps_multi([
+    skills = await _extract_many_from_steps(extractor, [
         {"action": {"action_type": "open_app", "text": "com.netease.cloudmusic"}, "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"}},
         {"action": {"action_type": "tap", "x": 100, "y": 200}, "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"}},
     ], is_success=True)
@@ -1484,13 +1532,13 @@ async def open_netease(device):
 async def test_skill_extractor_splits_file_trace_into_foreground_app_segments(
     tmp_path: Path,
 ) -> None:
-    chrome_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    chrome_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.android.chrome", platform="android", name="search_web", description="Search in Chrome")
 async def search_web(device):
     await action("tap", target="search field", valid_state="search field is visible")
 """
-    calendar_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    calendar_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="org.fossify.calendar", platform="android", name="open_day", description="Open a calendar day")
 async def open_day(device):
@@ -1546,7 +1594,7 @@ async def open_day(device):
 async def test_skill_extractor_skips_single_step_file_segments_before_llm(
     tmp_path: Path,
 ) -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="org.fossify.calendar", platform="android", name="open_day", description="Open a calendar day")
 async def open_day(device):
@@ -1598,13 +1646,13 @@ async def open_day(device):
 async def test_skill_extractor_does_not_carry_contracts_across_app_segments(
     tmp_path: Path,
 ) -> None:
-    chrome_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    chrome_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.android.chrome", platform="android", name="search_web", description="Search in Chrome")
 async def search_web(device):
     await action("tap", target="search field", valid_state="search field is visible")
 """
-    calendar_response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    calendar_response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="org.fossify.calendar", platform="android", name="open_day", description="Open a calendar day")
 async def open_day(device):
@@ -1669,7 +1717,7 @@ async def open_day(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_resolves_unknown_app_from_open_app_text() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="unknown", platform="android", name="open_calendar", description="Open Calendar")
 async def open_calendar(device):
@@ -1677,7 +1725,7 @@ async def open_calendar(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await extractor.extract_from_steps_multi([
+    skills = await _extract_many_from_steps(extractor, [
         {"action": {"action_type": "open_app", "text": "Calendar"}, "observation": {"platform": "android"}},
     ], is_success=True)
 
@@ -1687,7 +1735,7 @@ async def open_calendar(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_falls_back_to_trace_app_when_open_app_is_unknown() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="unknown", platform="android", name="open_calendar", description="Open Calendar")
 async def open_calendar(device):
@@ -1695,7 +1743,7 @@ async def open_calendar(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await extractor.extract_from_steps_multi([
+    skills = await _extract_many_from_steps(extractor, [
         {
             "action": {"action_type": "open_app", "text": "unknown"},
             "observation": {"platform": "android", "foreground_app": "com.google.android.calendar"},
@@ -1708,7 +1756,7 @@ async def open_calendar(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_trace_app_overrides_llm_app_and_open_app_valid_state() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.android.settings", platform="android", name="open_calendar", description="Open Calendar")
 async def open_calendar(device):
@@ -1717,7 +1765,7 @@ async def open_calendar(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await extractor.extract_from_steps_multi([
+    skills = await _extract_many_from_steps(extractor, [
         {
             "action": {"action_type": "open_app", "text": "org.fossify.calendar"},
             "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
@@ -1735,33 +1783,6 @@ async def open_calendar(device):
     assert skills[0].steps[0].fixed is True
     assert skills[0].steps[0].fixed_values["text"] == "org.fossify.calendar"
     assert skills[0].steps[0].valid_state == "No need to verify"
-
-
-@pytest.mark.asyncio
-async def test_skill_extractor_keeps_llm_app_when_it_is_observed_candidate() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
-
-@skill(app="com.google.android.apps.maps", platform="android", name="open_location", description="Open a location in Maps")
-async def open_location(device):
-    await action("open_app", target="Maps", fixed=True, fixed_values={"text": "com.google.android.apps.maps"}, valid_state="No need to verify")
-    await action("tap", target="Directions", fixed=True, fixed_values={"x": 100, "y": 200}, valid_state="Directions button is visible")
-"""
-    extractor = SkillExtractor(_ScriptedLLM([response]))
-
-    skills = await extractor.extract_from_steps_multi([
-        {
-            "action": {"action_type": "tap", "x": 10, "y": 20},
-            "observation": {"platform": "android", "foreground_app": "gmailclone"},
-        },
-        {
-            "action": {"action_type": "tap", "x": 100, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "maps"},
-        },
-    ], is_success=True)
-
-    assert len(skills) == 1
-    assert skills[0].app == "com.google.android.apps.maps"
-    assert skills[0].steps[0].fixed_values["text"] == "com.google.android.apps.maps"
 
 
 @pytest.mark.asyncio
@@ -1801,7 +1822,7 @@ async def test_skill_extractor_skips_trace_when_all_steps_share_foreground_app(
 
 @pytest.mark.asyncio
 async def test_skill_extractor_rejects_unknown_app_without_fallback() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="unknown", platform="android", name="open_unknown", description="Open unknown")
 async def open_unknown(device):
@@ -1809,7 +1830,7 @@ async def open_unknown(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await extractor.extract_from_steps_multi([
+    skills = await _extract_many_from_steps(extractor, [
         {"action": {"action_type": "open_app", "text": "unknown"}, "observation": {"platform": "android"}},
     ], is_success=True)
 
@@ -1818,7 +1839,7 @@ async def open_unknown(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_removes_llm_contract_without_codegen_contract() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.example", platform="android", name="open_details", description="Open details")
 async def open_details(device):
@@ -1828,7 +1849,7 @@ async def open_details(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps(
+    skill = await _extract_from_steps(extractor,
         [{"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}}],
         is_success=True,
     )
@@ -1839,7 +1860,7 @@ async def open_details(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_drops_llm_contract_when_step_trace_has_no_codegen_selector() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.zhihu.android", platform="android", name="search_box", description="Tap Zhihu search box")
 async def search_box(device):
@@ -1849,7 +1870,7 @@ async def search_box(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps(
+    skill = await _extract_from_steps(extractor,
         [{"action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}}],
         is_success=True,
     )
@@ -1860,7 +1881,7 @@ async def search_box(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_drops_later_llm_contract_without_codegen_selector() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.zhihu.android", platform="android", name="search_box_recover", description="Tap search box")
 async def search_box_recover(device):
@@ -1871,7 +1892,7 @@ async def search_box_recover(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "tap", "x": 607.0, "y": 243.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
         {"action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
     ], is_success=True)
@@ -1882,7 +1903,7 @@ async def search_box_recover(device):
 
 @pytest.mark.asyncio
 async def test_skill_extractor_drops_input_llm_contract_without_codegen_selector() -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.zhihu.android", platform="android", name="zhihu_search_text", description="Enter search text")
 async def zhihu_search_text(device):
@@ -1893,7 +1914,7 @@ async def zhihu_search_text(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_steps([
+    skill = await _extract_from_steps(extractor, [
         {"action": {"action_type": "input_text", "text": "强化学习"}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
     ], is_success=True)
 
@@ -2076,7 +2097,7 @@ def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path
 async def test_skill_extractor_overrides_llm_contract_with_codegen_contract(
     tmp_path: Path,
 ) -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="tv.danmaku.bili", platform="android", name="search_bilibili", description="Search Bilibili")
 async def search_bilibili(device, query):
@@ -2166,7 +2187,7 @@ async def search_bilibili(device, query):
 async def test_skill_extractor_injects_focused_input_contract_when_llm_omits_it(
     tmp_path: Path,
 ) -> None:
-    response = """from guiclaw.skills.flat import C, R, action, skill, tag
+    response = """from guiclaw.skills.flat import C, R, action, skill
 
 @skill(app="com.zhihu.android", platform="android", name="zhihu_search_text", description="Enter search text")
 async def zhihu_search_text(device, query):

@@ -24,17 +24,18 @@ from typing import Any, Callable
 
 import numpy as np
 
+import guiclaw.skills._merger as _merger
 from guiclaw.action import normalize_action_type
-from guiclaw.skills import _merger
 from guiclaw.skills._merger import (
     CLEANUP_EMBEDDING_THRESHOLD,
     EMBEDDING_CONFLICT_THRESHOLD,
     STOPWORDS,
     STRUCTURAL_CONFLICT_THRESHOLD,
 )
-from guiclaw.skills.data import Skill, SkillStep
+from guiclaw.skills.data import Skill, SkillStep, collect_placeholder_names
 from guiclaw.skills.normalization import (
     annotate_android_apps,
+    is_unknown_app_identifier,
     normalize_app_filter,
     normalize_app_identifier,
     normalize_skill_app,
@@ -51,7 +52,7 @@ SKILL_EMBEDDINGS_META_FILENAME = "skills_embeddings_meta.json"
 SKILL_EMBEDDINGS_CACHE_VERSION = 1
 SKILL_FEEDBACK_FILENAME = "skill_feedback.json"
 SKILL_FEEDBACK_VERSION = 1
-CODE_HEADER = "from guiclaw.skills.flat import C, R, action, skill, tag"
+CODE_HEADER = "from guiclaw.skills.flat import C, R, action, skill"
 
 _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
 _SELECTOR_KEYS = ("text", "content_desc", "resource_id", "class", "xpath")
@@ -62,7 +63,6 @@ _STOPWORDS = STOPWORDS
 _EMBEDDING_CONFLICT_THRESHOLD = EMBEDDING_CONFLICT_THRESHOLD
 _STRUCTURAL_CONFLICT_THRESHOLD = STRUCTURAL_CONFLICT_THRESHOLD
 _CLEANUP_EMBEDDING_THRESHOLD = CLEANUP_EMBEDDING_THRESHOLD
-_UNKNOWN_APP_IDS = {"", "unknown", "app-package-or-name"}
 
 
 def _store_lock(store_dir: Path) -> threading.RLock:
@@ -80,7 +80,6 @@ class FlatAction:
     action_type: str
     target: str = ""
     parameters: dict[str, Any] = field(default_factory=dict)
-    expected_state: str | None = None
     valid_state: str | None = None
     state_contract: dict[str, Any] | None = None
     fixed: bool = False
@@ -98,8 +97,6 @@ class FlatSkillMeta:
     created_at: float | None = None
     success_count: int = 0
     failure_count: int = 0
-    success_streak: int = 0
-    failure_streak: int = 0
 
 
 @dataclass(frozen=True)
@@ -181,18 +178,6 @@ def _contract_with_anchor(
     return normalize_state_contract(raw)
 
 
-def tag(*tags: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    clean_tags = tuple(str(t) for t in tags if str(t))
-
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        existing = tuple(getattr(func, "__guiclaw_tags__", ()))
-        merged = tuple(dict.fromkeys((*existing, *clean_tags)))
-        setattr(func, "__guiclaw_tags__", merged)
-        return func
-
-    return decorator
-
-
 def skill(
     *,
     app: str,
@@ -204,8 +189,6 @@ def skill(
     created_at: float | None = None,
     success_count: int = 0,
     failure_count: int = 0,
-    success_streak: int = 0,
-    failure_streak: int = 0,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         merged_tags = tuple(dict.fromkeys((*getattr(func, "__guiclaw_tags__", ()), *(tags or ()))))
@@ -222,8 +205,6 @@ def skill(
                 created_at=created_at,
                 success_count=success_count,
                 failure_count=failure_count,
-                success_streak=success_streak,
-                failure_streak=failure_streak,
             ),
         )
         setattr(func, "__guiclaw_tags__", merged_tags)
@@ -233,7 +214,6 @@ def skill(
 
 
 async def action(action_type: str, target: str = "", **parameters: Any) -> FlatAction:
-    expected_state = parameters.pop("expected_state", None)
     valid_state = parameters.pop("valid_state", None)
     state_contract = parameters.pop("state_contract", None)
     fixed = bool(parameters.pop("fixed", False))
@@ -245,7 +225,6 @@ async def action(action_type: str, target: str = "", **parameters: Any) -> FlatA
         action_type=action_type,
         target=target,
         parameters=parameters,
-        expected_state=expected_state,
         valid_state=valid_state,
         state_contract=normalize_state_contract(state_contract),
         fixed=fixed,
@@ -293,8 +272,6 @@ def compile_flat_skills(source: str) -> FlatCompileResult:
             for count_field in (
                 "success_count",
                 "failure_count",
-                "success_streak",
-                "failure_streak",
             ):
                 if count_field in meta:
                     skill_kwargs[count_field] = int(meta[count_field])
@@ -448,12 +425,14 @@ class FlatSkillLibrary:
             existing_same_id = next((skill for skill in skills if skill.skill_id == skill_obj.skill_id), None)
             if existing_same_id is not None:
                 updated = self._replace_in_list(skills, existing_same_id.skill_id, skill_obj)
-                updated = self._cleanup_superseded_prefixes(updated, skill_obj.platform, skill_obj.app, embeddings=embeddings)
+                updated = _merger.cleanup_superseded_prefixes(
+                    updated, skill_obj.platform, skill_obj.app, embeddings=embeddings
+                )
                 self._write_skills(updated)
                 self._prune_feedback_for_skills(updated)
                 return "KEEP_NEW", existing_same_id.skill_id
 
-            conflict = self._find_best_conflict(
+            conflict = _merger.find_best_conflict(
                 skill_obj,
                 skills,
                 incoming_embedding=incoming_embedding,
@@ -461,18 +440,22 @@ class FlatSkillLibrary:
             )
             if conflict is None:
                 updated = [*skills, skill_obj]
-                updated = self._cleanup_superseded_prefixes(updated, skill_obj.platform, skill_obj.app, embeddings=embeddings)
+                updated = _merger.cleanup_superseded_prefixes(
+                    updated, skill_obj.platform, skill_obj.app, embeddings=embeddings
+                )
                 self._write_skills(updated)
                 self._prune_feedback_for_skills(updated)
                 return "ADD", skill_obj.skill_id
 
-            decision = self._heuristic_merge_decision(conflict, skill_obj)
+            decision = _merger.heuristic_merge_decision(conflict, skill_obj)
             if decision == "MERGE":
-                merged = self._merge_skills(conflict.skill, skill_obj)
+                merged = _merger.merge_skills(conflict.skill, skill_obj)
                 if incoming_embedding is not None:
                     embeddings[merged.skill_id] = incoming_embedding
                 updated = self._replace_in_list(skills, conflict.skill.skill_id, merged)
-                updated = self._cleanup_superseded_prefixes(updated, merged.platform, merged.app, embeddings=embeddings)
+                updated = _merger.cleanup_superseded_prefixes(
+                    updated, merged.platform, merged.app, embeddings=embeddings
+                )
                 self._write_skills(updated)
                 self._merge_feedback_records(source_skill_id=skill_obj.skill_id, target_skill_id=merged.skill_id)
                 self._prune_feedback_for_skills(updated)
@@ -482,7 +465,9 @@ class FlatSkillLibrary:
                     self._normalize_skill(skill_obj) if skill.skill_id == conflict.skill.skill_id else skill
                     for skill in skills
                 ]
-                updated = self._cleanup_superseded_prefixes(updated, skill_obj.platform, skill_obj.app, embeddings=embeddings)
+                updated = _merger.cleanup_superseded_prefixes(
+                    updated, skill_obj.platform, skill_obj.app, embeddings=embeddings
+                )
                 self._write_skills(updated)
                 self._merge_feedback_records(source_skill_id=conflict.skill.skill_id, target_skill_id=skill_obj.skill_id)
                 self._prune_feedback_for_skills(updated)
@@ -517,40 +502,6 @@ class FlatSkillLibrary:
             if key in current_keys:
                 out[str(record["skill_id"])] = cached_embeddings[int(record["embedding_row"])]
         return out
-
-    @staticmethod
-    def _find_best_conflict(
-        incoming: Skill,
-        skills: list[Skill],
-        *,
-        incoming_embedding: np.ndarray | None,
-        existing_embeddings: dict[str, np.ndarray],
-    ) -> _merger.SkillConflict | None:
-        return _merger.find_best_conflict(
-            incoming, skills,
-            incoming_embedding=incoming_embedding,
-            existing_embeddings=existing_embeddings,
-        )
-
-    @staticmethod
-    def _heuristic_merge_decision(conflict: _merger.SkillConflict, new: Skill) -> str:
-        return _merger.heuristic_merge_decision(conflict, new)
-
-    @staticmethod
-    def _merge_skills(old: Skill, new: Skill) -> Skill:
-        return _merger.merge_skills(old, new)
-
-    @staticmethod
-    def _cleanup_superseded_prefixes(
-        skills: list[Skill],
-        platform: str,
-        app: str,
-        *,
-        embeddings: dict[str, np.ndarray] | None = None,
-    ) -> list[Skill]:
-        return _merger.cleanup_superseded_prefixes(
-            skills, platform, app, embeddings=embeddings,
-        )
 
     @staticmethod
     def _replace_in_list(skills: list[Skill], skill_id: str, updated_skill: Skill) -> list[Skill]:
@@ -917,10 +868,6 @@ def export_skills_to_source(skills: list[Skill] | tuple[Skill, ...]) -> str:
             decorator_parts.append(f"success_count={skill_obj.success_count}")
         if skill_obj.failure_count:
             decorator_parts.append(f"failure_count={skill_obj.failure_count}")
-        if skill_obj.success_streak:
-            decorator_parts.append(f"success_streak={skill_obj.success_streak}")
-        if skill_obj.failure_streak:
-            decorator_parts.append(f"failure_streak={skill_obj.failure_streak}")
         lines.append(f"@skill({', '.join(decorator_parts)})")
         placeholder_map = _parameter_placeholder_map(skill_obj.parameters)
         parameters = [placeholder_map[str(parameter)] for parameter in skill_obj.parameters]
@@ -1051,7 +998,6 @@ def _skill_step_from_action_call(call: ast.Call, bindings: dict[str, ast.AST]) -
     action_type = normalize_action_type(str(_literal_value(call.args[0]) if call.args else ""))
     target = ""
     parameters: dict[str, Any] = {}
-    expected_state: str | None = None
     valid_state: str | None = None
     state_contract: dict[str, Any] | None = None
     fixed = False
@@ -1061,9 +1007,6 @@ def _skill_step_from_action_call(call: ast.Call, bindings: dict[str, ast.AST]) -
             continue
         if kw.arg == "target":
             target = str(_literal_or_placeholder(kw.value, bindings))
-            continue
-        if kw.arg == "expected_state":
-            expected_state = str(_literal_or_placeholder(kw.value, bindings))
             continue
         if kw.arg == "valid_state":
             valid_state = str(_literal_or_placeholder(kw.value, bindings))
@@ -1088,7 +1031,6 @@ def _skill_step_from_action_call(call: ast.Call, bindings: dict[str, ast.AST]) -
         action_type=action_type,
         target=target,
         parameters=parameters,
-        expected_state=expected_state,
         valid_state=valid_state,
         state_contract=state_contract,
         fixed=fixed,
@@ -1265,11 +1207,10 @@ def _used_step_parameters(func: ast.AsyncFunctionDef, steps: tuple[SkillStep, ..
     declared = tuple(arg.arg for arg in func.args.args[1:])
     if not declared:
         return ()
-    used = _placeholder_names_in_value([
+    used = collect_placeholder_names([
         {
             "target": step.target,
             "parameters": step.parameters,
-            "expected_state": step.expected_state,
             "valid_state": step.valid_state,
             "state_contract": step.state_contract,
             "fixed_values": step.fixed_values,
@@ -1277,23 +1218,6 @@ def _used_step_parameters(func: ast.AsyncFunctionDef, steps: tuple[SkillStep, ..
         for step in steps
     ])
     return tuple(name for name in declared if name in used)
-
-
-def _placeholder_names_in_value(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {match.group(1) for match in _PLACEHOLDER_RE.finditer(value)}
-    if isinstance(value, dict):
-        names: set[str] = set()
-        for key, item in value.items():
-            names.update(_placeholder_names_in_value(key))
-            names.update(_placeholder_names_in_value(item))
-        return names
-    if isinstance(value, (list, tuple, set)):
-        names: set[str] = set()
-        for item in value:
-            names.update(_placeholder_names_in_value(item))
-        return names
-    return set()
 
 
 def _skill_search_text(skill_obj: Skill) -> str:
@@ -1304,7 +1228,6 @@ def _skill_search_text(skill_obj: Skill) -> str:
             step.target,
             " ".join(str(k) for k in step.parameters.keys()),
             " ".join(str(v) for v in step.parameters.values()),
-            step.expected_state or "",
             step.valid_state or "",
             _merger.stable_json(step.state_contract),
         ])
@@ -1317,7 +1240,6 @@ def _skill_search_text(skill_obj: Skill) -> str:
         app_alias_text,
         skill_obj.platform,
         " ".join(skill_obj.tags),
-        " ".join(skill_obj.preconditions),
         step_text,
     ])
     return " ".join([base_text, _retrieval_alias_text(base_text)])
@@ -1343,7 +1265,7 @@ def _cache_record_keys(records: list[dict[str, Any]]) -> list[tuple[str, str]]:
 
 
 def _is_unknown_app(app: str) -> bool:
-    return (app or "").strip().lower() in _UNKNOWN_APP_IDS
+    return is_unknown_app_identifier(app)
 
 
 def _feedback_failure_reason(failure_case: dict[str, Any]) -> str:
@@ -1429,8 +1351,6 @@ def _action_call_source(step: SkillStep, placeholder_map: dict[str, str]) -> str
             else:
                 kwargs.append(f"parameters={_code_literal(step.parameters)}")
                 break
-    if step.expected_state is not None:
-        kwargs.append(f"expected_state={_template_literal(step.expected_state, placeholder_map)}")
     if step.valid_state is not None:
         kwargs.append(f"valid_state={_template_literal(step.valid_state, placeholder_map)}")
     if step.state_contract:
@@ -1482,5 +1402,4 @@ __all__ = [
     "compile_flat_skills",
     "export_skills_to_source",
     "skill",
-    "tag",
 ]

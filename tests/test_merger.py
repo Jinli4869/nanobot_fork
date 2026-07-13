@@ -28,7 +28,6 @@ from guiclaw.skills._merger import (
 )
 from guiclaw.skills.data import Skill, SkillStep
 
-
 # -- helpers ----------------------------------------------------------------
 
 def _skill(
@@ -228,11 +227,11 @@ def test_action_signature_empty_steps() -> None:
 
 def test_action_similarity_identical() -> None:
     s1 = _skill(steps=(
-        _step("tap", "settings button", expected_state="visible and clickable"),
+        _step("tap", "settings button", valid_state="visible and clickable"),
         _step("swipe", "camera list"),
     ))
     s2 = _skill(steps=(
-        _step("tap", "settings button", expected_state="visible and clickable"),
+        _step("tap", "settings button", valid_state="visible and clickable"),
         _step("swipe", "camera list"),
     ))
     sim = action_similarity(_sig(s1), _sig(s2))
@@ -308,14 +307,14 @@ def test_find_best_conflict_different_platform_no_match() -> None:
 def test_find_best_conflict_rich_prefix_skipped() -> None:
     short = _skill(
         skill_id="short", name="open",
-        steps=(_step("tap", "settings button", expected_state="visible"),),
+        steps=(_step("tap", "settings button", valid_state="visible"),),
         success_count=0,
     )
     long = _skill(
         skill_id="long", name="open then swipe",
         steps=(
-            _step("tap", "settings button", expected_state="visible"),
-            _step("swipe", "camera list", expected_state="swipeable"),
+            _step("tap", "settings button", valid_state="visible"),
+            _step("swipe", "camera list", valid_state="swipeable"),
         ),
         success_count=0,
     )
@@ -396,7 +395,6 @@ def test_heuristic_merge_default() -> None:
 def test_cleanup_superseded_prefixes_removes_subsumed() -> None:
     step_kwargs = {
         "target": "settings button",
-        "expected_state": "visible",
         "valid_state": "settings page is visible",
         "parameters": {"x": 100, "y": 200},
     }
@@ -409,7 +407,7 @@ def test_cleanup_superseded_prefixes_removes_subsumed() -> None:
         skill_id="long", name="full",
         steps=(
             _step("tap", **step_kwargs),
-            _step("swipe", "camera list", expected_state="swipeable",
+            _step("swipe", "camera list", valid_state="swipeable",
                   parameters={"x2": 300, "y2": 400}),
         ),
         success_count=0,
@@ -425,14 +423,14 @@ def test_cleanup_superseded_prefixes_removes_subsumed() -> None:
 def test_cleanup_keeps_successful_skills() -> None:
     short = _skill(
         skill_id="short", name="prefix",
-        steps=(_step("tap", "settings button", expected_state="visible"),),
+        steps=(_step("tap", "settings button", valid_state="visible"),),
         success_count=1,  # has succeeded, so keep it
     )
     long = _skill(
         skill_id="long", name="full",
         steps=(
-            _step("tap", "settings button", expected_state="visible"),
-            _step("swipe", "camera list", expected_state="swipeable"),
+            _step("tap", "settings button", valid_state="visible"),
+            _step("swipe", "camera list", valid_state="swipeable"),
         ),
         success_count=0,
     )

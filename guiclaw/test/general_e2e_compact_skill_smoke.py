@@ -26,8 +26,8 @@ selected by the model as a ``use_skill`` action.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import ast
+import asyncio
 import base64
 import json
 import os
@@ -120,10 +120,10 @@ async def retrieve_skill_infos(
     search_k = max(top_k, top_k * 5 if shortcut_only else top_k)
     results = await library.search(task, platform=platform, app=app, top_k=search_k)
     out: list[SkillInfo] = []
-    for skill, score in results:
+    for skill, _score in results:
         if shortcut_only and not is_shortcut_skill(skill):
             continue
-        out.append(skill_info_from_flat_skill(skill, score=score))
+        out.append(skill_info_from_flat_skill(skill))
         if len(out) >= top_k:
             break
     return out
@@ -505,14 +505,7 @@ def skill_info_to_dict(skill: SkillInfo) -> dict[str, Any]:
         "skill_name": skill.function_name,
         "description": skill.description,
         "app": skill.app,
-        "platform": skill.platform,
-        "tags": list(skill.tags),
         "parameters": list(skill.parameters),
-        "score": skill.score,
-        "first_action_type": skill.first_action_type,
-        "first_action_target": skill.first_action_target,
-        "first_action_parameters": skill.first_action_parameters,
-        "first_valid_state": skill.first_valid_state,
     }
 
 

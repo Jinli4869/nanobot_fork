@@ -55,7 +55,7 @@ from typing import Any
 
 from guiclaw.action import normalize_action_type
 from guiclaw.interfaces import LLMResponse
-from guiclaw.skills.data import Skill
+from guiclaw.skills.data import Skill, collect_placeholder_names
 from guiclaw.skills.extractor import SkillExtractor
 from guiclaw.skills.flat import compile_flat_skills, export_skills_to_source
 from guiclaw.skills.state_contract import state_contract_fingerprint
@@ -278,24 +278,6 @@ def compactify_skill(
     )
 
 
-def _placeholder_names(value: Any) -> frozenset[str]:
-    """Collect ``{{name}}`` placeholders nested anywhere inside *value*."""
-    if isinstance(value, str):
-        return frozenset(_PLACEHOLDER_RE.findall(value))
-    if isinstance(value, dict):
-        out: set[str] = set()
-        for key, item in value.items():
-            out |= _placeholder_names(key)
-            out |= _placeholder_names(item)
-        return frozenset(out)
-    if isinstance(value, (list, tuple, set, frozenset)):
-        out = set()
-        for item in value:
-            out |= _placeholder_names(item)
-        return frozenset(out)
-    return frozenset()
-
-
 def _literal_target(text: str) -> str:
     """Normalized target text with ``{{placeholders}}`` removed.
 
@@ -322,7 +304,9 @@ def _cluster_key(skill: Skill) -> tuple[Any, ...]:
             normalize_action_type(step.action_type),
             state_contract_fingerprint(step.state_contract),
             _literal_target(step.target),
-            tuple(sorted(_placeholder_names((step.target, step.parameters, step.fixed_values)))),
+            tuple(sorted(collect_placeholder_names(
+                (step.target, step.parameters, step.fixed_values)
+            ))),
         )
         for step in skill.steps
     )
@@ -340,8 +324,8 @@ def cluster_compact_skills(
     *succeeded*.  A cluster is produced only when it has at least one
     success-derived member (so a workflow only ever seen failing is never
     promoted) and its total member count reaches ``min_support`` (failure-derived
-    members may help reach the threshold).  ``success_count`` / ``success_streak``
-    count *success-derived* members only, so failures never inflate confidence;
+    members may help reach the threshold). ``success_count`` counts
+    *success-derived* members only, so failures never inflate confidence;
     clusters that include any failure-derived member are tagged ``from_failure``.
     The richest success member (most ``state_contract`` guards) represents the
     cluster.
@@ -364,7 +348,6 @@ def cluster_compact_skills(
             replace(
                 representative,
                 success_count=len(success_members),
-                success_streak=len(success_members),
                 tags=tags,
             )
         )
@@ -423,7 +406,6 @@ def merge_into_output(skills: list[Skill], path: Path) -> int:
             by_id[skill.skill_id] = replace(
                 skill,
                 success_count=max(skill.success_count, prior.success_count),
-                success_streak=max(skill.success_streak, prior.success_streak),
             )
 
     ordered = sorted(by_id.values(), key=lambda s: (-s.success_count, s.app, s.name))

@@ -49,7 +49,7 @@ Full trajectory:
 Return ONLY a JSON object for the improved skill, using the same schema as the original skill.
 Rules:
 - Improve the original skill in place. Do not create a different skill or unrelated workflow.
-- Keep the same high-level intent unless the failure shows the description caused a wrong match; then narrow the description/preconditions.
+- Keep the same high-level intent unless the failure shows the description caused a wrong match; then narrow the description.
 - If a popup or optional obstacle appeared, add a guarded optional step before the blocked step:
   {{"action_type": "tap", "target": "Close", "parameters": {{"optional": true}}, "valid_state": "popup close button is visible"}}
   Optional steps are skipped when their valid_state is not present.
@@ -263,7 +263,6 @@ def _parse_skill_response(text: str, *, original: Skill) -> Skill | None:
                 action_type=str(raw_step["action_type"]),
                 target=str(raw_step.get("target") or ""),
                 parameters=dict(raw_step.get("parameters") or {}),
-                expected_state=raw_step.get("expected_state"),
                 valid_state=raw_step.get("valid_state"),
                 state_contract=normalize_state_contract(raw_step.get("state_contract")),
                 fixed=bool(raw_step.get("fixed", False)),
@@ -281,15 +280,10 @@ def _parse_skill_response(text: str, *, original: Skill) -> Skill | None:
             platform=platform,
             steps=tuple(steps),
             parameters=tuple(str(item) for item in (data.get("parameters") or original.parameters)),
-            preconditions=tuple(
-                str(item) for item in (data.get("preconditions") or original.preconditions)
-            ),
             tags=tuple(str(item) for item in (data.get("tags") or original.tags)),
             created_at=original.created_at,
             success_count=original.success_count,
             failure_count=original.failure_count,
-            success_streak=original.success_streak,
-            failure_streak=original.failure_streak,
         )
     )
 

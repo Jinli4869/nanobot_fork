@@ -486,8 +486,8 @@ def annotate_android_apps(packages: list[str]) -> list[str]:
 
     Only packages with a known display name are included; unmapped packages are
     silently dropped.  This keeps the system prompt focused on apps the model can
-    name and launch, while ``resolve_android_package()`` handles the package name
-    lookup at execution time.
+    name and launch, while the platform normalizers handle package lookup at
+    execution time.
 
     Returns a list like ``["美团/Meituan: com.sankuai.meituan"]``.
     """
@@ -497,21 +497,6 @@ def annotate_android_apps(packages: list[str]) -> list[str]:
         if display:
             result.append(f"{display}: {pkg}")
     return result
-
-
-def resolve_android_package(app_text: str) -> str:
-    """Resolve a human-readable app name to its Android package name.
-
-    Returns the matching package name if found, otherwise the input unchanged.
-    """
-    cleaned = " ".join((app_text or "").strip().strip("\"'").split())
-    if not cleaned:
-        return app_text or ""
-    lowered = cleaned.lower()
-    package = _lookup_android_alias(lowered)
-    if package:
-        return package
-    return cleaned
 
 
 def find_android_apps_in_text(text: str, *, max_apps: int = 5) -> list[str]:
@@ -746,6 +731,11 @@ def normalize_adb_app_identifier(app: str) -> str:
 
     slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
     return slug or "unknown"
+
+
+def is_unknown_app_identifier(app: str) -> bool:
+    """Return whether *app* is a placeholder rather than a usable identifier."""
+    return (app or "").strip().lower() in {"", "unknown", "app", "app-package-or-name"}
 
 
 def normalize_skill_app(skill: Skill) -> Skill:

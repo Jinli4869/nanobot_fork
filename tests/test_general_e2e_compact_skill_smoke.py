@@ -7,7 +7,7 @@ from guiclaw.skills.flat import FlatSkillLibrary
 from guiclaw.test import general_e2e_compact_skill_smoke as smoke
 
 
-def test_shortcut_skill_catalog_includes_id_transport_and_parameters() -> None:
+def test_shortcut_skill_catalog_includes_id_and_parameters() -> None:
     skill = Skill(
         skill_id="shortcut:dl:tv.danmaku.bili:search",
         name="bili_search",
@@ -29,12 +29,10 @@ def test_shortcut_skill_catalog_includes_id_transport_and_parameters() -> None:
         ),
     )
 
-    catalog = smoke.build_catalog([smoke.skill_info_from_flat_skill(skill, score=1.5)], limit=None)
+    catalog = smoke.build_catalog([smoke.skill_info_from_flat_skill(skill)], limit=None)
 
     assert "skill_id=shortcut:dl:tv.danmaku.bili:search" in catalog
-    assert "first_action=open_deeplink" in catalog
     assert "parameters=query" in catalog
-    assert "bilibili://search?keyword={{query}}" in catalog
 
 
 @pytest.mark.asyncio

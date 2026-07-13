@@ -84,38 +84,6 @@ _SENTENCE_PUNCT_RE = re.compile(r"[，。；：、,.!?！？]")
 _GENERIC_MEDIA_TEXTS = {"ad", "ads", "advertisement", "image", "图片", "图像", "广告", "广告素材"}
 
 
-def filter_static_texts(value: Any, *, limit: int = 40) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    if not isinstance(value, list):
-        return out
-    for item in value:
-        text = _clean_text(item)
-        if not text or text in seen or not is_static_text(text):
-            continue
-        seen.add(text)
-        out.append(text)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def filter_static_resource_ids(value: Any, *, limit: int = 40) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    if not isinstance(value, list):
-        return out
-    for item in value:
-        resource_id = _clean_text(item)
-        if not resource_id or resource_id in seen or not is_static_resource_id(resource_id):
-            continue
-        seen.add(resource_id)
-        out.append(resource_id)
-        if len(out) >= limit:
-            break
-    return out
-
-
 def static_control_from_node(node: dict[str, Any]) -> dict[str, Any] | None:
     text = _clean_text(node.get("text"))
     content_desc = _clean_text(node.get("content_desc"))

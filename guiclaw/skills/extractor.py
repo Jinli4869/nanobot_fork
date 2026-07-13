@@ -9,14 +9,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from guiclaw.action import ActionError, VALID_ACTION_TYPES, normalize_action_type, parse_action
+from guiclaw.action import VALID_ACTION_TYPES, ActionError, normalize_action_type, parse_action
 from guiclaw.interfaces import LLMProvider
-from guiclaw.skills.data import Skill
+from guiclaw.skills.data import Skill, collect_placeholder_names
 from guiclaw.skills.flat import CODE_HEADER, compile_flat_skills
-from guiclaw.skills.normalization import normalize_app_identifier
+from guiclaw.skills.normalization import is_unknown_app_identifier, normalize_app_identifier
 from guiclaw.skills.trajectory_codegen import (
-    CodeStep,
     CodegenResult,
+    CodeStep,
     apply_contract_constraints_from_codegen,
     apply_focused_contracts_from_codegen,
     apply_state_contracts_from_codegen,
@@ -26,7 +26,6 @@ from guiclaw.skills.trajectory_codegen import (
 
 logger = logging.getLogger(__name__)
 
-_UNKNOWN_APP_IDS = {"", "unknown", "app", "app-package-or-name"}
 _TRANSIENT_APP_IDS = frozenset({
     "com.google.android.apps.nexuslauncher",
     "com.android.intentresolver",
@@ -207,17 +206,6 @@ class SkillExtractor:
             "diagnostics": self.last_diagnostics,
         })
         return skills
-
-    async def extract_from_steps(self, steps: list[dict[str, Any]], *, is_success: bool = True) -> Skill | None:
-        skills = await self.extract_from_steps_multi(steps, is_success=is_success)
-        return skills[0] if skills else None
-
-    async def extract_from_steps_multi(self, steps: list[dict[str, Any]], *, is_success: bool = True) -> list[Skill]:
-        self._last_diagnostics = []
-        result = _codegen_from_step_dicts(steps)
-        if result is None or not result.steps:
-            return []
-        return await self._extract_all(result, is_success)
 
     async def extract_from_codegen_result_multi(
         self,
@@ -447,10 +435,9 @@ def _skill_quality_issues(skills: list[Skill]) -> list[str]:
                 issues.append(f"{skill.name} step {index} {action_type} is missing target")
             if action_type in _VALID_STATE_REQUIRED_ACTIONS and not (step.valid_state or "").strip():
                 issues.append(f"{skill.name} step {index} {action_type} is missing valid_state")
-            placeholders = _placeholder_names_in_value({
+            placeholders = collect_placeholder_names({
                 "target": step.target,
                 "parameters": step.parameters,
-                "expected_state": step.expected_state,
                 "valid_state": step.valid_state,
                 "state_contract": step.state_contract,
                 "fixed_values": step.fixed_values,
@@ -484,23 +471,6 @@ def _skill_quality_issues(skills: list[Skill]) -> list[str]:
                             f"{skill.name} step {index} fixed {action_type} is invalid: {exc}"
                         )
     return issues
-
-
-def _placeholder_names_in_value(value: Any) -> set[str]:
-    if isinstance(value, str):
-        return {match.group(1) for match in re.finditer(r"\{\{(\w+)\}\}", value)}
-    if isinstance(value, dict):
-        names: set[str] = set()
-        for key, item in value.items():
-            names.update(_placeholder_names_in_value(key))
-            names.update(_placeholder_names_in_value(item))
-        return names
-    if isinstance(value, (list, tuple, set)):
-        names: set[str] = set()
-        for item in value:
-            names.update(_placeholder_names_in_value(item))
-        return names
-    return set()
 
 
 def _format_quality_issues(issues: list[str]) -> str:
@@ -553,7 +523,7 @@ def _normalize_extracted_steps(
 ) -> tuple[Any, ...]:
     normalized = []
     for index, step in enumerate(steps):
-        updated = replace(step, expected_state=None)
+        updated = step
         if index == 0 and updated.action_type == "open_app":
             updated = replace(updated, valid_state=_NO_VERIFY_VALID_STATE)
             if _is_reusable_app(resolved_app):
@@ -587,7 +557,7 @@ def _first_open_app_text(skill: Skill) -> str:
 
 
 def _is_unknown_app(app: str) -> bool:
-    return (app or "").strip().lower() in _UNKNOWN_APP_IDS
+    return is_unknown_app_identifier(app)
 
 
 def _is_transient_app(app: str) -> bool:
@@ -765,58 +735,4 @@ def _write_log(trace_path: Path, status: str, detail: Any) -> None:
         json.dumps({"status": status, "trace": str(trace_path), "detail": detail},
                    ensure_ascii=False, indent=2),
         encoding="utf-8",
-    )
-
-
-def _codegen_from_step_dicts(steps: list[dict[str, Any]]) -> CodegenResult | None:
-    """Build a minimal CodegenResult from pre-parsed step dicts (for test compat)."""
-    if not steps:
-        return None
-    first = steps[0]
-    obs = first.get("observation") or {}
-    platform = str(obs.get("platform") or "unknown")
-    app = str(obs.get("foreground_app") or obs.get("app") or "")
-    task = str(first.get("task") or "")
-    app_candidates: list[str] = []
-
-    code_steps: list[CodeStep] = []
-    for i, s in enumerate(steps):
-        action = s.get("action") or {}
-        action_type = str(action.get("action_type") or "")
-        action_app = ""
-        if action_type == "open_app":
-            action_app = normalize_app_identifier(
-                platform,
-                str(action.get("text") or action.get("app_name") or action.get("package") or ""),
-            )
-        if _is_reusable_app(action_app) and action_app not in app_candidates:
-            app_candidates.append(action_app)
-        observation_app = normalize_app_identifier(
-            platform,
-            str((s.get("observation") or {}).get("foreground_app") or (s.get("observation") or {}).get("app") or ""),
-        )
-        if _is_reusable_app(observation_app) and observation_app not in app_candidates:
-            app_candidates.append(observation_app)
-        if not app:
-            app = str((s.get("observation") or {}).get("foreground_app") or "")
-        step_app = action_app if _is_reusable_app(action_app) else observation_app
-        code_steps.append(CodeStep(
-            step_index=i,
-            app=step_app,
-            intent=str(s.get("action_intent") or s.get("action_summary") or action_type),
-            action_type=action_type,
-            action_params={k: action[k] for k in ("x", "y", "x2", "y2", "text", "key", "pixels")
-                           if k in action and action[k] is not None},
-            control_info="",
-            contract_json="",
-            screenshot_b64="",
-        ))
-
-    normalized_app = normalize_app_identifier(platform, app)
-    if not _is_reusable_app(normalized_app) and app_candidates:
-        app = app_candidates[0]
-
-    return CodegenResult(
-        task=task, platform=platform, app=app, app_candidates=tuple(app_candidates),
-        steps=code_steps, screenshots_b64=[],
     )
