@@ -327,6 +327,8 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
     "adb": { "serial": null },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
+    "enableSkillExtraction": true,
+    "enableMemoryExtraction": true,
     "enableSkillExecution": true,
     "enablePromptSkillSelection": true,
     "promptSkillTopK": 5,
@@ -347,6 +349,8 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 > **关于 `gui.agentProfile`：** 当 GUI 模型使用非默认的 prompt / action 契约时，请在这里指定 profile。当前支持 `default`、`general_e2e`、`qwen3vl`、`mai_ui`、`gelab`、`seed`。
 >
 > **关于 `gui.evaluation.judgeModel`：** 这个模型只用于 GUI 任务结束后的可选评测，不会影响真正执行 GUI 操作的模型。
+>
+> **关于 `enableMemoryExtraction`：** 开启后，任务后处理器会复用当前 GUI 模型和 provider，从成功或失败轨迹中提取精简经验，并写入 `~/.guiclaw/memory/gui_memory_bank.jsonl`。
 
 ### 在 nanobot `config.json` 中设置 profile
 
@@ -462,6 +466,7 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `displayWidth` | `int` | `1280` | 虚拟显示宽度，像素 |
 | `displayHeight` | `int` | `720` | 虚拟显示高度，像素 |
 | `enableSkillExtraction` | `bool` | `false` | 是否在 GUI 任务后提取并存储技能 |
+| `enableMemoryExtraction` | `bool` | `false` | 是否在有效 GUI 任务后提取并去重存储记忆 |
 | `enableSkillExecution` | `bool` | `false` | 为模型选择的 `use_skill` 动作接入技能执行器 |
 | `enablePromptSkillSelection` | `bool` | `false` | 检索相关技能并暴露在 GUI prompt 中 |
 | `promptSkillTopK` | `int` | `5` | 展示给 GUI 模型的最多检索技能数 |
@@ -916,13 +921,14 @@ GUIClaw 从成功的任务中学习。每次任务完成后，系统会提取一
 | CLI（guiclaw） | `~/.guiclaw/skills/<platform>/` |
 | nanobot | `<workspace>/gui_skills/<platform>/` |
 
-### 开启技能提取与执行
+### 开启技能和记忆提取
 
-技能**学习**（提取）和技能**执行**（回放）都需要手动开启：
+技能学习、记忆学习和技能执行分别独立开关：
 
 ```json
 "gui": {
   "enableSkillExtraction": true,
+  "enableMemoryExtraction": true,
   "enableSkillExecution": true,
   "enablePromptSkillSelection": true,
   "promptSkillTopK": 5,
@@ -931,6 +937,8 @@ GUIClaw 从成功的任务中学习。每次任务完成后，系统会提取一
 ```
 
 `enableSkillExtraction: false`（默认）时，GUIClaw 会直接跳过任务后的技能提取与存储。
+
+`enableMemoryExtraction: true` 时，超过两步且正常结束的轨迹会在后台提取记忆，并去重写入 `~/.guiclaw/memory/gui_memory_bank.jsonl`。该过程直接复用当前 GUI 模型和 provider，不需要用户额外运行提取脚本；router 多子任务会在同一个 run 内按 subtask 分别处理。
 
 `enableSkillExecution: false`（默认）时，由于没有接入技能执行器，GUIClaw 会拒绝 `use_skill` 动作。
 

@@ -327,6 +327,8 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
     "adb": { "serial": null },
     "maxSteps": 20,
     "embeddingModel": "text-embedding-v4",
+    "enableSkillExtraction": true,
+    "enableMemoryExtraction": true,
     "enableSkillExecution": true,
     "enablePromptSkillSelection": true,
     "promptSkillTopK": 5,
@@ -347,6 +349,8 @@ nanobot reads a single JSON file. All keys accept both `camelCase` and `snake_ca
 > **Note on `gui.agentProfile`:** Use this when your GUI model expects a non-default action/prompt contract. Supported values are `default`, `general_e2e`, `qwen3vl`, `mai_ui`, `gelab`, and `seed`.
 >
 > **Note on `gui.evaluation.judgeModel`:** This judge model is only used for optional post-run evaluation. It does not change the model that actually performs the GUI task.
+>
+> **Note on `enableMemoryExtraction`:** When enabled, the post-run worker uses the configured GUI model/provider to derive concise success or failure lessons and stores them in `~/.guiclaw/memory/gui_memory_bank.jsonl`.
 
 ### Setting the profile in nanobot `config.json`
 
@@ -462,6 +466,7 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `displayWidth` | `int` | `1280` | Virtual display width in pixels |
 | `displayHeight` | `int` | `720` | Virtual display height in pixels |
 | `enableSkillExtraction` | `bool` | `false` | Extract and store learned skills after GUI runs |
+| `enableMemoryExtraction` | `bool` | `false` | Extract deduplicated GUI memory after eligible runs |
 | `enableSkillExecution` | `bool` | `false` | Wire the skill executor for model-selected `use_skill` actions |
 | `enablePromptSkillSelection` | `bool` | `false` | Retrieve relevant skills and expose them in the GUI prompt |
 | `promptSkillTopK` | `int` | `5` | Maximum retrieved skills shown to the GUI model |
@@ -925,13 +930,14 @@ GUIClaw learns from successful task runs. After each task it extracts a reusable
 | CLI (guiclaw) | `~/.guiclaw/skills/<platform>/` |
 | nanobot | `<workspace>/gui_skills/<platform>/` |
 
-### Enabling skill extraction and execution
+### Enabling skill and memory extraction
 
-Both skill learning (extraction) and skill execution (replay) are opt-in:
+Skill learning, memory learning, and skill execution are independently opt-in:
 
 ```json
 "gui": {
   "enableSkillExtraction": true,
+  "enableMemoryExtraction": true,
   "enableSkillExecution": true,
   "enablePromptSkillSelection": true,
   "promptSkillTopK": 5,
@@ -940,6 +946,8 @@ Both skill learning (extraction) and skill execution (replay) are opt-in:
 ```
 
 With `enableSkillExtraction: false` (default), GUIClaw skips post-run skill promotion entirely.
+
+With `enableMemoryExtraction: true`, eligible trajectories with more than two steps are summarized in the background and deduplicated into `~/.guiclaw/memory/gui_memory_bank.jsonl`. It uses the configured GUI model/provider and does not require a separate extraction command. Routed workflows process each subtask from the same run independently.
 
 With `enableSkillExecution: false` (default), GUIClaw rejects `use_skill` actions because no skill executor is wired.
 
