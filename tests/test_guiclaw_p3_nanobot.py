@@ -850,6 +850,53 @@ async def test_gui_task_multi_app_workflow_injects_blackboard_values(
     assert len(saved_result["subtasks"]) == 2
 
 
+def test_gui_task_schedules_postprocessing_once_per_routed_subtask(
+    tmp_workspace: Path,
+) -> None:
+    from nanobot.agent.tools.gui import GuiSubagentTool
+
+    provider = _MockNanobotProvider([])
+    tool = GuiSubagentTool(
+        gui_config=Config(
+            gui={
+                "backend": "dry-run",
+                "enableMemoryExtraction": True,
+                "enableSkillExtraction": True,
+            }
+        ).gui,
+        provider=provider,
+        model=provider.get_default_model(),
+        workspace=tmp_workspace,
+    )
+    schedule = MagicMock()
+    tool._postprocessor.schedule = schedule
+    run_root = tmp_workspace / "gui_runs" / "one-run"
+
+    tool._schedule_postprocessing(
+        run_root,
+        {
+            "success": True,
+            "subtasks": [
+                {"task": "Read the message", "success": True},
+                {"task": "Enter the code", "success": True},
+            ],
+        },
+        platform="android",
+        original_task="Copy a code between apps",
+    )
+
+    assert schedule.call_count == 2
+    assert [call.args[0] for call in schedule.call_args_list] == [
+        run_root / "traj.json",
+        run_root / "traj.json",
+    ]
+    assert [call.kwargs["subtask_index"] for call in schedule.call_args_list] == [1, 2]
+    assert [call.kwargs["task"] for call in schedule.call_args_list] == [
+        "Read the message",
+        "Enter the code",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_gui_task_multi_app_workflow_stops_on_missing_declared_output(
     tmp_workspace: Path,
@@ -982,8 +1029,8 @@ async def test_gui_task_returns_state_note_for_partial_run(
     tmp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent.tools.gui import GuiSubagentTool
     from guiclaw.agent import GuiAgent as GUIClawAgent
+    from nanobot.agent.tools.gui import GuiSubagentTool
 
     original_run = GUIClawAgent.run
 
@@ -1048,18 +1095,17 @@ async def test_gui_task_returns_state_note_for_partial_run(
 @pytest.mark.asyncio
 async def test_auto_skill_extraction(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
-    from guiclaw.skills.extractor import SkillExtractor
 
     extract_calls: list[dict[str, Any]] = []
 
-    async def fake_extract_from_file_multi(
-        self,
+    async def fake_induce_compact_skills_from_trace(
+        extractor: object,
         trace_path: Path,
         *,
         is_success: bool,
         subtask_index: int,
     ):
-        del self
+        del extractor
         extract_calls.append(
             {
                 "trace_path": trace_path,
@@ -1070,7 +1116,10 @@ async def test_auto_skill_extraction(tmp_workspace: Path, monkeypatch: pytest.Mo
         return [_skill_candidate()]
 
     _install_code_skill_trace_run(monkeypatch)
-    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_from_file_multi)
+    monkeypatch.setattr(
+        "guiclaw.postprocessing.induce_compact_skills_from_trace",
+        fake_induce_compact_skills_from_trace,
+    )
     monkeypatch.setattr(
         "guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value="")
     )
@@ -1110,11 +1159,10 @@ async def test_auto_skill_extraction_none_is_graceful(
     tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
-    from guiclaw.skills.extractor import SkillExtractor
 
     extract = AsyncMock(return_value=[])
     _install_code_skill_trace_run(monkeypatch)
-    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", extract)
+    monkeypatch.setattr("guiclaw.postprocessing.induce_compact_skills_from_trace", extract)
     monkeypatch.setattr(
         "guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value="")
     )
@@ -1151,14 +1199,16 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
-    from guiclaw.skills.extractor import SkillExtractor
 
-    async def fake_extract_multi(self, *args: Any, **kwargs: Any):
-        del self, args, kwargs
+    async def fake_extract_multi(extractor: object, *args: Any, **kwargs: Any):
+        del extractor, args, kwargs
         return [_skill_candidate(app=" Settings ")]
 
     _install_code_skill_trace_run(monkeypatch)
-    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_multi)
+    monkeypatch.setattr(
+        "guiclaw.postprocessing.induce_compact_skills_from_trace",
+        fake_extract_multi,
+    )
     monkeypatch.setattr(
         "guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value="")
     )
@@ -1194,8 +1244,8 @@ async def test_execute_creates_fresh_trajectory_recorder(
     tmp_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from nanobot.agent.tools.gui import GuiSubagentTool
     from guiclaw.agent import AgentResult
+    from nanobot.agent.tools.gui import GuiSubagentTool
 
     recorders: list[Any] = []
 

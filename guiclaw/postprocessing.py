@@ -20,6 +20,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from guiclaw.memory.induction import (
+    DEFAULT_MEMORY_BANK_PATH,
+    append_to_memory_bank,
+    format_trajectory_compact,
+    guess_app,
+    induce_memory_items,
+    resolve_trace_app,
+    trace_is_abnormal,
+    trace_step_count,
+)
 from guiclaw.skills.induction import induce_compact_skills_from_trace
 from guiclaw.trajectory.recorder import load_trajectory_events, update_result_section
 
@@ -121,6 +131,7 @@ class PostRunProcessor:
         skill_store_root: Path | None = None,
         enable_skill_extraction: bool = False,
         enable_memory_extraction: bool = False,
+        memory_bank_path: Path | None = None,
         evaluation: EvaluationConfig | None = None,
     ) -> None:
         self._llm = llm
@@ -130,6 +141,7 @@ class PostRunProcessor:
         self._skill_store_root = skill_store_root
         self._enable_skill_extraction = enable_skill_extraction
         self._enable_memory_extraction = enable_memory_extraction
+        self._memory_bank_path = memory_bank_path or DEFAULT_MEMORY_BANK_PATH
         self._evaluation = evaluation or EvaluationConfig()
         self._pending: set[asyncio.Task[None]] = set()
 
@@ -171,10 +183,16 @@ class PostRunProcessor:
         task: str,
         subtask_index: int = 1,
     ) -> None:
-        summary, evaluation_result = await asyncio.gather(
+        summary, evaluation_result, _ = await asyncio.gather(
             self._summarize_trajectory(trace_path, subtask_index=subtask_index),
             self._run_evaluation(
                 trace_path=trace_path,
+                is_success=is_success,
+                task=task,
+                subtask_index=subtask_index,
+            ),
+            self._extract_memory(
+                trace_path,
                 is_success=is_success,
                 task=task,
                 subtask_index=subtask_index,
@@ -214,6 +232,92 @@ class PostRunProcessor:
         )
         if summary:
             logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
+
+    async def _extract_memory(
+        self,
+        trace_path: Path,
+        *,
+        is_success: bool,
+        task: str,
+        subtask_index: int = 1,
+    ) -> dict[str, Any] | None:
+        if not self._enable_memory_extraction:
+            return None
+        if not trace_path.exists():
+            return None
+
+        step_count = trace_step_count(trace_path, subtask_index=subtask_index)
+        if step_count <= 2:
+            result = {"status": "skipped", "reason": "short_trajectory"}
+            await self._write_result_section(
+                trace_path,
+                "memory_extraction",
+                subtask_index,
+                result,
+            )
+            return result
+        if trace_is_abnormal(trace_path, subtask_index=subtask_index):
+            result = {"status": "skipped", "reason": "abnormal_termination"}
+            await self._write_result_section(
+                trace_path,
+                "memory_extraction",
+                subtask_index,
+                result,
+            )
+            return result
+
+        trajectory_text = format_trajectory_compact(
+            trace_path,
+            subtask_index=subtask_index,
+        )
+        if not trajectory_text:
+            result = {"status": "skipped", "reason": "no_usable_steps"}
+            await self._write_result_section(
+                trace_path,
+                "memory_extraction",
+                subtask_index,
+                result,
+            )
+            return result
+
+        try:
+            app = resolve_trace_app(
+                trace_path,
+                subtask_index=subtask_index,
+            ) or guess_app(task)
+            items = await induce_memory_items(
+                llm=self._llm,
+                trajectory_text=trajectory_text,
+                task_outcome="success" if is_success else "failure",
+                app=app,
+            )
+            if not items:
+                result = {
+                    "status": "no_candidate",
+                    "added_count": 0,
+                    "duplicate_count": 0,
+                }
+            else:
+                added = append_to_memory_bank(items, self._memory_bank_path)
+                result = {
+                    "status": "processed",
+                    "added_count": added,
+                    "duplicate_count": len(items) - added,
+                }
+        except Exception as exc:
+            logger.warning("Memory extraction failed for %s", trace_path, exc_info=True)
+            result = {
+                "status": "error",
+                "reason": str(exc) or type(exc).__name__,
+            }
+
+        await self._write_result_section(
+            trace_path,
+            "memory_extraction",
+            subtask_index,
+            result,
+        )
+        return result
 
     async def _summarize_trajectory(self, trace_path: Path, *, subtask_index: int = 1) -> str:
         if not trace_path.exists():

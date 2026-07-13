@@ -34,8 +34,10 @@ class _ScriptedLLM:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         tool_choice: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
-        del tools, tool_choice
+        del tools, tool_choice, model, max_tokens
         self.messages.append(messages)
         if not self._responses:
             raise AssertionError("_ScriptedLLM has no remaining responses.")
@@ -1036,6 +1038,161 @@ async def test_postprocessor_uses_add_or_merge_for_extracted_flat_skills(
     extraction_result = run_result["extraction"]["1"]
     assert extraction_result["skills"][0]["decision"] == "MERGE"
     assert extraction_result["compiled_skill_ids"] == ["existing"]
+
+
+def _memory_response(title: str = "Search flow") -> str:
+    return (
+        "# Memory Item 1\n"
+        f"## Title {title}\n"
+        "## Description Use when searching inside an app.\n"
+        "## Content Focus the search field before entering the query.\n"
+    )
+
+
+def _record_memory_trace(
+    output_dir: Path,
+    *,
+    steps: int = 3,
+    success: bool = True,
+    error: str | None = None,
+) -> Path:
+    recorder = TrajectoryRecorder(
+        output_dir=output_dir,
+        task="Search for an item",
+        platform="android",
+    )
+    trace_path = recorder.start()
+    for index in range(steps):
+        recorder.record_step(
+            action={"action_type": "tap", "target": f"control-{index}"},
+            model_output=f"Thought: interact with control {index}",
+            foreground_app="com.example.app",
+        )
+    recorder.finish(success=success, error=error)
+    return trace_path
+
+
+@pytest.mark.asyncio
+async def test_postprocessor_extracts_memory_to_configured_bank(tmp_path: Path) -> None:
+    from guiclaw.postprocessing import PostRunProcessor
+
+    trace_path = _record_memory_trace(tmp_path / "run")
+    bank_path = tmp_path / "memory" / "gui_memory_bank.jsonl"
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([_memory_response()]),
+        enable_memory_extraction=True,
+        memory_bank_path=bank_path,
+    )
+
+    result = await processor._extract_memory(
+        trace_path,
+        is_success=True,
+        task="Search for an item",
+        subtask_index=1,
+    )
+
+    assert result == {"status": "processed", "added_count": 1, "duplicate_count": 0}
+    stored = bank_path.read_text(encoding="utf-8")
+    assert "Search flow" in stored
+    run_result = json.loads((trace_path.parent / "result.json").read_text(encoding="utf-8"))
+    assert run_result["memory_extraction"]["1"] == result
+
+
+@pytest.mark.asyncio
+async def test_postprocessor_skips_memory_when_disabled(tmp_path: Path) -> None:
+    from guiclaw.postprocessing import PostRunProcessor
+
+    trace_path = _record_memory_trace(tmp_path / "run")
+    bank_path = tmp_path / "memory" / "gui_memory_bank.jsonl"
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        enable_memory_extraction=False,
+        memory_bank_path=bank_path,
+    )
+
+    result = await processor._extract_memory(
+        trace_path,
+        is_success=True,
+        task="Search for an item",
+    )
+
+    assert result is None
+    assert not bank_path.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("steps", "error", "reason"),
+    [
+        (2, None, "short_trajectory"),
+        (3, "intervention_cancelled", "abnormal_termination"),
+    ],
+)
+async def test_postprocessor_skips_unusable_memory_traces(
+    tmp_path: Path,
+    steps: int,
+    error: str | None,
+    reason: str,
+) -> None:
+    from guiclaw.postprocessing import PostRunProcessor
+
+    trace_path = _record_memory_trace(
+        tmp_path / reason,
+        steps=steps,
+        success=False,
+        error=error,
+    )
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        enable_memory_extraction=True,
+        memory_bank_path=tmp_path / "bank.jsonl",
+    )
+
+    result = await processor._extract_memory(
+        trace_path,
+        is_success=False,
+        task="Search for an item",
+    )
+
+    assert result == {"status": "skipped", "reason": reason}
+
+
+@pytest.mark.asyncio
+async def test_memory_extraction_is_not_suppressed_by_skill_evolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from guiclaw.postprocessing import PostRunProcessor
+
+    trace_path = _record_memory_trace(tmp_path / "run")
+    processor = PostRunProcessor(
+        llm=_ScriptedLLM([]),
+        enable_skill_extraction=True,
+        enable_memory_extraction=True,
+    )
+    memory = AsyncMock(return_value={"status": "processed", "added_count": 1})
+    monkeypatch.setattr(processor, "_extract_memory", memory)
+    monkeypatch.setattr(processor, "_summarize_trajectory", AsyncMock(return_value=""))
+    monkeypatch.setattr(processor, "_run_evaluation", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        processor,
+        "_evolve_failed_skill",
+        AsyncMock(return_value={"status": "processed_evolution"}),
+    )
+
+    await processor._run_all(
+        trace_path,
+        is_success=True,
+        platform="android",
+        task="Search for an item",
+    )
+
+    memory.assert_awaited_once_with(
+        trace_path,
+        is_success=True,
+        task="Search for an item",
+        subtask_index=1,
+    )
 
 
 @pytest.mark.asyncio
