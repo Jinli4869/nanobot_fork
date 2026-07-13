@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -126,6 +127,44 @@ class TestParseMemoryItemsStatus:
         # the status routes through GuiMemoryItem.__post_init__ validation.
         with pytest.raises(ValueError):
             parse_memory_items(_ITEM_TEXT, status="bogus")
+
+
+class TestPackagedMemoryInduction:
+    @pytest.mark.asyncio
+    async def test_uses_guiclaw_llm_provider(self) -> None:
+        from guiclaw.memory.induction import induce_memory_items
+
+        class LLM:
+            def __init__(self) -> None:
+                self.messages: list[dict] | None = None
+
+            async def chat(
+                self,
+                messages: list[dict],
+                tools: list[dict] | None = None,
+                tool_choice: str | None = None,
+                model: str | None = None,
+                max_tokens: int | None = None,
+            ) -> SimpleNamespace:
+                del tools, tool_choice, model
+                assert max_tokens == 2048
+                self.messages = messages
+                return SimpleNamespace(content=_ITEM_TEXT)
+
+        llm = LLM()
+        items = await induce_memory_items(
+            llm=llm,
+            trajectory_text="Task: compose a message",
+            task_outcome="success",
+            app="com.gmailclone",
+        )
+
+        assert llm.messages is not None
+        assert llm.messages[0]["role"] == "system"
+        assert llm.messages[1] == {"role": "user", "content": "Task: compose a message"}
+        assert len(items) == 1
+        assert items[0].app == "com.gmailclone"
+        assert items[0].status == "success"
 
 
 # ---------------------------------------------------------------------------

@@ -1,601 +1,172 @@
 #!/usr/bin/env python3
-"""Induce lightweight GuiMemoryItem entries from MobileWorld GUI trajectories.
+"""Induce lightweight GUI memory from one task directory or a trace root.
 
-Usage::
-
-    # Extract memory items from a single task trace (dry-run)
-    python scripts/induce_gui_memory.py \\
-        --trace-dir ~/Project/MobileWorld_fork/traj_logs/v2/SomeTask \\
-        --dry-run
-
-    # Batch-extract from all tasks in a trace root
-    python scripts/induce_gui_memory.py \\
-        --trace-root ~/Project/MobileWorld_fork/traj_logs/v2 \\
-        --model deepseek-v4-pro \\
-        --base-url https://...
-
-    # Optional: also keep a JSONL backup/debug bank
-    python scripts/induce_gui_memory.py --trace-dir ... --memory-bank gui_memory_bank.jsonl
+The reusable formatter, parser, filters, and bank writer live in
+``guiclaw.memory.induction`` so installed GUIClaw can run the same pipeline
+automatically after a configured ``gui_task``.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import re
 import sys
-import time
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from guiclaw.trajectory.recorder import load_trajectory_events, trajectory_subtask_indices
-
-# -- project imports (require nanobot_fork on PYTHONPATH) --------------------
-try:
-    from guiclaw.memory.gui_memory_item import GuiMemoryItem
-except ImportError:
-    # Lightweight fallback when running standalone (without PYTHONPATH)
-    from dataclasses import dataclass, field
-
-    @dataclass(frozen=True)
-    class GuiMemoryItem:
-        title: str
-        description: str
-        content: str
-        status: str = "success"
-        app: str | None = None
-        created_at: float = field(default_factory=time.time)
-
-        def to_dict(self) -> dict[str, Any]:
-            return {
-                "title": self.title,
-                "description": self.description,
-                "content": self.content,
-                "status": self.status,
-                "app": self.app,
-                "created_at": self.created_at,
-            }
-
-        @classmethod
-        def from_dict(cls, data: dict[str, Any]) -> "GuiMemoryItem":
-            return cls(
-                title=data["title"],
-                description=data["description"],
-                content=data["content"],
-                status=data.get("status", "success"),
-                app=data.get("app"),
-                created_at=data.get("created_at", time.time()),
-            )
+from guiclaw.interfaces import LLMResponse
+from guiclaw.memory.gui_memory_item import GuiMemoryItem
+from guiclaw.memory.induction import (
+    DEFAULT_DEDUP_THRESHOLD as _DEFAULT_DEDUP_THRESHOLD,
+)
+from guiclaw.memory.induction import (
+    DEFAULT_MEMORY_BANK_PATH,
+    append_to_memory_bank,
+    format_trajectory_compact,
+    get_trace_outcome,
+    induce_memory_items,
+    load_memory_bank,
+    parse_memory_items,
+    trace_is_abnormal,
+)
+from guiclaw.memory.induction import (
+    find_gui_task_traces as _find_gui_task_traces,
+)
+from guiclaw.memory.induction import (
+    guess_app as _guess_app,
+)
+from guiclaw.memory.induction import (
+    is_abnormal_termination as _is_abnormal_termination,
+)
+from guiclaw.memory.induction import (
+    resolve_trace_app as _resolve_trace_app,
+)
+from guiclaw.memory.induction import (
+    trace_step_count as _trace_step_count,
+)
+from guiclaw.trajectory.recorder import trajectory_subtask_indices
 
 
-# ---------------------------------------------------------------------------
-# Prompt templates (adapted from reasoning-bank)
-# ---------------------------------------------------------------------------
+class _OpenAICompatMemoryLLM:
+    """Small OpenAI-compatible adapter used only by this offline CLI."""
 
-SUCCESS_SYSTEM_PROMPT = """\
-You are an expert in Android GUI automation. You will be given a user task query
-and the corresponding trajectory that represents **how an agent successfully
-accomplished the task**.
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+    ) -> None:
+        from openai import AsyncOpenAI
 
-## Guidelines
-You need to extract and summarize useful insights in the format of memory items
-based on the agent's successful trajectory.  The goal of summarized memory items
-is to be helpful and generalizable for future similar tasks.
+        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+        self._model = model
+        self._max_tokens = max_tokens
+        self._temperature = temperature
 
-## Important notes
-- You must first think why the trajectory is successful, and then summarize
-  the insights.
-- You can extract *at most 3* memory items from the trajectory.
-- You must not repeat similar or overlapping items.
-- Prefer concrete, actionable procedures over abstract principles.  Do not
-  embed specific product names, queries, or literal string contents from the
-  task.
-- For Android GUI tasks, focus on: app navigation patterns, form-filling
-  strategies, common UI pitfalls that were avoided, and efficient action
-  sequences.
-- When UI snippets are present in the trajectory, ground lessons in the actual
-  visible/clickable controls rather than only repeating the agent's own
-  reasoning.
-
-## Output Format
-Your output must strictly follow the Markdown format shown below:
-
-```
-# Memory Item i
-## Title <the title of the memory item>
-## Description <one sentence summary describing when to use the memory item>
-## Content <1-3 sentences describing the insights learned to successfully
-  accomplish similar tasks in the future>
-```
-"""
-
-FAILURE_SYSTEM_PROMPT = """\
-You are an expert in Android GUI automation. You will be given a user task query
-and the corresponding trajectory that represents **how an agent attempted to
-resolve the task but failed**.
-
-## Guidelines
-You need to extract and summarize useful insights in the format of memory items
-based on the agent's failed trajectory.  The goal of summarized memory items is
-to be helpful and generalizable for future similar tasks.
-
-## Important notes
-- You must first reflect and think why the trajectory failed, and then
-  summarize what lessons you have learned or strategies to prevent the failure
-  in the future.
-- You can extract *at most 3* memory items from the trajectory.
-- You must not repeat similar or overlapping items.
-- Prefer concrete, actionable recovery procedures over abstract principles.
-  Do not embed specific product names, queries, or literal string contents
-  from the task.
-- For Android GUI tasks, focus on: navigation mistakes, form-filling errors,
-  premature task completion, app state assumptions that were wrong, and
-  specific UI patterns that caused trouble.
-- When UI snippets are present in the trajectory, ground lessons in the actual
-  visible/clickable controls rather than only repeating the failed agent's own
-  reasoning.
-
-## Output Format
-Your output must strictly follow the Markdown format shown below:
-
-```
-# Memory Item i
-## Title <the title of the memory item>
-## Description <one sentence summary describing when NOT to use this approach>
-## Content <1-3 sentences describing the insights learned to avoid such
-  failures in the future>
-```
-"""
-
-
-# ---------------------------------------------------------------------------
-# Trajectory formatting (JSONL → LLM-readable text)
-# ---------------------------------------------------------------------------
-
-def format_trajectory_compact(
-    trace_path: Path,
-    *,
-    subtask_index: int = 1,
-    max_steps_full: int = 30,
-    keep_first: int = 3,
-    keep_last: int = 10,
-    thought_max_chars: int = 200,
-    ui_hint_max_chars: int = 240,
-) -> str | None:
-    """Convert one compact GUIClaw subtask into LLM-readable text.
-
-    Returns ``None`` when the trace contains no usable steps.
-    """
-    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
-    if not events:
-        return None
-
-    task_goal = _find_task_goal(events) or trace_path.stem
-    steps = [e for e in events if _event_type(e) == "step"]
-
-    # -- build step lines ----------------------------------------------------
-    step_lines: list[str] = []
-    for step in steps:
-        action = step.get("action") or {}
-        atype = action.get("action_type", "?")
-        observation = step.get("observation") or {}
-        obs_app = observation.get("foreground_app", "") or "?"
-        thought = _extract_thought(step.get("model_output") or "")
-        extra = observation.get("extra") or {}
-        ui_hint = _step_ui_hint(extra, max_chars=ui_hint_max_chars)
-
-        if len(thought) > thought_max_chars:
-            thought = thought[: thought_max_chars - 3] + "..."
-
-        idx = step.get("step_index", len(step_lines))
-        line = f"  Step {idx} [{atype}] ({obs_app}): {thought}"
-        if ui_hint:
-            line += f" | UI: {ui_hint}"
-        step_lines.append(line)
-
-    if not step_lines:
-        return None
-
-    # -- truncate long trajectories ------------------------------------------
-    if len(step_lines) > max_steps_full:
-        omitted = len(step_lines) - keep_first - keep_last
-        step_lines = (
-            step_lines[:keep_first]
-            + [f"  ... ({omitted} steps omitted) ..."]
-            + step_lines[-keep_last:]
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        tool_choice: str | None = None,
+        model: str | None = None,
+        max_tokens: int | None = None,
+    ) -> LLMResponse:
+        del tools, tool_choice
+        response = await self._client.chat.completions.create(
+            model=model or self._model,
+            messages=messages,
+            max_tokens=max_tokens or self._max_tokens,
+            temperature=self._temperature,
+        )
+        return LLMResponse(
+            content=response.choices[0].message.content or "",
+            tool_calls=None,
+            raw=response,
         )
 
-    # -- assemble output -----------------------------------------------------
-    parts: list[str] = [
-        f"Task: {task_goal}",
-        "",
-        "Action sequence:",
-        *step_lines,
-    ]
-
-    # -- skill execution failures --------------------------------------------
-    skill_failures = [
-        e
-        for e in events
-        if _event_type(e) == "skill_execution_result" and e.get("state") == "failed"
-    ]
-    if skill_failures:
-        parts.append("")
-        parts.append("Skill execution failures:")
-        for sf in skill_failures:
-            skill_name = sf.get("skill_name", "?")
-            error = sf.get("error", "") or "unknown"
-            parts.append(f"  - {skill_name}: {_truncate(error, 200)}")
-
-    # -- final result error --------------------------------------------------
-    result = _find_result(events)
-    if result and result.get("error"):
-        parts.extend([
-            "",
-            f"Final error: {_truncate(str(result['error']), 200)}",
-        ])
-
-    return "\n".join(parts).rstrip()
-
-
-# ---------------------------------------------------------------------------
-# Memory induction (LLM call)
-# ---------------------------------------------------------------------------
-
-MEMORY_ITEM_RE = re.compile(
-    r"# Memory Item \d+\s*\n"
-    r"## Title\s*(.+?)\s*\n"
-    r"## Description\s*(.+?)\s*\n"
-    r"## Content\s*(.+?)(?=\n# Memory Item|\n?\Z)",
-    re.DOTALL,
-)
-
-
-def parse_memory_items(
-    text: str, *, app: str | None = None, status: str = "success"
-) -> list[GuiMemoryItem]:
-    """Parse LLM output into GuiMemoryItem objects.
-
-    ``status`` is applied at construction time so each item goes through
-    ``GuiMemoryItem.__post_init__`` validation — unlike a post-hoc
-    ``object.__setattr__`` on the frozen dataclass, which would silently bypass it.
-    """
-    items: list[GuiMemoryItem] = []
-    for match in MEMORY_ITEM_RE.finditer(text):
-        title = match.group(1).strip()
-        description = match.group(2).strip()
-        content = match.group(3).strip()
-        if title and content:
-            items.append(GuiMemoryItem(
-                title=title,
-                description=description,
-                content=content,
-                status=status,
-                app=app,
-            ))
-    return items
-
-
-async def induce_memory_items(
-    *,
-    trajectory_text: str,
-    task_outcome: str,  # "success" | "failure"
-    app: str | None = None,
-    api_key: str,
-    base_url: str,
-    model: str,
-    max_tokens: int = 2048,
-    temperature: float = 0.7,
-) -> list[GuiMemoryItem]:
-    """Call LLM to induce memory items from a formatted trajectory.
-
-    Returns a list of GuiMemoryItem (0-3 items).
-    """
-    from openai import AsyncOpenAI
-
-    system_prompt = (
-        SUCCESS_SYSTEM_PROMPT if task_outcome == "success" else FAILURE_SYSTEM_PROMPT
-    )
-    user_prompt = trajectory_text
-
-    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    content = response.choices[0].message.content or ""
-    return parse_memory_items(content, app=app, status=task_outcome)
-
-
-# ---------------------------------------------------------------------------
-# Task outcome detection
-# ---------------------------------------------------------------------------
 
 def get_task_outcome(task_dir: Path) -> tuple[str, str]:
-    """Return (outcome, error_message) for a task directory.
-
-    outcome is "success" when result.txt score >= 1.0, otherwise "failure".
-    """
+    """Return a MobileWorld task directory's score-derived outcome."""
     result_txt = task_dir / "result.txt"
     if not result_txt.exists():
         return "failure", "no result.txt found"
-
     text = result_txt.read_text(encoding="utf-8", errors="ignore")
     score_match = re.search(r"(?m)^score:\s*([0-9.]+)", text)
     if not score_match:
         return "failure", "no score field in result.txt"
-
     try:
         score = float(score_match.group(1))
     except ValueError:
         return "failure", f"unparseable score: {score_match.group(1)!r}"
+    return ("success", "") if score >= 1.0 else ("failure", f"score={score}")
 
-    if score >= 1.0:
-        return "success", ""
-    return "failure", f"score={score}"
-
-
-def get_trace_outcome(trace_path: Path, *, subtask_index: int = 1) -> tuple[str, str] | None:
-    """Return ``(outcome, note)`` for a single trace from its own ``result`` event.
-
-    The recorder writes a terminal ``result`` event with an explicit ``success``
-    bool (``guiclaw/trajectory/recorder.py``).  That signal is authoritative for
-    *this* gui-task run and is preferred over the task-level ``result.txt``, which
-    is shared by every run under a task dir and otherwise mislabels mixed-outcome
-    sub-runs (a failed run inheriting a sibling's success, or vice versa).
-
-    Returns ``None`` when the trace has no usable success signal so the caller can
-    fall back to :func:`get_task_outcome`.
-    """
-    result = _find_result(load_trajectory_events(trace_path, subtask_index=subtask_index))
-    if result is None or "success" not in result:
-        return None
-    if result.get("success"):
-        return "success", ""
-    error = str(result.get("error") or "").strip()
-    return "failure", error or "trace result.success is false"
-
-
-#: ``result.error`` prefixes marking a trajectory cut short by a detector or
-#: infrastructure noise rather than a genuine task outcome.  Mirrors
-#: ``guiclaw.postprocessing._ABNORMAL_TERMINATION_PREFIXES``.
-_ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
-    "stagnation_detected",
-    "step_timeout",
-    "intervention_cancelled",
-)
-
-
-def _is_abnormal_termination(result_event: dict[str, Any] | None) -> bool:
-    """True if a trajectory ended abnormally (intervention / stagnation / timeout).
-
-    Mirrors ``guiclaw.postprocessing._is_abnormal_termination`` so the offline
-    inducers agree with the online skill pipeline:
-
-    * ``intervention_cancelled`` (human-takeover handoff that was cancelled) is
-      always abnormal — there is no learnable agent behaviour to mine.
-    * ``stagnation_detected`` / ``step_timeout`` count as abnormal only when the
-      run made *no* progress (``total_steps == 0``); a detector that fired after
-      real steps still leaves a learnable (failed) trajectory and is kept.
-    * any error on a zero-step run is abnormal.
-    """
-    if not result_event:
-        return False
-    error = result_event.get("error")
-    total_steps = result_event.get("total_steps") or 0
-    if total_steps == 0 and error:
-        return True
-    if not isinstance(error, str):
-        return False
-    if total_steps > 0 and (
-        error == "stagnation_detected"
-        or error.startswith("stagnation_detected:")
-        or error == "step_timeout"
-        or error.startswith("step_timeout:")
-    ):
-        return False
-    return any(
-        error == prefix or error.startswith(prefix + ":")
-        for prefix in _ABNORMAL_TERMINATION_PREFIXES
-    )
-
-
-def trace_is_abnormal(trace_path: Path, *, subtask_index: int = 1) -> bool:
-    """True when *trace_path* ended in abnormal termination (see
-    :func:`_is_abnormal_termination`).  Shared with the compact-skill inducer."""
-    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
-    return _is_abnormal_termination(_find_result(events))
-
-
-# ---------------------------------------------------------------------------
-# Memory bank I/O
-# ---------------------------------------------------------------------------
-
-DEFAULT_MEMORY_BANK_PATH = Path.home() / ".guiclaw" / "memory" / "gui_memory_bank.jsonl"
-
-
-def load_memory_bank(path: Path) -> list[GuiMemoryItem]:
-    """Load all items from a JSONL memory bank."""
-    if not path.exists():
-        return []
-    items: list[GuiMemoryItem] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            items.append(GuiMemoryItem.from_dict(json.loads(line)))
-        except (json.JSONDecodeError, KeyError) as exc:
-            print(f"Warning: skipping malformed line in {path}: {exc}", file=sys.stderr)
-    return items
-
-
-#: Default Jaccard overlap above which a new item is treated as a near-duplicate
-#: of an existing same-app item and skipped.
-_DEFAULT_DEDUP_THRESHOLD = 0.6
-
-#: Latin filler words dropped before similarity so overlap reflects content words.
-_DEDUP_STOPWORDS = frozenset({
-    "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with", "is",
-    "are", "be", "this", "that", "these", "those", "when", "use", "using", "your",
-    "you", "it", "its", "as", "at", "by", "from", "then", "if", "which", "while",
-    "after", "before", "into", "any", "all", "not", "do", "does", "will", "can",
-    "should", "must", "may", "each", "via", "than", "such",
-})
-
-#: Tokenizer: Latin/digit runs as words, CJK characters individually (no spaces).
-_DEDUP_TOKEN_RE = re.compile(r"[a-z0-9]+|[一-鿿㐀-䶿]")
-
-
-def _dedup_token_set(item: GuiMemoryItem) -> frozenset[str]:
-    """Content-word token set over an item's title + content (case-folded)."""
-    text = f"{item.title}\n{item.content}".lower()
-    tokens: set[str] = set()
-    for tok in _DEDUP_TOKEN_RE.findall(text):
-        if len(tok) == 1:  # single CJK character
-            tokens.add(tok)
-        elif len(tok) >= 2 and tok not in _DEDUP_STOPWORDS:
-            tokens.add(tok)
-    return frozenset(tokens)
-
-
-def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
-
-
-def append_to_memory_bank(
-    items: list[GuiMemoryItem],
-    path: Path,
-    *,
-    similarity_threshold: float = _DEFAULT_DEDUP_THRESHOLD,
-) -> int:
-    """Append items, skipping near-duplicates of existing same-app entries.
-
-    Exact ``(title, content)`` matching was never enough: the LLM rephrases the
-    same lesson across runs, so the bank accumulated semantic duplicates.  An item
-    is skipped when its title+content token set has Jaccard overlap >=
-    ``similarity_threshold`` with an already-kept item *for the same app*
-    (cross-app items never collide).  Distinct facets of one flow stay below the
-    threshold and are kept; an exact repeat (overlap 1.0) is still caught.
-    """
-    existing = load_memory_bank(path)
-    # (app_key, token_set) for everything already kept; extended as we append so
-    # near-duplicates *within this batch* are collapsed too.
-    seen: list[tuple[str, frozenset[str]]] = [
-        ((it.app or "").casefold(), _dedup_token_set(it)) for it in existing
-    ]
-
-    new_count = 0
-    with open(path, "a", encoding="utf-8") as fh:
-        for item in items:
-            app_key = (item.app or "").casefold()
-            tokens = _dedup_token_set(item)
-            if any(
-                app_key == seen_app and _jaccard(tokens, seen_tokens) >= similarity_threshold
-                for seen_app, seen_tokens in seen
-            ):
-                continue
-            fh.write(json.dumps(item.to_dict(), ensure_ascii=False) + "\n")
-            seen.append((app_key, tokens))
-            new_count += 1
-
-    if new_count:
-        print(f"Appended {new_count} new item(s) to {path}")
-    return new_count
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__)
-    # Format-only mode (standalone, no other args required)
-    p.add_argument("--format-only", type=Path,
-                   help="Format a single trace file and print to stdout, then exit")
-    # Input sources
-    src = p.add_mutually_exclusive_group()
-    src.add_argument("--trace-dir", type=Path, help="Single task trace directory")
-    src.add_argument("--trace-root", type=Path, help="Root directory with many task subdirs")
-
-    # Output
-    p.add_argument("--memory-bank", type=Path, default=DEFAULT_MEMORY_BANK_PATH,
-                   help=f"JSONL memory bank path (default: {DEFAULT_MEMORY_BANK_PATH})")
-    p.add_argument("--dedup-threshold", type=float, default=_DEFAULT_DEDUP_THRESHOLD,
-                   help="Skip a new item when its title+content token overlap (Jaccard) "
-                        "with an existing same-app item reaches this value "
-                        f"(default: {_DEFAULT_DEDUP_THRESHOLD}; lower = more aggressive)")
-    p.add_argument("--max-items-per-task", type=int, default=_DEFAULT_MAX_ITEMS_PER_TASK,
-                   help="Cap how many memory items a single task dir may contribute, "
-                        "keeping failures first then round-robin across apps "
-                        f"(default: {_DEFAULT_MAX_ITEMS_PER_TASK}; 0 = unlimited)")
-
-    # LLM config
-    p.add_argument("--model", default=os.getenv("MEMORY_INDUCE_MODEL", "deepseek-v4-pro"))
-    p.add_argument("--base-url", default=os.getenv("MEMORY_INDUCE_BASE_URL", ""))
-    p.add_argument("--api-key-env", default="OPENAI_API_KEY")
-    p.add_argument("--max-tokens", type=int, default=2048)
-    p.add_argument("--temperature", type=float, default=0.7)
-
-    # Filtering
-    p.add_argument("--task", action="append", dest="tasks",
-                   help="Only process specific task(s). Repeatable.")
-    p.add_argument("--limit", type=int, default=0,
-                   help="Max number of tasks to process (0 = unlimited)")
-
-    # Modes
-    p.add_argument("--dry-run", action="store_true",
-                   help="Print formatted trajectories and exit without LLM calls")
-
-    return p.parse_args()
-
-
-#: Default per-task item budget (0 = unlimited).
-_DEFAULT_MAX_ITEMS_PER_TASK = 5
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--format-only",
+        type=Path,
+        help="Format one trace and print it without calling an LLM",
+    )
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--trace-dir", type=Path, help="Single task trace directory")
+    source.add_argument("--trace-root", type=Path, help="Root with multiple task directories")
+    parser.add_argument(
+        "--memory-bank",
+        type=Path,
+        default=DEFAULT_MEMORY_BANK_PATH,
+        help=f"JSONL memory bank path (default: {DEFAULT_MEMORY_BANK_PATH})",
+    )
+    parser.add_argument(
+        "--dedup-threshold",
+        type=float,
+        default=_DEFAULT_DEDUP_THRESHOLD,
+        help="Same-app token Jaccard threshold used for duplicate suppression",
+    )
+    parser.add_argument(
+        "--max-items-per-task",
+        type=int,
+        default=5,
+        help="Maximum items contributed by one task directory (0 = unlimited)",
+    )
+    parser.add_argument("--model", default=os.getenv("MEMORY_INDUCE_MODEL", "deepseek-v4-pro"))
+    parser.add_argument("--base-url", default=os.getenv("MEMORY_INDUCE_BASE_URL", ""))
+    parser.add_argument("--api-key-env", default="OPENAI_API_KEY")
+    parser.add_argument("--max-tokens", type=int, default=2048)
+    parser.add_argument("--temperature", type=float, default=0.7)
+    parser.add_argument("--task", action="append", dest="tasks")
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--dry-run", action="store_true")
+    return parser.parse_args()
 
 
 def _select_task_items(items: list[GuiMemoryItem], budget: int) -> list[GuiMemoryItem]:
-    """Cap one task's contribution to ``budget`` items, deterministically.
-
-    A single task dir can contain many gui-task runs, so it may produce far more
-    items than are worth keeping (the MastodonInviteTask example yielded 13).  When
-    over budget we keep failure-derived items first (they are the scarcer, more
-    valuable signal) and round-robin across apps so one app cannot crowd the others
-    out.  ``budget <= 0`` disables the cap.
-    """
+    """Prefer failure lessons and round-robin apps within a task budget."""
     if budget <= 0 or len(items) <= budget:
         return items
-
     groups: dict[str, list[GuiMemoryItem]] = {}
     for item in items:
         groups.setdefault(item.app or "", []).append(item)
-    # Within each app, failures (status != "success") come first; otherwise stable.
     for app_items in groups.values():
-        app_items.sort(key=lambda it: it.status == "success")
+        app_items.sort(key=lambda item: item.status == "success")
 
-    order = list(groups.keys())  # first-seen app order — deterministic
+    order = list(groups)
     selected: list[GuiMemoryItem] = []
-    idx = 0
+    index = 0
     while len(selected) < budget and any(groups[app] for app in order):
-        app = order[idx % len(order)]
+        app = order[index % len(order)]
         if groups[app]:
             selected.append(groups[app].pop(0))
-        idx += 1
+        index += 1
     return selected
 
 
 async def main_async(args: argparse.Namespace) -> int:
-    # -- format-only mode ----------------------------------------------------
     if args.format_only:
         formatted = [
             text
@@ -608,56 +179,51 @@ async def main_async(args: argparse.Namespace) -> int:
         print("\n\n".join(formatted))
         return 0
 
-    # -- validate input source -----------------------------------------------
     if not args.trace_dir and not args.trace_root:
-        print("Error: --trace-dir or --trace-root is required (or use --format-only).",
-              file=sys.stderr)
+        print("Error: --trace-dir or --trace-root is required.", file=sys.stderr)
         return 1
 
-    # -- collect task dirs ---------------------------------------------------
     if args.trace_dir:
         task_dirs = [args.trace_dir]
     else:
-        assert args.trace_root is not None
         root = args.trace_root.expanduser()
         task_dirs = sorted(
-            d for d in root.iterdir()
-            if d.is_dir() and not d.name.startswith(".")
+            directory
+            for directory in root.iterdir()
+            if directory.is_dir() and not directory.name.startswith(".")
         )
         if args.tasks:
-            task_dirs = [d for d in task_dirs if d.name in set(args.tasks)]
-
+            selected_tasks = set(args.tasks)
+            task_dirs = [directory for directory in task_dirs if directory.name in selected_tasks]
     if args.limit > 0:
         task_dirs = task_dirs[: args.limit]
-
     if not task_dirs:
         print("No task directories found.", file=sys.stderr)
         return 1
 
-    # -- process each task ---------------------------------------------------
     api_key = os.getenv(args.api_key_env, "")
     if not api_key and not args.dry_run:
-        print(f"Error: {args.api_key_env} not set. Use --dry-run to skip LLM calls.",
-              file=sys.stderr)
+        print(f"Error: {args.api_key_env} not set. Use --dry-run to skip LLM calls.", file=sys.stderr)
         return 1
+    llm = None
+    if not args.dry_run:
+        llm = _OpenAICompatMemoryLLM(
+            api_key=api_key,
+            base_url=args.base_url,
+            model=args.model,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+        )
 
     all_items: list[GuiMemoryItem] = []
     for task_dir in task_dirs:
         task_name = task_dir.name
-
-        # Find one trace per GUI task run, matching the skill extraction job discovery.
         trace_paths = _find_gui_task_traces(task_dir)
         if not trace_paths:
             print(f"[SKIP] {task_name}: no trace found")
             continue
 
-        # Outcome and app are resolved PER trace from the trajectory itself; the
-        # task-level result.txt / task-name only serve as fallbacks because they are
-        # shared across every gui-task run under this dir and would otherwise
-        # mislabel mixed-outcome runs or mis-tag the app.
         task_outcome, task_error = get_task_outcome(task_dir)
-
-        # job = (trace_path, subtask_index, trajectory_text, step_count, outcome, app)
         jobs: list[tuple[Path, int, str, int, str, str | None]] = []
         skipped_short = 0
         skipped_empty = 0
@@ -678,10 +244,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 if trajectory_text is None:
                     skipped_empty += 1
                     continue
-                trace_outcome = get_trace_outcome(
-                    trace_path,
-                    subtask_index=subtask_index,
-                )
+                trace_outcome = get_trace_outcome(trace_path, subtask_index=subtask_index)
                 outcome = trace_outcome[0] if trace_outcome is not None else task_outcome
                 app = _resolve_trace_app(
                     trace_path,
@@ -704,65 +267,50 @@ async def main_async(args: argparse.Namespace) -> int:
             continue
 
         if args.dry_run:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Task: {task_name}  (task-level outcome: {task_outcome})")
             if task_error:
                 print(f"Task-level note: {task_error}")
-            print("Traces:")
-            for trace_path, subtask_index, _, step_count, outcome, app in jobs:
-                print(f"  - {trace_path}#subtask-{subtask_index} ({step_count} steps) "
-                      f"outcome={outcome} app={app or '-'}")
-            if skipped_short or skipped_abnormal or skipped_empty:
-                print(f"Skipped: {skipped_short} short, "
-                      f"{skipped_abnormal} abnormal, {skipped_empty} empty")
-            print(f"{'='*60}")
-            for trace_path, subtask_index, trajectory_text, _, _, _ in jobs:
+            for trace_path, subtask_index, trajectory_text, step_count, outcome, app in jobs:
                 print(
-                    f"\n--- GUI task trace: {trace_path.parent.name} "
-                    f"subtask {subtask_index} ---"
+                    f"  - {trace_path}#subtask-{subtask_index} ({step_count} steps) "
+                    f"outcome={outcome} app={app or '-'}"
                 )
                 print(trajectory_text[:1500])
-                if len(trajectory_text) > 1500:
-                    print(f"... ({len(trajectory_text)} chars total)")
             continue
 
-        # Call LLM once per memory-worthy GUI task trace, with per-trace outcome+app.
+        assert llm is not None
         task_items: list[GuiMemoryItem] = []
         print(f"[GM] {task_name} ... ", end="", flush=True)
         for trace_path, _subtask_index, trajectory_text, _, outcome, app in jobs:
             try:
                 items = await induce_memory_items(
+                    llm=llm,
                     trajectory_text=trajectory_text,
                     task_outcome=outcome,
                     app=app,
-                    api_key=api_key,
-                    base_url=args.base_url,
-                    model=args.model,
                     max_tokens=args.max_tokens,
-                    temperature=args.temperature,
                 )
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - keep offline batch processing
                 print(f"\n  {trace_path}: LLM error: {exc}")
                 continue
             task_items.extend(items)
-
         selected = _select_task_items(task_items, args.max_items_per_task)
         dropped = len(task_items) - len(selected)
         suffix = f" (+{dropped} over per-task budget dropped)" if dropped else ""
         print(f"{len(selected)} item(s){suffix}")
         all_items.extend(selected)
 
-    # -- write memory bank ---------------------------------------------------
     if all_items:
         bank_path = args.memory_bank.expanduser()
-        bank_path.parent.mkdir(parents=True, exist_ok=True)
         added = append_to_memory_bank(
-            all_items, bank_path, similarity_threshold=args.dedup_threshold
+            all_items,
+            bank_path,
+            similarity_threshold=args.dedup_threshold,
         )
         skipped = len(all_items) - added
         suffix = f" ({skipped} near-duplicate(s) skipped)" if skipped else ""
         print(f"\nTotal: {added} new memory item(s) in {bank_path}{suffix}")
-
     return 0
 
 
@@ -770,178 +318,23 @@ def main() -> None:
     raise SystemExit(asyncio.run(main_async(parse_args())))
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _event_type(event: dict[str, Any]) -> str:
-    return str(event.get("type") or event.get("event") or "")
-
-
-def _find_task_goal(events: list[dict[str, Any]]) -> str:
-    for e in events:
-        if _event_type(e) == "metadata":
-            return str(e.get("task") or "")
-    return ""
-
-
-def _find_result(events: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for e in reversed(events):
-        if _event_type(e) == "result":
-            return e
-    return None
-
-
-def _extract_thought(model_output: Any) -> str:
-    """Extract the 'Thought' portion from a model_output string."""
-    if isinstance(model_output, dict):
-        text = str(
-            model_output.get("raw_content")
-            or model_output.get("action_text")
-            or model_output.get("action_summary")
-            or model_output.get("state_summary")
-            or ""
-        )
-    else:
-        text = str(model_output or "")
-    # Split on "Action:" and take everything before
-    for delimiter in ("\nAction:", "Action:"):
-        idx = text.find(delimiter)
-        if idx >= 0:
-            text = text[:idx]
-            break
-    return text.replace("Thought:", "").strip()
-
-
-def _truncate(text: str, max_chars: int) -> str:
-    if len(text) <= max_chars:
-        return text
-    return text[:max_chars - 3] + "..."
-
-
-def _step_ui_hint(extra: dict[str, Any], *, max_chars: int) -> str:
-    """Return a compact UI snippet from visible/clickable observation text."""
-    if not isinstance(extra, dict):
-        return ""
-    values: list[str] = []
-    for key in ("clickable_text", "visible_text", "content_desc"):
-        raw_values = extra.get(key)
-        if not isinstance(raw_values, list):
-            continue
-        for value in raw_values:
-            text = str(value).strip()
-            if text:
-                values.append(text)
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        if value in seen:
-            continue
-        deduped.append(value)
-        seen.add(value)
-        if len(deduped) >= 12:
-            break
-    return _truncate(", ".join(deduped), max_chars) if deduped else ""
-
-
-def _find_gui_task_traces(task_dir: Path) -> list[Path]:
-    """Find each run-level compact ``traj.json`` under a task directory."""
-    if task_dir.is_file() and task_dir.name == "traj.json":
-        return [task_dir]
-    return sorted(task_dir.rglob("traj.json"))
-
-
-def _trace_step_count(trace_path: Path, *, subtask_index: int = 1) -> int:
-    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
-    return sum(1 for event in events if _event_type(event) == "step")
-
-
-#: Launcher / system surfaces that are never the *target* app of a GUI task.
-#: Compared case-folded against each step's foreground app.  Some backends report
-#: a human-readable label (e.g. MobileWorld uses "桌面" / "Settings") instead of a
-#: package, so both package names and display-name labels are listed here.
-_LAUNCHER_OR_SYSTEM_PACKAGES = frozenset({
-    # package names
-    "",
-    "?",
-    "android",
-    "com.android.systemui",
-    "com.android.launcher",
-    "com.android.launcher3",
-    "com.sec.android.app.launcher",
-    "com.google.android.apps.nexuslauncher",
-    "com.google.android.apps.pixellauncher",
-    # display-name labels (already case-folded)
-    "桌面",
-    "主屏幕",
-    "launcher",
-    "desktop",
-    "home",
-    "system ui",
-    "系统界面",
-    "android system",
-})
-
-
-def _resolve_trace_app(trace_path: Path, *, subtask_index: int = 1) -> str | None:
-    """Resolve the target app from the trajectory itself, not the task name.
-
-    Returns the most frequent non-launcher / non-system ``foreground_app`` observed
-    across the trace's steps, or ``None`` when none is usable.  This mirrors the
-    validated principle in ``induce_compact_skills.py`` (take the app from the
-    trace, via codegen there) so the stored ``app`` actually matches what ran,
-    instead of a brittle keyword guess on the task name.
-    """
-    counter: Counter[str] = Counter()
-    for event in load_trajectory_events(trace_path, subtask_index=subtask_index):
-        if _event_type(event) != "step":
-            continue
-        observation = event.get("observation") or {}
-        app = str(observation.get("foreground_app") or observation.get("app") or "").strip()
-        if app and app.casefold() not in _LAUNCHER_OR_SYSTEM_PACKAGES:
-            counter[app] += 1
-    if not counter:
-        return None
-    return counter.most_common(1)[0][0]
-
-
-def _guess_app(task_name: str) -> str | None:
-    """Heuristic fallback: map task name to likely Android app.
-
-    Only used when :func:`_resolve_trace_app` cannot determine the app from the
-    trajectory (e.g. every step's foreground app is a launcher or missing).
-
-    Explicit app names are checked FIRST to avoid generic keywords
-    (``event``, ``send``) matching ``Mail`` before ``Calendar``, etc.
-    """
-    lowered = task_name.lower()
-
-    # Explicit app names (most specific first, before generic keywords)
-    if "mattermost" in lowered:
-        return "com.mattermost.rnbeta"
-    if "mastodon" in lowered:
-        return "org.joinmastodon.android.mastodon"
-    if "calendar" in lowered or "schedule" in lowered or "conference" in lowered:
-        return "org.fossify.calendar"
-    if "alarm" in lowered or "clock" in lowered:
-        return "com.google.android.deskclock"
-    if "chrome" in lowered or "github" in lowered or "search" in lowered:
-        return "com.android.chrome"
-    if "settings" in lowered or "airplane" in lowered or "flight" in lowered:
-        return "com.android.settings"
-    if any(k in lowered for k in ("cart", "mall", "checkout", "item", "taodian")):
-        return "com.testmall.app"
-    if any(k in lowered for k in ("photo", "gallery", "wallpaper", "selfie")):
-        return "gallery.photomanager.picturegalleryapp.imagegallery"
-    if any(k in lowered for k in ("file", "download", "count", "sum", "bid")):
-        return "com.google.android.documentsui"
-
-    # Generic keywords (only after explicit app names)
-    if any(k in lowered for k in ("mail", "email", "gmail", "meeting", "send",
-                                    "event", "receipt", "invoice")):
-        return "com.gmailclone"
-
-    return None
+__all__ = [
+    "DEFAULT_MEMORY_BANK_PATH",
+    "GuiMemoryItem",
+    "_find_gui_task_traces",
+    "_guess_app",
+    "_is_abnormal_termination",
+    "_resolve_trace_app",
+    "_select_task_items",
+    "_trace_step_count",
+    "append_to_memory_bank",
+    "format_trajectory_compact",
+    "get_task_outcome",
+    "get_trace_outcome",
+    "load_memory_bank",
+    "parse_memory_items",
+    "trace_is_abnormal",
+]
 
 
 if __name__ == "__main__":

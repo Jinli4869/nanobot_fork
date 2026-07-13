@@ -55,6 +55,16 @@ from typing import Any
 
 from guiclaw.action import normalize_action_type
 from guiclaw.interfaces import LLMResponse
+from guiclaw.memory.induction import (
+    find_gui_task_traces as _find_gui_task_traces,
+)
+from guiclaw.memory.induction import (
+    get_trace_outcome,
+    trace_is_abnormal,
+)
+from guiclaw.memory.induction import (
+    trace_step_count as _trace_step_count,
+)
 from guiclaw.skills.data import Skill, collect_placeholder_names
 from guiclaw.skills.extractor import SkillExtractor
 from guiclaw.skills.flat import compile_flat_skills, export_skills_to_source
@@ -64,15 +74,7 @@ from guiclaw.skills.induction import (
 from guiclaw.skills.state_contract import state_contract_fingerprint
 from guiclaw.skills.trajectory_codegen import codegen_to_extraction_text, codegen_trajectory
 from guiclaw.trajectory.recorder import trajectory_subtask_indices
-
-# Trace discovery / outcome helpers are shared with the gui-memory inducer.
-from scripts.induce_gui_memory import (
-    _find_gui_task_traces,
-    _trace_step_count,
-    get_task_outcome,
-    get_trace_outcome,
-    trace_is_abnormal,
-)
+from scripts.induce_gui_memory import get_task_outcome
 
 _FROM_FAILURE_TAG = "from_failure"
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
