@@ -19,7 +19,6 @@ from guiclaw.agents.implementations import (
     general_e2e_agent,
     gui_owl_1_5,
     mai_ui_agent,
-    planner_executor,
     qwen3vl,
     seed_agent,
     ui_venus_agent,
@@ -55,7 +54,6 @@ from guiclaw.agents.utils.prompts import (
     MAI_MOBILE_SYS_PROMPT_ASK_USER_MCP,
     MOBILE_QWEN3VL_PROMPT_WITH_ASK_USER,
     MOBILE_QWEN3VL_USER_TEMPLATE,
-    PLANNER_EXECUTOR_PROMPT_TEMPLATE,
     SEED_PROMPT,
 )
 from guiclaw.interfaces import LLMResponse, ToolCall
@@ -64,54 +62,27 @@ from guiclaw.skills.compact_prompt import (
     USE_SKILL_ACTION_TYPE,
     format_seed_skill_instructions,
 )
+from guiclaw.tool_schemas import COMPUTER_USE_TOOL
 
 SUPPORTED_AGENT_PROFILES: tuple[str, ...] = (
+    "default",
     "general_e2e",
-    "mobileworld_general_e2e",
-    "mobileworld_general_e2e_compact_skill",
-    "planner_executor",
+    "gui_owl",
+    "venus",
+    "seed",
     "qwen3vl",
     "mai_ui",
     "gelab",
-    "seed",
-    "gui_owl_1_5",
-    "ui_venus",
 )
-
-_PROFILE_ALIASES: dict[str | None, str] = {
-    None: "general_e2e",
-    "": "general_e2e",
-    "default": "general_e2e",
-    "general": "general_e2e",
-    "general_e2e_compact_skill": "general_e2e",
-    "mobileworld-general-e2e": "mobileworld_general_e2e",
-    "mw_general_e2e": "mobileworld_general_e2e",
-    "mw-general-e2e": "mobileworld_general_e2e",
-    "mobileworld-general-e2e-compact-skill": "mobileworld_general_e2e_compact_skill",
-    "mw_general_e2e_compact_skill": "mobileworld_general_e2e_compact_skill",
-    "mw-general-e2e-compact-skill": "mobileworld_general_e2e_compact_skill",
-    "gui-owl-1.5": "gui_owl_1_5",
-    "gui_owl": "gui_owl_1_5",
-    "venus": "ui_venus",
-}
 
 _CLAUDE_IMAGE_SIZE = (1280, 720)
 _CLAUDE_OPUS_MAX_DIMENSION = 1280
+_MODEL_RELATIVE_GRID_HINTS = ("qwen", "gemini")
 DEFAULT_SCROLL_PIXELS = 400
-
-_MOBILEWORLD_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "mobile_use",
-        "description": "MobileWorld textual profile tool schema; GUIClaw parses this from assistant text.",
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-}
 
 
 def canonicalize_agent_profile(profile_name: str | None) -> str:
-    key = (profile_name or "").strip().lower()
-    key = _PROFILE_ALIASES.get(key, key or "general_e2e")
+    key = "default" if profile_name in (None, "") else profile_name
     if key not in SUPPORTED_AGENT_PROFILES:
         raise ValueError(
             f"Unsupported agent profile {profile_name!r}. "
@@ -121,12 +92,15 @@ def canonicalize_agent_profile(profile_name: str | None) -> str:
 
 
 def profile_uses_native_tools(profile_name: str | None) -> bool:
-    del profile_name
-    return False
+    return canonicalize_agent_profile(profile_name) == "default"
 
 
 def coordinate_mode_for_profile(profile_name: str | None, model_name: str = "") -> str:
-    del profile_name, model_name
+    profile = canonicalize_agent_profile(profile_name)
+    if profile == "default" and any(
+        hint in model_name.lower() for hint in _MODEL_RELATIVE_GRID_HINTS
+    ):
+        return "relative_999"
     return "absolute"
 
 
@@ -146,17 +120,14 @@ def profile_llm_defaults(profile_name: str | None) -> dict[str, Any]:
     return dict(_PROFILE_LLM_DEFAULTS.get(canonicalize_agent_profile(profile_name), {}))
 
 
-def profile_tool_definition(profile_name: str | None) -> dict[str, Any]:
-    del profile_name
-    return _MOBILEWORLD_TOOL
+def profile_tool_definition(profile_name: str | None) -> dict[str, Any] | None:
+    if canonicalize_agent_profile(profile_name) == "default":
+        return COMPUTER_USE_TOOL
+    return None
 
 
 def _is_general_e2e_profile(profile_name: str | None) -> bool:
-    return canonicalize_agent_profile(profile_name) in {
-        "general_e2e",
-        "mobileworld_general_e2e",
-        "mobileworld_general_e2e_compact_skill",
-    }
+    return canonicalize_agent_profile(profile_name) == "general_e2e"
 
 
 def prompt_contract_for_profile(profile_name: str | None) -> dict[str, tuple[str, ...]]:
@@ -189,13 +160,6 @@ def build_mobileworld_messages(
             prompt_template=GENERAL_E2E_PROMPT_TEMPLATE,
             compact_prompt_parts=compact_prompt_parts,
         )
-    if profile == "planner_executor":
-        return _build_planner_executor_messages(
-            task=task,
-            current_observation=current_observation,
-            history=history,
-            history_image_window=history_image_window,
-        )
     if profile == "qwen3vl":
         return _build_qwen3vl_messages(
             task=task, current_observation=current_observation, history=history
@@ -219,14 +183,14 @@ def build_mobileworld_messages(
             history_image_window=history_image_window,
             compact_prompt_parts=compact_prompt_parts,
         )
-    if profile == "gui_owl_1_5":
+    if profile == "gui_owl":
         return _build_gui_owl_messages(
             task=task,
             current_observation=current_observation,
             history=history,
             history_image_window=history_image_window,
         )
-    if profile == "ui_venus":
+    if profile == "venus":
         return _build_ui_venus_messages(
             task=task,
             current_observation=current_observation,
@@ -312,15 +276,6 @@ def parse_mobileworld_action(
             scale_factor=_general_e2e_scale_factor(model_name, screen_width, screen_height),
         )
         return _to_guiclaw_payload(action, summary=content)
-    if profile == "planner_executor":
-        _thought, action_str = planner_executor.parse_action(content)
-        action = planner_executor.parsing_planner_response_to_android_world_env_action(action_str)
-        if action.get("action_type") in {"click", "double_tap", "long_press", "drag"}:
-            action = {
-                "action_type": UNKNOWN,
-                "text": "planner_executor target grounding requires a MobileWorld executor agent.",
-            }
-        return _to_guiclaw_payload(action, summary=content)
     if profile == "qwen3vl":
         structured = qwen3vl.parse_action_to_structure_output(content)
         action = qwen3vl.parsing_response_to_andoid_world_env_action(
@@ -348,7 +303,7 @@ def parse_mobileworld_action(
             raise ValueError("No Seed action parsed from response.")
         action = _seed_to_action(parsed[0], screen_width=screen_width, screen_height=screen_height)
         return _to_guiclaw_payload(action, summary=content)
-    if profile == "gui_owl_1_5":
+    if profile == "gui_owl":
         structured = gui_owl_1_5.parse_action_to_structure_output(content)
         action = gui_owl_1_5.parsing_response_to_andoid_world_env_action(
             structured,
@@ -356,7 +311,7 @@ def parse_mobileworld_action(
             image_width=screen_width,
         )
         return _to_guiclaw_payload(action, summary=structured.get("conclusion") or content)
-    if profile == "ui_venus":
+    if profile == "venus":
         action_text = _between(content, "<action>", "</action>")
         action_name, action_params = ui_venus_agent.parse_answer(action_text)
         action = ui_venus_agent.convert_venus_action_to_json_action(
@@ -422,35 +377,6 @@ def _build_general_e2e_messages(
                 ask_user_response=None,
                 instruction=None,
                 model_name=model_name,
-            )
-        )
-    return _hide_history_images_like_general(messages, history_image_window)
-
-
-def _build_planner_executor_messages(
-    *,
-    task: str,
-    current_observation: Observation,
-    history: list[Any],
-    history_image_window: int,
-) -> list[dict[str, Any]]:
-    observations = [turn.observation for turn in history] + [current_observation]
-    tool_results = [turn.tool_result_message.get("content") for turn in history]
-    responses = [_history_raw_response(turn) for turn in history]
-    messages = [
-        {
-            "role": "system",
-            "content": PLANNER_EXECUTOR_PROMPT_TEMPLATE.render(goal=task, tools=""),
-        },
-        _planner_user_message(observations[0], tool_result=None, ask_user_response=None),
-    ]
-    for index, response in enumerate(responses):
-        messages.append({"role": "assistant", "content": [{"type": "text", "text": response}]})
-        messages.append(
-            _planner_user_message(
-                observations[index + 1],
-                tool_result=tool_results[index],
-                ask_user_response=None,
             )
         )
     return _hide_history_images_like_general(messages, history_image_window)
@@ -669,21 +595,6 @@ def _general_user_message(
     return {"role": "user", "content": content}
 
 
-def _planner_user_message(
-    observation: Observation,
-    *,
-    tool_result: Any,
-    ask_user_response: Any,
-) -> dict[str, Any]:
-    content: list[dict[str, Any]] = []
-    if tool_result is not None:
-        content.append({"type": "text", "text": f"Tool call result: {tool_result}"})
-    elif ask_user_response is not None:
-        content.append({"type": "text", "text": str(ask_user_response)})
-    content.append(_image_content_raw(observation))
-    return {"role": "user", "content": content}
-
-
 def _mai_user_message(observation: Observation, tool_result: Any) -> dict[str, Any]:
     if tool_result is not None:
         return {
@@ -715,13 +626,6 @@ def _gui_owl_user_message(observation: Observation, tool_result: Any) -> dict[st
 
 
 def _image_content(observation: Observation) -> dict[str, Any]:
-    return {
-        "type": "image_url",
-        "image_url": {"url": f"data:image/png;base64,{_observation_base64(observation)}"},
-    }
-
-
-def _image_content_raw(observation: Observation) -> dict[str, Any]:
     return {
         "type": "image_url",
         "image_url": {"url": f"data:image/png;base64,{_observation_base64(observation)}"},
