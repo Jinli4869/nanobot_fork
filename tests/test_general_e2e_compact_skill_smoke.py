@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import pytest
 
+from guiclaw.skills.compact_prompt import (
+    build_catalog,
+    is_shortcut_skill,
+    skill_info_from_flat_skill,
+)
 from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.flat import FlatSkillLibrary
-from guiclaw.test import general_e2e_compact_skill_smoke as smoke
 
 
 def test_shortcut_skill_catalog_includes_id_and_parameters() -> None:
@@ -29,7 +33,7 @@ def test_shortcut_skill_catalog_includes_id_and_parameters() -> None:
         ),
     )
 
-    catalog = smoke.build_catalog([smoke.skill_info_from_flat_skill(skill)], limit=None)
+    catalog = build_catalog([skill_info_from_flat_skill(skill)], limit=None)
 
     assert "skill_id=shortcut:dl:tv.danmaku.bili:search" in catalog
     assert "parameters=query" in catalog
@@ -71,29 +75,12 @@ async def test_retrieve_skill_infos_can_filter_to_shortcut_skills(tmp_path) -> N
         )
     )
 
-    results = await smoke.retrieve_skill_infos(
-        store_root=tmp_path,
-        task="在B站搜索敢杀我的马",
+    results = await library.search(
+        "在B站搜索敢杀我的马",
         platform="android",
         app="tv.danmaku.bili",
         top_k=3,
-        shortcut_only=True,
     )
+    shortcut_ids = [skill.skill_id for skill, _score in results if is_shortcut_skill(skill)]
 
-    assert [result.skill_id for result in results] == ["shortcut:dl:tv.danmaku.bili:search"]
-
-
-def test_summarize_skill_selection_checks_expected_skill_id() -> None:
-    parsed = {
-        "action_type": "use_skill",
-        "skill_id": "shortcut:di:com.android.chrome:incognito",
-        "skill_name": "chrome_incognito",
-    }
-
-    summary = smoke.summarize_skill_selection(
-        parsed,
-        expected_skill="shortcut:di:com.android.chrome:incognito",
-    )
-
-    assert summary["used_skill"] is True
-    assert summary["expected_match"] is True
+    assert shortcut_ids == ["shortcut:dl:tv.danmaku.bili:search"]
