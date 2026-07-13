@@ -1,13 +1,9 @@
-""""Tests for gui_memory_item.py and induce_gui_memory.py."""
+""" "Tests for gui_memory_item.py and induce_gui_memory.py."""
 
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-import time
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 
@@ -16,9 +12,11 @@ import pytest
 # GuiMemoryItem
 # ---------------------------------------------------------------------------
 
+
 class TestGuiMemoryItem:
     def test_creation_defaults(self):
         from guiclaw.memory.gui_memory_item import GuiMemoryItem
+
         item = GuiMemoryItem(title="T", description="D", content="C")
         assert item.title == "T"
         assert item.description == "D"
@@ -29,16 +27,19 @@ class TestGuiMemoryItem:
 
     def test_creation_explicit_status(self):
         from guiclaw.memory.gui_memory_item import GuiMemoryItem
+
         item = GuiMemoryItem(title="T", description="D", content="C", status="failure")
         assert item.status == "failure"
 
     def test_creation_invalid_status_raises(self):
         from guiclaw.memory.gui_memory_item import GuiMemoryItem
+
         with pytest.raises(ValueError, match="status must be one of"):
             GuiMemoryItem(title="T", description="D", content="C", status="invalid")
 
     def test_repr(self):
         from guiclaw.memory.gui_memory_item import GuiMemoryItem
+
         item = GuiMemoryItem(title="Fix Alarm", description="D", content="C", status="failure")
         r = repr(item)
         assert "Fix Alarm" in r
@@ -46,6 +47,7 @@ class TestGuiMemoryItem:
 
     def test_to_dict_roundtrip(self):
         from guiclaw.memory.gui_memory_item import GuiMemoryItem
+
         item = GuiMemoryItem(
             title="Navigate Settings",
             description="Use when changing wallpaper",
@@ -67,11 +69,14 @@ class TestGuiMemoryItem:
 
     def test_from_dict_defaults(self):
         from guiclaw.memory.gui_memory_item import GuiMemoryItem
-        item = GuiMemoryItem.from_dict({
-            "title": "Minimal",
-            "description": "No extra fields",
-            "content": "Just content",
-        })
+
+        item = GuiMemoryItem.from_dict(
+            {
+                "title": "Minimal",
+                "description": "No extra fields",
+                "content": "Just content",
+            }
+        )
         assert item.status == "success"
         assert item.app is None
 
@@ -80,10 +85,12 @@ class TestGuiMemoryItem:
 # Fallback GuiMemoryItem (standalone)
 # ---------------------------------------------------------------------------
 
+
 class TestFallbackGuiMemoryItem:
     def test_fallback_to_dict_from_dict(self):
         """Verify the ImportError fallback defines serialization helpers."""
         import scripts.induce_gui_memory as im
+
         item = im.GuiMemoryItem(
             title="Fallback Title",
             description="Fallback Desc",
@@ -105,9 +112,11 @@ class TestFallbackGuiMemoryItem:
 # parse_memory_items
 # ---------------------------------------------------------------------------
 
+
 class TestParseMemoryItems:
     def test_single_item(self):
         from scripts.induce_gui_memory import parse_memory_items
+
         text = (
             "# Memory Item 1\n"
             "## Title Fix Alarm\n"
@@ -124,18 +133,15 @@ class TestParseMemoryItems:
     def test_single_item_no_trailing_newline(self):
         """Regression: old regex required \n before EOF."""
         from scripts.induce_gui_memory import parse_memory_items
-        text = (
-            "# Memory Item 1\n"
-            "## Title T\n"
-            "## Description D\n"
-            "## Content C"
-        )
+
+        text = "# Memory Item 1\n## Title T\n## Description D\n## Content C"
         items = parse_memory_items(text)
         assert len(items) >= 1
         assert items[0].title == "T"
 
     def test_multiple_items(self):
         from scripts.induce_gui_memory import parse_memory_items
+
         text = (
             "# Memory Item 1\n## Title T1\n## Description D1\n## Content C1\n"
             "# Memory Item 2\n## Title T2\n## Description D2\n## Content C2\n"
@@ -147,18 +153,21 @@ class TestParseMemoryItems:
 
     def test_app_passed_to_items(self):
         from scripts.induce_gui_memory import parse_memory_items
+
         text = "# Memory Item 1\n## Title T\n## Description D\n## Content C\n"
         items = parse_memory_items(text, app="com.gmailclone")
         assert items[0].app == "com.gmailclone"
 
     def test_empty_input(self):
         from scripts.induce_gui_memory import parse_memory_items
+
         assert parse_memory_items("") == []
         assert parse_memory_items("No memory items here") == []
 
     def test_partial_item_missing_content(self):
         """Items missing required fields are skipped."""
         from scripts.induce_gui_memory import parse_memory_items
+
         text = "# Memory Item 1\n## Title T\n## Description D\n"
         items = parse_memory_items(text)
         assert items == []  # No "## Content"
@@ -168,36 +177,93 @@ class TestParseMemoryItems:
 # format_trajectory_compact
 # ---------------------------------------------------------------------------
 
-def _write_trace_jsonl(path: Path, events: list[dict]) -> None:
+
+def _write_compact_trajectory(path: Path, events: list[dict]) -> None:
+    metadata = next((event for event in events if event.get("type") == "metadata"), {})
+    steps: list[dict] = []
+    for event in events:
+        if event.get("type") == "step":
+            observation = event.get("observation") or {}
+            step = {
+                "step": len(steps) + 1,
+                "subtask": 1,
+                "attempt": 1,
+                "phase": "agent",
+                "model_output": event.get("model_output") or "",
+                "action": event.get("action") or {},
+            }
+            app = observation.get("foreground_app") or observation.get("app")
+            if app:
+                step["app"] = app
+            steps.append(step)
+        elif event.get("type") == "skill_execution_result" and steps:
+            steps[-1]["skill"] = {
+                "skill_id": event.get("skill_id"),
+                "skill_name": event.get("skill_name"),
+                "state": event.get("state"),
+                "error": event.get("error"),
+            }
     path.write_text(
-        "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events),
+        json.dumps(
+            {
+                "instruction": metadata.get("task") or "test task",
+                "platform": "android",
+                "subtasks": [{"subtask": 1, "task": metadata.get("task") or "test task"}],
+                "steps": steps,
+                "screenshots": [],
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
+    result_event = next(
+        (
+            event
+            for event in reversed(events)
+            if event.get("type") == "result" and "success" in event
+        ),
+        None,
+    )
+    if result_event is not None:
+        subtask = {
+            "subtask": 1,
+            "task": metadata.get("task") or "test task",
+            "success": result_event["success"],
+            "error": result_event.get("error"),
+            "steps_taken": len(steps),
+        }
+        (path.parent / "result.json").write_text(
+            json.dumps({"run": subtask, "subtasks": [subtask]}),
+            encoding="utf-8",
+        )
 
 
 class TestFormatTrajectoryCompact:
     def test_basic_format(self, tmp_path):
         from scripts.induce_gui_memory import format_trajectory_compact
 
-        trace = tmp_path / "trace.jsonl"
-        _write_trace_jsonl(trace, [
-            {"type": "metadata", "task": "Open Clock and set alarm"},
-            {
-                "type": "step",
-                "step_index": 0,
-                "action": {"action_type": "tap"},
-                "observation": {"foreground_app": "桌面"},
-                "model_output": "Thought: I need to open the Clock app. Action: {\"action_type\": \"click\"}",
-            },
-            {
-                "type": "step",
-                "step_index": 1,
-                "action": {"action_type": "input_text"},
-                "observation": {"foreground_app": "Clock"},
-                "model_output": "Thought: Type 8:25 AM. Action: {\"action_type\": \"input_text\"}",
-            },
-            {"type": "result", "error": None},
-        ])
+        trace = tmp_path / "traj.json"
+        _write_compact_trajectory(
+            trace,
+            [
+                {"type": "metadata", "task": "Open Clock and set alarm"},
+                {
+                    "type": "step",
+                    "step_index": 0,
+                    "action": {"action_type": "tap"},
+                    "observation": {"foreground_app": "桌面"},
+                    "model_output": 'Thought: I need to open the Clock app. Action: {"action_type": "click"}',
+                },
+                {
+                    "type": "step",
+                    "step_index": 1,
+                    "action": {"action_type": "input_text"},
+                    "observation": {"foreground_app": "Clock"},
+                    "model_output": 'Thought: Type 8:25 AM. Action: {"action_type": "input_text"}',
+                },
+                {"type": "result", "error": None},
+            ],
+        )
 
         text = format_trajectory_compact(trace)
         assert text is not None
@@ -206,49 +272,59 @@ class TestFormatTrajectoryCompact:
         assert "Step 1 [input_text] (Clock)" in text
         assert "I need to open the Clock app" in text
 
-    def test_includes_ui_hint(self, tmp_path):
+    def test_omits_verbose_ui_dump(self, tmp_path):
         from scripts.induce_gui_memory import format_trajectory_compact
 
-        trace = tmp_path / "trace.jsonl"
-        _write_trace_jsonl(trace, [
-            {"type": "metadata", "task": "Rename files"},
-            {
-                "type": "step",
-                "step_index": 0,
-                "action": {"action_type": "tap"},
-                "observation": {
-                    "foreground_app": "Files",
-                    "extra": {
-                        "visible_text": ["Sort by...", "Select all", "Copy to…", "Move to…", "Compress"],
-                        "clickable_text": ["Sort by...", "Select all"],
+        trace = tmp_path / "traj.json"
+        _write_compact_trajectory(
+            trace,
+            [
+                {"type": "metadata", "task": "Rename files"},
+                {
+                    "type": "step",
+                    "step_index": 0,
+                    "action": {"action_type": "tap"},
+                    "observation": {
+                        "foreground_app": "Files",
+                        "extra": {
+                            "visible_text": [
+                                "Sort by...",
+                                "Select all",
+                                "Copy to…",
+                                "Move to…",
+                                "Compress",
+                            ],
+                            "clickable_text": ["Sort by...", "Select all"],
+                        },
                     },
+                    "model_output": "Thought: Open the menu. Action: {}",
                 },
-                "model_output": "Thought: Open the menu. Action: {}",
-            },
-        ])
+            ],
+        )
 
         text = format_trajectory_compact(trace)
         assert text is not None
-        assert "| UI:" in text
-        assert "Sort by..." in text
-        assert "Compress" in text
+        assert "| UI:" not in text
+        assert "Sort by..." not in text
 
     def test_truncates_long_trajectories(self, tmp_path):
         from scripts.induce_gui_memory import format_trajectory_compact
 
         events = [{"type": "metadata", "task": "Long task"}]
         for i in range(40):
-            events.append({
-                "type": "step",
-                "step_index": i,
-                "action": {"action_type": "tap"},
-                "observation": {"foreground_app": "App"},
-                "model_output": f"Thought: Step {i} thought. Action: {{}}",
-            })
+            events.append(
+                {
+                    "type": "step",
+                    "step_index": i,
+                    "action": {"action_type": "tap"},
+                    "observation": {"foreground_app": "App"},
+                    "model_output": f"Thought: Step {i} thought. Action: {{}}",
+                }
+            )
         events.append({"type": "result", "error": None})
 
-        trace = tmp_path / "trace.jsonl"
-        _write_trace_jsonl(trace, events)
+        trace = tmp_path / "traj.json"
+        _write_compact_trajectory(trace, events)
 
         text = format_trajectory_compact(trace)
         assert text is not None
@@ -262,24 +338,27 @@ class TestFormatTrajectoryCompact:
     def test_includes_skill_failures(self, tmp_path):
         from scripts.induce_gui_memory import format_trajectory_compact
 
-        trace = tmp_path / "trace.jsonl"
-        _write_trace_jsonl(trace, [
-            {"type": "metadata", "task": "Send email"},
-            {
-                "type": "step",
-                "step_index": 0,
-                "action": {"action_type": "use_skill"},
-                "observation": {"foreground_app": "Mail"},
-                "model_output": "Thought: Use adb skill. Action: {\"action_type\": \"use_skill\"}",
-            },
-            {
-                "type": "skill_execution_result",
-                "skill_name": "adb_read_sent_email",
-                "state": "failed",
-                "error": "adb failed: No such file",
-            },
-            {"type": "result", "error": "max_steps_exceeded"},
-        ])
+        trace = tmp_path / "traj.json"
+        _write_compact_trajectory(
+            trace,
+            [
+                {"type": "metadata", "task": "Send email"},
+                {
+                    "type": "step",
+                    "step_index": 0,
+                    "action": {"action_type": "use_skill"},
+                    "observation": {"foreground_app": "Mail"},
+                    "model_output": 'Thought: Use adb skill. Action: {"action_type": "use_skill"}',
+                },
+                {
+                    "type": "skill_execution_result",
+                    "skill_name": "adb_read_sent_email",
+                    "state": "failed",
+                    "error": "adb failed: No such file",
+                },
+                {"type": "result", "error": "max_steps_exceeded"},
+            ],
+        )
 
         text = format_trajectory_compact(trace)
         assert "Skill execution failures:" in text
@@ -287,17 +366,22 @@ class TestFormatTrajectoryCompact:
 
     def test_empty_trace_returns_none(self, tmp_path):
         from scripts.induce_gui_memory import format_trajectory_compact
-        trace = tmp_path / "trace.jsonl"
-        _write_trace_jsonl(trace, [
-            {"type": "metadata", "task": "No steps"},
-            {"type": "result", "error": None},
-        ])
+
+        trace = tmp_path / "traj.json"
+        _write_compact_trajectory(
+            trace,
+            [
+                {"type": "metadata", "task": "No steps"},
+                {"type": "result", "error": None},
+            ],
+        )
         assert format_trajectory_compact(trace) is None
 
 
 # ---------------------------------------------------------------------------
 # GUI task trace discovery
 # ---------------------------------------------------------------------------
+
 
 class TestGuiTaskTraceDiscovery:
     def test_discovers_one_trace_per_gui_task_run_and_counts_steps(self, tmp_path):
@@ -310,34 +394,94 @@ class TestGuiTaskTraceDiscovery:
         run_a.mkdir(parents=True)
         run_b.mkdir(parents=True)
 
-        trace_a = run_a / "trace_20260101_000000.jsonl"
-        trace_b = run_b / "trace_20260101_000001.jsonl"
-        _write_trace_jsonl(trace_a, [
-            {"type": "metadata", "task": "Long GUI task"},
-            {"type": "step", "step_index": 0, "action": {"action_type": "tap"}},
-            {"type": "step", "step_index": 1, "action": {"action_type": "scroll"}},
-            {"type": "step", "step_index": 2, "action": {"action_type": "tap"}},
-            {"type": "result", "success": False},
-        ])
-        _write_trace_jsonl(trace_b, [
-            {"type": "metadata", "task": "Short GUI task"},
-            {"type": "step", "step_index": 0, "action": {"action_type": "done"}},
-            {"type": "result", "success": True},
-        ])
+        trace_a = run_a / "traj.json"
+        trace_b = run_b / "traj.json"
+        _write_compact_trajectory(
+            trace_a,
+            [
+                {"type": "metadata", "task": "Long GUI task"},
+                {"type": "step", "step_index": 0, "action": {"action_type": "tap"}},
+                {"type": "step", "step_index": 1, "action": {"action_type": "scroll"}},
+                {"type": "step", "step_index": 2, "action": {"action_type": "tap"}},
+                {"type": "result", "success": False},
+            ],
+        )
+        _write_compact_trajectory(
+            trace_b,
+            [
+                {"type": "metadata", "task": "Short GUI task"},
+                {"type": "step", "step_index": 0, "action": {"action_type": "done"}},
+                {"type": "result", "success": True},
+            ],
+        )
 
         traces = _find_gui_task_traces(task_dir)
         assert traces == [trace_a, trace_b]
         assert _trace_step_count(trace_a) == 3
         assert _trace_step_count(trace_b) == 1
 
+    def test_one_run_exposes_each_router_subtask_independently(self, tmp_path):
+        from guiclaw.trajectory.recorder import trajectory_subtask_indices
+        from scripts.induce_gui_memory import (
+            _resolve_trace_app,
+            _trace_step_count,
+            format_trajectory_compact,
+        )
+
+        run_dir = tmp_path / "gui_runs" / "run-1"
+        run_dir.mkdir(parents=True)
+        trace = run_dir / "traj.json"
+        trace.write_text(
+            json.dumps(
+                {
+                    "instruction": "Read mail, then search maps",
+                    "platform": "android",
+                    "subtasks": [
+                        {"subtask": 1, "task": "Read mail"},
+                        {"subtask": 2, "task": "Search maps"},
+                    ],
+                    "steps": [
+                        {
+                            "step": 1,
+                            "subtask": 1,
+                            "attempt": 1,
+                            "phase": "agent",
+                            "model_output": "Read the address",
+                            "action": {"action_type": "tap"},
+                            "app": "Mail",
+                        },
+                        {
+                            "step": 2,
+                            "subtask": 2,
+                            "attempt": 1,
+                            "phase": "agent",
+                            "model_output": "Search the address",
+                            "action": {"action_type": "input_text", "text": "address"},
+                            "app": "Maps",
+                        },
+                    ],
+                    "screenshots": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert trajectory_subtask_indices(trace) == (1, 2)
+        assert _trace_step_count(trace, subtask_index=1) == 1
+        assert _trace_step_count(trace, subtask_index=2) == 1
+        assert _resolve_trace_app(trace, subtask_index=2) == "Maps"
+        assert "Search maps" in format_trajectory_compact(trace, subtask_index=2)
+
 
 # ---------------------------------------------------------------------------
 # get_task_outcome
 # ---------------------------------------------------------------------------
 
+
 class TestGetTaskOutcome:
     def test_success(self, tmp_path):
         from scripts.induce_gui_memory import get_task_outcome
+
         task_dir = tmp_path / "SuccessTask"
         task_dir.mkdir()
         (task_dir / "result.txt").write_text("score: 1.0\n", encoding="utf-8")
@@ -347,6 +491,7 @@ class TestGetTaskOutcome:
 
     def test_failure_zero(self, tmp_path):
         from scripts.induce_gui_memory import get_task_outcome
+
         task_dir = tmp_path / "FailTask"
         task_dir.mkdir()
         (task_dir / "result.txt").write_text("score: 0.0\n", encoding="utf-8")
@@ -356,6 +501,7 @@ class TestGetTaskOutcome:
 
     def test_failure_partial(self, tmp_path):
         from scripts.induce_gui_memory import get_task_outcome
+
         task_dir = tmp_path / "PartialTask"
         task_dir.mkdir()
         (task_dir / "result.txt").write_text("score: 0.5\n", encoding="utf-8")
@@ -364,6 +510,7 @@ class TestGetTaskOutcome:
 
     def test_missing_result(self, tmp_path):
         from scripts.induce_gui_memory import get_task_outcome
+
         task_dir = tmp_path / "NoResultTask"
         task_dir.mkdir()
         outcome, error = get_task_outcome(task_dir)
@@ -375,10 +522,12 @@ class TestGetTaskOutcome:
 # _guess_app ordering
 # ---------------------------------------------------------------------------
 
+
 class TestGuessApp:
     def test_calendar_before_mail(self):
         """Calendar tasks with 'event' or 'meeting' must not return Mail."""
         from scripts.induce_gui_memory import _guess_app
+
         # "CalendarMultiMemosTask" contains "calendar" → explicit
         assert _guess_app("CalendarMultiMemosTask") == "org.fossify.calendar"
         # "CheckConferenceDurationTask" contains "conference" → explicit
@@ -386,27 +535,32 @@ class TestGuessApp:
 
     def test_mattermost_before_generic(self):
         from scripts.induce_gui_memory import _guess_app
+
         assert _guess_app("MattermostProjectStatusReportTask") == "com.mattermost.rnbeta"
         assert _guess_app("MattermostEmailTask") == "com.mattermost.rnbeta"
 
     def test_mastodon_before_generic(self):
         from scripts.induce_gui_memory import _guess_app
+
         assert _guess_app("MastodonNewFilterTask") == "org.joinmastodon.android.mastodon"
 
     def test_mail_generic_match(self):
         from scripts.induce_gui_memory import _guess_app
+
         # Only mail/email keywords should map to Mail
         assert _guess_app("SendInterviewEmailTask") == "com.gmailclone"
         assert _guess_app("CVEmailTask") == "com.gmailclone"
 
     def test_no_match(self):
         from scripts.induce_gui_memory import _guess_app
+
         assert _guess_app("UnknownTaskName") is None
 
 
 # ---------------------------------------------------------------------------
 # Memory bank I/O
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryBankIO:
     def test_append_and_load(self, tmp_path):
@@ -415,6 +569,7 @@ class TestMemoryBankIO:
             append_to_memory_bank,
             load_memory_bank,
         )
+
         bank = tmp_path / "test_bank.jsonl"
 
         items = [
@@ -434,6 +589,7 @@ class TestMemoryBankIO:
             append_to_memory_bank,
             load_memory_bank,
         )
+
         bank = tmp_path / "dedup_bank.jsonl"
 
         item1 = GuiMemoryItem(title="Dup", description="D", content="C", status="success")
@@ -446,6 +602,7 @@ class TestMemoryBankIO:
 
     def test_load_empty_bank(self, tmp_path):
         from scripts.induce_gui_memory import load_memory_bank
+
         bank = tmp_path / "nonexistent.jsonl"
         assert load_memory_bank(bank) == []
 
@@ -453,6 +610,7 @@ class TestMemoryBankIO:
 # ---------------------------------------------------------------------------
 # GUIClaw memory store + router retrieval
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryBankJSONL:
     def test_append_to_memory_bank_jsonl_dedups(self, tmp_path):
@@ -506,18 +664,21 @@ class TestGuiRouterMemoryRetriever:
         bank_dir = tmp_path / "guiclaw_memory"
         bank_dir.mkdir()
         bank_path = bank_dir / "gui_memory_bank.jsonl"
-        append_to_memory_bank([
-            GuiMemoryItem(
-                title="Differentiate profile sharing from invite generation",
-                description="Use when generating one-person expiring invite links.",
-                content=(
-                    "Create invite links from server settings or invite controls; "
-                    "profile share links do not configure expiry, usage limits, or auto-follow."
-                ),
-                status="failure",
-                app="org.joinmastodon.android.mastodon",
-            )
-        ], bank_path)
+        append_to_memory_bank(
+            [
+                GuiMemoryItem(
+                    title="Differentiate profile sharing from invite generation",
+                    description="Use when generating one-person expiring invite links.",
+                    content=(
+                        "Create invite links from server settings or invite controls; "
+                        "profile share links do not configure expiry, usage limits, or auto-follow."
+                    ),
+                    status="failure",
+                    app="org.joinmastodon.android.mastodon",
+                )
+            ],
+            bank_path,
+        )
         monkeypatch.setattr(gui_tools, "DEFAULT_GUICLAW_MEMORY_DIR", bank_dir)
 
         retriever = GuiRouterMemoryRetriever(tmp_path / "workspace")

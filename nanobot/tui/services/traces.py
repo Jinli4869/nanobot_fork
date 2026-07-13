@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from guiclaw.trajectory.recorder import load_trajectory_events
 from nanobot.tui.schemas import (
     LogInspectionResponse,
     TraceEventSummary,
@@ -98,23 +99,16 @@ class TraceInspectionService:
 
     @staticmethod
     def _resolve_trace_path(run_dir: Path) -> Path | None:
-        candidates = sorted(run_dir.glob("trace*.jsonl"))
-        return candidates[0] if candidates else None
+        path = run_dir / "traj.json"
+        return path if path.is_file() else None
 
     def _load_trace_events(self, trace_path: Path) -> list[TraceEventSummary]:
         events: list[TraceEventSummary] = []
         try:
-            with open(trace_path, encoding="utf-8") as handle:
-                for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    raw_event = json.loads(line)
-                    if not isinstance(raw_event, dict):
-                        continue
-                    event = self._filter_trace_event(raw_event)
-                    if event is not None:
-                        events.append(event)
+            for raw_event in load_trajectory_events(trace_path, subtask_index=None):
+                event = self._filter_trace_event(raw_event)
+                if event is not None:
+                    events.append(event)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return []
         return events
@@ -152,17 +146,10 @@ class TraceInspectionService:
     def _build_log_lines_from_trace(self, trace_path: Path) -> list[TraceLogLine]:
         lines: list[TraceLogLine] = []
         try:
-            with open(trace_path, encoding="utf-8") as handle:
-                for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    raw_event = json.loads(line)
-                    if not isinstance(raw_event, dict):
-                        continue
-                    log_line = self._trace_event_to_log_line(raw_event)
-                    if log_line is not None:
-                        lines.append(log_line)
+            for raw_event in load_trajectory_events(trace_path, subtask_index=None):
+                log_line = self._trace_event_to_log_line(raw_event)
+                if log_line is not None:
+                    lines.append(log_line)
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return []
         return lines

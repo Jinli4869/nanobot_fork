@@ -31,6 +31,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from guiclaw.trajectory.recorder import load_trajectory_events, trajectory_subtask_indices
+
 # -- project imports (require nanobot_fork on PYTHONPATH) --------------------
 try:
     from guiclaw.memory.gui_memory_item import GuiMemoryItem
@@ -156,17 +158,18 @@ Your output must strictly follow the Markdown format shown below:
 def format_trajectory_compact(
     trace_path: Path,
     *,
+    subtask_index: int = 1,
     max_steps_full: int = 30,
     keep_first: int = 3,
     keep_last: int = 10,
     thought_max_chars: int = 200,
     ui_hint_max_chars: int = 240,
 ) -> str | None:
-    """Convert a MobileWorld JSONL trace into compact LLM-readable text.
+    """Convert one compact GUIClaw subtask into LLM-readable text.
 
     Returns ``None`` when the trace contains no usable steps.
     """
-    events = _load_jsonl(trace_path)
+    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
     if not events:
         return None
 
@@ -340,7 +343,7 @@ def get_task_outcome(task_dir: Path) -> tuple[str, str]:
     return "failure", f"score={score}"
 
 
-def get_trace_outcome(trace_path: Path) -> tuple[str, str] | None:
+def get_trace_outcome(trace_path: Path, *, subtask_index: int = 1) -> tuple[str, str] | None:
     """Return ``(outcome, note)`` for a single trace from its own ``result`` event.
 
     The recorder writes a terminal ``result`` event with an explicit ``success``
@@ -352,7 +355,7 @@ def get_trace_outcome(trace_path: Path) -> tuple[str, str] | None:
     Returns ``None`` when the trace has no usable success signal so the caller can
     fall back to :func:`get_task_outcome`.
     """
-    result = _find_result(_load_jsonl(trace_path))
+    result = _find_result(load_trajectory_events(trace_path, subtask_index=subtask_index))
     if result is None or "success" not in result:
         return None
     if result.get("success"):
@@ -405,10 +408,11 @@ def _is_abnormal_termination(result_event: dict[str, Any] | None) -> bool:
     )
 
 
-def trace_is_abnormal(trace_path: Path) -> bool:
+def trace_is_abnormal(trace_path: Path, *, subtask_index: int = 1) -> bool:
     """True when *trace_path* ended in abnormal termination (see
     :func:`_is_abnormal_termination`).  Shared with the compact-skill inducer."""
-    return _is_abnormal_termination(_find_result(_load_jsonl(trace_path)))
+    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
+    return _is_abnormal_termination(_find_result(events))
 
 
 # ---------------------------------------------------------------------------
@@ -593,11 +597,15 @@ def _select_task_items(items: list[GuiMemoryItem], budget: int) -> list[GuiMemor
 async def main_async(args: argparse.Namespace) -> int:
     # -- format-only mode ----------------------------------------------------
     if args.format_only:
-        text = format_trajectory_compact(args.format_only)
-        if text is None:
+        formatted = [
+            text
+            for index in trajectory_subtask_indices(args.format_only)
+            if (text := format_trajectory_compact(args.format_only, subtask_index=index))
+        ]
+        if not formatted:
             print("No usable steps found in trace.", file=sys.stderr)
             return 1
-        print(text)
+        print("\n\n".join(formatted))
         return 0
 
     # -- validate input source -----------------------------------------------
@@ -649,29 +657,39 @@ async def main_async(args: argparse.Namespace) -> int:
         # mislabel mixed-outcome runs or mis-tag the app.
         task_outcome, task_error = get_task_outcome(task_dir)
 
-        # job = (trace_path, trajectory_text, step_count, outcome, app)
-        jobs: list[tuple[Path, str, int, str, str | None]] = []
+        # job = (trace_path, subtask_index, trajectory_text, step_count, outcome, app)
+        jobs: list[tuple[Path, int, str, int, str, str | None]] = []
         skipped_short = 0
         skipped_empty = 0
         skipped_abnormal = 0
         for trace_path in trace_paths:
-            step_count = _trace_step_count(trace_path)
-            if step_count <= 2:
-                skipped_short += 1
-                continue
-            # Skip degenerate runs (human-intervention cancel, no-progress
-            # stagnation/timeout): mining "lessons" from them yields only noise.
-            if trace_is_abnormal(trace_path):
-                skipped_abnormal += 1
-                continue
-            trajectory_text = format_trajectory_compact(trace_path)
-            if trajectory_text is None:
-                skipped_empty += 1
-                continue
-            trace_outcome = get_trace_outcome(trace_path)
-            outcome = trace_outcome[0] if trace_outcome is not None else task_outcome
-            app = _resolve_trace_app(trace_path) or _guess_app(task_name)
-            jobs.append((trace_path, trajectory_text, step_count, outcome, app))
+            for subtask_index in trajectory_subtask_indices(trace_path):
+                step_count = _trace_step_count(trace_path, subtask_index=subtask_index)
+                if step_count <= 2:
+                    skipped_short += 1
+                    continue
+                if trace_is_abnormal(trace_path, subtask_index=subtask_index):
+                    skipped_abnormal += 1
+                    continue
+                trajectory_text = format_trajectory_compact(
+                    trace_path,
+                    subtask_index=subtask_index,
+                )
+                if trajectory_text is None:
+                    skipped_empty += 1
+                    continue
+                trace_outcome = get_trace_outcome(
+                    trace_path,
+                    subtask_index=subtask_index,
+                )
+                outcome = trace_outcome[0] if trace_outcome is not None else task_outcome
+                app = _resolve_trace_app(
+                    trace_path,
+                    subtask_index=subtask_index,
+                ) or _guess_app(task_name)
+                jobs.append(
+                    (trace_path, subtask_index, trajectory_text, step_count, outcome, app)
+                )
 
         if not jobs:
             detail = []
@@ -691,15 +709,18 @@ async def main_async(args: argparse.Namespace) -> int:
             if task_error:
                 print(f"Task-level note: {task_error}")
             print("Traces:")
-            for trace_path, _, step_count, outcome, app in jobs:
-                print(f"  - {trace_path} ({step_count} steps) "
+            for trace_path, subtask_index, _, step_count, outcome, app in jobs:
+                print(f"  - {trace_path}#subtask-{subtask_index} ({step_count} steps) "
                       f"outcome={outcome} app={app or '-'}")
             if skipped_short or skipped_abnormal or skipped_empty:
                 print(f"Skipped: {skipped_short} short, "
                       f"{skipped_abnormal} abnormal, {skipped_empty} empty")
             print(f"{'='*60}")
-            for trace_path, trajectory_text, _, _, _ in jobs:
-                print(f"\n--- GUI task trace: {trace_path.parent.name} ---")
+            for trace_path, subtask_index, trajectory_text, _, _, _ in jobs:
+                print(
+                    f"\n--- GUI task trace: {trace_path.parent.name} "
+                    f"subtask {subtask_index} ---"
+                )
                 print(trajectory_text[:1500])
                 if len(trajectory_text) > 1500:
                     print(f"... ({len(trajectory_text)} chars total)")
@@ -708,7 +729,7 @@ async def main_async(args: argparse.Namespace) -> int:
         # Call LLM once per memory-worthy GUI task trace, with per-trace outcome+app.
         task_items: list[GuiMemoryItem] = []
         print(f"[GM] {task_name} ... ", end="", flush=True)
-        for trace_path, trajectory_text, _, outcome, app in jobs:
+        for trace_path, _subtask_index, trajectory_text, _, outcome, app in jobs:
             try:
                 items = await induce_memory_items(
                     trajectory_text=trajectory_text,
@@ -752,19 +773,6 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            events.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return events
-
 
 def _event_type(event: dict[str, Any]) -> str:
     return str(event.get("type") or event.get("event") or "")
@@ -837,38 +845,15 @@ def _step_ui_hint(extra: dict[str, Any], *, max_chars: int) -> str:
 
 
 def _find_gui_task_traces(task_dir: Path) -> list[Path]:
-    """Find one primary trace JSONL for each GUI task run under a task dir."""
-    run_dir = task_dir / "nanobot_gui_task_runs"
-    if not run_dir.exists():
-        return []
-    traces: list[Path] = []
-    for gui_task_dir in sorted(path for path in run_dir.iterdir() if path.is_dir()):
-        trace_path = _select_trace_file(gui_task_dir)
-        if trace_path is not None:
-            traces.append(trace_path)
-    return traces
+    """Find each run-level compact ``traj.json`` under a task directory."""
+    if task_dir.is_file() and task_dir.name == "traj.json":
+        return [task_dir]
+    return sorted(task_dir.rglob("traj.json"))
 
 
-def _select_trace_file(run_dir: Path) -> Path | None:
-    """Select the primary trace for one GUI task run, following skill extraction."""
-    candidates = sorted(run_dir.glob("trace*.jsonl"))
-    if not candidates:
-        candidates = sorted(run_dir.glob("*.jsonl"))
-    if not candidates:
-        candidates = sorted(run_dir.rglob("trace*.jsonl"))
-    if not candidates:
-        candidates = sorted(run_dir.rglob("*.jsonl"))
-    if not candidates:
-        return None
-    for name in ("trace.jsonl",):
-        for path in candidates:
-            if path.name == name:
-                return path
-    return candidates[0]
-
-
-def _trace_step_count(trace_path: Path) -> int:
-    return sum(1 for event in _load_jsonl(trace_path) if _event_type(event) == "step")
+def _trace_step_count(trace_path: Path, *, subtask_index: int = 1) -> int:
+    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
+    return sum(1 for event in events if _event_type(event) == "step")
 
 
 #: Launcher / system surfaces that are never the *target* app of a GUI task.
@@ -898,7 +883,7 @@ _LAUNCHER_OR_SYSTEM_PACKAGES = frozenset({
 })
 
 
-def _resolve_trace_app(trace_path: Path) -> str | None:
+def _resolve_trace_app(trace_path: Path, *, subtask_index: int = 1) -> str | None:
     """Resolve the target app from the trajectory itself, not the task name.
 
     Returns the most frequent non-launcher / non-system ``foreground_app`` observed
@@ -908,7 +893,7 @@ def _resolve_trace_app(trace_path: Path) -> str | None:
     instead of a brittle keyword guess on the task name.
     """
     counter: Counter[str] = Counter()
-    for event in _load_jsonl(trace_path):
+    for event in load_trajectory_events(trace_path, subtask_index=subtask_index):
         if _event_type(event) != "step":
             continue
         observation = event.get("observation") or {}

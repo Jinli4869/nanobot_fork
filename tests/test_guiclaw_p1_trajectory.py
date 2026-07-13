@@ -1,29 +1,25 @@
-"""
-Unit tests for guiclaw.trajectory module.
+"""Unit tests for compact GUIClaw trajectory artifacts."""
 
-Covers:
-- TrajectoryRecorder: event sequencing (metadata first, result last),
-  phase tracking, start/finish lifecycle, and error paths.
-- TrajectorySummarizer: returns non-empty string from mocked LLM.
-
-All tests are network-free and device-free; external I/O is replaced by
-injected fakes following the established P0/_FakeEmbedder patterns.
-"""
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
 from guiclaw.interfaces import LLMResponse
-from guiclaw.trajectory.recorder import ExecutionPhase, TrajectoryRecorder
+from guiclaw.trajectory.recorder import (
+    ExecutionPhase,
+    TrajectoryRecorder,
+    load_trajectory_events,
+)
 from guiclaw.trajectory.summarizer import TrajectorySummarizer
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class _ScriptedLLM:
     """Minimal LLMProvider fake: pops canned string responses in order."""
@@ -41,98 +37,198 @@ class _ScriptedLLM:
 # TrajectoryRecorder tests
 # ---------------------------------------------------------------------------
 
-def test_trajectory_recorder_start_creates_file(tmp_path: Path) -> None:
-    """start() returns a Path that exists on disk."""
-    rec = TrajectoryRecorder(output_dir=tmp_path, task="open settings", platform="android")
-    trace_path = rec.start()
 
-    assert isinstance(trace_path, Path)
-    assert trace_path.exists()
-    assert trace_path.suffix == ".jsonl"
-
-
-def test_trajectory_recorder_event_order(tmp_path: Path) -> None:
-    """After start + 2 steps + finish, JSONL has metadata first and result last."""
-    rec = TrajectoryRecorder(output_dir=tmp_path, task="open wifi", platform="android")
+def test_trajectory_recorder_writes_compact_json_artifacts(tmp_path: Path) -> None:
+    rec = TrajectoryRecorder(
+        output_dir=tmp_path,
+        task="search video",
+        platform="android",
+        instruction="Find and play a video",
+        subtask_index=1,
+        app_hint="tv.danmaku.bili",
+    )
     path = rec.start()
+    rec.set_attempt(1)
+    initial = tmp_path / "subtasks/01_bilibili/attempt_01/screenshots/000_initial.png"
+    initial.parent.mkdir(parents=True)
+    initial.write_bytes(b"png")
+    rec.record_screenshot(initial, kind="initial")
+    screenshot = initial.with_name("001_tap.png")
+    screenshot.write_bytes(b"png")
+    rec.record_step(
+        action={"action_type": "tap", "x": 100, "y": 200},
+        model_output="Thought: tap the result\nAction: tap",
+        screenshot_path=str(screenshot),
+        foreground_app="tv.danmaku.bili",
+        interaction_target={"selector": {"text": "result"}},
+        token_usage={"prompt_tokens": 10, "completion_tokens": 2},
+    )
+    rec.finish(success=True, summary="video is playing")
 
-    rec.record_step(action={"action_type": "tap", "x": 100, "y": 200}, model_output="tap icon")
-    rec.record_step(action={"action_type": "done"}, model_output="done")
-    rec.finish(success=True)
+    assert path == tmp_path / "traj.json"
+    trajectory = json.loads(path.read_text(encoding="utf-8"))
+    assert trajectory["instruction"] == "Find and play a video"
+    assert trajectory["platform"] == "android"
+    assert trajectory["subtasks"] == [
+        {
+            "subtask": 1,
+            "task": "search video",
+            "app_hint": "tv.danmaku.bili",
+        }
+    ]
+    assert trajectory["screenshots"] == [
+        {
+            "subtask": 1,
+            "attempt": 1,
+            "sequence": 0,
+            "kind": "initial",
+            "file": "subtasks/01_bilibili/attempt_01/screenshots/000_initial.png",
+        },
+        {
+            "subtask": 1,
+            "attempt": 1,
+            "sequence": 1,
+            "kind": "tap",
+            "file": "subtasks/01_bilibili/attempt_01/screenshots/001_tap.png",
+        },
+    ]
+    assert trajectory["steps"] == [
+        {
+            "step": 1,
+            "subtask": 1,
+            "attempt": 1,
+            "phase": "agent",
+            "model_output": "Thought: tap the result\nAction: tap",
+            "action": {"action_type": "tap", "x": 100, "y": 200},
+            "screenshot": "subtasks/01_bilibili/attempt_01/screenshots/001_tap.png",
+            "app": "tv.danmaku.bili",
+            "interaction_target": {"selector": {"text": "result"}},
+            "token_usage": {"prompt_tokens": 10, "completion_tokens": 2},
+        }
+    ]
+    assert "duration_s" not in trajectory["steps"][0]
+    assert "chat_latency_s" not in trajectory["steps"][0]
+    assert "ttft_s" not in trajectory["steps"][0]
+    assert not list(tmp_path.glob("*.jsonl"))
+    assert not (tmp_path / "gui_metrics.json").exists()
 
-    lines = path.read_text(encoding="utf-8").strip().splitlines()
-    events = [json.loads(line) for line in lines]
-    types = [e["type"] for e in events]
-
-    assert types[0] == "metadata", f"Expected metadata first, got: {types}"
-    assert types[-1] == "result", f"Expected result last, got: {types}"
-
-    metadata = events[0]
-    assert metadata["task"] == "open wifi"
-    assert metadata["platform"] == "android"
-
-    result = events[-1]
-    assert result["success"] is True
-    assert result["total_steps"] == 2
-
-    step_events = [e for e in events if e["type"] == "step"]
-    assert len(step_events) == 2, f"Expected 2 step events, got: {len(step_events)}"
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["run"]["success"] is True
+    assert result["run"]["summary"] == "video is playing"
+    assert result["run"]["steps_taken"] == 1
+    assert result["run"]["token_usage"] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+    }
+    assert "total_token_usage" not in result["run"]
 
 
-def test_trajectory_recorder_set_phase(tmp_path: Path) -> None:
-    """set_phase() changes subsequent step events to the new phase."""
+def test_trajectory_recorder_keeps_global_steps_across_subtasks(tmp_path: Path) -> None:
+    first = TrajectoryRecorder(
+        output_dir=tmp_path,
+        instruction="Compare two apps",
+        task="Check app A",
+        subtask_index=1,
+    )
+    first.start()
+    first.record_step(action={"action_type": "tap"}, token_usage={"prompt_tokens": 3})
+    first.finish(success=True)
+
+    second = TrajectoryRecorder(
+        output_dir=tmp_path,
+        instruction="Compare two apps",
+        task="Check app B",
+        subtask_index=2,
+    )
+    second.start()
+    second.set_attempt(2)
+    second.record_step(action={"action_type": "done"}, token_usage={"completion_tokens": 4})
+    second.finish(success=True)
+
+    trajectory = json.loads((tmp_path / "traj.json").read_text(encoding="utf-8"))
+    assert [step["step"] for step in trajectory["steps"]] == [1, 2]
+    assert [step["subtask"] for step in trajectory["steps"]] == [1, 2]
+    assert [step["attempt"] for step in trajectory["steps"]] == [1, 2]
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["run"]["token_usage"] == {
+        "prompt_tokens": 3,
+        "completion_tokens": 4,
+    }
+    assert sorted(path.name for path in tmp_path.glob("*.json")) == [
+        "result.json",
+        "traj.json",
+    ]
+    assert not list(tmp_path.rglob("*.jsonl"))
+
+
+def test_trajectory_recorder_set_phase_changes_compact_step(tmp_path: Path) -> None:
     rec = TrajectoryRecorder(output_dir=tmp_path, task="test task", platform="macos")
     path = rec.start()
-
-    # Step 1: default phase (AGENT)
-    rec.record_step(action={"action_type": "tap", "x": 50, "y": 50}, model_output="first tap")
-    # Switch phase to SKILL
+    rec.record_step(action={"action_type": "tap"})
     rec.set_phase(ExecutionPhase.SKILL, reason="matched skill")
-    # Step 2: should be recorded with SKILL phase
-    rec.record_step(action={"action_type": "tap", "x": 80, "y": 80}, model_output="second tap")
+    rec.record_step(action={"action_type": "done"})
     rec.finish(success=True)
 
-    lines = path.read_text(encoding="utf-8").strip().splitlines()
-    events = [json.loads(line) for line in lines]
-    step_events = [e for e in events if e["type"] == "step"]
-
-    assert len(step_events) == 2
-    assert step_events[0]["phase"] == "agent", (
-        f"First step should be 'agent', got: {step_events[0]['phase']}"
-    )
-    assert step_events[1]["phase"] == "skill", (
-        f"Second step should be 'skill', got: {step_events[1]['phase']}"
-    )
+    trajectory = json.loads(path.read_text(encoding="utf-8"))
+    assert [step["phase"] for step in trajectory["steps"]] == ["agent", "skill"]
 
 
-def test_trajectory_recorder_step_details_are_persisted(tmp_path: Path) -> None:
-    """record_step() should persist lightweight observation fields."""
-    rec = TrajectoryRecorder(output_dir=tmp_path, task="search video", platform="android")
+def test_trajectory_recorder_embeds_minimal_failed_skill_data_in_step(tmp_path: Path) -> None:
+    rec = TrajectoryRecorder(output_dir=tmp_path, task="Open messages", platform="android")
     path = rec.start()
-
-    rec.record_step(
-        action={"action_type": "input_text", "text": "we are the world"},
-        model_output="输入搜索词",
-        screenshot_path="/screenshots/step_001.png",
-        foreground_app="com.example.app",
-        screen_width=1080,
-        screen_height=1920,
-        platform="android",
+    rec.record_event("skill_execution_start", skill_id="skill-1", skill_name="open_messages")
+    rec.record_event(
+        "skill_step",
+        skill_id="skill-1",
+        skill_name="open_messages",
+        step_index=0,
+        target="Messages",
+        valid_state="Messages tab visible",
+        state_contract={"anchor": {"app_package": "com.example.app"}},
+        valid_state_check=False,
+        observation={"foreground_app": "com.example.app", "platform": "android"},
+        screenshot_path="subtasks/01_messages/attempt_01/screenshots/001_use_skill.png",
+        error="popup visible",
+        duration_s=12.3,
     )
-    rec.finish(success=True)
+    rec.record_event(
+        "skill_execution_result",
+        skill_id="skill-1",
+        skill_name="open_messages",
+        state="failed",
+        error="Step 0 valid_state not reached",
+    )
+    rec.record_step(
+        action={"action_type": "use_skill", "text": "skill-1"},
+        model_output="Use the saved Messages skill",
+    )
+    rec.finish(success=False, error="skill failed")
 
-    events = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    step_event = next(event for event in events if event["type"] == "step")
-
-    assert step_event["observation"]["foreground_app"] == "com.example.app"
-    assert step_event["observation"]["app"] == "com.example.app"
-    assert step_event["observation"]["screen_width"] == 1080
-    assert step_event["observation"]["screen_height"] == 1920
-    assert step_event["observation"]["platform"] == "android"
-    assert step_event["observation"]["screenshot_path"] == "/screenshots/step_001.png"
-    assert "prompt" not in step_event
-    assert "model_response" not in step_event
-    assert "execution" not in step_event
+    trajectory = json.loads(path.read_text(encoding="utf-8"))
+    assert "skill_events" not in trajectory
+    assert trajectory["steps"][0]["skill"] == {
+        "skill_id": "skill-1",
+        "skill_name": "open_messages",
+        "state": "failed",
+        "error": "Step 0 valid_state not reached",
+        "failed_step": {
+            "step_index": 0,
+            "target": "Messages",
+            "valid_state": "Messages tab visible",
+            "state_contract": {"anchor": {"app_package": "com.example.app"}},
+            "observation": {"foreground_app": "com.example.app", "platform": "android"},
+            "screenshot_path": "subtasks/01_messages/attempt_01/screenshots/001_use_skill.png",
+            "error": "popup visible",
+        },
+    }
+    events = load_trajectory_events(path, subtask_index=1)
+    assert [event["type"] for event in events] == [
+        "metadata",
+        "skill_step",
+        "skill_execution_result",
+        "step",
+        "result",
+    ]
 
 
 def test_trajectory_recorder_not_started_raises(tmp_path: Path) -> None:
@@ -144,43 +240,21 @@ def test_trajectory_recorder_not_started_raises(tmp_path: Path) -> None:
 
 
 def test_trajectory_recorder_finish_failure(tmp_path: Path) -> None:
-    """finish(success=False, error=...) writes result with success=False and error field."""
     rec = TrajectoryRecorder(output_dir=tmp_path, task="failing task", platform="android")
-    path = rec.start()
-
+    rec.start()
     rec.record_step(action={"action_type": "wait"}, model_output="waiting")
-    rec.finish(success=False, error="timeout")
+    rec.finish(success=False, error="timeout", summary="timed out")
 
-    lines = path.read_text(encoding="utf-8").strip().splitlines()
-    events = [json.loads(line) for line in lines]
-    result = events[-1]
-
-    assert result["type"] == "result"
-    assert result["success"] is False
-    assert result["error"] == "timeout"
-    assert result["total_steps"] == 1
-
-
-def test_trajectory_recorder_metadata_fields(tmp_path: Path) -> None:
-    """metadata event includes task, platform, and initial_phase fields."""
-    rec = TrajectoryRecorder(output_dir=tmp_path, task="check battery", platform="ios")
-    path = rec.start()
-    rec.finish(success=True)
-
-    lines = path.read_text(encoding="utf-8").strip().splitlines()
-    events = [json.loads(line) for line in lines]
-    metadata = events[0]
-
-    assert metadata["type"] == "metadata"
-    assert metadata["task"] == "check battery"
-    assert metadata["platform"] == "ios"
-    assert "initial_phase" in metadata
-    assert "timestamp" in metadata
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["run"]["success"] is False
+    assert result["run"]["error"] == "timeout"
+    assert result["run"]["steps_taken"] == 1
 
 
 # ---------------------------------------------------------------------------
 # TrajectorySummarizer tests
 # ---------------------------------------------------------------------------
+
 
 async def test_trajectory_summarizer_returns_string() -> None:
     """summarize_events() returns the strict GUI state note from the LLM."""
@@ -220,3 +294,48 @@ async def test_trajectory_summarizer_empty_events_returns_empty_string() -> None
     result = await summarizer.summarize_events([])
 
     assert result == ""
+
+
+async def test_postprocessing_sections_share_one_result_without_lost_subtasks(
+    tmp_path: Path,
+) -> None:
+    from guiclaw.postprocessing import PostRunProcessor
+
+    recorder = TrajectoryRecorder(output_dir=tmp_path, task="first")
+    trace_path = recorder.start()
+    recorder.finish(success=True)
+    processor = PostRunProcessor(llm=_ScriptedLLM())
+
+    await asyncio.gather(
+        processor._write_result_section(
+            trace_path,
+            "evaluation",
+            1,
+            {"success": True, "reason": "done", "token_usage": {"total_tokens": 7}},
+        ),
+        processor._write_result_section(
+            trace_path,
+            "evaluation",
+            2,
+            {"success": False, "reason": "missing evidence"},
+        ),
+        processor._write_result_section(
+            trace_path,
+            "extraction",
+            1,
+            {
+                "status": "no_candidate",
+                "trace": str(trace_path),
+                "detail": {"reason": "empty", "token_usage": {"total_tokens": 5}},
+            },
+        ),
+    )
+
+    result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    assert result["evaluation"] == {
+        "1": {"success": True, "reason": "done"},
+        "2": {"success": False, "reason": "missing evidence"},
+    }
+    assert result["extraction"] == {"1": {"status": "no_candidate", "detail": {"reason": "empty"}}}
+    assert not list(tmp_path.glob("evaluation*.json"))
+    assert not list(tmp_path.glob("extraction*.json"))

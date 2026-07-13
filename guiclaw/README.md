@@ -435,9 +435,9 @@ If you want nanobot to evaluate each successful GUI run after the task finishes,
 
 Behavior:
 
-- evaluation runs only after a successful GUI task with a saved `trace.jsonl`
+- evaluation runs only after a successful GUI task with a saved `traj.json`
 - evaluation runs in the background postprocessing path and does not block the main GUI result
-- the evaluation result is written as `evaluation.json` next to the GUI run trace
+- the compact evaluation section is merged into the run's single `result.json`
 - if `apiKey` is omitted, nanobot falls back to `OPENAI_API_KEY`
 - `judgeModel` can use a different provider/model pair than both the main agent and the GUI agent, as long as `apiBase` and `apiKey` point to a compatible endpoint
 

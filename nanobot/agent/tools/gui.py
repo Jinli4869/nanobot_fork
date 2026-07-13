@@ -26,7 +26,11 @@ from guiclaw.skills.normalization import (
     get_gui_skill_store_root,
     normalize_app_identifier,
 )
-from guiclaw.trajectory.recorder import TrajectoryRecorder
+from guiclaw.trajectory.recorder import (
+    TrajectoryRecorder,
+    finalize_run_result,
+    load_trajectory_events,
+)
 from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
 from nanobot.agent.tools.base import Tool
 
@@ -716,6 +720,7 @@ class GuiWorkflowRunner:
         )
         task_with_hints = self._task_with_router_hints(task, router_context)
         plan = await self._safe_plan_workflow(task, router_context=router_context)
+        kwargs.setdefault("subtask_index", 1)
         if plan is None:
             return await self._run_task(active_backend, task_with_hints, **kwargs)
         plan = self._normalize_plan_app_hints(
@@ -726,6 +731,7 @@ class GuiWorkflowRunner:
             payload = await self._run_task(active_backend, task_with_hints, **kwargs)
             return self._with_workflow_mode(payload, "single")
 
+        kwargs.pop("original_task", None)
         return await self._run_multi_app(active_backend, task, plan, **kwargs)
 
     @staticmethod
@@ -927,6 +933,8 @@ class GuiWorkflowRunner:
             subtask_context = await self._build_router_context(subtask.task, platform=platform)
             task_prompt = self._task_with_router_hints(task_prompt, subtask_context)
             run_kwargs = dict(kwargs)
+            run_kwargs["subtask_index"] = index
+            run_kwargs["original_task"] = original_task
             if remaining_steps is not None:
                 run_kwargs["max_steps"] = remaining_steps
             if subtask.app_hint is not None:
@@ -1123,11 +1131,8 @@ class GuiWorkflowRunner:
             "steps_taken": steps_taken,
             "error": error,
             "post_run_state": last_payload.get("post_run_state"),
-            "metrics_path": last_payload.get("metrics_path"),
             "duration_s": duration_s,
             "token_usage": token_usage,
-            "total_duration_s": duration_s,
-            "total_token_usage": token_usage,
             "workflow_mode": "multi_app",
             "subtasks": subtask_records,
             "blackboard": dict(blackboard),
@@ -1232,6 +1237,7 @@ class GuiWorkflowRunner:
 
 class GuiSubagentTool(Tool):
     """Run a GUI automation task through guiclaw."""
+
     _plugin_discoverable = False
 
     def __init__(
@@ -1449,6 +1455,7 @@ class GuiSubagentTool(Tool):
             await self._shutdown_android_backend(active_backend)
 
     async def _run_workflow_or_task(self, active_backend: Any, task: str, **kwargs: Any) -> str:
+        run_root = self._make_run_dir()
         runner = GuiWorkflowRunner(
             llm=self._llm_adapter,
             run_task=self._run_task,
@@ -1459,7 +1466,51 @@ class GuiSubagentTool(Tool):
                 embedding_signature=self._embedding_signature,
             ),
         )
-        return await runner.run(active_backend, task, **kwargs)
+        raw_result = await runner.run(
+            active_backend,
+            task,
+            run_root=run_root,
+            original_task=task,
+            **kwargs,
+        )
+        payload = GuiWorkflowRunner._load_result_payload(raw_result)
+        if payload is not None:
+            finalize_run_result(run_root, payload)
+            self._schedule_postprocessing(
+                run_root,
+                payload,
+                platform=str(getattr(active_backend, "platform", "") or "unknown"),
+                original_task=task,
+            )
+        return raw_result
+
+    def _schedule_postprocessing(
+        self,
+        run_root: Path,
+        payload: dict[str, Any],
+        *,
+        platform: str,
+        original_task: str,
+    ) -> None:
+        trace_path = run_root / "traj.json"
+        subtasks = payload.get("subtasks")
+        if not isinstance(subtasks, list) or not subtasks:
+            subtasks = [
+                {
+                    "task": original_task,
+                    "success": bool(payload.get("success")),
+                }
+            ]
+        for index, subtask in enumerate(subtasks, start=1):
+            if not isinstance(subtask, dict):
+                continue
+            self._postprocessor.schedule(
+                trace_path,
+                is_success=bool(subtask.get("success")),
+                platform=platform,
+                task=str(subtask.get("task") or original_task),
+                subtask_index=index,
+            )
 
     async def _run_task(
         self,
@@ -1467,6 +1518,9 @@ class GuiSubagentTool(Tool):
         task: str,
         *,
         app_hint: str | None = None,
+        run_root: Path | None = None,
+        subtask_index: int = 1,
+        original_task: str | None = None,
         **kwargs: Any,
     ) -> str:
         raw_max_retries = kwargs.pop("max_retries", 1)
@@ -1495,12 +1549,21 @@ class GuiSubagentTool(Tool):
                 active_backend.platform,
                 embedding_signature=self._embedding_signature,
             )
-        run_dir = self._make_run_dir()
+        if run_root is None:
+            run_root = self._make_run_dir()
+        artifacts_root = self._make_subtask_dir(
+            run_root,
+            subtask_index=subtask_index,
+            name=app_hint or task,
+        )
         recorder = TrajectoryRecorder(
-            output_dir=run_dir,
+            output_dir=run_root,
             task=task,
             platform=active_backend.platform,
             event_callback=self._gui_event_callback,
+            instruction=original_task or task,
+            subtask_index=subtask_index,
+            app_hint=app_hint,
         )
 
         skill_executor = None
@@ -1542,7 +1605,7 @@ class GuiSubagentTool(Tool):
                     backend=active_backend,
                     state_validator=state_validator,
                     model=self._model,
-                    artifacts_root=run_dir,
+                    artifacts_root=artifacts_root,
                     trajectory_recorder=recorder,
                     agent_profile=self._gui_config.agent_profile,
                     step_timeout=90.0,
@@ -1550,7 +1613,7 @@ class GuiSubagentTool(Tool):
                 ),
                 screenshot_provider=_AgentScreenshotProvider(
                     backend=active_backend,
-                    artifacts_root=run_dir,
+                    artifacts_root=artifacts_root,
                 ),
                 trajectory_recorder=recorder,
                 stop_on_failure=True,
@@ -1568,7 +1631,7 @@ class GuiSubagentTool(Tool):
             backend=active_backend,
             trajectory_recorder=recorder,
             model=self._model,
-            artifacts_root=run_dir,
+            artifacts_root=artifacts_root,
             max_steps=max_steps,
             policy_context=policy_context,
             skill_library=skill_library,
@@ -1604,19 +1667,15 @@ class GuiSubagentTool(Tool):
             summary=summary,
             error=error,
         )
-        metrics_path = recorder.metrics_path
-        metrics = self._load_gui_metrics(metrics_path)
-        total_duration_s = metrics.get("total_duration_s") or metrics.get("duration_s")
-        total_token_usage = (
-            metrics.get("total_token_usage")
-            or metrics.get("token_usage")
-            or result.token_usage
-            or {}
+        compact_result = self._load_json_object(recorder.result_path)
+        subtask_result = next(
+            (
+                item
+                for item in compact_result.get("subtasks", [])
+                if isinstance(item, dict) and item.get("subtask") == subtask_index
+            ),
+            {},
         )
-        self._postprocessor.schedule(
-            trace_path, is_success=result.success, platform=active_backend.platform, task=task
-        )
-
         return json.dumps(
             {
                 "success": result.success,
@@ -1626,13 +1685,8 @@ class GuiSubagentTool(Tool):
                 "steps_taken": result.steps_taken,
                 "error": error,
                 "post_run_state": post_run_state,
-                "metrics_path": str(metrics_path)
-                if metrics_path is not None and metrics_path.exists()
-                else None,
-                "duration_s": total_duration_s,
-                "token_usage": total_token_usage,
-                "total_duration_s": total_duration_s,
-                "total_token_usage": total_token_usage,
+                "duration_s": subtask_result.get("duration_s"),
+                "token_usage": result.token_usage or {},
             },
             ensure_ascii=False,
         )
@@ -1696,25 +1750,17 @@ class GuiSubagentTool(Tool):
     def _load_latest_step_event(trace_path: Path | None) -> dict[str, Any]:
         if trace_path is None or not trace_path.exists():
             return {}
-
-        latest_step: dict[str, Any] = {}
         try:
-            with open(trace_path, encoding="utf-8") as handle:
-                for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        event = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(event, dict) and event.get("type") == "step":
-                        latest_step = event
-        except OSError:
+            events = load_trajectory_events(trace_path, subtask_index=None)
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
             logger.warning(
                 "Could not read GUI trace for post-run state: %s", trace_path, exc_info=True
             )
-        return latest_step
+            return {}
+        return next(
+            (event for event in reversed(events) if event.get("type") == "step"),
+            {},
+        )
 
     @staticmethod
     def _extract_latest_observation(step_event: dict[str, Any]) -> dict[str, Any]:
@@ -2102,6 +2148,13 @@ class GuiSubagentTool(Tool):
                 continue
 
     @staticmethod
+    def _make_subtask_dir(run_root: Path, *, subtask_index: int, name: str) -> Path:
+        slug = re.sub(r"[^a-zA-Z0-9]+", "_", name)[:48].strip("_") or "gui_task"
+        path = run_root / "subtasks" / f"{max(1, int(subtask_index)):02d}_{slug}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
     def _resolve_trace_path(
         recorder_path: Path | None, agent_trace_path: str | None
     ) -> Path | None:
@@ -2115,17 +2168,17 @@ class GuiSubagentTool(Tool):
         if candidate.is_file():
             return candidate
         if candidate.is_dir():
-            matches = sorted(candidate.glob("**/*.jsonl"))
+            matches = sorted(candidate.glob("**/traj.json"))
             if matches:
                 return matches[0]
         return None
 
     @staticmethod
-    def _load_gui_metrics(metrics_path: Path | None) -> dict[str, Any]:
-        if metrics_path is None or not metrics_path.exists():
+    def _load_json_object(path: Path | None) -> dict[str, Any]:
+        if path is None or not path.exists():
             return {}
         try:
-            payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return {}
         return payload if isinstance(payload, dict) else {}
@@ -2139,11 +2192,8 @@ class GuiSubagentTool(Tool):
                 "trace_path": None,
                 "steps_taken": 0,
                 "error": None,
-                "metrics_path": None,
                 "duration_s": None,
                 "token_usage": {},
-                "total_duration_s": None,
-                "total_token_usage": {},
             },
             ensure_ascii=False,
         )

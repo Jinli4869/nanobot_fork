@@ -728,6 +728,12 @@ class SkillExecutor:
     def __post_init__(self) -> None:
         self.valid_state_mode = _coerce_valid_state_mode(self.valid_state_mode)
 
+    def set_artifacts_root(self, artifacts_root: Path) -> None:
+        for component in (self.screenshot_provider, self.subgoal_runner):
+            setter = getattr(component, "set_artifacts_root", None)
+            if callable(setter):
+                setter(artifacts_root)
+
     def _effective_mode(
         self,
         skill: Skill,

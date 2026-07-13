@@ -6,12 +6,12 @@ LLM-driven trajectory summarization and shared GUI state-note formatting.
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
 from guiclaw.interfaces import LLMProvider
+from guiclaw.trajectory.recorder import load_trajectory_events
 
 logger = logging.getLogger(__name__)
 
@@ -194,14 +194,13 @@ class TrajectorySummarizer:
     def __init__(self, llm: LLMProvider) -> None:
         self._llm = llm
 
-    async def summarize_file(self, trajectory_path: Path) -> str:
-        """Read a trajectory JSONL and return a natural-language summary."""
+    async def summarize_file(self, trajectory_path: Path, *, subtask_index: int = 1) -> str:
+        """Read one compact trajectory subtask and return a natural-language summary."""
         if not trajectory_path.exists():
             logger.warning("Trajectory file not found: %s", trajectory_path)
             return ""
 
-        lines = trajectory_path.read_text(encoding="utf-8").strip().splitlines()
-        events = [json.loads(line) for line in lines if line.strip()]
+        events = load_trajectory_events(trajectory_path, subtask_index=subtask_index)
         return await self.summarize_events(events)
 
     async def summarize_events(self, events: list[dict]) -> str:

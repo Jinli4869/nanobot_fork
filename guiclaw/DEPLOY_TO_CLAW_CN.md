@@ -130,7 +130,8 @@
 
 - `TrajectoryRecorder`
 - 截图目录
-- `trace.jsonl`
+- `traj.json`
+- `result.json`
 
 这样宿主后面才能做：
 
@@ -156,12 +157,12 @@
   "success": true,
   "summary": "Task completed after 3 step(s).",
   "model_summary": "Opened Settings and enabled Wi-Fi.",
-  "trace_path": "/workspace/gui_runs/2026-04-07_120000/trace.jsonl",
+  "trace_path": "/workspace/gui_runs/2026-04-07_120000/traj.json",
   "steps_taken": 3,
   "error": null,
   "post_run_state": {
     "trace_read": true,
-    "latest_screenshot_path": "/workspace/gui_runs/2026-04-07_120000/screenshots/step_002.png",
+    "latest_screenshot_path": "/workspace/gui_runs/2026-04-07_120000/attempt_01/screenshots/002_done.png",
     "last_action": {
       "action_type": "done",
       "status": "success"
@@ -448,7 +449,7 @@ uv pip install -e .
 1. `dry-run` 是否跑通
 2. 本地 `local` backend 是否可截图
 3. Android / iOS / HDC 的设备连通性是否正常
-4. run 目录下是否产生截图和 `trace.jsonl`
+4. run 目录下是否产生截图、`traj.json` 和 `result.json`
 5. 宿主是否能把 JSON 结果返回给主 agent
 6. 主 agent 是否能基于 `post_run_state` 回复用户
 7. 是否需要启用背景运行

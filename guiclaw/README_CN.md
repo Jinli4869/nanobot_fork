@@ -435,9 +435,9 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 
 行为说明：
 
-- 只有成功完成且生成了 `trace.jsonl` 的 GUI 任务才会触发评测
+- 只有成功完成且生成了 `traj.json` 的 GUI 任务才会触发评测
 - 评测走后台 postprocessing，不会阻塞主 GUI 任务返回
-- 评测结果会以 `evaluation.json` 写在同一次 GUI run 的目录下
+- 精简后的评测内容会合并到同一次 GUI run 的单一 `result.json` 中
 - 如果 `apiKey` 为空，nanobot 会回退到环境变量 `OPENAI_API_KEY`
 - `judgeModel` 可以和主 agent、GUI agent 分别使用不同的模型，只要 `apiBase` 与 `apiKey` 指向兼容的 OpenAI-style 接口即可
 

@@ -19,7 +19,7 @@ class TaskSpec:
 
 @dataclass
 class RunMetrics:
-    """Per-run metrics parsed from a trace.jsonl."""
+    """Per-run metrics parsed from a compact ``traj.json``."""
 
     steps: int = 0
     prompt_tokens: int = 0

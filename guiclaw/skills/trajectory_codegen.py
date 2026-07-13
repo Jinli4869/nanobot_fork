@@ -16,33 +16,36 @@ from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.normalization import find_android_app_in_text, normalize_app_identifier
 from guiclaw.skills.state_contract import infer_focused_input_contract
 from guiclaw.skills.static_selector_filter import static_selector_from_node
+from guiclaw.trajectory.recorder import load_trajectory_events
 
 _BOUNDS_RE = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
 _ACTION_PARAM_KEYS = ("x", "y", "x2", "y2", "text", "key", "pixels", "direction")
-_COORDLESS_ACTIONS = frozenset({
-    "wait", "back", "home", "enter", "app_switch", "done",
-    "request_intervention", "hotkey", "screenshot",
-})
+_COORDLESS_ACTIONS = frozenset(
+    {
+        "wait",
+        "back",
+        "home",
+        "enter",
+        "app_switch",
+        "done",
+        "request_intervention",
+        "hotkey",
+        "screenshot",
+    }
+)
 _STATE_FLAGS = ("visible", "clickable", "enabled", "focused", "scrollable")
 _AMBIGUOUS_APP_IDS = frozenset({"", "unknown", "app", "app-package-or-name"})
-_TRANSIENT_APP_IDS = frozenset({
-    "com.google.android.apps.nexuslauncher",
-    "com.android.intentresolver",
-    "com.android.systemui",
-    "nexuslauncher",
-    "intentresolver",
-    "launcher",
-    "systemui",
-})
-_TAODIAN_VISIBLE_TEXT_MARKERS = frozenset({
-    "淘店",
-    "购物车",
-    "百亿补贴",
-    "每日疯抢",
-    "热销商品",
-    "订单",
-    "红包",
-})
+_TRANSIENT_APP_IDS = frozenset(
+    {
+        "com.google.android.apps.nexuslauncher",
+        "com.android.intentresolver",
+        "com.android.systemui",
+        "nexuslauncher",
+        "intentresolver",
+        "launcher",
+        "systemui",
+    }
+)
 
 
 @dataclass
@@ -69,8 +72,8 @@ class CodegenResult:
     screenshots_b64: list[str]
 
 
-def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
-    events = _load_jsonl(trace_path)
+def codegen_trajectory(trace_path: Path, *, subtask_index: int = 1) -> CodegenResult | None:
+    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
     if not events:
         return None
 
@@ -127,6 +130,12 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
                 event["state_contract"], ensure_ascii=False, separators=(",", ":")
             )
             control_info = _describe_contract_selector(event["state_contract"])
+        elif isinstance(event.get("interaction_target"), dict) and isinstance(
+            event["interaction_target"].get("state_contract"), dict
+        ):
+            contract = event["interaction_target"]["state_contract"]
+            contract_json = json.dumps(contract, ensure_ascii=False, separators=(",", ":"))
+            control_info = _describe_contract_selector(contract)
         elif action_type == "input_text" and previous_observation is not None:
             contract_app = _contract_app_for_observation(
                 previous_observation,
@@ -174,25 +183,29 @@ def codegen_trajectory(trace_path: Path) -> CodegenResult | None:
         else:
             suppress_extracted_contract = False
 
-        steps.append(CodeStep(
-            step_index=int(event.get("step_index", len(steps))),
-            app=step_app,
-            intent=_step_intent(event, action_type),
-            action_type=action_type,
-            action_params=_extract_params(action, action_type),
-            control_info=control_info,
-            contract_json=contract_json,
-            screenshot_b64=b64,
-            succeeded=succeeded if succeeded is False else (
-                None if skill_failed else None
-            ),
-            suppress_extracted_contract=suppress_extracted_contract,
-        ))
+        steps.append(
+            CodeStep(
+                step_index=int(event.get("step_index", len(steps))),
+                app=step_app,
+                intent=_step_intent(event, action_type),
+                action_type=action_type,
+                action_params=_extract_params(action, action_type),
+                control_info=control_info,
+                contract_json=contract_json,
+                screenshot_b64=b64,
+                succeeded=succeeded if succeeded is False else (None if skill_failed else None),
+                suppress_extracted_contract=suppress_extracted_contract,
+            )
+        )
         previous_observation = observation if isinstance(observation, dict) else None
 
     return CodegenResult(
-        task=task, platform=platform, app=app, app_candidates=app_candidates,
-        steps=steps, screenshots_b64=screenshots_b64,
+        task=task,
+        platform=platform,
+        app=app,
+        app_candidates=app_candidates,
+        steps=steps,
+        screenshots_b64=screenshots_b64,
     )
 
 
@@ -204,10 +217,12 @@ def codegen_to_extraction_text(result: CodegenResult) -> str:
     ]
     if result.app_candidates:
         lines.append(f"Observed apps: {', '.join(result.app_candidates)}")
-    lines.extend([
-        "",
-        "Action sequence:",
-    ])
+    lines.extend(
+        [
+            "",
+            "Action sequence:",
+        ]
+    )
     for step in result.steps:
         status = ""
         if step.succeeded is False:
@@ -240,9 +255,6 @@ def _skill_step_action(event: dict[str, Any]) -> dict[str, Any]:
 
 # ---- internal helpers ----
 
-def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
 
 def _find_metadata(events: list[dict[str, Any]]) -> dict[str, Any]:
     for e in events:
@@ -260,7 +272,9 @@ def _first_platform(events: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _trace_app_candidates(events: list[dict[str, Any]], platform: str, task: str) -> tuple[str, ...]:
+def _trace_app_candidates(
+    events: list[dict[str, Any]], platform: str, task: str
+) -> tuple[str, ...]:
     candidates: list[str] = []
     task_app = _task_app_candidate(task, platform)
     if task_app:
@@ -269,7 +283,11 @@ def _trace_app_candidates(events: list[dict[str, Any]], platform: str, task: str
     for event in events:
         if event.get("type") not in ("step", "skill_step"):
             continue
-        action = _skill_step_action(event) if event.get("type") == "skill_step" else (event.get("action") or {})
+        action = (
+            _skill_step_action(event)
+            if event.get("type") == "skill_step"
+            else (event.get("action") or {})
+        )
         action_app = _open_app_action_candidate(action, platform)
         if action_app:
             candidates.append(action_app)
@@ -315,7 +333,7 @@ def _observation_app_candidate(observation: dict[str, Any] | None, platform: str
     if not isinstance(observation, dict):
         return ""
     raw = str(observation.get("foreground_app") or observation.get("app") or "")
-    candidate = _normalize_trace_app(raw, platform, observation=observation)
+    candidate = _normalize_trace_app(raw, platform)
     return candidate if _is_meaningful_trace_app(candidate) else ""
 
 
@@ -335,28 +353,13 @@ def _contract_app_for_observation(
 def _normalize_trace_app(
     app: str,
     platform: str,
-    *,
-    observation: dict[str, Any] | None = None,
 ) -> str:
-    normalized = normalize_app_identifier(platform, app)
-    if normalized == "app" and observation is not None and _looks_like_taodian(observation):
-        return "com.testmall.app"
-    return normalized
+    return normalize_app_identifier(platform, app)
 
 
 def _is_meaningful_trace_app(app: str) -> bool:
     key = (app or "").strip().lower()
     return bool(key) and key not in _AMBIGUOUS_APP_IDS and key not in _TRANSIENT_APP_IDS
-
-
-def _looks_like_taodian(observation: dict[str, Any]) -> bool:
-    extra = observation.get("extra") or {}
-    visible_text = extra.get("visible_text")
-    if isinstance(visible_text, (list, tuple, set)):
-        text = " ".join(str(item) for item in visible_text)
-    else:
-        text = str(visible_text or "")
-    return any(marker in text for marker in _TAODIAN_VISIBLE_TEXT_MARKERS)
 
 
 def _split_camel_case(text: str) -> str:
@@ -377,7 +380,9 @@ def _extract_params(action: dict[str, Any], action_type: str) -> dict[str, Any]:
     params: dict[str, Any] = {}
     for key in _ACTION_PARAM_KEYS:
         if key == "direction":
-            value = action.get("direction") or (action.get("text") if action_type == "scroll" else None)
+            value = action.get("direction") or (
+                action.get("text") if action_type == "scroll" else None
+            )
         else:
             value = action.get(key)
         if value is not None:
@@ -438,7 +443,9 @@ def _scale_point_to_ui_tree(x: int, y: int, observation: dict[str, Any]) -> tupl
         return x, y
     if x > screen_width or y > screen_height:
         return x, y
-    if _similar_extent(screen_width, bounds_width) and _similar_extent(screen_height, bounds_height):
+    if _similar_extent(screen_width, bounds_width) and _similar_extent(
+        screen_height, bounds_height
+    ):
         return x, y
     return round(x * bounds_width / screen_width), round(y * bounds_height / screen_height)
 
@@ -535,7 +542,9 @@ def _describe_contract_selector(contract: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _build_contract_json(node: dict[str, Any], app: str, *, allow_class_fallback: bool = True) -> str:
+def _build_contract_json(
+    node: dict[str, Any], app: str, *, allow_class_fallback: bool = True
+) -> str:
     selector = static_selector_from_node(node) or _fallback_selector(
         node,
         allow_class=allow_class_fallback,
@@ -674,7 +683,11 @@ def apply_contract_constraints_from_codegen(skill: Skill, result: CodegenResult)
     changed = False
     steps: list[SkillStep] = []
     for step, code_step in aligned:
-        if code_step is not None and code_step.suppress_extracted_contract and step.state_contract is not None:
+        if (
+            code_step is not None
+            and code_step.suppress_extracted_contract
+            and step.state_contract is not None
+        ):
             changed = True
             steps.append(replace(step, state_contract=None))
         else:

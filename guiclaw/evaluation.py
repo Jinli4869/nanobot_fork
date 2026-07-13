@@ -18,22 +18,14 @@ from typing import Any
 import json_repair
 from openai import OpenAI
 
+from guiclaw.trajectory.recorder import load_trajectory_events
+
 DEFAULT_JUDGE_MODEL = "qwen3-vl-plus"
 DEFAULT_API_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
-def load_traj_rows(traj_path: Path) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    with traj_path.open("r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return rows
+def load_traj_rows(traj_path: Path, *, subtask_index: int = 1) -> list[dict[str, Any]]:
+    return load_trajectory_events(traj_path, subtask_index=subtask_index)
 
 
 def filter_step_rows(traj_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -87,9 +79,8 @@ def judge_success(
             {
                 "step_num": row.get("step_num"),
                 "action": row.get("action"),
-                "response": row.get("response"),
-                "done": row.get("done"),
-                "info": row.get("info"),
+                "model_output": row.get("model_output"),
+                "interaction_target": row.get("interaction_target"),
             }
         )
 
@@ -167,12 +158,13 @@ def evaluate_gui_trajectory_sync(
     api_base: str | None,
     task_id: str,
     output_path: Path | None,
+    subtask_index: int = 1,
 ) -> dict[str, Any]:
     if not api_key:
         raise ValueError("Missing evaluation api_key")
 
     client = OpenAI(api_key=api_key, base_url=api_base) if api_base else OpenAI(api_key=api_key)
-    traj_rows = filter_step_rows(load_traj_rows(trace_path))
+    traj_rows = filter_step_rows(load_traj_rows(trace_path, subtask_index=subtask_index))
     screenshots = load_screenshots_for_judge(trace_path, traj_rows)
     success, reason = judge_success(
         client=client,
@@ -208,6 +200,7 @@ async def evaluate_gui_trajectory(
     api_base: str | None = DEFAULT_API_BASE,
     task_id: str = "gui-task",
     output_path: Path | None = None,
+    subtask_index: int = 1,
 ) -> dict[str, Any]:
     """Evaluate one GUI run and optionally persist a JSON artifact."""
     return await asyncio.to_thread(
@@ -219,4 +212,5 @@ async def evaluate_gui_trajectory(
         api_base=api_base,
         task_id=task_id,
         output_path=output_path,
+        subtask_index=subtask_index,
     )

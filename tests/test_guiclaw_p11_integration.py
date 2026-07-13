@@ -57,7 +57,9 @@ def test_guiconfig_background_rejects_dryrun() -> None:
 
 def test_guiconfig_camel_case_aliases() -> None:
     """GuiConfig accepts camelCase aliases for background display fields."""
-    cfg = GuiConfig(backend="local", background=True, displayWidth=1920, displayHeight=1080, displayNum=42)
+    cfg = GuiConfig(
+        backend="local", background=True, displayWidth=1920, displayHeight=1080, displayNum=42
+    )
     assert cfg.display_width == 1920
     assert cfg.display_height == 1080
     assert cfg.display_num == 42
@@ -228,10 +230,15 @@ async def test_gui_tool_execute_background_wraps_backend(monkeypatch: pytest.Mon
 
     mock_bg_cls = MagicMock(return_value=mock_bg_instance)
 
-    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+    canned_result = json.dumps(
+        {"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None}
+    )
 
     with (
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)) as mock_run_task,
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(return_value=canned_result),
+        ) as mock_run_task,
         patch(
             "guiclaw.backends.background_runtime.probe_isolated_background_support",
             return_value=MagicMock(
@@ -266,10 +273,15 @@ async def test_gui_tool_execute_background_nonlinux_fallback(
     tool = _make_gui_tool(background=True)
     raw_backend = tool._backend
 
-    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+    canned_result = json.dumps(
+        {"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None}
+    )
 
     with (
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)) as mock_run_task,
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(return_value=canned_result),
+        ) as mock_run_task,
         patch(
             "guiclaw.backends.background_runtime.probe_isolated_background_support",
             return_value=MagicMock(
@@ -298,9 +310,14 @@ async def test_gui_tool_execute_no_background() -> None:
     tool = _make_gui_tool(background=False)
     raw_backend = tool._backend
 
-    canned_result = json.dumps({"success": True, "summary": "ok", "trace_path": None, "steps_taken": 0, "error": None})
+    canned_result = json.dumps(
+        {"success": True, "summary": "ok", "trace_path": None, "steps_taken": 0, "error": None}
+    )
 
-    with patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)) as mock_run_task:
+    with patch(
+        "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+        new=AsyncMock(return_value=canned_result),
+    ) as mock_run_task:
         result = await tool.execute("test task")
 
     assert result == canned_result
@@ -330,14 +347,19 @@ async def test_gui_tool_requires_ack_for_background_fallback(
             sys_platform="darwin",
         ),
     ):
-        with patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock()) as mock_run_task:
+        with patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock()
+        ) as mock_run_task:
             with caplog.at_level(logging.WARNING, logger="nanobot.agent.tools.gui"):
                 payload = json.loads(await tool.execute("open settings"))
 
             assert payload["success"] is False
             assert "resolved to fallback" in payload["summary"]
             assert "platform_unsupported" in payload["summary"]
-            assert "Run without background isolation on this host until a supported isolated backend exists." in payload["summary"]
+            assert (
+                "Run without background isolation on this host until a supported isolated backend exists."
+                in payload["summary"]
+            )
             assert "acknowledge_background_fallback=true" in payload["summary"]
             assert "background_mode" not in payload
             mock_run_task.assert_not_awaited()
@@ -346,7 +368,17 @@ async def test_gui_tool_requires_ack_for_background_fallback(
 
         with patch(
             "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
-            new=AsyncMock(return_value=json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})),
+            new=AsyncMock(
+                return_value=json.dumps(
+                    {
+                        "success": True,
+                        "summary": "done",
+                        "trace_path": None,
+                        "steps_taken": 1,
+                        "error": None,
+                    }
+                )
+            ),
         ) as mock_run_task:
             await tool.execute("open settings", acknowledge_background_fallback=True)
             assert mock_run_task.await_count == 1
@@ -408,21 +440,34 @@ async def test_gui_tool_reports_busy_waiting_metadata_for_serialized_background_
             await release_first.wait()
         else:
             await first_started.wait()
-        return json.dumps({"success": True, "summary": task, "trace_path": None, "steps_taken": 1, "error": None})
+        return json.dumps(
+            {"success": True, "summary": task, "trace_path": None, "steps_taken": 1, "error": None}
+        )
 
     with (
         patch("guiclaw.backends.displays.xvfb.XvfbDisplayManager", FakeXvfbDisplayManager),
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(side_effect=fake_run_task)),
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(side_effect=fake_run_task),
+        ),
         caplog.at_level(logging.WARNING, logger="guiclaw.backends.background_runtime"),
     ):
-        first_task = asyncio.create_task(tool.execute("first", acknowledge_background_fallback=True))
+        first_task = asyncio.create_task(
+            tool.execute("first", acknowledge_background_fallback=True)
+        )
         await first_started.wait()
-        second_task = asyncio.create_task(tool.execute("second", acknowledge_background_fallback=True))
+        second_task = asyncio.create_task(
+            tool.execute("second", acknowledge_background_fallback=True)
+        )
         await asyncio.sleep(0.05)
         release_first.set()
         await asyncio.gather(first_task, second_task)
 
-    busy_messages = [record.message for record in caplog.records if record.message.startswith("background runtime busy:")]
+    busy_messages = [
+        record.message
+        for record in caplog.records
+        if record.message.startswith("background runtime busy:")
+    ]
     assert busy_messages
     assert "waiting_owner=nanobot" in busy_messages[0]
     assert "active_owner=nanobot" in busy_messages[0]
@@ -442,14 +487,18 @@ async def test_gui_tool_uses_windows_isolated_desktop_backend_for_windows_isolat
 
     manager_init_kwargs: list[dict[str, Any]] = []
     wrapped_backend_ref: list[Any] = []
-    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+    canned_result = json.dumps(
+        {"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None}
+    )
 
     class FakeWin32DesktopManager:
         def __init__(self, width: int = 1280, height: int = 720) -> None:
             manager_init_kwargs.append({"width": width, "height": height})
 
     class FakeWindowsIsolatedBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
             self._manager = manager
             self._run_metadata = run_metadata
@@ -458,7 +507,10 @@ async def test_gui_tool_uses_windows_isolated_desktop_backend_for_windows_isolat
             wrapped_backend_ref.append(self)
 
     with (
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)),
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(return_value=canned_result),
+        ),
         patch(
             "guiclaw.backends.background_runtime.probe_isolated_background_support",
             return_value=runtime.IsolationProbeResult(
@@ -470,8 +522,14 @@ async def test_gui_tool_uses_windows_isolated_desktop_backend_for_windows_isolat
                 sys_platform="win32",
             ),
         ),
-        patch("guiclaw.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
-        patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
+        patch(
+            "guiclaw.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager
+        ),
+        patch(
+            "nanobot.agent.tools.gui.WindowsIsolatedBackend",
+            FakeWindowsIsolatedBackend,
+            create=True,
+        ),
     ):
         monkeypatch.setattr(sys, "platform", "win32")
         result = await tool.execute("test task")
@@ -493,7 +551,9 @@ async def test_gui_tool_passes_target_app_class_to_windows_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tool = _make_gui_tool(background=True)
-    canned_result = json.dumps({"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None})
+    canned_result = json.dumps(
+        {"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None}
+    )
     probe_calls: list[dict[str, Any]] = []
 
     def fake_probe(**kwargs: Any) -> Any:
@@ -510,11 +570,24 @@ async def test_gui_tool_passes_target_app_class_to_windows_probe(
     monkeypatch.setattr(sys, "platform", "win32")
 
     with (
-        patch("guiclaw.backends.background_runtime.probe_isolated_background_support", side_effect=fake_probe),
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(return_value=canned_result)) as mock_run_task,
+        patch(
+            "guiclaw.backends.background_runtime.probe_isolated_background_support",
+            side_effect=fake_probe,
+        ),
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(return_value=canned_result),
+        ) as mock_run_task,
     ):
-        assert await tool.execute("test task", target_app_class="uwp", acknowledge_background_fallback=True) == canned_result
-        assert await tool.execute("test task", acknowledge_background_fallback=True) == canned_result
+        assert (
+            await tool.execute(
+                "test task", target_app_class="uwp", acknowledge_background_fallback=True
+            )
+            == canned_result
+        )
+        assert (
+            await tool.execute("test task", acknowledge_background_fallback=True) == canned_result
+        )
 
     assert mock_run_task.await_count == 2
     assert probe_calls[0] == {"sys_platform": "win32", "target_app_class": "uwp"}
@@ -539,7 +612,9 @@ async def test_gui_tool_blocks_windows_non_interactive_isolation_request(
             sys_platform="win32",
         ),
     ):
-        with patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock()) as mock_run_task:
+        with patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock()
+        ) as mock_run_task:
             payload = json.loads(await tool.execute("open settings"))
 
     assert payload["success"] is False
@@ -598,7 +673,9 @@ async def test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload(
             self.height = height
 
     class FakeWindowsIsolatedBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
             self._manager = manager
             self._run_metadata = run_metadata
@@ -622,9 +699,18 @@ async def test_gui_tool_reports_windows_cleanup_reason_codes_in_failure_payload(
                 sys_platform="win32",
             ),
         ),
-        patch("guiclaw.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
-        patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(side_effect=RuntimeError(failure_message))),
+        patch(
+            "guiclaw.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager
+        ),
+        patch(
+            "nanobot.agent.tools.gui.WindowsIsolatedBackend",
+            FakeWindowsIsolatedBackend,
+            create=True,
+        ),
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(side_effect=RuntimeError(failure_message)),
+        ),
     ):
         monkeypatch.setattr(sys, "platform", "win32")
         payload = json.loads(await tool.execute("test task"))
@@ -642,7 +728,9 @@ async def test_gui_tool_background_decision_tokens_stay_consistent_across_suppor
     import guiclaw.backends.background_runtime as runtime
 
     class _SimpleBackgroundWrapper:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
 
         @property
@@ -667,13 +755,26 @@ async def test_gui_tool_background_decision_tokens_stay_consistent_across_suppor
                     sys_platform="win32",
                 ),
             ),
-            patch("guiclaw.backends.displays.win32desktop.Win32DesktopManager", lambda *args, **kwargs: object()),
-            patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", _SimpleBackgroundWrapper, create=True),
+            patch(
+                "guiclaw.backends.displays.win32desktop.Win32DesktopManager",
+                lambda *args, **kwargs: object(),
+            ),
+            patch(
+                "nanobot.agent.tools.gui.WindowsIsolatedBackend",
+                _SimpleBackgroundWrapper,
+                create=True,
+            ),
             patch(
                 "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
                 new=AsyncMock(
                     return_value=json.dumps(
-                        {"success": True, "summary": "done", "trace_path": None, "steps_taken": 1, "error": None}
+                        {
+                            "success": True,
+                            "summary": "done",
+                            "trace_path": None,
+                            "steps_taken": 1,
+                            "error": None,
+                        }
                     )
                 ),
             ),
@@ -729,7 +830,9 @@ async def test_gui_tool_background_decision_tokens_stay_consistent_across_suppor
         for record in caplog.records
     )
     assert any(
-        "owner=nanobot" in record.message and "mode=fallback" in record.message and "reason=xvfb_missing" in record.message
+        "owner=nanobot" in record.message
+        and "mode=fallback" in record.message
+        and "reason=xvfb_missing" in record.message
         for record in caplog.records
     )
     assert any(
@@ -759,7 +862,9 @@ async def test_gui_tool_preserves_cleanup_and_intervention_tokens_in_structured_
             self.height = height
 
     class FakeWindowsIsolatedBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
             self._manager = manager
             self._run_metadata = run_metadata
@@ -791,9 +896,18 @@ async def test_gui_tool_preserves_cleanup_and_intervention_tokens_in_structured_
                 sys_platform="win32",
             ),
         ),
-        patch("guiclaw.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager),
-        patch("nanobot.agent.tools.gui.WindowsIsolatedBackend", FakeWindowsIsolatedBackend, create=True),
-        patch("nanobot.agent.tools.gui.GuiSubagentTool._run_task", new=AsyncMock(side_effect=RuntimeError(failure_message))),
+        patch(
+            "guiclaw.backends.displays.win32desktop.Win32DesktopManager", FakeWin32DesktopManager
+        ),
+        patch(
+            "nanobot.agent.tools.gui.WindowsIsolatedBackend",
+            FakeWindowsIsolatedBackend,
+            create=True,
+        ),
+        patch(
+            "nanobot.agent.tools.gui.GuiSubagentTool._run_task",
+            new=AsyncMock(side_effect=RuntimeError(failure_message)),
+        ),
     ):
         monkeypatch.setattr(sys, "platform", "win32")
         payload = json.loads(await tool.execute("test task"))
@@ -870,7 +984,9 @@ async def test_gui_tool_intervention_flow_returns_structured_resume_result(
             return InterventionResolution(resume_confirmed=True, note="operator resumed")
 
     with (
-        patch.object(type(tool), "_build_intervention_handler", return_value=_ResumeHandler(), create=True),
+        patch.object(
+            type(tool), "_build_intervention_handler", return_value=_ResumeHandler(), create=True
+        ),
         patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="")),
         patch.object(tool._postprocessor, "_extract_skill", new=AsyncMock(return_value=None)),
     ):
@@ -916,7 +1032,9 @@ async def test_gui_tool_intervention_trace_payload_is_scrubbed(
             return InterventionResolution(resume_confirmed=False, note=note)
 
     with (
-        patch.object(type(tool), "_build_intervention_handler", return_value=_CancelHandler(), create=True),
+        patch.object(
+            type(tool), "_build_intervention_handler", return_value=_CancelHandler(), create=True
+        ),
         patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="")),
         patch.object(tool._postprocessor, "_extract_skill", new=AsyncMock(return_value=None)),
     ):
@@ -943,7 +1061,9 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes(tmp_pa
     tool = _make_gui_tool(background=False)
     tool._workspace = tmp_path
 
-    async def fake_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None) -> AgentResult:
+    async def fake_run(
+        self, task: str, *, max_retries: int = 3, app_hint: str | None = None
+    ) -> AgentResult:
         del max_retries, app_hint
         self._trajectory_recorder.start()
         self._trajectory_recorder.record_step(action={"action_type": "wait"}, model_output="wait")
@@ -960,15 +1080,23 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes(tmp_pa
     release_postprocess = asyncio.Event()
     postprocess_started = asyncio.Event()
 
-    async def fake_promote(trace_path: Path, is_success: bool, platform: str, **kwargs: Any) -> None:
+    async def fake_promote(
+        trace_path: Path, is_success: bool, platform: str, **kwargs: Any
+    ) -> None:
         del trace_path, is_success, platform, kwargs
         postprocess_started.set()
         await release_postprocess.wait()
 
     with (
         patch("guiclaw.agent.GuiAgent.run", new=fake_run),
-        patch.object(tool._postprocessor, "_extract_skill", new=AsyncMock(side_effect=fake_promote)),
-        patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="background summary")),
+        patch.object(
+            tool._postprocessor, "_extract_skill", new=AsyncMock(side_effect=fake_promote)
+        ),
+        patch.object(
+            tool._postprocessor,
+            "_summarize_trajectory",
+            new=AsyncMock(return_value="background summary"),
+        ),
         patch.object(tool._postprocessor, "_run_evaluation", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("test"))
@@ -989,7 +1117,9 @@ async def test_gui_tool_promotion_failure_is_non_fatal(tmp_path: Path) -> None:
     tool = _make_gui_tool(background=False)
     tool._workspace = tmp_path
 
-    async def fake_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None) -> AgentResult:
+    async def fake_run(
+        self, task: str, *, max_retries: int = 3, app_hint: str | None = None
+    ) -> AgentResult:
         del max_retries, app_hint
         self._trajectory_recorder.start()
         self._trajectory_recorder.record_step(action={"action_type": "wait"}, model_output="wait")
@@ -1010,7 +1140,11 @@ async def test_gui_tool_promotion_failure_is_non_fatal(tmp_path: Path) -> None:
             "_extract_skill",
             new=AsyncMock(side_effect=RuntimeError("extraction exploded")),
         ),
-        patch.object(tool._postprocessor, "_summarize_trajectory", new=AsyncMock(return_value="background summary")),
+        patch.object(
+            tool._postprocessor,
+            "_summarize_trajectory",
+            new=AsyncMock(return_value="background summary"),
+        ),
         patch.object(tool._postprocessor, "_run_evaluation", new=AsyncMock(return_value=None)),
     ):
         payload = json.loads(await tool.execute("test"))
@@ -1027,8 +1161,8 @@ async def test_gui_tool_skips_skill_extraction_when_disabled(tmp_path: Path) -> 
     tool = _make_gui_tool(background=False, enable_skill_extraction=False)
     tool._workspace = tmp_path
 
-    trace_path = tmp_path / "trace.jsonl"
-    trace_path.write_text('{"type":"metadata"}\n', encoding="utf-8")
+    trace_path = tmp_path / "traj.json"
+    trace_path.write_text('{"instruction":"test","steps":[]}', encoding="utf-8")
 
     result = await tool._postprocessor._extract_skill(trace_path, is_success=True, platform="linux")
 

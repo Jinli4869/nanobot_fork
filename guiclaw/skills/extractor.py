@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from dataclasses import replace
@@ -138,73 +137,45 @@ class SkillExtractor:
 
     # -- public API --
 
-    async def extract_from_file(self, trajectory_path: Path, *, is_success: bool = True) -> Skill | None:
-        skills = await self.extract_from_file_multi(trajectory_path, is_success=is_success)
+    async def extract_from_file(
+        self,
+        trajectory_path: Path,
+        *,
+        is_success: bool = True,
+        subtask_index: int = 1,
+    ) -> Skill | None:
+        skills = await self.extract_from_file_multi(
+            trajectory_path,
+            is_success=is_success,
+            subtask_index=subtask_index,
+        )
         return skills[0] if skills else None
 
-    async def extract_from_file_multi(self, trajectory_path: Path, *, is_success: bool = True) -> list[Skill]:
+    async def extract_from_file_multi(
+        self,
+        trajectory_path: Path,
+        *,
+        is_success: bool = True,
+        subtask_index: int = 1,
+    ) -> list[Skill]:
         self._last_diagnostics = []
-        result = codegen_trajectory(trajectory_path)
+        result = codegen_trajectory(trajectory_path, subtask_index=subtask_index)
         if result is None or not result.steps:
-            _write_log(trajectory_path, "no_candidate", {"reason": "empty_codegen"})
             return []
-        single_app = _single_foreground_app_package(trajectory_path, result.platform)
+        single_app = _single_foreground_app_package(result)
         if single_app:
-            _write_log(trajectory_path, "no_candidate", {
-                "reason": "single_foreground_app_package",
-                "app": single_app,
-            })
             return []
         raw_segments = _split_codegen_result_by_app(result)
-        segments, skipped_segments = _filter_codegen_segments_for_extraction(raw_segments)
+        segments, _ = _filter_codegen_segments_for_extraction(raw_segments)
         if not segments:
-            _write_log(trajectory_path, "no_candidate", {
-                "reason": "no_extractable_app_segment",
-                "skipped_segments": skipped_segments,
-            })
             return []
 
         skills: list[Skill] = []
-        segment_diagnostics: list[dict[str, Any]] = []
-        for segment_index, segment in enumerate(segments):
-            before = len(self._last_diagnostics)
+        for segment in segments:
             extracted = await self._extract_all(segment, is_success)
-            if len(self._last_diagnostics) > before:
-                segment_diagnostics.append({
-                    "segment_index": segment_index,
-                    "app": segment.app,
-                    "step_indices": [step.step_index for step in segment.steps],
-                    "diagnostics": self._last_diagnostics[before:],
-                })
             skills.extend(extracted)
         if not skills:
-            _write_log(trajectory_path, "no_candidate", {
-                "reason": "compile_returned_none",
-                "diagnostics": self.last_diagnostics,
-                "skipped_segments": skipped_segments,
-                "segments": [
-                    {
-                        "app": segment.app,
-                        "step_indices": [step.step_index for step in segment.steps],
-                    }
-                    for segment in segments
-                ],
-            })
             return []
-        _write_log(trajectory_path, "compiled", {
-            "skill_ids": [s.skill_id for s in skills],
-            "names": [s.name for s in skills],
-            "segments": [
-                {
-                    "app": segment.app,
-                    "step_indices": [step.step_index for step in segment.steps],
-                }
-                for segment in segments
-            ],
-            "segment_diagnostics": segment_diagnostics,
-            "skipped_segments": skipped_segments,
-            "diagnostics": self.last_diagnostics,
-        })
         return skills
 
     async def extract_from_codegen_result_multi(
@@ -215,9 +186,7 @@ class SkillExtractor:
     ) -> list[Skill]:
         """Extract skills from an already-computed :class:`CodegenResult`.
 
-        This is the side-effect-free counterpart to
-        :meth:`extract_from_file_multi`: it never writes ``extraction_result.json``
-        to the trace directory and does not apply the single-foreground-app guard
+        This accepts precomputed codegen data and does not apply the single-foreground-app guard
         (single-app success traces are exactly what compact-skill induction feeds
         in). App selection, codegen evidence, the prompt/quality loop, and contract
         alignment are all reused unchanged.
@@ -697,42 +666,19 @@ def _dedupe(values: list[str]) -> list[str]:
     return result
 
 
-def _single_foreground_app_package(trace_path: Path, platform: str) -> str:
-    step_count = 0
+def _single_foreground_app_package(result: CodegenResult) -> str:
     apps: list[str] = []
-    try:
-        lines = trace_path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return ""
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if event.get("type") not in ("step", "skill_step"):
-            continue
-        step_count += 1
-        observation = event.get("observation") or {}
-        app = str(observation.get("foreground_app") or observation.get("app") or "").strip()
+    for step in result.steps:
+        app = str(step.app or "").strip()
         if not app:
             return ""
-        normalized = normalize_app_identifier(platform, app)
+        normalized = normalize_app_identifier(result.platform, app)
         if not _is_reusable_app(normalized):
             return ""
         apps.append(normalized)
-    if step_count == 0 or len(apps) != step_count:
+    if not apps:
         return ""
     unique_apps = set(apps)
     if len(unique_apps) != 1:
         return ""
     return apps[0]
-
-
-def _write_log(trace_path: Path, status: str, detail: Any) -> None:
-    (trace_path.parent / "extraction_result.json").write_text(
-        json.dumps({"status": status, "trace": str(trace_path), "detail": detail},
-                   ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )

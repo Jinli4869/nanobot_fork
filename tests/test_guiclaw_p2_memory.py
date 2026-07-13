@@ -1,4 +1,5 @@
 """Phase 2 memory tests — MEM-05 POLICY always-include behavior."""
+
 from __future__ import annotations
 
 import copy
@@ -52,19 +53,26 @@ class _RecordingLLM:
 def _done_response() -> LLMResponse:
     return LLMResponse(
         content='Thought: done\nAction: {"action_type":"status","goal_status":"complete"}',
-        tool_calls=[ToolCall(
-            id="tc_done", name="computer_use",
-            arguments={"action_type": "done", "status": "success"},
-        )],
+        tool_calls=[
+            ToolCall(
+                id="tc_done",
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )
+        ],
     )
 
 
 def _make_entry(
-    entry_id: str, content: str, memory_type: MemoryType = MemoryType.APP_GUIDE,
+    entry_id: str,
+    content: str,
+    memory_type: MemoryType = MemoryType.APP_GUIDE,
 ) -> MemoryEntry:
     return MemoryEntry(
-        entry_id=entry_id, memory_type=memory_type,
-        platform="android", content=content,
+        entry_id=entry_id,
+        memory_type=memory_type,
+        platform="android",
+        content=content,
     )
 
 
@@ -81,7 +89,9 @@ async def test_policy_always_included(tmp_path: Path) -> None:
     for i in range(6):
         store.add(_make_entry(f"app{i}", f"App guide entry {i}"))
     # Add 1 POLICY entry
-    store.add(_make_entry("policy1", "Never delete user data without confirmation", MemoryType.POLICY))
+    store.add(
+        _make_entry("policy1", "Never delete user data without confirmation", MemoryType.POLICY)
+    )
     store.save()
 
     retriever = MemoryRetriever(embedding_provider=_FakeEmbedder())
@@ -90,10 +100,13 @@ async def test_policy_always_included(tmp_path: Path) -> None:
     llm = _RecordingLLM([_done_response()])
     recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="unrelated query")
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
-        memory_retriever=retriever, memory_top_k=3,
-        artifacts_root=tmp_path / "runs", max_steps=1,
+        memory_retriever=retriever,
+        memory_top_k=3,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
     )
 
     result = await agent.run("unrelated query", max_retries=1)
@@ -123,10 +136,12 @@ async def test_memory_context_formatted_in_system_prompt(tmp_path: Path) -> None
     llm = _RecordingLLM([_done_response()])
     recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="go home")
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
         memory_retriever=retriever,
-        artifacts_root=tmp_path / "runs", max_steps=1,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
     )
 
     result = await agent.run("go home", max_retries=1)
@@ -136,13 +151,21 @@ async def test_memory_context_formatted_in_system_prompt(tmp_path: Path) -> None
     # System prompt should contain the "Relevant Knowledge" section
     assert "Relevant Knowledge" in system_msg
     # At least one of our entries should appear
-    assert "Swipe up from bottom to go home" in system_msg or "Long press for app info" in system_msg
+    assert (
+        "Swipe up from bottom to go home" in system_msg or "Long press for app info" in system_msg
+    )
 
 
 @pytest.mark.asyncio
-async def test_memory_retrieval_is_logged_and_recorded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+async def test_memory_retrieval_is_logged_and_recorded(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     store = MemoryStore(tmp_path / "mem")
-    store.add(_make_entry("browser1", "Use Command + L to focus the browser address bar", MemoryType.APP_GUIDE))
+    store.add(
+        _make_entry(
+            "browser1", "Use Command + L to focus the browser address bar", MemoryType.APP_GUIDE
+        )
+    )
     store.add(_make_entry("os1", "Use Command + Space to open Spotlight", MemoryType.OS_GUIDE))
     store.save()
 
@@ -150,12 +173,19 @@ async def test_memory_retrieval_is_logged_and_recorded(tmp_path: Path, caplog: p
     await retriever.index(store.list_all())
 
     llm = _RecordingLLM([_done_response()])
-    recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="focus the browser address bar")
+    events: list[dict] = []
+    recorder = TrajectoryRecorder(
+        output_dir=tmp_path / "traj",
+        task="focus the browser address bar",
+        event_callback=events.append,
+    )
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
         memory_retriever=retriever,
-        artifacts_root=tmp_path / "runs", max_steps=1,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
     )
 
     with caplog.at_level(logging.INFO, logger="guiclaw.agent"):
@@ -166,7 +196,6 @@ async def test_memory_retrieval_is_logged_and_recorded(tmp_path: Path, caplog: p
     assert "Memory hit id=browser1" in caplog.text
 
     assert recorder.path is not None
-    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     memory_event = next(event for event in events if event["type"] == "memory_retrieval")
     assert memory_event["hit_count"] >= 1
     assert any(hit["entry_id"] == "browser1" for hit in memory_event["hits"])

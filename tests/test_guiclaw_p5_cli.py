@@ -443,10 +443,7 @@ def test_cli_embedding_batch_splits_requests(
         async def create(self, *, model: str, input: list[str]) -> Any:
             calls.append({"model": model, "input": list(input)})
             return types.SimpleNamespace(
-                data=[
-                    types.SimpleNamespace(embedding=[float(int(text[1:]))])
-                    for text in input
-                ]
+                data=[types.SimpleNamespace(embedding=[float(int(text[1:]))]) for text in input]
             )
 
     class FakeClient:
@@ -513,7 +510,9 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             calls["indexed_entries"].append(entries)
 
     class FakeFlatSkillLibrary:
-        def __init__(self, store_dir: Path, embedding_provider: Any = None, merge_llm: Any = None) -> None:
+        def __init__(
+            self, store_dir: Path, embedding_provider: Any = None, merge_llm: Any = None
+        ) -> None:
             calls["skill_library"].append(
                 {
                     "store_dir": store_dir,
@@ -639,7 +638,17 @@ def test_cli_parses_background_flags() -> None:
 
     # With all display geometry flags
     args2 = cli.parse_args(
-        ["--background", "--display-num", "42", "--width", "1920", "--height", "1080", "--task", "t"]
+        [
+            "--background",
+            "--display-num",
+            "42",
+            "--width",
+            "1920",
+            "--height",
+            "1080",
+            "--task",
+            "t",
+        ]
     )
     assert args2.background is True
     assert args2.display_num == 42
@@ -754,6 +763,7 @@ def test_run_cli_logs_resolved_background_mode_before_agent_start() -> None:
     assert "reason=xvfb_missing" in log_messages[0]
     assert "Install Xvfb to enable isolated background execution." in log_messages[0]
 
+
 def test_run_cli_blocks_when_isolation_required_but_unavailable() -> None:
     import guiclaw.cli as cli
     import guiclaw.backends.background_runtime as runtime
@@ -782,12 +792,16 @@ def test_run_cli_blocks_when_isolation_required_but_unavailable() -> None:
     try:
         monkeypatch.setattr(cli, "load_config", lambda path=None: config)
         monkeypatch.setattr(cli, "OpenAICompatibleLLMProvider", FakeProvider)
-        monkeypatch.setattr(cli, "build_backend", lambda backend_name, cfg: _FakeBackend(platform="linux"))
+        monkeypatch.setattr(
+            cli, "build_backend", lambda backend_name, cfg: _FakeBackend(platform="linux")
+        )
         monkeypatch.setattr(cli, "probe_isolated_background_support", lambda **_: probe_result)
         monkeypatch.setattr(
             cli,
             "GuiAgent",
-            lambda **kwargs: (_ for _ in ()).throw(AssertionError("GuiAgent should not be constructed")),
+            lambda **kwargs: (_ for _ in ()).throw(
+                AssertionError("GuiAgent should not be constructed")
+            ),
         )
 
         args = cli.parse_args(["--background", "--require-isolation", "--task", "open settings"])
@@ -826,13 +840,16 @@ def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> No
 
         async def start(self) -> Any:
             from guiclaw.backends.virtual_display import DisplayInfo
+
             return DisplayInfo(display_id=":99", width=self.width, height=self.height)
 
         async def stop(self) -> None:
             pass
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
             self._manager = manager
             self._run_metadata = run_metadata
@@ -895,11 +912,13 @@ def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(sys, "platform", "linux")
 
     import guiclaw.backends.displays.xvfb as xvfb_mod
+
     monkeypatch.setattr(xvfb_mod, "XvfbDisplayManager", FakeXvfbDisplayManager)
 
     # Also patch the xvfb import inside run_cli's local scope by patching the module reference
     import importlib
     import guiclaw.backends.displays.xvfb as _xvfb
+
     monkeypatch.setattr(_xvfb, "XvfbDisplayManager", FakeXvfbDisplayManager)
 
     args = cli.parse_args(["--background", "--task", "open settings"])
@@ -935,7 +954,9 @@ def test_run_cli_background_nonlinux_fallback(
     bg_created: list[Any] = []
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             bg_created.append(self)
 
         @property
@@ -1001,7 +1022,9 @@ def test_run_cli_background_nonlinux_fallback(
     assert agent_backend_ref[0] is inner_backend
     warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
     assert any("background runtime resolved:" in msg for msg in warning_messages)
-    assert any("mode=fallback" in msg and "reason=platform_unsupported" in msg for msg in warning_messages)
+    assert any(
+        "mode=fallback" in msg and "reason=platform_unsupported" in msg for msg in warning_messages
+    )
 
 
 def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1026,13 +1049,16 @@ def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> No
 
         async def start(self) -> Any:
             from guiclaw.backends.virtual_display import DisplayInfo
+
             return DisplayInfo(display_id=":42", width=1920, height=1080)
 
         async def stop(self) -> None:
             pass
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
             self._manager = manager
 
@@ -1090,10 +1116,21 @@ def test_run_cli_background_uses_cli_args(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(sys, "platform", "linux")
 
     import guiclaw.backends.displays.xvfb as _xvfb
+
     monkeypatch.setattr(_xvfb, "XvfbDisplayManager", FakeXvfbDisplayManager)
 
     args = cli.parse_args(
-        ["--background", "--display-num", "42", "--width", "1920", "--height", "1080", "--task", "t"]
+        [
+            "--background",
+            "--display-num",
+            "42",
+            "--width",
+            "1920",
+            "--height",
+            "1080",
+            "--task",
+            "t",
+        ]
     )
     asyncio.run(cli.run_cli(args))
 
@@ -1125,7 +1162,9 @@ def test_run_cli_uses_windows_isolated_desktop_backend_for_windows_isolated_mode
             manager_init_kwargs.append({"width": width, "height": height})
 
     class FakeWindowsIsolatedBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
             self._manager = manager
             self._run_metadata = run_metadata
@@ -1191,7 +1230,9 @@ def test_run_cli_uses_windows_isolated_desktop_backend_for_windows_isolated_mode
 
     monkeypatch.setattr(win32_mod, "Win32DesktopManager", FakeWin32DesktopManager)
 
-    args = cli.parse_args(["--background", "--width", "1600", "--height", "900", "--task", "open settings"])
+    args = cli.parse_args(
+        ["--background", "--width", "1600", "--height", "900", "--task", "open settings"]
+    )
     asyncio.run(cli.run_cli(args))
 
     assert manager_init_kwargs == [{"width": 1600, "height": 900}]
@@ -1260,7 +1301,11 @@ def test_run_cli_passes_target_app_class_to_windows_probe(
     monkeypatch.setattr(cli, "probe_isolated_background_support", fake_probe)
     monkeypatch.setattr(sys, "platform", "win32")
 
-    asyncio.run(cli.run_cli(cli.parse_args(["--background", "--target-app-class", "uwp", "--task", "Open Settings"])))
+    asyncio.run(
+        cli.run_cli(
+            cli.parse_args(["--background", "--target-app-class", "uwp", "--task", "Open Settings"])
+        )
+    )
     asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
 
     assert probe_calls[0] == {"sys_platform": "win32", "target_app_class": "uwp"}
@@ -1394,7 +1439,9 @@ def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hos
         return None, None, None
 
     class FakeBackgroundBackend:
-        def __init__(self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None) -> None:
+        def __init__(
+            self, inner: Any, manager: Any, run_metadata: dict[str, str] | None = None
+        ) -> None:
             self._inner = inner
 
         @property
@@ -1455,13 +1502,17 @@ def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hos
             monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
             monkeypatch.setattr(cli, "BackgroundDesktopBackend", FakeBackgroundBackend)
             monkeypatch.setattr(cli, "probe_isolated_background_support", lambda **_: probe_result)
-            monkeypatch.setattr(cli, "TrajectoryRecorder", lambda *args, **kwargs: types.SimpleNamespace(path=None))
+            monkeypatch.setattr(
+                cli, "TrajectoryRecorder", lambda *args, **kwargs: types.SimpleNamespace(path=None)
+            )
             monkeypatch.setattr(sys, "platform", sys_platform)
 
             if probe_result.backend_name == "windows_isolated_desktop":
                 import guiclaw.backends.displays.win32desktop as win32_mod
 
-                monkeypatch.setattr(win32_mod, "Win32DesktopManager", lambda *args, **kwargs: object())
+                monkeypatch.setattr(
+                    win32_mod, "Win32DesktopManager", lambda *args, **kwargs: object()
+                )
 
             try:
                 asyncio.run(cli.run_cli(cli.parse_args(argv)))
@@ -1499,7 +1550,10 @@ def test_run_cli_background_decision_tokens_stay_consistent_across_supported_hos
     )
 
     assert "xvfb_missing" in blocked_error
-    assert any("owner=cli" in message and "mode=blocked" in message and "reason=xvfb_missing" in message for message in log_messages)
+    assert any(
+        "owner=cli" in message and "mode=blocked" in message and "reason=xvfb_missing" in message
+        for message in log_messages
+    )
     assert any(
         "owner=cli" in message
         and "mode=fallback" in message
@@ -1636,7 +1690,9 @@ def test_run_cli_logs_windows_target_surface_metadata(
     monkeypatch.setattr(win_iso, "launch_windows_worker", lambda **kwargs: FakeWorkerProcess())
 
     with caplog.at_level(logging.INFO):
-        result = asyncio.run(cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"])))
+        result = asyncio.run(
+            cli.run_cli(cli.parse_args(["--background", "--task", "Open Settings"]))
+        )
 
     assert result.success is True
     assert "backend_name=windows_isolated_desktop" in caplog.text
@@ -1765,7 +1821,7 @@ def test_run_cli_intervention_flow_resumes_after_confirmation(
     captured = capsys.readouterr()
     assert isinstance(result, AgentResult)
     assert result.success is True
-    assert Path(backend.observe_calls[1]).name == "step_001.png"
+    assert Path(backend.observe_calls[1]).name == "001_request_intervention.png"
     assert "<redacted:intervention_reason>" in captured.out
     assert reason not in captured.out
     assert "display_id" in captured.out
@@ -1820,7 +1876,7 @@ def test_run_cli_intervention_logs_are_scrubbed(
 
     result = asyncio.run(cli.run_cli(cli.parse_args(["--task", "Handle OTP"])))
 
-    trace_text = (Path(result.trace_path) / "trace.jsonl").read_text(encoding="utf-8")
+    trace_text = (Path(result.trace_path).parent / "traj.json").read_text(encoding="utf-8")
     captured = capsys.readouterr()
 
     assert result.success is False

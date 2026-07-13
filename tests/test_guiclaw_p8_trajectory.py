@@ -166,11 +166,14 @@ async def test_summarizer_called_post_run(
 
     tool = _dry_run_tool(tmp_workspace)
     promote_mock = AsyncMock(return_value=None)
-    with patch(
-        "guiclaw.trajectory.summarizer.TrajectorySummarizer.summarize_file",
-        new_callable=AsyncMock,
-        return_value="Summary text",
-    ) as mock_summarize, patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    with (
+        patch(
+            "guiclaw.trajectory.summarizer.TrajectorySummarizer.summarize_file",
+            new_callable=AsyncMock,
+            return_value="Summary text",
+        ) as mock_summarize,
+        patch.object(tool._postprocessor, "_extract_skill", new=promote_mock),
+    ):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -188,11 +191,14 @@ async def test_summarizer_failure_non_fatal(
 
     tool = _dry_run_tool(tmp_workspace)
     promote_mock = AsyncMock(return_value=None)
-    with patch(
-        "guiclaw.trajectory.summarizer.TrajectorySummarizer.summarize_file",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("summarizer exploded"),
-    ), patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    with (
+        patch(
+            "guiclaw.trajectory.summarizer.TrajectorySummarizer.summarize_file",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("summarizer exploded"),
+        ),
+        patch.object(tool._postprocessor, "_extract_skill", new=promote_mock),
+    ):
         raw = await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -252,7 +258,7 @@ async def test_gui_tool_returns_post_run_state_from_latest_trace_step(
     assert post_run_state["completion_assessment"] == "completed"
     assert post_run_state["latest_screenshot_path"] is not None
     assert post_run_state["last_action"]["action_type"] == "done"
-    assert post_run_state["screen_resolution"] == "1080x1920"
+    assert post_run_state["screen_resolution"] is None
     assert post_run_state["last_foreground_app"] == "DryRun"
     assert "Current: DryRun" in post_run_state["current_state"]
 
@@ -273,11 +279,13 @@ async def test_gui_tool_returns_before_background_postprocessing_finishes_with_p
         is_success: bool,
         platform: str,
         task: str,
+        subtask_index: int,
     ) -> None:
         captured["trace_path"] = trace_path
         captured["is_success"] = is_success
         captured["platform"] = platform
         captured["task"] = task
+        captured["subtask_index"] = subtask_index
         postprocess_started.set()
         await release_postprocess.wait()
 
@@ -356,10 +364,13 @@ async def test_summarizer_skipped_when_no_trace(
         property(lambda self: None),
     )
 
-    with patch(
-        "guiclaw.trajectory.summarizer.TrajectorySummarizer.summarize_file",
-        new_callable=AsyncMock,
-    ) as mock_summarize, patch.object(tool._postprocessor, "_extract_skill", new=promote_mock):
+    with (
+        patch(
+            "guiclaw.trajectory.summarizer.TrajectorySummarizer.summarize_file",
+            new_callable=AsyncMock,
+        ) as mock_summarize,
+        patch.object(tool._postprocessor, "_extract_skill", new=promote_mock),
+    ):
         await tool.execute(task="test task")
         await tool._wait_for_pending_postprocessing()
 
@@ -386,15 +397,37 @@ def test_evaluate_gui_trajectory_counts_only_step_rows(
 ) -> None:
     from nanobot.utils.gui_evaluation import evaluate_gui_trajectory_sync
 
-    trace_path = tmp_path / "trace.jsonl"
-    rows = [
-        {"type": "metadata", "screenshot_file": "meta.png"},
-        {"type": "step", "step_num": 1, "action": "tap", "screenshot_file": "step_001.png"},
-        {"type": "attempt_result"},
-        {"type": "step", "step_num": 2, "action": "done", "screenshot_file": "step_002.png"},
-    ]
+    trace_path = tmp_path / "traj.json"
     trace_path.write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+        json.dumps(
+            {
+                "instruction": "test instruction",
+                "platform": "android",
+                "subtasks": [{"subtask": 1, "task": "test instruction"}],
+                "steps": [
+                    {
+                        "step": 1,
+                        "subtask": 1,
+                        "attempt": 1,
+                        "phase": "agent",
+                        "model_output": "tap",
+                        "action": {"action_type": "tap"},
+                        "screenshot": "step_001.png",
+                    },
+                    {
+                        "step": 2,
+                        "subtask": 1,
+                        "attempt": 1,
+                        "phase": "agent",
+                        "model_output": "done",
+                        "action": {"action_type": "done"},
+                        "screenshot": "step_002.png",
+                    },
+                ],
+                "screenshots": [],
+            },
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     for name in ("meta.png", "step_001.png", "step_002.png"):
@@ -428,8 +461,8 @@ def test_evaluate_gui_trajectory_counts_only_step_rows(
 def test_load_screenshots_for_judge_supports_screenshot_path_field(tmp_path: Path) -> None:
     from nanobot.utils.gui_evaluation import load_screenshots_for_judge
 
-    trace_path = tmp_path / "trace.jsonl"
-    screenshot_path = tmp_path / "screenshots" / "step_001.png"
+    trace_path = tmp_path / "traj.json"
+    screenshot_path = tmp_path / "screenshots" / "001_tap.png"
     screenshot_path.parent.mkdir(parents=True, exist_ok=True)
     screenshot_path.write_bytes(b"png-bytes")
     trace_path.write_text("", encoding="utf-8")
@@ -453,8 +486,7 @@ def test_eval_script_uses_step_only_counts(tmp_path: Path, monkeypatch: pytest.M
 
     dataset_csv = tmp_path / "dataset.csv"
     dataset_csv.write_text(
-        "task_id,instruction,instruction_ch\n"
-        "task-1,Open settings,\n",
+        "task_id,instruction,instruction_ch\ntask-1,Open settings,\n",
         encoding="utf-8",
     )
 

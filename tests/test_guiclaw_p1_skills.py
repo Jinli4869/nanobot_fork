@@ -21,6 +21,7 @@ from guiclaw.skills.flat import FlatSkillLibrary, compile_flat_skills
 from guiclaw.skills.normalization import normalize_app_identifier
 from guiclaw.skills.state_contract import infer_focused_input_contract, infer_interaction_target
 from guiclaw.skills.trajectory_codegen import CodegenResult, CodeStep, codegen_trajectory
+from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 
 class _ScriptedLLM:
@@ -92,12 +93,14 @@ class _FakeSubgoalRunner:
         max_steps: int = 3,
         current_observation: Observation | None = None,
     ) -> SubgoalResult:
-        self.calls.append({
-            "goal": goal,
-            "screenshot": screenshot,
-            "max_steps": max_steps,
-            "current_observation": current_observation,
-        })
+        self.calls.append(
+            {
+                "goal": goal,
+                "screenshot": screenshot,
+                "max_steps": max_steps,
+                "current_observation": current_observation,
+            }
+        )
         return self.result
 
 
@@ -131,10 +134,12 @@ class _KeywordEmbeddingProvider:
         rows: list[list[float]] = []
         for text in texts:
             lowered = text.lower()
-            rows.append([
-                float(lowered.count("messages")),
-                float(lowered.count("camera")),
-            ])
+            rows.append(
+                [
+                    float(lowered.count("messages")),
+                    float(lowered.count("camera")),
+                ]
+            )
         return np.array(rows, dtype=np.float32)
 
 
@@ -184,9 +189,142 @@ def _focused_input_extra() -> dict[str, Any]:
     }
 
 
-def _write_jsonl(path: Path, events: list[dict[str, Any]]) -> None:
+def _write_compact_trajectory(path: Path, events: list[dict[str, Any]]) -> None:
+    metadata = next((event for event in events if event.get("type") == "metadata"), {})
+    platform = str(metadata.get("platform") or "unknown")
+    steps: list[dict[str, Any]] = []
+    pending_skill: dict[str, Any] = {}
+    previous_observation: dict[str, Any] | None = None
+    result_event = next((event for event in events if event.get("type") == "result"), {})
+
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "skill_step":
+            pending_skill.update(
+                {
+                    key: event[key]
+                    for key in ("skill_id", "skill_name")
+                    if event.get(key) is not None
+                }
+            )
+            pending_skill["failed_step"] = {
+                key: event[key]
+                for key in (
+                    "step_index",
+                    "target",
+                    "valid_state",
+                    "state_contract",
+                    "observation",
+                    "screenshot_path",
+                    "error",
+                )
+                if event.get(key) is not None
+            }
+            continue
+        if event_type == "skill_execution_result":
+            pending_skill.update(
+                {
+                    key: event[key]
+                    for key in ("skill_id", "skill_name", "state", "error")
+                    if event.get(key) is not None
+                }
+            )
+            continue
+        if event_type != "step":
+            continue
+
+        action = event.get("action") or {}
+        observation = event.get("observation") or {}
+        app = str(observation.get("foreground_app") or observation.get("app") or "")
+
+        interaction_target = event.get("interaction_target")
+        action_type = action.get("action_type")
+        if (
+            not isinstance(interaction_target, dict)
+            and action_type
+            in {
+                "tap",
+                "long_press",
+                "double_tap",
+            }
+            and previous_observation is not None
+        ):
+            interaction_target = infer_interaction_target(action, previous_observation)
+        if not isinstance(interaction_target, dict) and action_type == "input_text":
+            source = previous_observation or observation
+            contract = infer_focused_input_contract(
+                source.get("extra"),
+                app=str(source.get("foreground_app") or source.get("app") or app),
+            )
+            if contract:
+                interaction_target = {"state_contract": contract}
+
+        compact_step: dict[str, Any] = {
+            "step": len(steps) + 1,
+            "subtask": 1,
+            "attempt": 1,
+            "phase": event.get("phase") or "agent",
+            "model_output": event.get("model_output") or "",
+            "action": action,
+            "app": app,
+        }
+        if isinstance(interaction_target, dict):
+            compact_step["interaction_target"] = interaction_target
+        if pending_skill:
+            compact_step["skill"] = dict(pending_skill)
+            pending_skill.clear()
+        steps.append(compact_step)
+        previous_observation = observation
+
+    if pending_skill:
+        steps.append(
+            {
+                "step": len(steps) + 1,
+                "subtask": 1,
+                "attempt": 1,
+                "phase": "skill",
+                "model_output": "",
+                "action": {"action_type": "use_skill"},
+                "app": "",
+                "skill": dict(pending_skill),
+            }
+        )
+
+    task = str(metadata.get("task") or "test task")
     path.write_text(
-        "\n".join(json.dumps(event) for event in events),
+        json.dumps(
+            {
+                "instruction": task,
+                "platform": platform,
+                "subtasks": [{"subtask": 1, "task": task, "app_hint": None}],
+                "steps": steps,
+                "screenshots": [],
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    success = bool(result_event.get("success", True))
+    result = {
+        "run": {
+            "success": success,
+            "steps_taken": len(steps),
+            "workflow_mode": "single",
+            "token_usage": {},
+        },
+        "subtasks": [
+            {
+                "subtask": 1,
+                "task": task,
+                "success": success,
+                "steps_taken": len(steps),
+                "error": result_event.get("error"),
+            }
+        ],
+    }
+    (path.parent / "result.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -221,39 +359,51 @@ def _codegen_result_from_steps(steps: list[dict[str, Any]]) -> CodegenResult:
     for index, item in enumerate(steps):
         action = item.get("action") or {}
         action_type = str(action.get("action_type") or "")
-        code_steps.append(CodeStep(
-            step_index=index,
-            app=app,
-            intent=str(item.get("action_intent") or item.get("action_summary") or action_type),
-            action_type=action_type,
-            action_params={
-                key: action[key]
-                for key in ("x", "y", "x2", "y2", "text", "key", "pixels")
-                if key in action and action[key] is not None
-            },
-            control_info="",
-            contract_json="",
-            screenshot_b64="",
-        ))
+        code_steps.append(
+            CodeStep(
+                step_index=index,
+                app=app,
+                intent=str(item.get("action_intent") or item.get("action_summary") or action_type),
+                action_type=action_type,
+                action_params={
+                    key: action[key]
+                    for key in ("x", "y", "x2", "y2", "text", "key", "pixels")
+                    if key in action and action[key] is not None
+                },
+                control_info="",
+                contract_json="",
+                screenshot_b64="",
+            )
+        )
 
     core_steps = [
-        step for step in code_steps
-        if step.action_type not in {
-            "wait", "screenshot", "home", "back", "enter", "done", "app_switch",
+        step
+        for step in code_steps
+        if step.action_type
+        not in {
+            "wait",
+            "screenshot",
+            "home",
+            "back",
+            "enter",
+            "done",
+            "app_switch",
             "request_intervention",
         }
     ]
     if len(core_steps) < 2:
-        code_steps.append(CodeStep(
-            step_index=len(code_steps),
-            app=app,
-            intent="continue reusable workflow",
-            action_type="tap",
-            action_params={"x": 1, "y": 1},
-            control_info="",
-            contract_json="",
-            screenshot_b64="",
-        ))
+        code_steps.append(
+            CodeStep(
+                step_index=len(code_steps),
+                app=app,
+                intent="continue reusable workflow",
+                action_type="tap",
+                action_params={"x": 1, "y": 1},
+                control_info="",
+                contract_json="",
+                screenshot_b64="",
+            )
+        )
 
     return CodegenResult(
         task=str(first.get("task") or "test task"),
@@ -380,18 +530,30 @@ async def test_flat_skill_library_search_returns_relevant_skill(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_add_or_merge_deduplicates_semantic_conflict(tmp_path: Path) -> None:
+async def test_flat_skill_library_add_or_merge_deduplicates_semantic_conflict(
+    tmp_path: Path,
+) -> None:
     steps = (
-        SkillStep(action_type="open_app", target="Launch WeChat", parameters={"text": "com.tencent.mm"}),
+        SkillStep(
+            action_type="open_app", target="Launch WeChat", parameters={"text": "com.tencent.mm"}
+        ),
         SkillStep(action_type="tap", target="Messages", valid_state="Messages tab is visible"),
-        SkillStep(action_type="tap", target="Verification code", valid_state="Verification message is visible"),
+        SkillStep(
+            action_type="tap",
+            target="Verification code",
+            valid_state="Verification message is visible",
+        ),
     )
     lib = FlatSkillLibrary(
         store_dir=tmp_path / "skills",
         embedding_provider=_RecordingEmbeddingProvider(),
         embedding_signature="sig-v1",
     )
-    lib.add(_make_skill("read-code", "read_verification_code", "Open WeChat and read a login code", steps=steps))
+    lib.add(
+        _make_skill(
+            "read-code", "read_verification_code", "Open WeChat and read a login code", steps=steps
+        )
+    )
 
     decision, skill_id = await lib.add_or_merge(
         _make_skill("otp", "get_otp_from_message", "Open WeChat and read a login code", steps=steps)
@@ -416,14 +578,26 @@ async def test_flat_skill_library_rejects_unknown_app(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_add_or_merge_uses_description_when_names_differ(tmp_path: Path) -> None:
+async def test_flat_skill_library_add_or_merge_uses_description_when_names_differ(
+    tmp_path: Path,
+) -> None:
     steps = (
-        SkillStep(action_type="open_app", target="Launch WeChat", parameters={"text": "com.tencent.mm"}),
+        SkillStep(
+            action_type="open_app", target="Launch WeChat", parameters={"text": "com.tencent.mm"}
+        ),
         SkillStep(action_type="tap", target="Messages", valid_state="Messages tab is visible"),
-        SkillStep(action_type="tap", target="Verification code", valid_state="Verification message is visible"),
+        SkillStep(
+            action_type="tap",
+            target="Verification code",
+            valid_state="Verification message is visible",
+        ),
     )
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills")
-    lib.add(_make_skill("read-code", "read_code_from_sms", "Open WeChat and read a login code", steps=steps))
+    lib.add(
+        _make_skill(
+            "read-code", "read_code_from_sms", "Open WeChat and read a login code", steps=steps
+        )
+    )
 
     decision, skill_id = await lib.add_or_merge(
         _make_skill("otp", "fetch_login_number", "Open WeChat and read a login code", steps=steps)
@@ -437,17 +611,19 @@ async def test_flat_skill_library_add_or_merge_uses_description_when_names_diffe
 @pytest.mark.asyncio
 async def test_flat_skill_library_search_includes_android_app_display_alias(tmp_path: Path) -> None:
     library = FlatSkillLibrary(store_dir=tmp_path / "skills")
-    library.add(_make_skill(
-        "bili-search",
-        "search_and_play_bilibili_video",
-        "Search for a video and play the first result",
-        app="tv.danmaku.bili",
-        platform="android",
-        steps=(
-            SkillStep(action_type="open_app", target="tv.danmaku.bili"),
-            SkillStep(action_type="input_text", target="{{query}}"),
-        ),
-    ))
+    library.add(
+        _make_skill(
+            "bili-search",
+            "search_and_play_bilibili_video",
+            "Search for a video and play the first result",
+            app="tv.danmaku.bili",
+            platform="android",
+            steps=(
+                SkillStep(action_type="open_app", target="tv.danmaku.bili"),
+                SkillStep(action_type="input_text", target="{{query}}"),
+            ),
+        )
+    )
 
     results = await library.search("在哔哩哔哩搜索播放华强买瓜", platform="android", top_k=1)
 
@@ -456,28 +632,34 @@ async def test_flat_skill_library_search_includes_android_app_display_alias(tmp_
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_search_expands_common_bilingual_action_aliases(tmp_path: Path) -> None:
+async def test_flat_skill_library_search_expands_common_bilingual_action_aliases(
+    tmp_path: Path,
+) -> None:
     library = FlatSkillLibrary(store_dir=tmp_path / "skills")
-    library.add(_make_skill(
-        "bili-open",
-        "open_bilibili_app",
-        "Open Bilibili",
-        app="tv.danmaku.bili",
-        platform="android",
-        steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili"),),
-    ))
-    library.add(_make_skill(
-        "bili-search-play",
-        "search_and_play_bilibili_video",
-        "Search for a video and play the first result",
-        app="tv.danmaku.bili",
-        platform="android",
-        steps=(
-            SkillStep(action_type="open_app", target="tv.danmaku.bili"),
-            SkillStep(action_type="input_text", target="{{query}}"),
-            SkillStep(action_type="tap", target="first_video_result"),
-        ),
-    ))
+    library.add(
+        _make_skill(
+            "bili-open",
+            "open_bilibili_app",
+            "Open Bilibili",
+            app="tv.danmaku.bili",
+            platform="android",
+            steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili"),),
+        )
+    )
+    library.add(
+        _make_skill(
+            "bili-search-play",
+            "search_and_play_bilibili_video",
+            "Search for a video and play the first result",
+            app="tv.danmaku.bili",
+            platform="android",
+            steps=(
+                SkillStep(action_type="open_app", target="tv.danmaku.bili"),
+                SkillStep(action_type="input_text", target="{{query}}"),
+                SkillStep(action_type="tap", target="first_video_result"),
+            ),
+        )
+    )
 
     results = await library.search("在哔哩哔哩搜索播放华强买瓜", platform="android", top_k=1)
 
@@ -486,25 +668,37 @@ async def test_flat_skill_library_search_expands_common_bilingual_action_aliases
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_does_not_merge_same_embedding_for_different_targets(tmp_path: Path) -> None:
+async def test_flat_skill_library_does_not_merge_same_embedding_for_different_targets(
+    tmp_path: Path,
+) -> None:
     lib = FlatSkillLibrary(
         store_dir=tmp_path / "skills",
         embedding_provider=_ConstantEmbeddingProvider(),
         embedding_signature="constant",
     )
-    lib.add(_make_skill(
-        "settings",
-        "open_entry",
-        "Open the requested entry",
-        steps=(SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),),
-    ))
+    lib.add(
+        _make_skill(
+            "settings",
+            "open_entry",
+            "Open the requested entry",
+            steps=(
+                SkillStep(
+                    action_type="tap", target="Settings", valid_state="Settings icon visible"
+                ),
+            ),
+        )
+    )
 
-    decision, skill_id = await lib.add_or_merge(_make_skill(
-        "camera",
-        "open_entry_variant",
-        "Open the requested entry",
-        steps=(SkillStep(action_type="tap", target="Camera", valid_state="Camera icon visible"),),
-    ))
+    decision, skill_id = await lib.add_or_merge(
+        _make_skill(
+            "camera",
+            "open_entry_variant",
+            "Open the requested entry",
+            steps=(
+                SkillStep(action_type="tap", target="Camera", valid_state="Camera icon visible"),
+            ),
+        )
+    )
 
     assert decision == "ADD"
     assert skill_id == "camera"
@@ -512,10 +706,10 @@ async def test_flat_skill_library_does_not_merge_same_embedding_for_different_ta
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_migrates_feedback_when_incoming_skill_merges(tmp_path: Path) -> None:
-    steps = (
-        SkillStep(action_type="tap", target="Messages", valid_state="Messages tab visible"),
-    )
+async def test_flat_skill_library_migrates_feedback_when_incoming_skill_merges(
+    tmp_path: Path,
+) -> None:
+    steps = (SkillStep(action_type="tap", target="Messages", valid_state="Messages tab visible"),)
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills")
     lib.add(_make_skill("existing", "open_messages", "Open messages", steps=steps))
     lib.record_feedback(
@@ -538,7 +732,9 @@ async def test_flat_skill_library_migrates_feedback_when_incoming_skill_merges(t
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_keeps_proven_old_skill_for_weaker_unproven_conflict(tmp_path: Path) -> None:
+async def test_flat_skill_library_keeps_proven_old_skill_for_weaker_unproven_conflict(
+    tmp_path: Path,
+) -> None:
     store = tmp_path / "skills"
     lib = FlatSkillLibrary(
         store_dir=store,
@@ -549,17 +745,25 @@ async def test_flat_skill_library_keeps_proven_old_skill_for_weaker_unproven_con
         "old",
         "open_settings",
         "Open settings",
-        steps=(SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),),
+        steps=(
+            SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),
+        ),
         success_count=3,
     )
     lib.add(old)
 
-    decision, skill_id = await lib.add_or_merge(_make_skill(
-        "new",
-        "open_settings_variant",
-        "Open settings",
-        steps=(SkillStep(action_type="tap", target="Settings gear", valid_state="Settings icon visible"),),
-    ))
+    decision, skill_id = await lib.add_or_merge(
+        _make_skill(
+            "new",
+            "open_settings_variant",
+            "Open settings",
+            steps=(
+                SkillStep(
+                    action_type="tap", target="Settings gear", valid_state="Settings icon visible"
+                ),
+            ),
+        )
+    )
 
     assert decision == "KEEP_OLD"
     assert skill_id == "old"
@@ -569,23 +773,33 @@ async def test_flat_skill_library_keeps_proven_old_skill_for_weaker_unproven_con
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_replaces_unproven_old_when_new_has_success(tmp_path: Path) -> None:
+async def test_flat_skill_library_replaces_unproven_old_when_new_has_success(
+    tmp_path: Path,
+) -> None:
     store = tmp_path / "skills"
     lib = FlatSkillLibrary(store_dir=store)
-    lib.add(_make_skill(
-        "old",
-        "open_messages",
-        "Open messages",
-        steps=(SkillStep(action_type="tap", target="Messages", valid_state="Messages visible"),),
-    ))
+    lib.add(
+        _make_skill(
+            "old",
+            "open_messages",
+            "Open messages",
+            steps=(
+                SkillStep(action_type="tap", target="Messages", valid_state="Messages visible"),
+            ),
+        )
+    )
 
-    decision, skill_id = await lib.add_or_merge(_make_skill(
-        "new",
-        "open_messages_verified",
-        "Open messages",
-        steps=(SkillStep(action_type="tap", target="Messages", valid_state="Messages visible"),),
-        success_count=2,
-    ))
+    decision, skill_id = await lib.add_or_merge(
+        _make_skill(
+            "new",
+            "open_messages_verified",
+            "Open messages",
+            steps=(
+                SkillStep(action_type="tap", target="Messages", valid_state="Messages visible"),
+            ),
+            success_count=2,
+        )
+    )
 
     assert decision == "KEEP_NEW"
     assert skill_id == "new"
@@ -595,13 +809,19 @@ async def test_flat_skill_library_replaces_unproven_old_when_new_has_success(tmp
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_cleanup_removes_zero_success_superseded_prefix(tmp_path: Path) -> None:
+async def test_flat_skill_library_cleanup_removes_zero_success_superseded_prefix(
+    tmp_path: Path,
+) -> None:
     prefix = _make_skill(
         "prefix",
         "open_search",
         "Open search",
         steps=(
-            SkillStep(action_type="open_app", target="Launch Store", parameters={"text": "com.example.app"}),
+            SkillStep(
+                action_type="open_app",
+                target="Launch Store",
+                parameters={"text": "com.example.app"},
+            ),
             SkillStep(action_type="tap", target="Search", valid_state="Search button visible"),
         ),
     )
@@ -611,7 +831,9 @@ async def test_flat_skill_library_cleanup_removes_zero_success_superseded_prefix
         "Search store for an item",
         steps=(
             *prefix.steps,
-            SkillStep(action_type="input_text", target="{{query}}", valid_state="Search field focused"),
+            SkillStep(
+                action_type="input_text", target="{{query}}", valid_state="Search field focused"
+            ),
         ),
         success_count=3,
     )
@@ -628,13 +850,19 @@ async def test_flat_skill_library_cleanup_removes_zero_success_superseded_prefix
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_cleanup_prunes_feedback_for_removed_prefix(tmp_path: Path) -> None:
+async def test_flat_skill_library_cleanup_prunes_feedback_for_removed_prefix(
+    tmp_path: Path,
+) -> None:
     prefix = _make_skill(
         "prefix",
         "open_search",
         "Open search",
         steps=(
-            SkillStep(action_type="open_app", target="Launch Store", parameters={"text": "com.example.app"}),
+            SkillStep(
+                action_type="open_app",
+                target="Launch Store",
+                parameters={"text": "com.example.app"},
+            ),
             SkillStep(action_type="tap", target="Search", valid_state="Search button visible"),
         ),
     )
@@ -644,7 +872,9 @@ async def test_flat_skill_library_cleanup_prunes_feedback_for_removed_prefix(tmp
         "Search store for an item",
         steps=(
             *prefix.steps,
-            SkillStep(action_type="input_text", target="{{query}}", valid_state="Search field focused"),
+            SkillStep(
+                action_type="input_text", target="{{query}}", valid_state="Search field focused"
+            ),
         ),
         success_count=3,
     )
@@ -664,10 +894,14 @@ async def test_flat_skill_library_cleanup_prunes_feedback_for_removed_prefix(tmp
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_caches_skill_embeddings_and_only_embeds_query_on_hit(tmp_path: Path) -> None:
+async def test_flat_skill_library_caches_skill_embeddings_and_only_embeds_query_on_hit(
+    tmp_path: Path,
+) -> None:
     store = tmp_path / "skills"
     embedder = _RecordingEmbeddingProvider()
-    lib = FlatSkillLibrary(store_dir=store, embedding_provider=embedder, embedding_signature="sig-v1")
+    lib = FlatSkillLibrary(
+        store_dir=store, embedding_provider=embedder, embedding_signature="sig-v1"
+    )
     lib.add(_make_skill("settings", "Open Settings", "Navigate to Android settings"))
     lib.add(_make_skill("camera", "Open Camera", "Take a photo with the camera"))
 
@@ -688,10 +922,14 @@ async def test_flat_skill_library_caches_skill_embeddings_and_only_embeds_query_
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_reuses_unchanged_skill_embeddings_when_skills_py_changes(tmp_path: Path) -> None:
+async def test_flat_skill_library_reuses_unchanged_skill_embeddings_when_skills_py_changes(
+    tmp_path: Path,
+) -> None:
     store = tmp_path / "skills"
     embedder = _RecordingEmbeddingProvider()
-    lib = FlatSkillLibrary(store_dir=store, embedding_provider=embedder, embedding_signature="sig-v1")
+    lib = FlatSkillLibrary(
+        store_dir=store, embedding_provider=embedder, embedding_signature="sig-v1"
+    )
     lib.add(_make_skill("settings", "Open Settings", "Navigate to Android settings"))
     lib.add(_make_skill("camera", "Open Camera", "Take a photo with the camera"))
     await lib.search("settings screen", platform="android", top_k=2)
@@ -710,16 +948,22 @@ async def test_flat_skill_library_reuses_unchanged_skill_embeddings_when_skills_
 
 
 @pytest.mark.asyncio
-async def test_flat_skill_library_rebuilds_skill_embeddings_when_signature_changes(tmp_path: Path) -> None:
+async def test_flat_skill_library_rebuilds_skill_embeddings_when_signature_changes(
+    tmp_path: Path,
+) -> None:
     store = tmp_path / "skills"
     first_embedder = _RecordingEmbeddingProvider()
-    lib = FlatSkillLibrary(store_dir=store, embedding_provider=first_embedder, embedding_signature="sig-v1")
+    lib = FlatSkillLibrary(
+        store_dir=store, embedding_provider=first_embedder, embedding_signature="sig-v1"
+    )
     lib.add(_make_skill("settings", "Open Settings", "Navigate to Android settings"))
     lib.add(_make_skill("camera", "Open Camera", "Take a photo with the camera"))
     await lib.search("settings screen", platform="android", top_k=2)
 
     second_embedder = _RecordingEmbeddingProvider()
-    reloaded = FlatSkillLibrary(store_dir=store, embedding_provider=second_embedder, embedding_signature="sig-v2")
+    reloaded = FlatSkillLibrary(
+        store_dir=store, embedding_provider=second_embedder, embedding_signature="sig-v2"
+    )
     await reloaded.search("camera", platform="android", top_k=2)
 
     assert len(second_embedder.calls) == 2
@@ -740,13 +984,17 @@ async def test_postprocessor_uses_add_or_merge_for_extracted_flat_skills(
         "existing",
         "open_settings",
         "Open Android settings",
-        steps=(SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),),
+        steps=(
+            SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),
+        ),
     )
     incoming = _make_skill(
         "incoming",
         "open_settings",
         "Open Android settings",
-        steps=(SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),),
+        steps=(
+            SkillStep(action_type="tap", target="Settings", valid_state="Settings icon visible"),
+        ),
     )
     FlatSkillLibrary(store_dir=store).add(existing)
 
@@ -755,13 +1003,16 @@ async def test_postprocessor_uses_add_or_merge_for_extracted_flat_skills(
         trajectory_path: Path,
         *,
         is_success: bool = True,
+        subtask_index: int = 1,
     ) -> list[Skill]:
-        del self, trajectory_path, is_success
+        del self, trajectory_path, is_success, subtask_index
         return [incoming]
 
     monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_from_file_multi)
-    trace_path = tmp_path / "trace.jsonl"
-    trace_path.write_text('{"type":"result","success":true,"total_steps":1}\n', encoding="utf-8")
+    recorder = TrajectoryRecorder(output_dir=tmp_path, task="Open settings", platform="android")
+    trace_path = recorder.start()
+    recorder.record_step(action={"action_type": "tap"})
+    recorder.finish(success=True)
 
     processor = PostRunProcessor(
         llm=_ScriptedLLM([]),
@@ -769,11 +1020,18 @@ async def test_postprocessor_uses_add_or_merge_for_extracted_flat_skills(
         enable_skill_extraction=True,
     )
 
-    result_id = await processor._extract_skill(trace_path, True, "android", task="Open settings")
+    result_id = await processor._extract_skill(
+        trace_path,
+        True,
+        "android",
+        task="Open settings",
+        subtask_index=1,
+    )
 
     assert result_id == "existing"
     assert FlatSkillLibrary(store_dir=store).count() == 1
-    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    run_result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    extraction_result = run_result["extraction"]["1"]
     assert extraction_result["skills"][0]["decision"] == "MERGE"
     assert extraction_result["compiled_skill_ids"] == ["existing"]
 
@@ -792,60 +1050,62 @@ async def test_postprocessor_evolves_failed_reused_skill_instead_of_extracting_n
             "skill-1",
             "open_messages",
             "Open messages",
-            steps=(SkillStep(action_type="tap", target="Messages", valid_state="Messages tab visible"),),
+            steps=(
+                SkillStep(action_type="tap", target="Messages", valid_state="Messages tab visible"),
+            ),
         )
     )
-    evolved_payload = json.dumps({
-        "name": "open_messages",
-        "description": "Open messages and dismiss popup when present",
-        "app": "com.example.app",
-        "platform": "android",
-        "parameters": [],
-        "steps": [
-            {
-                "action_type": "tap",
-                "target": "Close",
-                "parameters": {"optional": True},
-                "valid_state": "popup close button is visible",
-            },
-            {
-                "action_type": "tap",
-                "target": "Messages",
-                "valid_state": "Messages tab visible",
-            },
-        ],
-    })
+    evolved_payload = json.dumps(
+        {
+            "name": "open_messages",
+            "description": "Open messages and dismiss popup when present",
+            "app": "com.example.app",
+            "platform": "android",
+            "parameters": [],
+            "steps": [
+                {
+                    "action_type": "tap",
+                    "target": "Close",
+                    "parameters": {"optional": True},
+                    "valid_state": "popup close button is visible",
+                },
+                {
+                    "action_type": "tap",
+                    "target": "Messages",
+                    "valid_state": "Messages tab visible",
+                },
+            ],
+        }
+    )
     extractor = monkeypatch.setattr(
         SkillExtractor,
         "extract_from_file_multi",
         pytest.fail,
     )
     del extractor
-    trace_path = tmp_path / "trace.jsonl"
-    trace_path.write_text(
-        "\n".join([
-            json.dumps({
-                "type": "skill_step",
-                "skill_id": "skill-1",
-                "skill_name": "open_messages",
-                "step_index": 0,
-                "target": "Messages",
-                "valid_state": "Messages tab visible",
-                "valid_state_check": False,
-                "error": "valid_state not reached: popup visible",
-                "observation": {"foreground_app": "com.example.app", "platform": "android"},
-            }),
-            json.dumps({
-                "type": "skill_execution_result",
-                "skill_id": "skill-1",
-                "skill_name": "open_messages",
-                "state": "failed",
-                "error": "Step 0 valid_state not reached",
-            }),
-            json.dumps({"type": "result", "success": True, "total_steps": 2}),
-        ]),
-        encoding="utf-8",
+    recorder = TrajectoryRecorder(output_dir=tmp_path, task="Open messages", platform="android")
+    trace_path = recorder.start()
+    recorder.record_event("skill_execution_start", skill_id="skill-1", skill_name="open_messages")
+    recorder.record_event(
+        "skill_step",
+        skill_id="skill-1",
+        skill_name="open_messages",
+        step_index=0,
+        target="Messages",
+        valid_state="Messages tab visible",
+        valid_state_check=False,
+        error="valid_state not reached: popup visible",
+        observation={"foreground_app": "com.example.app", "platform": "android"},
     )
+    recorder.record_event(
+        "skill_execution_result",
+        skill_id="skill-1",
+        skill_name="open_messages",
+        state="failed",
+        error="Step 0 valid_state not reached",
+    )
+    recorder.record_step(action={"action_type": "use_skill", "text": "skill-1"})
+    recorder.finish(success=True)
     processor = PostRunProcessor(
         llm=_ScriptedLLM([evolved_payload]),
         skill_store_root=store,
@@ -859,9 +1119,10 @@ async def test_postprocessor_evolves_failed_reused_skill_instead_of_extracting_n
     assert evolved is not None
     assert evolved.description == "Open messages and dismiss popup when present"
     assert evolved.steps[0].parameters["optional"] is True
-    evolution_result = json.loads((tmp_path / "evolution_result.json").read_text(encoding="utf-8"))
+    run_result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    evolution_result = run_result["evolution"]["1"]
     assert evolution_result["status"] == "processed_evolution"
-    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    extraction_result = run_result["extraction"]["1"]
     assert extraction_result["status"] == "processed_evolution"
     assert extraction_result["ordinary_code_extraction_skipped"] is True
     feedback = FlatSkillLibrary(store_dir=store).feedback_for_skill("skill-1")
@@ -887,29 +1148,34 @@ async def test_postprocessor_evolution_injects_focused_input_contract(
             "Search Zhihu",
             app="com.zhihu.android",
             steps=(
-                SkillStep(action_type="input_text", target="{{query}}", valid_state="Search field focused"),
+                SkillStep(
+                    action_type="input_text", target="{{query}}", valid_state="Search field focused"
+                ),
             ),
         )
     )
-    evolved_payload = json.dumps({
-        "name": "search_zhihu",
-        "description": "Search Zhihu",
-        "app": "com.zhihu.android",
-        "platform": "android",
-        "parameters": ["query"],
-        "steps": [
-            {
-                "action_type": "input_text",
-                "target": "{{query}}",
-                "valid_state": "Search field focused",
-            }
-        ],
-    })
+    evolved_payload = json.dumps(
+        {
+            "name": "search_zhihu",
+            "description": "Search Zhihu",
+            "app": "com.zhihu.android",
+            "platform": "android",
+            "parameters": ["query"],
+            "steps": [
+                {
+                    "action_type": "input_text",
+                    "target": "{{query}}",
+                    "valid_state": "Search field focused",
+                }
+            ],
+        }
+    )
     monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", pytest.fail)
-    trace_path = tmp_path / "trace.jsonl"
-    trace_path.write_text(
-        "\n".join([
-            json.dumps({
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {
                 "type": "skill_step",
                 "skill_id": "skill-1",
                 "skill_name": "search_zhihu",
@@ -918,15 +1184,15 @@ async def test_postprocessor_evolution_injects_focused_input_contract(
                 "valid_state": "Search field focused",
                 "valid_state_check": False,
                 "error": "valid_state not reached: Search field focused",
-            }),
-            json.dumps({
+            },
+            {
                 "type": "skill_execution_result",
                 "skill_id": "skill-1",
                 "skill_name": "search_zhihu",
                 "state": "failed",
                 "error": "Step 0 valid_state not reached",
-            }),
-            json.dumps({
+            },
+            {
                 "type": "step",
                 "step_index": 0,
                 "action": {"action_type": "tap", "x": 100, "y": 40},
@@ -935,8 +1201,8 @@ async def test_postprocessor_evolution_injects_focused_input_contract(
                     "foreground_app": "com.zhihu.android",
                     "extra": _focused_input_extra(),
                 },
-            }),
-            json.dumps({
+            },
+            {
                 "type": "step",
                 "step_index": 1,
                 "action": {"action_type": "input_text", "text": "强化学习"},
@@ -945,10 +1211,9 @@ async def test_postprocessor_evolution_injects_focused_input_contract(
                     "foreground_app": "com.zhihu.android",
                     "extra": {"ui_tree": []},
                 },
-            }),
-            json.dumps({"type": "result", "success": True, "total_steps": 2}),
-        ]),
-        encoding="utf-8",
+            },
+            {"type": "result", "success": True, "total_steps": 2},
+        ],
     )
     processor = PostRunProcessor(
         llm=_ScriptedLLM([evolved_payload]),
@@ -982,28 +1247,33 @@ async def test_postprocessor_rejects_evolved_skill_that_drifts_from_original(
         "skill-1",
         "open_messages",
         "Open messages",
-        steps=(SkillStep(action_type="tap", target="Messages", valid_state="Messages tab visible"),),
+        steps=(
+            SkillStep(action_type="tap", target="Messages", valid_state="Messages tab visible"),
+        ),
     )
     FlatSkillLibrary(store_dir=store).add(original)
-    drifted_payload = json.dumps({
-        "name": "open_camera",
-        "description": "Open camera",
-        "app": "com.example.app",
-        "platform": "android",
-        "parameters": [],
-        "steps": [
-            {
-                "action_type": "tap",
-                "target": "Camera",
-                "valid_state": "Camera icon visible",
-            },
-        ],
-    })
+    drifted_payload = json.dumps(
+        {
+            "name": "open_camera",
+            "description": "Open camera",
+            "app": "com.example.app",
+            "platform": "android",
+            "parameters": [],
+            "steps": [
+                {
+                    "action_type": "tap",
+                    "target": "Camera",
+                    "valid_state": "Camera icon visible",
+                },
+            ],
+        }
+    )
     monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", pytest.fail)
-    trace_path = tmp_path / "trace.jsonl"
-    trace_path.write_text(
-        "\n".join([
-            json.dumps({
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {
                 "type": "skill_step",
                 "skill_id": "skill-1",
                 "skill_name": "open_messages",
@@ -1012,17 +1282,16 @@ async def test_postprocessor_rejects_evolved_skill_that_drifts_from_original(
                 "valid_state": "Messages tab visible",
                 "valid_state_check": False,
                 "error": "valid_state not reached: camera visible",
-            }),
-            json.dumps({
+            },
+            {
                 "type": "skill_execution_result",
                 "skill_id": "skill-1",
                 "skill_name": "open_messages",
                 "state": "failed",
                 "error": "Step 0 valid_state not reached",
-            }),
-            json.dumps({"type": "result", "success": True, "total_steps": 2}),
-        ]),
-        encoding="utf-8",
+            },
+            {"type": "result", "success": True, "total_steps": 2},
+        ],
     )
     processor = PostRunProcessor(
         llm=_ScriptedLLM([drifted_payload]),
@@ -1037,10 +1306,11 @@ async def test_postprocessor_rejects_evolved_skill_that_drifts_from_original(
 
     unchanged = FlatSkillLibrary(store_dir=store).get("skill-1")
     assert unchanged == original
-    evolution_result = json.loads((tmp_path / "evolution_result.json").read_text(encoding="utf-8"))
+    run_result = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
+    evolution_result = run_result["evolution"]["1"]
     assert evolution_result["status"] == "evolution_rejected"
     assert evolution_result["reason"] == "low_embedding_similarity"
-    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
+    extraction_result = run_result["extraction"]["1"]
     assert extraction_result["status"] == "evolution_error"
     feedback = FlatSkillLibrary(store_dir=store).feedback_for_skill("skill-1")
     assert feedback["last_evolution_status"] == "rejected:low_embedding_similarity"
@@ -1057,7 +1327,7 @@ def test_build_failure_case_ignores_failed_result_without_skill_id(tmp_path: Pat
                 "error": "Skill failed without metadata",
             },
         ],
-        trace_path=tmp_path / "trace.jsonl",
+        trace_path=tmp_path / "traj.json",
         task="Open messages",
         platform="android",
     )
@@ -1071,7 +1341,14 @@ async def test_skill_executor_runs_validated_steps() -> None:
         "s1",
         "Wait",
         "Wait for a moment",
-        steps=(SkillStep(action_type="wait", target="pause", parameters={"duration_ms": 1}, valid_state="ready"),),
+        steps=(
+            SkillStep(
+                action_type="wait",
+                target="pause",
+                parameters={"duration_ms": 1},
+                valid_state="ready",
+            ),
+        ),
     )
     executor = SkillExecutor(
         backend=DryRunBackend(),
@@ -1197,7 +1474,9 @@ async def test_skill_executor_passes_observation_to_subgoal_and_skips_revalidati
 
 
 @pytest.mark.asyncio
-async def test_skill_executor_dismisses_post_open_app_skip_overlay(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_skill_executor_dismisses_post_open_app_skip_overlay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import guiclaw.skills.executor as executor_module
 
     monkeypatch.setattr(executor_module, "_OPEN_APP_SETTLE_SECONDS", 0.0)
@@ -1207,30 +1486,36 @@ async def test_skill_executor_dismisses_post_open_app_skip_overlay(monkeypatch: 
         "s1",
         "Open Bilibili",
         "Open Bilibili",
-        steps=(SkillStep(action_type="open_app", target="tv.danmaku.bili", valid_state="No need to verify"),),
-    )
-    provider = _ObservationProvider([
-        Observation(None, 496, 1080, foreground_app="tv.danmaku.bili", platform="android"),
-        Observation(
-            None,
-            496,
-            1080,
-            foreground_app="tv.danmaku.bili",
-            platform="android",
-            extra={
-                "ui_tree": [
-                    {"class": "FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                    {
-                        "text": "Skip 2",
-                        "class": "TextView",
-                        "clickable": True,
-                        "enabled": True,
-                        "bounds": "[1062,2775][1384,2936]",
-                    },
-                ],
-            },
+        steps=(
+            SkillStep(
+                action_type="open_app", target="tv.danmaku.bili", valid_state="No need to verify"
+            ),
         ),
-    ])
+    )
+    provider = _ObservationProvider(
+        [
+            Observation(None, 496, 1080, foreground_app="tv.danmaku.bili", platform="android"),
+            Observation(
+                None,
+                496,
+                1080,
+                foreground_app="tv.danmaku.bili",
+                platform="android",
+                extra={
+                    "ui_tree": [
+                        {"class": "FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "text": "Skip 2",
+                            "class": "TextView",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[1062,2775][1384,2936]",
+                        },
+                    ],
+                },
+            ),
+        ]
+    )
     executor = SkillExecutor(backend=backend, screenshot_provider=provider)
 
     result = await executor.execute(skill)
@@ -1242,7 +1527,9 @@ async def test_skill_executor_dismisses_post_open_app_skip_overlay(monkeypatch: 
 
 
 @pytest.mark.asyncio
-async def test_skill_executor_ignores_center_close_after_open_app(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_skill_executor_ignores_center_close_after_open_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import guiclaw.skills.executor as executor_module
 
     monkeypatch.setattr(executor_module, "_OPEN_APP_SETTLE_SECONDS", 0.0)
@@ -1252,30 +1539,36 @@ async def test_skill_executor_ignores_center_close_after_open_app(monkeypatch: p
         "s1",
         "Open App",
         "Open App",
-        steps=(SkillStep(action_type="open_app", target="com.example", valid_state="No need to verify"),),
-    )
-    provider = _ObservationProvider([
-        Observation(None, 496, 1080, foreground_app="com.example", platform="android"),
-        Observation(
-            None,
-            496,
-            1080,
-            foreground_app="com.example",
-            platform="android",
-            extra={
-                "ui_tree": [
-                    {"class": "FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                    {
-                        "text": "关闭",
-                        "class": "TextView",
-                        "clickable": True,
-                        "enabled": True,
-                        "bounds": "[620,1400][820,1500]",
-                    },
-                ],
-            },
+        steps=(
+            SkillStep(
+                action_type="open_app", target="com.example", valid_state="No need to verify"
+            ),
         ),
-    ])
+    )
+    provider = _ObservationProvider(
+        [
+            Observation(None, 496, 1080, foreground_app="com.example", platform="android"),
+            Observation(
+                None,
+                496,
+                1080,
+                foreground_app="com.example",
+                platform="android",
+                extra={
+                    "ui_tree": [
+                        {"class": "FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
+                        {
+                            "text": "关闭",
+                            "class": "TextView",
+                            "clickable": True,
+                            "enabled": True,
+                            "bounds": "[620,1400][820,1500]",
+                        },
+                    ],
+                },
+            ),
+        ]
+    )
     executor = SkillExecutor(backend=backend, screenshot_provider=provider)
 
     result = await executor.execute(skill)
@@ -1295,7 +1588,8 @@ async def open_settings(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await _extract_from_steps(extractor,
+    skill = await _extract_from_steps(
+        extractor,
         [
             {
                 "action": {"action_type": "open_app", "text": "com.android.settings"},
@@ -1327,16 +1621,20 @@ async def search_bilibili(device, query):
     llm = _ScriptedLLM([response])
     extractor = SkillExtractor(llm)
 
-    await _extract_from_steps(extractor, [
-        {
-            "action": {"action_type": "open_app", "text": "tv.danmaku.bili"},
-            "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
-        },
-        {
-            "action": {"action_type": "input_text", "text": "敢杀我的马"},
-            "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
-        },
-    ], is_success=False)
+    await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "tv.danmaku.bili"},
+                "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
+            },
+            {
+                "action": {"action_type": "input_text", "text": "敢杀我的马"},
+                "observation": {"platform": "android", "foreground_app": "tv.danmaku.bili"},
+            },
+        ],
+        is_success=False,
+    )
 
     prompt = llm.messages[0][0]["content"][0]["text"]
     assert "MUST be generic and reusable" in prompt
@@ -1348,7 +1646,10 @@ async def search_bilibili(device, query):
     assert "concise natural-language grounding hint" in prompt
     assert "Do not use raw class/resource_id as target" in prompt
     assert "prefer the trajectory app package" in prompt
-    assert "Every required interactive step must have a natural-language target and valid_state" in prompt
+    assert (
+        "Every required interactive step must have a natural-language target and valid_state"
+        in prompt
+    )
     assert "input field is focused" in prompt
     assert "do not invent selectors" in prompt
     assert "postprocess will align contracts from codegen" in prompt
@@ -1368,10 +1669,19 @@ async def search_example(device, query):
     llm = _ScriptedLLM([response])
     extractor = SkillExtractor(llm)
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "tap", "x": 100, "y": 200}, "observation": {"platform": "android", "foreground_app": "com.example"}},
-        {"action": {"action_type": "input_text", "text": "query"}, "observation": {"platform": "android", "foreground_app": "com.example"}},
-    ])
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 100, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            },
+            {
+                "action": {"action_type": "input_text", "text": "query"},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            },
+        ],
+    )
 
     assert skill is not None
     assert len(llm.messages) == 1
@@ -1396,9 +1706,15 @@ async def open_details(device):
     llm = _ScriptedLLM([bad_response, fixed_response])
     extractor = SkillExtractor(llm)
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
-    ])
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 150, "y": 230},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            },
+        ],
+    )
 
     assert skill is not None
     assert len(llm.messages) == 2
@@ -1417,9 +1733,15 @@ async def open_details(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response, response]))
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
-    ])
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 150, "y": 230},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            },
+        ],
+    )
 
     assert skill is None
 
@@ -1441,9 +1763,15 @@ async def open_search(device):
     llm = _ScriptedLLM([bad_response, fixed_response])
     extractor = SkillExtractor(llm)
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
-    ])
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 150, "y": 230},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            },
+        ],
+    )
 
     assert skill is not None
     assert len(llm.messages) == 2
@@ -1469,9 +1797,15 @@ async def open_details(device, item_name):
     llm = _ScriptedLLM([bad_response, fixed_response])
     extractor = SkillExtractor(llm)
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}},
-    ])
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 150, "y": 230},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            },
+        ],
+    )
 
     assert skill is not None
     assert len(llm.messages) == 2
@@ -1492,19 +1826,31 @@ async def search_youtube(device, query):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await _extract_from_steps(extractor, [
-        {
-            "action": {"action_type": "open_app", "text": "YouTube"},
-            "observation": {"platform": "android", "foreground_app": "com.google.android.youtube"},
-        },
-        {
-            "action": {"action_type": "input_text", "text": "Never Gonna Give You Up"},
-            "observation": {"platform": "android", "foreground_app": "com.google.android.youtube"},
-        },
-    ])
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "YouTube"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.google.android.youtube",
+                },
+            },
+            {
+                "action": {"action_type": "input_text", "text": "Never Gonna Give You Up"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.google.android.youtube",
+                },
+            },
+        ],
+    )
 
     assert skill is not None
-    assert skill.description == "Opens YouTube, searches for a video by query, selects the matching result, and skips ads."
+    assert (
+        skill.description
+        == "Opens YouTube, searches for a video by query, selects the matching result, and skips ads."
+    )
 
 
 @pytest.mark.asyncio
@@ -1518,10 +1864,20 @@ async def open_netease(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await _extract_many_from_steps(extractor, [
-        {"action": {"action_type": "open_app", "text": "com.netease.cloudmusic"}, "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"}},
-        {"action": {"action_type": "tap", "x": 100, "y": 200}, "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"}},
-    ], is_success=True)
+    skills = await _extract_many_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "com.netease.cloudmusic"},
+                "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"},
+            },
+            {
+                "action": {"action_type": "tap", "x": 100, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "com.netease.cloudmusic"},
+            },
+        ],
+        is_success=True,
+    )
 
     assert len(skills) == 1
     assert skills[0].app == "com.netease.cloudmusic"
@@ -1544,34 +1900,37 @@ async def search_web(device):
 async def open_day(device):
     await action("tap", target="calendar day", valid_state="calendar day is visible")
 """
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Search then schedule", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 100, "y": 100},
-            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "input_text", "text": "graduation"},
-            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
-        },
-        {
-            "type": "step",
-            "step_index": 2,
-            "action": {"action_type": "tap", "x": 200, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-        {
-            "type": "step",
-            "step_index": 3,
-            "action": {"action_type": "tap", "x": 240, "y": 240},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-    ])
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Search then schedule", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 100},
+                "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "input_text", "text": "graduation"},
+                "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+            },
+            {
+                "type": "step",
+                "step_index": 2,
+                "action": {"action_type": "tap", "x": 200, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+            {
+                "type": "step",
+                "step_index": 3,
+                "action": {"action_type": "tap", "x": 240, "y": 240},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+        ],
+    )
     llm = _ScriptedLLM([chrome_response, calendar_response])
     extractor = SkillExtractor(llm)
 
@@ -1600,28 +1959,31 @@ async def test_skill_extractor_skips_single_step_file_segments_before_llm(
 async def open_day(device):
     await action("tap", target="calendar day", valid_state="calendar day is visible")
 """
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Search then schedule", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 100, "y": 100},
-            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "tap", "x": 200, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-        {
-            "type": "step",
-            "step_index": 2,
-            "action": {"action_type": "tap", "x": 240, "y": 240},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-    ])
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Search then schedule", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 100},
+                "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "tap", "x": 200, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+            {
+                "type": "step",
+                "step_index": 2,
+                "action": {"action_type": "tap", "x": 240, "y": 240},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+        ],
+    )
     llm = _ScriptedLLM([response])
     extractor = SkillExtractor(llm)
 
@@ -1632,14 +1994,7 @@ async def open_day(device):
     prompt = llm.messages[0][0]["content"][0]["text"]
     assert "App: org.fossify.calendar" in prompt
     assert "[0] tap" not in prompt
-    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
-    assert extraction_result["detail"]["skipped_segments"] == [
-        {
-            "app": "com.android.chrome",
-            "reason": "single_core_step_segment",
-            "step_indices": [0],
-        }
-    ]
+    assert extractor.last_diagnostics == []
 
 
 @pytest.mark.asyncio
@@ -1659,50 +2014,53 @@ async def open_day(device):
     await action("tap", target="calendar day", valid_state="calendar day is visible",
                  state_contract=C(app="com.android.chrome", required=[R(resource_id="com.android.chrome:id/search_box", visible=True)]))
 """
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Search then schedule", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 100, "y": 100},
-            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "tap", "x": 140, "y": 140},
-            "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
-        },
-        {
-            "type": "step",
-            "step_index": 2,
-            "action": {"action_type": "tap", "x": 120, "y": 120},
-            "observation": {
-                "platform": "android",
-                "foreground_app": "org.fossify.calendar",
-                "screen_width": 200,
-                "screen_height": 200,
-                "extra": {
-                    "ui_tree": [
-                        {
-                            "resource_id": "org.fossify.calendar:id/day_button",
-                            "class": "android.widget.TextView",
-                            "clickable": True,
-                            "enabled": True,
-                            "bounds": "[80,80][200,200]",
-                        }
-                    ]
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Search then schedule", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 100},
+                "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "tap", "x": 140, "y": 140},
+                "observation": {"platform": "android", "foreground_app": "com.android.chrome"},
+            },
+            {
+                "type": "step",
+                "step_index": 2,
+                "action": {"action_type": "tap", "x": 120, "y": 120},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "org.fossify.calendar",
+                    "screen_width": 200,
+                    "screen_height": 200,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "resource_id": "org.fossify.calendar:id/day_button",
+                                "class": "android.widget.TextView",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[80,80][200,200]",
+                            }
+                        ]
+                    },
                 },
             },
-        },
-        {
-            "type": "step",
-            "step_index": 3,
-            "action": {"action_type": "tap", "x": 180, "y": 180},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-    ])
+            {
+                "type": "step",
+                "step_index": 3,
+                "action": {"action_type": "tap", "x": 180, "y": 180},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+        ],
+    )
     extractor = SkillExtractor(_ScriptedLLM([chrome_response, calendar_response]))
 
     skills = await extractor.extract_from_file_multi(trace_path)
@@ -1725,9 +2083,16 @@ async def open_calendar(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await _extract_many_from_steps(extractor, [
-        {"action": {"action_type": "open_app", "text": "Calendar"}, "observation": {"platform": "android"}},
-    ], is_success=True)
+    skills = await _extract_many_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "Calendar"},
+                "observation": {"platform": "android"},
+            },
+        ],
+        is_success=True,
+    )
 
     assert len(skills) == 1
     assert skills[0].app == "org.fossify.calendar"
@@ -1743,12 +2108,19 @@ async def open_calendar(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await _extract_many_from_steps(extractor, [
-        {
-            "action": {"action_type": "open_app", "text": "unknown"},
-            "observation": {"platform": "android", "foreground_app": "com.google.android.calendar"},
-        },
-    ], is_success=True)
+    skills = await _extract_many_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "unknown"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.google.android.calendar",
+                },
+            },
+        ],
+        is_success=True,
+    )
 
     assert len(skills) == 1
     assert skills[0].app == "org.fossify.calendar"
@@ -1765,16 +2137,20 @@ async def open_calendar(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await _extract_many_from_steps(extractor, [
-        {
-            "action": {"action_type": "open_app", "text": "org.fossify.calendar"},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-        {
-            "action": {"action_type": "tap", "x": 100, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
-        },
-    ], is_success=True)
+    skills = await _extract_many_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "org.fossify.calendar"},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+            {
+                "action": {"action_type": "tap", "x": 100, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "org.fossify.calendar"},
+            },
+        ],
+        is_success=True,
+    )
 
     assert len(skills) == 1
     assert skills[0].app == "org.fossify.calendar"
@@ -1789,22 +2165,25 @@ async def open_calendar(device):
 async def test_skill_extractor_skips_trace_when_all_steps_share_foreground_app(
     tmp_path: Path,
 ) -> None:
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Search Zhihu", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 100, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "input_text", "text": "query"},
-            "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
-        },
-    ])
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Search Zhihu", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "input_text", "text": "query"},
+                "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+            },
+        ],
+    )
     llm = _ScriptedLLM([])
     extractor = SkillExtractor(llm)
 
@@ -1812,12 +2191,7 @@ async def test_skill_extractor_skips_trace_when_all_steps_share_foreground_app(
 
     assert skills == []
     assert llm.messages == []
-    extraction_result = json.loads((tmp_path / "extraction_result.json").read_text(encoding="utf-8"))
-    assert extraction_result["status"] == "no_candidate"
-    assert extraction_result["detail"] == {
-        "reason": "single_foreground_app_package",
-        "app": "com.zhihu.android",
-    }
+    assert extractor.last_diagnostics == []
 
 
 @pytest.mark.asyncio
@@ -1830,9 +2204,16 @@ async def open_unknown(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skills = await _extract_many_from_steps(extractor, [
-        {"action": {"action_type": "open_app", "text": "unknown"}, "observation": {"platform": "android"}},
-    ], is_success=True)
+    skills = await _extract_many_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "unknown"},
+                "observation": {"platform": "android"},
+            },
+        ],
+        is_success=True,
+    )
 
     assert skills == []
 
@@ -1849,8 +2230,14 @@ async def open_details(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await _extract_from_steps(extractor,
-        [{"action": {"action_type": "tap", "x": 150, "y": 230}, "observation": {"platform": "android", "foreground_app": "com.example"}}],
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 150, "y": 230},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            }
+        ],
         is_success=True,
     )
 
@@ -1870,8 +2257,14 @@ async def search_box(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await _extract_from_steps(extractor,
-        [{"action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}}],
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True},
+                "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+            }
+        ],
         is_success=True,
     )
 
@@ -1892,10 +2285,20 @@ async def search_box_recover(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "tap", "x": 607.0, "y": 243.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
-        {"action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
-    ], is_success=True)
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 607.0, "y": 243.0, "relative": True},
+                "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+            },
+            {
+                "action": {"action_type": "tap", "x": 436.0, "y": 76.0, "relative": True},
+                "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+            },
+        ],
+        is_success=True,
+    )
 
     assert skill is not None
     assert skill.steps[1].state_contract is None
@@ -1914,9 +2317,16 @@ async def zhihu_search_text(device):
 """
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await _extract_from_steps(extractor, [
-        {"action": {"action_type": "input_text", "text": "强化学习"}, "observation": {"platform": "android", "foreground_app": "com.zhihu.android"}},
-    ], is_success=True)
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "input_text", "text": "强化学习"},
+                "observation": {"platform": "android", "foreground_app": "com.zhihu.android"},
+            },
+        ],
+        is_success=True,
+    )
 
     assert skill is not None
     assert skill.steps[0].action_type == "input_text"
@@ -1935,63 +2345,93 @@ def test_infer_focused_input_contract_prefers_resource_id_and_class() -> None:
     assert required[0]["state"] == ["visible", "enabled", "focused"]
 
 
-def test_codegen_scales_coordinates_and_prefers_previous_observation_for_tap(tmp_path: Path) -> None:
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Open first result", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "wait"},
-            "observation": {
-                "platform": "android",
-                "foreground_app": "com.example",
-                "screen_width": 496,
-                "screen_height": 1080,
-                "extra": {
-                    "ui_tree": [
-                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                        {
-                            "resource_id": "com.example:id/search_results_list",
-                            "class": "androidx.recyclerview.widget.RecyclerView",
-                            "enabled": True,
-                            "bounds": "[0,460][1440,3036]",
-                        },
-                        {
-                            "class": "android.view.ViewGroup",
-                            "clickable": True,
-                            "enabled": True,
-                            "bounds": "[0,460][1440,1024]",
-                        },
-                    ],
+def test_codegen_scales_coordinates_and_prefers_previous_observation_for_tap(
+    tmp_path: Path,
+) -> None:
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Open first result", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "wait"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.example",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "class": "android.widget.FrameLayout",
+                                "enabled": True,
+                                "bounds": "[0,0][1440,3120]",
+                            },
+                            {
+                                "resource_id": "com.example:id/search_results_list",
+                                "class": "androidx.recyclerview.widget.RecyclerView",
+                                "enabled": True,
+                                "bounds": "[0,460][1440,3036]",
+                            },
+                            {
+                                "class": "android.view.ViewGroup",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[0,460][1440,1024]",
+                            },
+                        ],
+                    },
                 },
             },
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "tap", "x": 248, "y": 235},
-            "observation": {
-                "platform": "android",
-                "foreground_app": "com.example",
-                "screen_width": 496,
-                "screen_height": 1080,
-                "extra": {
-                    "ui_tree": [
-                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                        {
-                            "text": "query",
-                            "resource_id": "com.example:id/search_fake_text",
-                            "class": "android.widget.TextView",
-                            "clickable": True,
-                            "enabled": True,
-                            "bounds": "[225,179][1030,284]",
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "tap", "x": 248, "y": 235},
+                "interaction_target": {
+                    "state_contract": {
+                        "anchor": {"app_package": "com.example"},
+                        "signature": {
+                            "required": [
+                                {
+                                    "selector": {
+                                        "resource_id": "com.example:id/search_results_list"
+                                    },
+                                    "state": ["visible", "clickable"],
+                                }
+                            ],
+                            "forbidden": [],
                         },
-                    ],
+                        "mask_rules": [],
+                    }
+                },
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.example",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "class": "android.widget.FrameLayout",
+                                "enabled": True,
+                                "bounds": "[0,0][1440,3120]",
+                            },
+                            {
+                                "text": "query",
+                                "resource_id": "com.example:id/search_fake_text",
+                                "class": "android.widget.TextView",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[225,179][1030,284]",
+                            },
+                        ],
+                    },
                 },
             },
-        },
-    ])
+        ],
+    )
 
     result = codegen_trajectory(trace_path)
 
@@ -2002,22 +2442,25 @@ def test_codegen_scales_coordinates_and_prefers_previous_observation_for_tap(tmp
 
 
 def test_codegen_ignores_launcher_when_inferring_trace_app(tmp_path: Path) -> None:
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Send Mail", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "home"},
-            "observation": {"platform": "android", "foreground_app": "nexuslauncher"},
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "tap", "x": 100, "y": 200},
-            "observation": {"platform": "android", "foreground_app": "gmailclone"},
-        },
-    ])
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Send Mail", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "home"},
+                "observation": {"platform": "android", "foreground_app": "nexuslauncher"},
+            },
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "tap", "x": 100, "y": 200},
+                "observation": {"platform": "android", "foreground_app": "gmailclone"},
+            },
+        ],
+    )
 
     result = codegen_trajectory(trace_path)
 
@@ -2026,21 +2469,23 @@ def test_codegen_ignores_launcher_when_inferring_trace_app(tmp_path: Path) -> No
     assert result.app_candidates == ("com.gmailclone",)
 
 
-def test_codegen_maps_mobileworld_taodian_app_from_visible_text(tmp_path: Path) -> None:
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "CartManagementTask", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 100, "y": 200},
-            "observation": {
-                "platform": "android",
-                "foreground_app": "app",
-                "extra": {"visible_text": ["首页", "购物车", "淘店直播"]},
+def test_codegen_uses_resolved_app_from_compact_step(tmp_path: Path) -> None:
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "CartManagementTask", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 100, "y": 200},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.testmall.app",
+                },
             },
-        },
-    ])
+        ],
+    )
 
     result = codegen_trajectory(trace_path)
 
@@ -2049,47 +2494,56 @@ def test_codegen_maps_mobileworld_taodian_app_from_visible_text(tmp_path: Path) 
     assert result.app_candidates == ("com.testmall.app",)
 
 
-def test_codegen_does_not_use_post_action_focused_input_as_tap_contract(tmp_path: Path) -> None:
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Tap search", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 206, "y": 81},
-            "observation": {
-                "platform": "android",
-                "screen_width": 496,
-                "screen_height": 1080,
-                "extra": {
-                    "ui_tree": [
-                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                        {
-                            "resource_id": "tv.danmaku.bili:id/search_bar",
-                            "class": "android.widget.FrameLayout",
-                            "enabled": True,
-                            "bounds": "[225,172][1156,291]",
-                        },
-                        {
-                            "text": "Search for videos, series, or UPs",
-                            "content_desc": "Search query",
-                            "resource_id": "tv.danmaku.bili:id/search_src_text",
-                            "class": "android.widget.EditText",
-                            "clickable": True,
-                            "focused": True,
-                            "enabled": True,
-                            "bounds": "[225,179][1156,284]",
-                        },
-                    ],
+def test_compact_codegen_does_not_reconstruct_target_from_post_action_ui_tree(
+    tmp_path: Path,
+) -> None:
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Tap search", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 206, "y": 81},
+                "observation": {
+                    "platform": "android",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "class": "android.widget.FrameLayout",
+                                "enabled": True,
+                                "bounds": "[0,0][1440,3120]",
+                            },
+                            {
+                                "resource_id": "tv.danmaku.bili:id/search_bar",
+                                "class": "android.widget.FrameLayout",
+                                "enabled": True,
+                                "bounds": "[225,172][1156,291]",
+                            },
+                            {
+                                "text": "Search for videos, series, or UPs",
+                                "content_desc": "Search query",
+                                "resource_id": "tv.danmaku.bili:id/search_src_text",
+                                "class": "android.widget.EditText",
+                                "clickable": True,
+                                "focused": True,
+                                "enabled": True,
+                                "bounds": "[225,179][1156,284]",
+                            },
+                        ],
+                    },
                 },
             },
-        },
-    ])
+        ],
+    )
 
     result = codegen_trajectory(trace_path)
 
     assert result is not None
-    assert result.steps[0].control_info == "post-action focused input; omit state_contract"
+    assert result.steps[0].control_info == ""
     assert result.steps[0].contract_json == ""
 
 
@@ -2106,70 +2560,99 @@ async def search_bilibili(device, query):
                  state_contract=C(app="tv.danmaku.bili", required=[R(resource_id="tv.danmaku.bili:id/hallucinated", visible=True, clickable=True)]))
     await action("input_text", target=query, valid_state="search input is focused")
 """
-    trace_path = tmp_path / "trace.jsonl"
-    _write_jsonl(trace_path, [
-        {"type": "metadata", "task": "Search Bilibili", "platform": "android"},
-        {
-            "type": "step",
-            "step_index": 0,
-            "action": {"action_type": "tap", "x": 400, "y": 800},
-            "observation": {
-                "platform": "android",
-                "foreground_app": "tv.danmaku.bili",
-                "screen_width": 496,
-                "screen_height": 1080,
-                "extra": {
-                    "ui_tree": [
-                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                        {
-                            "content_desc": "Search bar, button",
-                            "resource_id": "tv.danmaku.bili:id/expand_search",
-                            "class": "android.widget.LinearLayout",
-                            "clickable": True,
-                            "enabled": True,
-                            "bounds": "[249,182][1076,301]",
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Search Bilibili", "platform": "android"},
+            {
+                "type": "step",
+                "step_index": 0,
+                "action": {"action_type": "tap", "x": 400, "y": 800},
+                "interaction_target": {
+                    "state_contract": {
+                        "anchor": {"app_package": "tv.danmaku.bili"},
+                        "signature": {
+                            "required": [
+                                {
+                                    "selector": {"resource_id": "tv.danmaku.bili:id/expand_search"},
+                                    "state": ["visible", "clickable"],
+                                }
+                            ],
+                            "forbidden": [],
                         },
-                    ],
+                        "mask_rules": [],
+                    }
+                },
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "tv.danmaku.bili",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "class": "android.widget.FrameLayout",
+                                "enabled": True,
+                                "bounds": "[0,0][1440,3120]",
+                            },
+                            {
+                                "content_desc": "Search bar, button",
+                                "resource_id": "tv.danmaku.bili:id/expand_search",
+                                "class": "android.widget.LinearLayout",
+                                "clickable": True,
+                                "enabled": True,
+                                "bounds": "[249,182][1076,301]",
+                            },
+                        ],
+                    },
                 },
             },
-        },
-        {
-            "type": "step",
-            "step_index": 1,
-            "action": {"action_type": "tap", "x": 206, "y": 81},
-            "observation": {
-                "platform": "android",
-                "foreground_app": "tv.danmaku.bili",
-                "screen_width": 496,
-                "screen_height": 1080,
-                "extra": {
-                    "ui_tree": [
-                        {"class": "android.widget.FrameLayout", "enabled": True, "bounds": "[0,0][1440,3120]"},
-                        {
-                            "resource_id": "tv.danmaku.bili:id/search_src_text",
-                            "class": "android.widget.EditText",
-                            "clickable": True,
-                            "focused": True,
-                            "enabled": True,
-                            "bounds": "[225,179][1156,284]",
-                        },
-                    ],
+            {
+                "type": "step",
+                "step_index": 1,
+                "action": {"action_type": "tap", "x": 206, "y": 81},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "tv.danmaku.bili",
+                    "screen_width": 496,
+                    "screen_height": 1080,
+                    "extra": {
+                        "ui_tree": [
+                            {
+                                "class": "android.widget.FrameLayout",
+                                "enabled": True,
+                                "bounds": "[0,0][1440,3120]",
+                            },
+                            {
+                                "resource_id": "tv.danmaku.bili:id/search_src_text",
+                                "class": "android.widget.EditText",
+                                "clickable": True,
+                                "focused": True,
+                                "enabled": True,
+                                "bounds": "[225,179][1156,284]",
+                            },
+                        ],
+                    },
                 },
             },
-        },
-        {
-            "type": "step",
-            "step_index": 2,
-            "action": {"action_type": "input_text", "text": "Never Gonna Give You Up MV"},
-            "observation": {
-                "platform": "android",
-                "extra": {"ui_tree": []},
+            {
+                "type": "step",
+                "step_index": 2,
+                "action": {"action_type": "input_text", "text": "Never Gonna Give You Up MV"},
+                "observation": {
+                    "platform": "android",
+                    "extra": {"ui_tree": []},
+                },
             },
-        },
-    ])
+        ],
+    )
     extractor = SkillExtractor(_ScriptedLLM([response]))
 
-    skill = await extractor.extract_from_file(trace_path)
+    codegen = codegen_trajectory(trace_path)
+    assert codegen is not None
+    skills = await extractor.extract_from_codegen_result_multi(codegen)
+    skill = skills[0] if skills else None
 
     assert skill is not None
     tap_step = [step for step in skill.steps if step.action_type == "tap"][0]
@@ -2194,11 +2677,12 @@ async def zhihu_search_text(device, query):
     await action("tap", target="Search box", valid_state="Search box is visible")
     await action("input_text", target=query, valid_state="Search input field is focused")
 """
-    trace_path = tmp_path / "trace.jsonl"
-    trace_path.write_text(
-        "\n".join([
-            json.dumps({"type": "metadata", "task": "Search Zhihu", "platform": "android"}),
-            json.dumps({
+    trace_path = tmp_path / "traj.json"
+    _write_compact_trajectory(
+        trace_path,
+        [
+            {"type": "metadata", "task": "Search Zhihu", "platform": "android"},
+            {
                 "type": "step",
                 "step_index": 0,
                 "action": {"action_type": "tap", "x": 100, "y": 40},
@@ -2207,8 +2691,8 @@ async def zhihu_search_text(device, query):
                     "foreground_app": "com.zhihu.android",
                     "extra": _focused_input_extra(),
                 },
-            }),
-            json.dumps({
+            },
+            {
                 "type": "step",
                 "step_index": 1,
                 "action": {"action_type": "input_text", "text": "强化学习"},
@@ -2216,13 +2700,15 @@ async def zhihu_search_text(device, query):
                     "platform": "android",
                     "extra": {"ui_tree": []},
                 },
-            }),
-        ]),
-        encoding="utf-8",
+            },
+        ],
     )
 
     extractor = SkillExtractor(_ScriptedLLM([response]))
-    skill = await extractor.extract_from_file(trace_path)
+    codegen = codegen_trajectory(trace_path)
+    assert codegen is not None
+    skills = await extractor.extract_from_codegen_result_multi(codegen)
+    skill = skills[0] if skills else None
 
     assert skill is not None
     input_step = [step for step in skill.steps if step.action_type == "input_text"][0]

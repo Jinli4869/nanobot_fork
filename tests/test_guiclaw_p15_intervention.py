@@ -333,7 +333,7 @@ async def test_resume_uses_fresh_observation_after_intervention(tmp_path: Path) 
     result = await agent.run("Resume after MFA", max_retries=1)
 
     assert result.success
-    assert Path(backend.observe.await_args_list[1].args[0]).name == "step_001.png"
+    assert Path(backend.observe.await_args_list[1].args[0]).name == "001_request_intervention.png"
     assert len(llm.calls) == 2
 
 
@@ -393,12 +393,10 @@ async def test_trace_and_trajectory_scrub_sensitive_intervention_fields(tmp_path
     result = await agent.run("Handle the payroll OTP screen", max_retries=1)
 
     assert result.success
-    trace_text = (Path(result.trace_path) / "trace.jsonl").read_text(encoding="utf-8")
+    assert not list(Path(result.trace_path).rglob("trace.jsonl"))
     trajectory_text = recorder.path.read_text(encoding="utf-8")
 
-    assert "<redacted:intervention_reason>" in trace_text
     assert "<redacted:intervention_reason>" in trajectory_text
-    assert reason not in trace_text
     assert reason not in trajectory_text
 
 
@@ -440,10 +438,8 @@ async def test_input_text_is_preserved_in_trace_artifacts(tmp_path: Path) -> Non
     result = await agent.run("Enter the temporary code", max_retries=1)
 
     assert result.success
-    trace_events = _read_jsonl(Path(result.trace_path) / "trace.jsonl")
-    trajectory_events = _read_jsonl(recorder.path)
-    serialized_trace = json.dumps(trace_events)
-    serialized_trajectory = json.dumps(trajectory_events)
+    assert not list(Path(result.trace_path).rglob("trace.jsonl"))
+    trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
+    serialized_trajectory = json.dumps(trajectory)
 
-    assert typed_secret in serialized_trace
     assert typed_secret in serialized_trajectory

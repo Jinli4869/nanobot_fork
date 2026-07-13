@@ -14,18 +14,18 @@ JSON-backed skill store in this path.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from guiclaw.trajectory.recorder import load_trajectory_events, update_result_section
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_EVALUATION_FILENAME = "evaluation.json"
 _FLAT_SKILL_LOCKS: dict[Path, asyncio.Lock] = {}
+_RESULT_LOCKS: dict[Path, asyncio.Lock] = {}
 
 _ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
     "stagnation_detected",
@@ -34,58 +34,39 @@ _ABNORMAL_TERMINATION_PREFIXES: tuple[str, ...] = (
 )
 
 
-def _load_trajectory_result(trace_path: Path) -> dict[str, Any] | None:
-    """Return the final result event from a trajectory JSONL, or None."""
-    try:
-        last: dict[str, Any] | None = None
-        with open(trace_path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict) and event.get("type") == "result":
-                    last = event
-        return last
-    except OSError:
-        return None
+def _load_trajectory_result(
+    trace_path: Path,
+    *,
+    subtask_index: int = 1,
+) -> dict[str, Any] | None:
+    """Return the selected subtask's compact result event."""
+    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
+    return next((event for event in reversed(events) if event.get("type") == "result"), None)
 
 
-def _load_completed_reuse(trace_path: Path) -> dict[str, Any] | None:
+def _load_completed_reuse(
+    trace_path: Path,
+    *,
+    subtask_index: int = 1,
+) -> dict[str, Any] | None:
     """Return reuse metadata when a reused flat skill completed the task."""
     full_reuse: dict[str, Any] | None = None
     agent_work_after_full_reuse = False
-    try:
-        with open(trace_path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    event = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(event, dict):
-                    continue
-                event_type = event.get("type")
-                if event_type == "step" and full_reuse is not None:
-                    action = event.get("action")
-                    action_type = action.get("action_type") if isinstance(action, dict) else None
-                    if action_type != "done":
-                        agent_work_after_full_reuse = True
-                    continue
-                if event_type == "skill_execution_result" and event.get("state") == "succeeded":
-                    full_reuse = {
-                        "reuse_source": "skill",
-                        "skill_id": event.get("skill_id"),
-                        "skill_name": event.get("skill_name"),
-                    }
-                    agent_work_after_full_reuse = False
-    except OSError:
-        return None
+    for event in load_trajectory_events(trace_path, subtask_index=subtask_index):
+        event_type = event.get("type")
+        if event_type == "step" and full_reuse is not None:
+            action = event.get("action")
+            action_type = action.get("action_type") if isinstance(action, dict) else None
+            if action_type != "done":
+                agent_work_after_full_reuse = True
+            continue
+        if event_type == "skill_execution_result" and event.get("state") == "succeeded":
+            full_reuse = {
+                "reuse_source": "skill",
+                "skill_id": event.get("skill_id"),
+                "skill_name": event.get("skill_name"),
+            }
+            agent_work_after_full_reuse = False
     if agent_work_after_full_reuse:
         return None
     return full_reuse
@@ -156,12 +137,19 @@ class PostRunProcessor:
         is_success: bool,
         platform: str,
         task: str,
+        subtask_index: int = 1,
     ) -> None:
         if trace_path is None or not trace_path.exists():
             return
         bg = asyncio.create_task(
-            self._run_all(trace_path, is_success=is_success, platform=platform, task=task),
-            name=f"postprocess-{trace_path.stem}",
+            self._run_all(
+                trace_path,
+                is_success=is_success,
+                platform=platform,
+                task=task,
+                subtask_index=subtask_index,
+            ),
+            name=f"postprocess-{trace_path.stem}-{subtask_index}",
         )
         self._pending.add(bg)
         bg.add_done_callback(self._on_done)
@@ -178,11 +166,24 @@ class PostRunProcessor:
         is_success: bool,
         platform: str,
         task: str,
+        subtask_index: int = 1,
     ) -> None:
         summary, evaluation_result = await asyncio.gather(
-            self._summarize_trajectory(trace_path),
-            self._run_evaluation(trace_path=trace_path, is_success=is_success, task=task),
+            self._summarize_trajectory(trace_path, subtask_index=subtask_index),
+            self._run_evaluation(
+                trace_path=trace_path,
+                is_success=is_success,
+                task=task,
+                subtask_index=subtask_index,
+            ),
         )
+        if evaluation_result is not None:
+            await self._write_result_section(
+                trace_path,
+                "evaluation",
+                subtask_index,
+                evaluation_result,
+            )
         effective_success = is_success
         if isinstance(evaluation_result, dict) and evaluation_result.get("success") is False:
             effective_success = False
@@ -193,6 +194,7 @@ class PostRunProcessor:
             task=task,
             evaluation_result=evaluation_result,
             agent_success=is_success,
+            subtask_index=subtask_index,
         )
         if evolution_result is not None and evolution_result.get("status") != "no_failure_case":
             if summary:
@@ -205,18 +207,19 @@ class PostRunProcessor:
             task=task,
             evaluation_result=evaluation_result,
             agent_success=is_success,
+            subtask_index=subtask_index,
         )
         if summary:
             logger.info("Trajectory state note: %s", summary.replace("\n", " | ")[:200])
 
-    async def _summarize_trajectory(self, trace_path: Path) -> str:
+    async def _summarize_trajectory(self, trace_path: Path, *, subtask_index: int = 1) -> str:
         if not trace_path.exists():
             return ""
         try:
             from guiclaw.trajectory.summarizer import TrajectorySummarizer
 
             summarizer = TrajectorySummarizer(llm=self._llm)
-            return await summarizer.summarize_file(trace_path)
+            return await summarizer.summarize_file(trace_path, subtask_index=subtask_index)
         except Exception:
             logger.warning("Trajectory summarization failed for %s", trace_path, exc_info=True)
             return ""
@@ -230,6 +233,7 @@ class PostRunProcessor:
         task: str | None = None,
         evaluation_result: dict[str, Any] | None = None,
         agent_success: bool | None = None,
+        subtask_index: int = 1,
     ) -> dict[str, Any] | None:
         if not self._enable_skill_extraction:
             return None
@@ -253,6 +257,7 @@ class PostRunProcessor:
                     platform=platform,
                     embedding_provider=self._embedding_provider,
                     embedding_signature=self._embedding_signature,
+                    subtask_index=subtask_index,
                 )
         except Exception as exc:
             logger.warning("Skill evolution failed for %s", trace_path, exc_info=True)
@@ -263,26 +268,39 @@ class PostRunProcessor:
                 "error_type": type(exc).__name__,
             }
 
-        self._write_evolution_result(trace_path, result)
+        await self._write_result_section(
+            trace_path,
+            "evolution",
+            subtask_index,
+            result,
+        )
         if result.get("status") == "no_failure_case":
             return result
 
-        status = "processed_evolution" if result.get("status") == "processed_evolution" else "evolution_error"
-        self._write_extraction_result(trace_path, {
-            "status": status,
-            "trace": str(trace_path),
-            "is_success": is_success,
-            "agent_success": agent_success,
-            "evaluation_success": _evaluation_success(evaluation_result),
-            "platform": platform,
-            "task": task,
-            "learning_mode": _learning_mode(is_success),
-            "updated_functions": list(result.get("updated_functions") or []),
-            "compiled_skill_ids": list(result.get("compiled_skill_ids") or []),
-            "evolution": result,
-            "reuse_failure_trace": True,
-            "ordinary_code_extraction_skipped": True,
-        })
+        status = (
+            "processed_evolution"
+            if result.get("status") == "processed_evolution"
+            else "evolution_error"
+        )
+        await self._write_result_section(
+            trace_path,
+            "extraction",
+            subtask_index,
+            {
+                "status": status,
+                "trace": str(trace_path),
+                "is_success": is_success,
+                "agent_success": agent_success,
+                "evaluation_success": _evaluation_success(evaluation_result),
+                "platform": platform,
+                "task": task,
+                "learning_mode": _learning_mode(is_success),
+                "updated_functions": list(result.get("updated_functions") or []),
+                "compiled_skill_ids": list(result.get("compiled_skill_ids") or []),
+                "reuse_failure_trace": True,
+                "ordinary_code_extraction_skipped": True,
+            },
+        )
         return result
 
     async def _extract_skill(
@@ -294,6 +312,7 @@ class PostRunProcessor:
         task: str | None = None,
         evaluation_result: dict[str, Any] | None = None,
         agent_success: bool | None = None,
+        subtask_index: int = 1,
     ) -> str | None:
         if not self._enable_skill_extraction:
             logger.info("Skipping skill extraction: disabled")
@@ -301,48 +320,15 @@ class PostRunProcessor:
         if not trace_path.exists():
             return None
 
-        result_event = _load_trajectory_result(trace_path)
+        result_event = _load_trajectory_result(trace_path, subtask_index=subtask_index)
         if result_event is not None and _is_abnormal_termination(result_event):
-            self._write_extraction_result(trace_path, {
-                "status": "skipped",
-                "reason": "abnormal_termination",
-                "trace": str(trace_path),
-                "is_success": is_success,
-                "agent_success": agent_success,
-                "evaluation_success": _evaluation_success(evaluation_result),
-                "platform": platform,
-                "learning_mode": _learning_mode(is_success),
-                "updated_functions": [],
-                "compiled_skill_ids": [],
-            })
-            return None
-
-        completed_reuse = _load_completed_reuse(trace_path)
-        if completed_reuse is not None:
-            self._write_extraction_result(trace_path, {
-                "status": "skipped_reused_skill_complete",
-                "trace": str(trace_path),
-                "is_success": is_success,
-                "agent_success": agent_success,
-                "evaluation_success": _evaluation_success(evaluation_result),
-                "platform": platform,
-                "learning_mode": _learning_mode(is_success),
-                "updated_functions": [],
-                "compiled_skill_ids": [],
-                **completed_reuse,
-            })
-            return None
-
-        try:
-            from guiclaw.skills.extractor import SkillExtractor
-
-            extractor = SkillExtractor(llm=self._llm)
-            skills = await extractor.extract_from_file_multi(trace_path, is_success=is_success)
-            self._write_extraction_usage(trace_path, extractor.total_usage)
-            if not skills:
-                self._write_extraction_result(trace_path, {
-                    "status": "no_candidate",
-                    "reason": "extractor_returned_none",
+            await self._write_result_section(
+                trace_path,
+                "extraction",
+                subtask_index,
+                {
+                    "status": "skipped",
+                    "reason": "abnormal_termination",
                     "trace": str(trace_path),
                     "is_success": is_success,
                     "agent_success": agent_success,
@@ -351,8 +337,59 @@ class PostRunProcessor:
                     "learning_mode": _learning_mode(is_success),
                     "updated_functions": [],
                     "compiled_skill_ids": [],
-                    "extractor_diagnostics": extractor.last_diagnostics,
-                })
+                },
+            )
+            return None
+
+        completed_reuse = _load_completed_reuse(trace_path, subtask_index=subtask_index)
+        if completed_reuse is not None:
+            await self._write_result_section(
+                trace_path,
+                "extraction",
+                subtask_index,
+                {
+                    "status": "skipped_reused_skill_complete",
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "agent_success": agent_success,
+                    "evaluation_success": _evaluation_success(evaluation_result),
+                    "platform": platform,
+                    "learning_mode": _learning_mode(is_success),
+                    "updated_functions": [],
+                    "compiled_skill_ids": [],
+                    **completed_reuse,
+                },
+            )
+            return None
+
+        try:
+            from guiclaw.skills.extractor import SkillExtractor
+
+            extractor = SkillExtractor(llm=self._llm)
+            skills = await extractor.extract_from_file_multi(
+                trace_path,
+                is_success=is_success,
+                subtask_index=subtask_index,
+            )
+            if not skills:
+                await self._write_result_section(
+                    trace_path,
+                    "extraction",
+                    subtask_index,
+                    {
+                        "status": "no_candidate",
+                        "reason": "extractor_returned_none",
+                        "trace": str(trace_path),
+                        "is_success": is_success,
+                        "agent_success": agent_success,
+                        "evaluation_success": _evaluation_success(evaluation_result),
+                        "platform": platform,
+                        "learning_mode": _learning_mode(is_success),
+                        "updated_functions": [],
+                        "compiled_skill_ids": [],
+                        "extractor_diagnostics": extractor.last_diagnostics,
+                    },
+                )
                 return None
 
             store_root = self._skill_store_root or trace_path.parent
@@ -388,47 +425,47 @@ class PostRunProcessor:
                     if skill_id is not None:
                         compiled_skill_ids.append(skill_id)
 
-            first_skill = skills[0]
-
-            self._write_extraction_result(trace_path, {
-                "status": "processed_code",
-                "trace": str(trace_path),
-                "is_success": is_success,
-                "agent_success": agent_success,
-                "evaluation_success": _evaluation_success(evaluation_result),
-                "platform": platform,
-                "task": task,
-                "learning_mode": _learning_mode(is_success),
-                "updated_functions": [skill.name for skill in skills],
-                "compiled_skill_ids": compiled_skill_ids,
-                "source_path": str((store_root / "skills.py").expanduser()),
-                "extractor_diagnostics": extractor.last_diagnostics,
-                "skills": skill_infos,
-                "skill": {
-                    "skill_id": first_skill.skill_id,
-                    "name": first_skill.name,
-                    "description": first_skill.description,
-                    "app": first_skill.app,
-                    "platform": first_skill.platform,
-                    "step_count": len(first_skill.steps),
+            await self._write_result_section(
+                trace_path,
+                "extraction",
+                subtask_index,
+                {
+                    "status": "processed_code",
+                    "trace": str(trace_path),
+                    "is_success": is_success,
+                    "agent_success": agent_success,
+                    "evaluation_success": _evaluation_success(evaluation_result),
+                    "platform": platform,
+                    "task": task,
+                    "learning_mode": _learning_mode(is_success),
+                    "updated_functions": [skill.name for skill in skills],
+                    "compiled_skill_ids": compiled_skill_ids,
+                    "source_path": str((store_root / "skills.py").expanduser()),
+                    "extractor_diagnostics": extractor.last_diagnostics,
+                    "skills": skill_infos,
                 },
-            })
+            )
             return compiled_skill_ids[0]
         except Exception as exc:
             logger.warning("Skill extraction failed for %s", trace_path, exc_info=True)
-            self._write_extraction_result(trace_path, {
-                "status": "error",
-                "trace": str(trace_path),
-                "reason": str(exc) or type(exc).__name__,
-                "error_type": type(exc).__name__,
-                "is_success": is_success,
-                "agent_success": agent_success,
-                "evaluation_success": _evaluation_success(evaluation_result),
-                "platform": platform,
-                "learning_mode": _learning_mode(is_success),
-                "updated_functions": [],
-                "compiled_skill_ids": [],
-            })
+            await self._write_result_section(
+                trace_path,
+                "extraction",
+                subtask_index,
+                {
+                    "status": "error",
+                    "trace": str(trace_path),
+                    "reason": str(exc) or type(exc).__name__,
+                    "error_type": type(exc).__name__,
+                    "is_success": is_success,
+                    "agent_success": agent_success,
+                    "evaluation_success": _evaluation_success(evaluation_result),
+                    "platform": platform,
+                    "learning_mode": _learning_mode(is_success),
+                    "updated_functions": [],
+                    "compiled_skill_ids": [],
+                },
+            )
             return None
 
     async def _run_evaluation(
@@ -437,6 +474,7 @@ class PostRunProcessor:
         trace_path: Path,
         is_success: bool,
         task: str,
+        subtask_index: int = 1,
     ) -> dict[str, Any] | None:
         if not self._evaluation.enabled:
             return None
@@ -462,7 +500,8 @@ class PostRunProcessor:
                 api_key=api_key,
                 api_base=self._evaluation.api_base,
                 task_id=trace_path.parent.name,
-                output_path=trace_path.parent / DEFAULT_EVALUATION_FILENAME,
+                output_path=None,
+                subtask_index=subtask_index,
             )
             logger.info(
                 "GUI evaluation completed: success=%s reason=%s",
@@ -492,36 +531,22 @@ class PostRunProcessor:
             )
 
     @staticmethod
-    def _write_extraction_usage(trace_path: Path, usage: dict[str, int]) -> None:
-        usage_path = trace_path.parent / "extraction_usage.json"
-        try:
-            usage_path.write_text(json.dumps(usage, indent=2), encoding="utf-8")
-        except OSError as exc:
-            logger.warning("Could not write extraction usage to %s: %s", usage_path, exc)
-
-    @staticmethod
-    def _write_evolution_result(trace_path: Path, result: dict[str, Any]) -> None:
-        result.setdefault("timestamp", time.time())
-        result_path = trace_path.parent / "evolution_result.json"
-        try:
-            result_path.write_text(
-                json.dumps(result, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            logger.warning("Could not write evolution result to %s: %s", result_path, exc)
-
-    @staticmethod
-    def _write_extraction_result(trace_path: Path, result: dict[str, Any]) -> None:
-        result.setdefault("timestamp", time.time())
-        result_path = trace_path.parent / "extraction_result.json"
-        try:
-            result_path.write_text(
-                json.dumps(result, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except OSError as exc:
-            logger.warning("Could not write extraction result to %s: %s", result_path, exc)
+    async def _write_result_section(
+        trace_path: Path,
+        section: str,
+        subtask_index: int,
+        result: dict[str, Any],
+    ) -> None:
+        result_path = trace_path.parent / "result.json"
+        lock = _RESULT_LOCKS.setdefault(
+            result_path.expanduser().resolve(strict=False),
+            asyncio.Lock(),
+        )
+        async with lock:
+            try:
+                update_result_section(trace_path.parent, section, subtask_index, result)
+            except OSError as exc:
+                logger.warning("Could not update %s in %s: %s", section, result_path, exc)
 
 
 def _evaluation_success(evaluation_result: dict[str, Any] | None) -> bool | None:
@@ -532,7 +557,6 @@ def _evaluation_success(evaluation_result: dict[str, Any] | None) -> bool | None
 
 
 __all__ = [
-    "DEFAULT_EVALUATION_FILENAME",
     "EvaluationConfig",
     "PostRunProcessor",
     "_is_abnormal_termination",

@@ -35,8 +35,60 @@ _ITEM_TEXT = (
 
 
 def _write_trace(path: Path, events: list[dict]) -> Path:
-    path.write_text("\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
-    return path
+    run_dir = path.parent / path.stem
+    run_dir.mkdir(parents=True, exist_ok=True)
+    metadata = next((event for event in events if event.get("type") == "metadata"), {})
+    steps = []
+    for event in events:
+        if event.get("type") != "step":
+            continue
+        observation = event.get("observation") or {}
+        step = {
+            "step": len(steps) + 1,
+            "subtask": 1,
+            "attempt": 1,
+            "phase": "agent",
+            "model_output": event.get("model_output") or "",
+            "action": event.get("action") or {},
+        }
+        app = observation.get("foreground_app") or observation.get("app")
+        if app:
+            step["app"] = app
+        steps.append(step)
+    trace_path = run_dir / "traj.json"
+    trace_path.write_text(
+        json.dumps(
+            {
+                "instruction": metadata.get("task") or "test task",
+                "platform": "android",
+                "subtasks": [{"subtask": 1, "task": metadata.get("task") or "test task"}],
+                "steps": steps,
+                "screenshots": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    result_event = next(
+        (
+            event
+            for event in reversed(events)
+            if event.get("type") == "result" and "success" in event
+        ),
+        None,
+    )
+    if result_event is not None:
+        subtask_result = {
+            "subtask": 1,
+            "task": metadata.get("task") or "test task",
+            "success": result_event["success"],
+            "error": result_event.get("error"),
+            "steps_taken": result_event.get("total_steps", len(steps)),
+        }
+        (run_dir / "result.json").write_text(
+            json.dumps({"run": subtask_result, "subtasks": [subtask_result]}),
+            encoding="utf-8",
+        )
+    return trace_path
 
 
 def _step(app: str | None, *, key: str = "foreground_app") -> dict:

@@ -60,88 +60,16 @@ from guiclaw.skills.extractor import SkillExtractor
 from guiclaw.skills.flat import compile_flat_skills, export_skills_to_source
 from guiclaw.skills.state_contract import state_contract_fingerprint
 from guiclaw.skills.trajectory_codegen import codegen_to_extraction_text, codegen_trajectory
+from guiclaw.trajectory.recorder import trajectory_subtask_indices
 
 # Trace discovery / outcome helpers are shared with the gui-memory inducer.
-try:
-    from scripts.induce_gui_memory import (
-        _find_gui_task_traces,
-        _trace_step_count,
-        get_task_outcome,
-        trace_is_abnormal,
-    )
-except ImportError:  # pragma: no cover - standalone fallback
-    import json
-
-    def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-        events: list[dict[str, Any]] = []
-        for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-        return events
-
-    def _event_type(event: dict[str, Any]) -> str:
-        return str(event.get("type") or event.get("event") or "")
-
-    def _find_result(events: list[dict[str, Any]]) -> dict[str, Any] | None:
-        for event in reversed(events):
-            if _event_type(event) == "result":
-                return event
-        return None
-
-    _ABNORMAL_PREFIXES = ("stagnation_detected", "step_timeout", "intervention_cancelled")
-
-    def trace_is_abnormal(trace_path: Path) -> bool:
-        result = _find_result(_load_jsonl(trace_path))
-        if not result:
-            return False
-        error = result.get("error")
-        total_steps = result.get("total_steps") or 0
-        if total_steps == 0 and error:
-            return True
-        if not isinstance(error, str):
-            return False
-        if total_steps > 0 and (
-            error == "stagnation_detected" or error.startswith("stagnation_detected:")
-            or error == "step_timeout" or error.startswith("step_timeout:")
-        ):
-            return False
-        return any(error == p or error.startswith(p + ":") for p in _ABNORMAL_PREFIXES)
-
-    def _find_gui_task_traces(task_dir: Path) -> list[Path]:
-        run_dir = task_dir / "nanobot_gui_task_runs"
-        if not run_dir.exists():
-            return []
-        traces: list[Path] = []
-        for gui_task_dir in sorted(p for p in run_dir.iterdir() if p.is_dir()):
-            candidates = sorted(gui_task_dir.glob("trace*.jsonl"))
-            if not candidates:
-                candidates = sorted(gui_task_dir.rglob("trace*.jsonl"))
-            if candidates:
-                traces.append(candidates[0])
-        return traces
-
-    def _trace_step_count(trace_path: Path) -> int:
-        return sum(1 for e in _load_jsonl(trace_path) if _event_type(e) == "step")
-
-    def get_task_outcome(task_dir: Path) -> tuple[str, str]:
-        result_txt = task_dir / "result.txt"
-        if not result_txt.exists():
-            return "failure", "no result.txt found"
-        text = result_txt.read_text(encoding="utf-8", errors="ignore")
-        m = re.search(r"(?m)^score:\s*([0-9.]+)", text)
-        if not m:
-            return "failure", "no score field"
-        try:
-            score = float(m.group(1))
-        except ValueError:
-            return "failure", "unparseable score"
-        return ("success", "") if score >= 1.0 else ("failure", f"score={score}")
-
+from scripts.induce_gui_memory import (
+    _find_gui_task_traces,
+    _trace_step_count,
+    get_task_outcome,
+    get_trace_outcome,
+    trace_is_abnormal,
+)
 
 _COMPACT_TAGS: tuple[str, ...] = ("compact", "compact_extracted")
 _FROM_FAILURE_TAG = "from_failure"
@@ -426,6 +354,7 @@ async def induce_from_trace(
     max_steps: int,
     max_scroll_steps: int,
     is_success: bool = True,
+    subtask_index: int = 1,
 ) -> list[Skill]:
     """Extract and compactify all skills from a single trace.
 
@@ -433,7 +362,7 @@ async def induce_from_trace(
     *prefix* of a failed trajectory (its ``_FAILURE_NOTE`` forbids fixing terminal
     actions such as send/pay/delete).
     """
-    result = codegen_trajectory(trace_path)
+    result = codegen_trajectory(trace_path, subtask_index=subtask_index)
     if result is None or not result.steps:
         return []
     extracted = await extractor.extract_from_codegen_result_multi(
@@ -504,61 +433,64 @@ async def main_async(args: argparse.Namespace) -> int:
     skipped_abnormal = 0
 
     for task_dir in task_dirs:
-        outcome, _ = get_task_outcome(task_dir)
-        is_success = outcome == "success"
-        if not is_success and not args.include_failures:
-            skipped_failure += 1
-            continue
+        task_outcome, _ = get_task_outcome(task_dir)
 
         trace_paths = _find_gui_task_traces(task_dir)
         if not trace_paths:
             skipped_no_trace += 1
             continue
 
-        usable: list[Path] = []
+        usable: list[tuple[Path, int, bool]] = []
         for tp in trace_paths:
-            if _trace_step_count(tp) <= 2:
-                skipped_short += 1
-                continue
-            # Degenerate runs (intervention cancel / no-progress stagnation or
-            # timeout) carry no reusable skill — drop them before extraction.
-            if trace_is_abnormal(tp):
-                skipped_abnormal += 1
-                continue
-            usable.append(tp)
+            for subtask_index in trajectory_subtask_indices(tp):
+                trace_outcome = get_trace_outcome(tp, subtask_index=subtask_index)
+                outcome = trace_outcome[0] if trace_outcome is not None else task_outcome
+                is_success = outcome == "success"
+                if not is_success and not args.include_failures:
+                    skipped_failure += 1
+                    continue
+                if _trace_step_count(tp, subtask_index=subtask_index) <= 2:
+                    skipped_short += 1
+                    continue
+                if trace_is_abnormal(tp, subtask_index=subtask_index):
+                    skipped_abnormal += 1
+                    continue
+                usable.append((tp, subtask_index, is_success))
         if not usable:
             continue
 
         if args.dry_run:
-            tag = "success" if is_success else "FAILURE(prefix)"
-            print(f"\n{'=' * 60}\nTask dir: {task_dir.name}  [{tag}]")
-            for tp in usable:
-                result = codegen_trajectory(tp)
+            print(f"\n{'=' * 60}\nTask dir: {task_dir.name}")
+            for tp, subtask_index, is_success in usable:
+                result = codegen_trajectory(tp, subtask_index=subtask_index)
                 if result is None:
                     continue
-                print(f"--- {tp.name}  (app={result.app}) ---")
+                tag = "success" if is_success else "FAILURE(prefix)"
+                print(
+                    f"--- {tp.name} subtask {subtask_index} "
+                    f"(app={result.app}, {tag}) ---"
+                )
                 print(codegen_to_extraction_text(result)[:1800])
             continue
 
         assert extractor is not None
-        print(f"[SKL] {task_dir.name} ({'ok' if is_success else 'fail'}) ... ",
-              end="", flush=True)
-        task_skills: list[Skill] = []
-        for tp in usable:
+        print(f"[SKL] {task_dir.name} ... ", end="", flush=True)
+        task_items: list[tuple[Skill, bool]] = []
+        for tp, subtask_index, is_success in usable:
             try:
-                task_skills.extend(
-                    await induce_from_trace(
-                        extractor,
-                        tp,
-                        max_steps=args.max_steps,
-                        max_scroll_steps=args.max_scroll_steps,
-                        is_success=is_success,
-                    )
+                skills = await induce_from_trace(
+                    extractor,
+                    tp,
+                    max_steps=args.max_steps,
+                    max_scroll_steps=args.max_scroll_steps,
+                    is_success=is_success,
+                    subtask_index=subtask_index,
                 )
+                task_items.extend((skill, is_success) for skill in skills)
             except Exception as exc:  # noqa: BLE001 - keep batch going
-                print(f"\n  {tp.name}: extraction error: {exc}")
-        print(f"{len(task_skills)} compact skill(s)")
-        all_items.extend((skill, is_success) for skill in task_skills)
+                print(f"\n  {tp.name} subtask {subtask_index}: extraction error: {exc}")
+        print(f"{len(task_items)} compact skill(s)")
+        all_items.extend(task_items)
         processed += 1
 
     if args.dry_run:

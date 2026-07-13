@@ -20,8 +20,9 @@ from guiclaw.skills._merger import cosine_similarity
 from guiclaw.skills.data import Skill, SkillStep
 from guiclaw.skills.flat import FlatSkillLibrary, _skill_search_text
 from guiclaw.skills.normalization import normalize_app_identifier, normalize_skill_app
-from guiclaw.skills.state_contract import infer_focused_input_contract, normalize_state_contract
+from guiclaw.skills.state_contract import normalize_state_contract
 from guiclaw.skills.trajectory_codegen import apply_focused_input_contracts
+from guiclaw.trajectory.recorder import load_trajectory_events
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +87,9 @@ async def evolve_failed_skill_from_trace(
     platform: str,
     embedding_provider: Any | None = None,
     embedding_signature: str | None = None,
+    subtask_index: int = 1,
 ) -> dict[str, Any]:
-    events = _load_jsonl(trace_path)
+    events = load_trajectory_events(trace_path, subtask_index=subtask_index)
     failure_case = _build_failure_case(
         events,
         trace_path=trace_path,
@@ -150,7 +152,7 @@ async def evolve_failed_skill_from_trace(
         }
     candidate = apply_focused_input_contracts(
         candidate,
-        _focused_input_contracts_from_events(events, app=candidate.app),
+        _focused_input_contracts_from_events(events),
     )
 
     rejection_reason = await _evolution_rejection_reason(
@@ -290,28 +292,22 @@ def _parse_skill_response(text: str, *, original: Skill) -> Skill | None:
 
 def _focused_input_contracts_from_events(
     events: list[dict[str, Any]],
-    *,
-    app: str,
 ) -> list[dict[str, Any]]:
     contracts: list[dict[str, Any]] = []
-    previous_observation: dict[str, Any] | None = None
     for event in events:
         if event.get("type") != "step":
             continue
         action = event.get("action") if isinstance(event.get("action"), dict) else {}
-        if action.get("action_type") == "input_text" and previous_observation is not None:
-            contract = infer_focused_input_contract(
-                previous_observation.get("extra") or {},
-                app=str(
-                    previous_observation.get("foreground_app")
-                    or previous_observation.get("app")
-                    or app
-                ),
+        if action.get("action_type") == "input_text":
+            interaction_target = event.get("interaction_target")
+            contract = (
+                interaction_target.get("state_contract")
+                if isinstance(interaction_target, dict)
+                and isinstance(interaction_target.get("state_contract"), dict)
+                else None
             )
             if contract:
                 contracts.append(contract)
-        observation = event.get("observation")
-        previous_observation = observation if isinstance(observation, dict) else None
     return contracts
 
 
@@ -406,23 +402,6 @@ def _append_failure_case(store_root: Path, failure_case: SkillFailureCase) -> No
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(asdict(failure_case), ensure_ascii=False) + "\n")
-
-
-def _load_jsonl(path: Path) -> list[dict[str, Any]]:
-    events: list[dict[str, Any]] = []
-    try:
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            if not raw.strip():
-                continue
-            try:
-                value = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(value, dict):
-                events.append(value)
-    except OSError:
-        return []
-    return events
 
 
 def _compact_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:

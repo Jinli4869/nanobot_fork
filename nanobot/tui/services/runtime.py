@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from guiclaw.trajectory.recorder import load_trajectory_events
 from nanobot.tui.contracts import RuntimeInspectionContract, SessionContract
 from nanobot.tui.schemas import (
     RuntimeFailureSummary,
@@ -28,14 +29,10 @@ class RuntimeService:
         task_launch_available: bool = False,
     ) -> None:
         self._legacy_contract = (
-            session_contract
-            if isinstance(session_contract, RuntimeInspectionContract)
-            else None
+            session_contract if isinstance(session_contract, RuntimeInspectionContract) else None
         )
         self._session_contract = (
-            session_contract
-            if isinstance(session_contract, SessionContract)
-            else None
+            session_contract if isinstance(session_contract, SessionContract) else None
         )
         self._registry = registry or OperationsRegistry()
         self._artifacts_root = artifacts_root
@@ -144,7 +141,7 @@ class RuntimeService:
 
         summaries: dict[str, RuntimeRunSummary] = {}
         for trace_path in sorted(
-            artifacts_root.glob("**/trace*.jsonl"),
+            artifacts_root.glob("**/traj.json"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         ):
@@ -159,40 +156,16 @@ class RuntimeService:
         status = "running"
         summary: str | None = None
         steps_taken = 0
-        started_at: str | None = None
-        finished_at: str | None = None
 
         try:
-            with open(trace_path, encoding="utf-8") as handle:
-                for raw_line in handle:
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    event = json.loads(line)
-                    if not isinstance(event, dict):
-                        continue
-                    event_name = str(event.get("event") or event.get("type") or "")
-                    if event_name == "metadata":
-                        task_kind = self._infer_task_kind(event)
-                        started_at = _coerce_timestamp(event)
-                    elif event_name == "attempt_start":
-                        task_kind = self._infer_task_kind(event, fallback=task_kind)
-                        status = "running"
-                        started_at = started_at or _coerce_timestamp(event)
-                    elif event_name == "attempt_result":
-                        status = "succeeded" if bool(event.get("success")) else "failed"
-                        summary = _clean_summary(event.get("summary"))
-                        steps_taken = _coerce_int(event.get("steps_taken"), default=steps_taken)
-                        finished_at = _coerce_timestamp(event) or finished_at
-                    elif event_name == "attempt_exception":
-                        status = "failed"
-                        summary = _clean_summary(event.get("error_message"))
-                        finished_at = _coerce_timestamp(event) or finished_at
-                    elif event_name == "result":
-                        status = "succeeded" if bool(event.get("success")) else "failed"
-                        summary = summary or _clean_summary(event.get("error"))
-                        steps_taken = _coerce_int(event.get("total_steps"), default=steps_taken)
-                        finished_at = finished_at or _coerce_timestamp(event)
+            for event in load_trajectory_events(trace_path, subtask_index=None):
+                event_name = str(event.get("type") or "")
+                if event_name == "metadata":
+                    task_kind = self._infer_task_kind(event)
+                elif event_name == "result":
+                    status = "succeeded" if bool(event.get("success")) else "failed"
+                    summary = _clean_summary(event.get("summary") or event.get("error"))
+                    steps_taken = _coerce_int(event.get("total_steps"), default=steps_taken)
         except (OSError, json.JSONDecodeError, ValueError, TypeError):
             return None
 
@@ -202,8 +175,8 @@ class RuntimeService:
             status=status,
             summary=summary,
             steps_taken=steps_taken,
-            started_at=started_at,
-            finished_at=finished_at,
+            started_at=None,
+            finished_at=None,
         )
 
     @staticmethod
@@ -220,18 +193,6 @@ def _coerce_int(value: Any, *, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
-
-
-def _coerce_timestamp(event: dict[str, Any]) -> str | None:
-    explicit = event.get("timestamp_iso")
-    if isinstance(explicit, str) and explicit:
-        return explicit
-    raw = event.get("timestamp")
-    if isinstance(raw, (int, float)):
-        from datetime import UTC, datetime
-
-        return datetime.fromtimestamp(raw, tz=UTC).isoformat().replace("+00:00", "Z")
-    return None
 
 
 def _clean_summary(value: Any) -> str | None:

@@ -109,9 +109,10 @@ async def _extract_skills_from_phase_a(
     output_path: Path,
 ) -> None:
     """Run skill extraction over Phase A successful traces."""
-    from nanobot.agent.gui_adapter import NanobotEmbeddingAdapter, NanobotLLMAdapter
     from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
     from guiclaw.skills.normalization import get_gui_skill_store_root
+    from guiclaw.trajectory.recorder import trajectory_subtask_indices
+    from nanobot.agent.gui_adapter import NanobotLLMAdapter
 
     llm = NanobotLLMAdapter(provider, model)
     processor = PostRunProcessor(
@@ -129,24 +130,22 @@ async def _extract_skills_from_phase_a(
         if not rec.success or not rec.trace_path:
             continue
         trace = Path(rec.trace_path)
-        # Use platform if recoverable from trace metadata; default unknown.
         platform = "unknown"
         try:
-            with trace.open("r", encoding="utf-8") as f:
-                first = f.readline()
-                if first.strip():
-                    meta = json.loads(first)
-                    if meta.get("type") == "metadata":
-                        platform = meta.get("platform", platform)
+            trajectory = json.loads(trace.read_text(encoding="utf-8"))
+            if isinstance(trajectory, dict):
+                platform = str(trajectory.get("platform") or platform)
         except Exception:
             pass
 
-        processor.schedule(
-            trace,
-            is_success=True,
-            platform=platform,
-            task=rec.instruction,
-        )
+        for subtask_index in trajectory_subtask_indices(trace):
+            processor.schedule(
+                trace,
+                is_success=True,
+                platform=platform,
+                task=rec.instruction,
+                subtask_index=subtask_index,
+            )
         extracted.append({
             "task_id": rec.task_id,
             "trial_index": rec.trial_index,

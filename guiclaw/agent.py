@@ -548,6 +548,11 @@ class GuiAgent:
         for attempt in range(max_retries):
             run_dir = self._make_run_dir(task, attempt)
             last_trace_path = str(run_dir)
+            self._trajectory_recorder.set_attempt(attempt + 1)
+            if self._skill_executor is not None:
+                setter = getattr(type(self._skill_executor), "set_artifacts_root", None)
+                if callable(setter):
+                    setter(self._skill_executor, run_dir)
 
             await self._log_attempt_event(
                 run_dir,
@@ -651,7 +656,8 @@ class GuiAgent:
         self._trajectory_recorder.finish(
             success=result.success,
             error=result.error,
-            token_usage=result.token_usage or None,
+            summary=result.summary,
+            model_summary=result.model_summary,
         )
 
         return result
@@ -686,10 +692,9 @@ class GuiAgent:
             )
 
         # 2. Initial observation
-        obs = await self.backend.observe(
-            run_dir / "screenshots" / "step_000.png",
-            timeout=self.step_timeout,
-        )
+        initial_screenshot = run_dir / "screenshots" / "000_initial.png"
+        obs = await self.backend.observe(initial_screenshot, timeout=self.step_timeout)
+        self._trajectory_recorder.record_screenshot(initial_screenshot, kind="initial")
 
         history: list[HistoryTurn] = []
         previous_fingerprint: _ScreenFingerprint | None = None
@@ -710,13 +715,7 @@ class GuiAgent:
                 memory_context=memory_context,
                 prompt_skill_parts=prompt_skill_parts,
             )
-            prompt_snapshot = self._snapshot_step_prompt(
-                task=task,
-                step_index=step_index,
-                messages=messages,
-                current_observation=obs,
-                history=history,
-            )
+            prompt_snapshot = None
 
             try:
                 result = await asyncio.wait_for(
@@ -730,14 +729,7 @@ class GuiAgent:
                     timeout=self.step_timeout * 3,
                 )
             except asyncio.TimeoutError:
-                await self._write_trace(
-                    run_dir / "trace.jsonl",
-                    {
-                        "event": "timeout",
-                        "step_index": step_index,
-                        "timestamp": time.time(),
-                    },
-                )
+                await self._log_attempt_event(run_dir, "timeout", step_index=step_index)
                 return AgentResult(
                     success=False,
                     summary=self._build_state_note(
@@ -793,7 +785,11 @@ class GuiAgent:
                             step_index=step_index,
                             note=resolution.note,
                         )
-                        next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+                        next_screenshot = self._step_screenshot_path(
+                            run_dir,
+                            step_index,
+                            result.action.action_type,
+                        )
                         next_observation = await self.backend.observe(
                             next_screenshot,
                             timeout=self.step_timeout,
@@ -1052,51 +1048,24 @@ class GuiAgent:
             if result.next_observation and result.next_observation.screenshot_path
             else current_observation.screenshot_path
         )
-        await self._write_trace(
-            run_dir / "trace.jsonl",
-            self._scrub_for_artifact(
-                {
-                    "event": "step",
-                    "step_index": step_index,
-                    "prompt": result.prompt_snapshot,
-                    "model_output": result.model_snapshot,
-                    "execution": result.execution_snapshot,
-                    "action": self._serialize_action(result.action),
-                    "action_summary": self._scrub_text_for_artifact_action(
-                        result.action_summary, result.action
-                    ),
-                    "action_intent": self._scrub_text_for_artifact_action(
-                        result.action_intent, result.action
-                    ),
-                    "state_summary": self._scrub_text_for_artifact_action(
-                        result.state_summary, result.action
-                    ),
-                    "screenshot_path": screenshot_path,
-                    "done": result.done,
-                    "timestamp": time.time(),
-                }
-            ),
+        raw_model_output = (
+            result.model_snapshot.get("raw_content")
+            if isinstance(result.model_snapshot, dict)
+            else None
         )
         self._trajectory_recorder.record_step(
             action=self._scrub_for_artifact(self._serialize_action(result.action)),
             model_output=(
                 self._scrub_text_for_artifact_action(
-                    result.action_intent or result.action_summary,
+                    raw_model_output or result.action_intent or result.action_summary,
                     result.action,
                 )
                 or ""
             ),
             screenshot_path=str(screenshot_path) if screenshot_path else None,
             foreground_app=recorded_observation.foreground_app,
-            screen_width=recorded_observation.screen_width,
-            screen_height=recorded_observation.screen_height,
-            platform=recorded_observation.platform,
-            observation_extra=self._scrub_for_artifact(recorded_observation.extra),
             interaction_target=self._scrub_for_artifact(result.interaction_target),
             token_usage=(result.event_usage or result.step_usage) or None,
-            duration_s=result.duration_s or None,
-            chat_latency_s=result.chat_latency_s,
-            ttft_s=result.ttft_s,
         )
 
     # ------------------------------------------------------------------
@@ -1452,7 +1421,11 @@ class GuiAgent:
 
             # Observe next state
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
-            next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+            next_screenshot = self._step_screenshot_path(
+                run_dir,
+                step_index,
+                action.action_type,
+            )
             next_observation = await self._observe_after_action(
                 next_screenshot,
                 previous_observation=current_observation,
@@ -1658,7 +1631,11 @@ class GuiAgent:
         next_observation = self._observation_from_skill_result(skill_result)
         if next_observation is None:
             run_dir = Path(current_observation.screenshot_path or ".").parent.parent
-            next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+            next_screenshot = self._step_screenshot_path(
+                run_dir,
+                step_index,
+                action.action_type,
+            )
             next_observation = await self.backend.observe(
                 next_screenshot, timeout=self.step_timeout
             )
@@ -1728,7 +1705,11 @@ class GuiAgent:
         action_intent: str | None,
     ) -> StepResult:
         run_dir = Path(current_observation.screenshot_path or ".").parent.parent
-        next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+        next_screenshot = self._step_screenshot_path(
+            run_dir,
+            step_index,
+            action.action_type,
+        )
         next_observation = await self.backend.observe(next_screenshot, timeout=self.step_timeout)
         result_text = f"Prompt-selected skill failed with {type(exc).__name__}: {exc}"
         action_summary = f"use_skill {skill_name}: failed"
@@ -1818,7 +1799,11 @@ class GuiAgent:
 
         await asyncio.sleep(self._POST_ACTION_SETTLE_SECONDS)
         run_dir = Path(current_observation.screenshot_path or ".").parent.parent
-        next_screenshot = run_dir / "screenshots" / f"step_{step_index:03d}.png"
+        next_screenshot = self._step_screenshot_path(
+            run_dir,
+            step_index,
+            action.action_type,
+        )
         next_observation = await self._observe_after_action(
             next_screenshot,
             previous_observation=current_observation,
@@ -2412,34 +2397,6 @@ class GuiAgent:
         first_line = first_line.strip('"')
         return first_line.strip()
 
-    def _snapshot_step_prompt(
-        self,
-        *,
-        task: str,
-        step_index: int,
-        messages: list[dict[str, Any]],
-        current_observation: Observation,
-        history: list[HistoryTurn],
-    ) -> dict[str, Any]:
-        return {
-            "task": task,
-            "step_index": step_index,
-            "messages": self._scrub_for_artifact(messages),
-            "history": [
-                {
-                    "step_index": turn.step_index,
-                    "action_summary": turn.action_summary,
-                    "action_intent": turn.action_intent,
-                    "state_summary": turn.state_summary,
-                    "raw_response_content": turn.raw_response_content,
-                    "observation": self._serialize_observation(turn.observation),
-                    "tool_result": turn.tool_result_message.get("content"),
-                }
-                for turn in history
-            ],
-            "current_observation": self._serialize_observation(current_observation),
-        }
-
     def _snapshot_model_response(
         self,
         *,
@@ -2726,21 +2683,17 @@ class GuiAgent:
     # ------------------------------------------------------------------
 
     def _make_run_dir(self, task: str, attempt: int) -> Path:
-        """Create a unique run directory for this task attempt."""
-        slug = re.sub(r"[^a-zA-Z0-9]+", "_", task)[:48].strip("_") or "gui_task"
-        name = f"{slug}_{int(time.time() * 1000)}_{attempt}"
-        run_dir = self.artifacts_root / name
+        """Create the stable artifact directory for one task attempt."""
+        del task
+        run_dir = self.artifacts_root / f"attempt_{attempt + 1:02d}"
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "screenshots").mkdir(exist_ok=True)
         return run_dir
 
     @staticmethod
-    async def _write_trace(path: Path, payload: dict[str, Any]) -> None:
-        """Append a JSON line to the trace file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(payload, ensure_ascii=False, default=str) + "\n"
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(line)
+    def _step_screenshot_path(run_dir: Path, step_index: int, action_type: str) -> Path:
+        kind = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(action_type or "action")).strip("_")
+        return run_dir / "screenshots" / f"{step_index:03d}_{kind or 'action'}.png"
 
     async def _log_attempt_event(
         self,
@@ -2748,15 +2701,8 @@ class GuiAgent:
         event: str,
         **payload: Any,
     ) -> None:
+        del run_dir
         scrubbed_payload = self._scrub_for_log(payload)
-        await self._write_trace(
-            run_dir / "trace.jsonl",
-            {
-                "event": event,
-                "timestamp": time.time(),
-                **scrubbed_payload,
-            },
-        )
         self._trajectory_recorder.record_event(event, **scrubbed_payload)
 
     # ------------------------------------------------------------------

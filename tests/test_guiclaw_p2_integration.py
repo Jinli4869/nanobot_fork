@@ -2,6 +2,7 @@
 
 Covers: AGENT-04, AGENT-05, AGENT-06, SKILL-08, TRAJ-03, TEST-05.
 """
+
 from __future__ import annotations
 
 import copy
@@ -68,20 +69,26 @@ class _RecordingLLM:
 def _done_response(call_id: str = "tc_done") -> LLMResponse:
     return LLMResponse(
         content='Thought: task complete\nAction: {"action_type":"status","goal_status":"complete"}',
-        tool_calls=[ToolCall(
-            id=call_id, name="computer_use",
-            arguments={"action_type": "done", "status": "success"},
-        )],
+        tool_calls=[
+            ToolCall(
+                id=call_id,
+                name="computer_use",
+                arguments={"action_type": "done", "status": "success"},
+            )
+        ],
     )
 
 
 def _wait_response(call_id: str = "tc_wait") -> LLMResponse:
     return LLMResponse(
         content='Thought: waiting\nAction: {"action_type":"wait"}',
-        tool_calls=[ToolCall(
-            id=call_id, name="computer_use",
-            arguments={"action_type": "wait", "duration_ms": 1},
-        )],
+        tool_calls=[
+            ToolCall(
+                id=call_id,
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 1},
+            )
+        ],
     )
 
 
@@ -90,11 +97,15 @@ def _make_recorder(tmp_path: Path, task: str = "test") -> TrajectoryRecorder:
 
 
 def _make_memory_entry(
-    entry_id: str, content: str, memory_type: MemoryType = MemoryType.APP_GUIDE,
+    entry_id: str,
+    content: str,
+    memory_type: MemoryType = MemoryType.APP_GUIDE,
 ) -> MemoryEntry:
     return MemoryEntry(
-        entry_id=entry_id, memory_type=memory_type,
-        platform="android", content=content,
+        entry_id=entry_id,
+        memory_type=memory_type,
+        platform="android",
+        content=content,
     )
 
 
@@ -116,10 +127,12 @@ async def test_memory_injected_into_system_prompt(tmp_path: Path) -> None:
 
     llm = _RecordingLLM([_done_response()])
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=_make_recorder(tmp_path, "Open Settings"),
         memory_retriever=retriever,
-        artifacts_root=tmp_path / "runs", max_steps=1,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
     )
 
     result = await agent.run("Open Settings", max_retries=1)
@@ -142,8 +155,10 @@ async def test_skill_library_does_not_trigger_pre_run_skill_path(tmp_path: Path)
     embedder = _FakeEmbedder()
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     skill = Skill(
-        skill_id="wifi-toggle", name="Toggle Wi-Fi",
-        description="Toggle Wi-Fi in Settings", app="com.android.settings",
+        skill_id="wifi-toggle",
+        name="Toggle Wi-Fi",
+        description="Toggle Wi-Fi in Settings",
+        app="com.android.settings",
         platform="android",
         steps=(
             SkillStep(
@@ -166,10 +181,13 @@ async def test_skill_library_does_not_trigger_pre_run_skill_path(tmp_path: Path)
     llm = _RecordingLLM([_done_response()])
     recorder = _make_recorder(tmp_path, "Turn on Wi-Fi")
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
-        skill_library=lib, skill_executor=mock_executor,
-        artifacts_root=tmp_path / "runs", max_steps=1,
+        skill_library=lib,
+        skill_executor=mock_executor,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
     )
 
     result = await agent.run("Toggle Wi-Fi", max_retries=1)
@@ -179,10 +197,8 @@ async def test_skill_library_does_not_trigger_pre_run_skill_path(tmp_path: Path)
     # No pre-run SKILL phase should be recorded without a prompt-selected use_skill action.
     traj_path = recorder.path
     assert traj_path is not None and traj_path.exists()
-    events = [json.loads(line) for line in traj_path.read_text().splitlines()]
-    phase_changes = [e for e in events if e.get("type") == "phase_change"]
-    skill_phases = [e for e in phase_changes if e.get("to_phase") == "skill"]
-    assert len(skill_phases) == 0
+    trajectory = json.loads(traj_path.read_text())
+    assert not any(step.get("phase") == "skill" for step in trajectory["steps"])
 
 
 # ---------------------------------------------------------------------------
@@ -196,31 +212,33 @@ async def test_free_explore_when_prompt_skill_selection_disabled(tmp_path: Path)
     embedder = _FakeEmbedder()
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     # Add an unrelated skill
-    lib.add(Skill(
-        skill_id="unrelated", name="Send Email",
-        description="Send an email via Gmail", app="com.google.android.gm",
-        platform="android",
-    ))
+    lib.add(
+        Skill(
+            skill_id="unrelated",
+            name="Send Email",
+            description="Send an email via Gmail",
+            app="com.google.android.gm",
+            platform="android",
+        )
+    )
 
     llm = _RecordingLLM([_done_response()])
     recorder = _make_recorder(tmp_path, "Open calculator")
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
         skill_library=lib,
-        artifacts_root=tmp_path / "runs", max_steps=1,
+        artifacts_root=tmp_path / "runs",
+        max_steps=1,
     )
 
     result = await agent.run("Open calculator", max_retries=1)
     assert result.success
 
     # No SKILL phase in trajectory
-    events = [json.loads(line) for line in recorder.path.read_text().splitlines()]
-    skill_phases = [
-        e for e in events
-        if e.get("type") == "phase_change" and e.get("to_phase") == "skill"
-    ]
-    assert len(skill_phases) == 0
+    trajectory = json.loads(recorder.path.read_text())
+    assert not any(step.get("phase") == "skill" for step in trajectory["steps"])
 
 
 # ---------------------------------------------------------------------------
@@ -230,26 +248,29 @@ async def test_free_explore_when_prompt_skill_selection_disabled(tmp_path: Path)
 
 @pytest.mark.asyncio
 async def test_trajectory_recorded_on_run(tmp_path: Path) -> None:
-    """Every agent run should produce a JSONL trajectory with metadata/step/result."""
+    """Every agent run should produce compact trajectory and result JSON files."""
     llm = _RecordingLLM([_wait_response("w1"), _done_response()])
     recorder = _make_recorder(tmp_path, "Open Settings")
     agent = GuiAgent(
-        llm, DryRunBackend(),
+        llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
-        artifacts_root=tmp_path / "runs", max_steps=5,
+        artifacts_root=tmp_path / "runs",
+        max_steps=5,
     )
 
     result = await agent.run("Open Settings", max_retries=1)
     assert result.success
 
     assert recorder.path is not None and recorder.path.exists()
-    events = [json.loads(line) for line in recorder.path.read_text().splitlines()]
-
-    types = [e["type"] for e in events]
-    assert types[0] == "metadata"
-    assert "step" in types
-    assert types[-1] == "result"
-    assert events[-1]["success"] is True
+    trajectory = json.loads(recorder.path.read_text())
+    result_payload = json.loads((recorder.path.parent / "result.json").read_text())
+    assert trajectory["instruction"] == "Open Settings"
+    assert [step["action"]["action_type"] for step in trajectory["steps"]] == [
+        "wait",
+        "done",
+    ]
+    assert result_payload["run"]["success"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -270,10 +291,13 @@ async def test_planner_decomposes_task(tmp_path: Path) -> None:
     # Mock LLM that returns a create_plan tool call
     plan_response = LLMResponse(
         content="",
-        tool_calls=[ToolCall(
-            id="plan1", name="create_plan",
-            arguments={"tree": tree_data},
-        )],
+        tool_calls=[
+            ToolCall(
+                id="plan1",
+                name="create_plan",
+                arguments={"tree": tree_data},
+            )
+        ],
     )
     llm = _RecordingLLM([plan_response])
     planner = TaskPlanner(llm=llm)
@@ -305,9 +329,12 @@ async def test_router_dispatches_gui_and_tool_atoms(tmp_path: Path) -> None:
     )
 
     mock_gui = AsyncMock()
-    mock_gui.run = AsyncMock(return_value=AgentResult(
-        success=True, summary="Wi-Fi turned on",
-    ))
+    mock_gui.run = AsyncMock(
+        return_value=AgentResult(
+            success=True,
+            summary="Wi-Fi turned on",
+        )
+    )
 
     mock_tool_registry = object()  # just needs to be non-None
 
@@ -317,7 +344,8 @@ async def test_router_dispatches_gui_and_tool_atoms(tmp_path: Path) -> None:
     router = TreeRouter()
     ctx = RouterContext(
         task="Turn on Wi-Fi and check weather",
-        gui_agent=mock_gui, tool_registry=mock_tool_registry,
+        gui_agent=mock_gui,
+        tool_registry=mock_tool_registry,
     )
 
     with patch.object(TreeRouter, "_run_tool", side_effect=fake_run_tool):
@@ -394,8 +422,10 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
     embedder = _FakeEmbedder()
     lib = FlatSkillLibrary(store_dir=tmp_path / "skills", embedding_provider=embedder)
     skill = Skill(
-        skill_id="open-settings", name="Open Settings",
-        description="Open the Settings app", app="com.android.settings",
+        skill_id="open-settings",
+        name="Open Settings",
+        description="Open the Settings app",
+        app="com.android.settings",
         platform="android",
         steps=(SkillStep(action_type="open_app", target="com.android.settings"),),
     )
@@ -411,11 +441,14 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
     recorder = _make_recorder(tmp_path, "Open Settings")
 
     agent = GuiAgent(
-        agent_llm, DryRunBackend(),
+        agent_llm,
+        DryRunBackend(),
         trajectory_recorder=recorder,
-        memory_retriever=retriever, skill_library=lib,
+        memory_retriever=retriever,
+        skill_library=lib,
         skill_executor=mock_executor,
-        artifacts_root=tmp_path / "runs", max_steps=3,
+        artifacts_root=tmp_path / "runs",
+        max_steps=3,
     )
 
     result = await agent.run("Open Settings", max_retries=1)
@@ -426,8 +459,7 @@ async def test_full_flow_with_mock_llm(tmp_path: Path) -> None:
     assert "Settings is the gear icon" in first_prompt
     assert "Confirm before destructive actions" in first_prompt
 
-    # Trajectory file has correct events
-    events = [json.loads(line) for line in recorder.path.read_text().splitlines()]
-    types = [e["type"] for e in events]
-    assert "metadata" in types
-    assert "result" in types
+    trajectory = json.loads(recorder.path.read_text())
+    result_payload = json.loads((recorder.path.parent / "result.json").read_text())
+    assert trajectory["instruction"] == "Open Settings"
+    assert result_payload["run"]["success"] is True

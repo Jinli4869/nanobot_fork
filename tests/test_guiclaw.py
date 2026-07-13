@@ -42,8 +42,17 @@ from guiclaw.tool_schemas import build_shortcut_tool_defs
 from guiclaw.trajectory.recorder import TrajectoryRecorder
 
 
-def _make_recorder(tmp_path: Path, task: str = "test task") -> TrajectoryRecorder:
-    return TrajectoryRecorder(output_dir=tmp_path / "traj", task=task)
+def _make_recorder(
+    tmp_path: Path,
+    task: str = "test task",
+    *,
+    events: list[dict[str, Any]] | None = None,
+) -> TrajectoryRecorder:
+    return TrajectoryRecorder(
+        output_dir=tmp_path / "traj",
+        task=task,
+        event_callback=events.append if events is not None else None,
+    )
 
 
 def _write_test_png(path: Path, *, size: tuple[int, int] = (32, 32)) -> None:
@@ -2013,7 +2022,8 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
     )
     backend = _SkillTestBackend()
     validator = _RecordingValidator([])
-    recorder = _make_recorder(tmp_path, "subgoal trace")
+    events: list[dict[str, Any]] = []
+    recorder = _make_recorder(tmp_path, "subgoal trace", events=events)
     recorder.start()
     runner = _AgentSubgoalRunner(
         llm=llm,
@@ -2025,8 +2035,7 @@ async def test_agent_subgoal_runner_records_events(tmp_path: Path) -> None:
     )
 
     result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=2)
-    trace_path = recorder.finish(success=True)
-    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    recorder.finish(success=True)
 
     assert result.success is True
     names = [event["type"] for event in events]
@@ -2054,7 +2063,8 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
             LLMResponse(content="Invalid again", tool_calls=None),
         ]
     )
-    recorder = _make_recorder(tmp_path, "subgoal trace failure")
+    events: list[dict[str, Any]] = []
+    recorder = _make_recorder(tmp_path, "subgoal trace failure", events=events)
     recorder.start()
     runner = _AgentSubgoalRunner(
         llm=llm,
@@ -2066,8 +2076,7 @@ async def test_agent_subgoal_runner_records_parse_failure(tmp_path: Path) -> Non
     )
 
     result = await runner.run_subgoal("Settings screen visible", screenshot, max_steps=1)
-    trace_path = recorder.finish(success=True)
-    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    recorder.finish(success=True)
 
     assert result.success is False
     assert result.steps_taken == 0
@@ -2106,8 +2115,8 @@ async def test_agent_subgoal_runner_retries_parse_without_consuming_step(tmp_pat
     assert len(llm.calls) == 2
 
 
-def test_recorder_metrics_include_skill_and_agent_totals(tmp_path: Path) -> None:
-    recorder = _make_recorder(tmp_path, "skill plus agent metrics")
+def test_recorder_keeps_step_usage_once_in_trajectory_and_result(tmp_path: Path) -> None:
+    recorder = _make_recorder(tmp_path, "compact usage")
     recorder.start()
     recorder.record_event(
         "skill_step",
@@ -2122,52 +2131,40 @@ def test_recorder_metrics_include_skill_and_agent_totals(tmp_path: Path) -> None
         action={"action_type": "done"},
         model_output="done",
         token_usage={"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
-        duration_s=0.5,
     )
 
-    recorder.finish(
-        success=True,
-        token_usage={"prompt_tokens": 8, "completion_tokens": 3, "total_tokens": 11},
-    )
+    recorder.finish(success=True)
 
-    assert recorder.metrics_path is not None
-    metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
-    assert metrics["token_usage"] == {
-        "prompt_tokens": 8,
-        "completion_tokens": 3,
-        "total_tokens": 11,
+    assert recorder.path is not None
+    trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
+    assert len(trajectory["steps"]) == 1
+    assert trajectory["steps"][0]["token_usage"] == {
+        "prompt_tokens": 5,
+        "completion_tokens": 2,
+        "total_tokens": 7,
     }
-    assert metrics["total_token_usage"] == metrics["token_usage"]
-    assert metrics["total_duration_s"] == metrics["duration_s"]
-    assert metrics["total_steps"] == 1
-    assert metrics["total_recorded_steps"] == 2
-    assert metrics["steps"][0]["event_type"] == "skill_step"
-    assert metrics["steps"][0]["phase"] == "skill"
-    assert metrics["steps"][0]["skill_id"] == "code:open_menu"
-    assert metrics["steps"][1]["event_type"] == "step"
-    assert metrics["steps"][1]["phase"] == "agent"
-    assert metrics["phase_metrics"]["skill"]["token_usage"]["total_tokens"] == 4
-    assert metrics["phase_metrics"]["agent"]["token_usage"]["total_tokens"] == 7
+    result = json.loads((recorder.path.parent / "result.json").read_text(encoding="utf-8"))
+    assert result["run"]["token_usage"] == trajectory["steps"][0]["token_usage"]
+    assert not (recorder.path.parent / "gui_metrics.json").exists()
 
 
-def test_recorder_metrics_prefers_step_usage_over_explicit_finish_usage(tmp_path: Path) -> None:
+def test_recorder_result_prefers_step_usage_over_explicit_finish_usage(tmp_path: Path) -> None:
     recorder = _make_recorder(tmp_path, "step usage wins over explicit")
     recorder.start()
     recorder.record_step(
         action={"action_type": "wait", "duration_ms": 1000},
         model_output="wait",
         token_usage={"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
-        duration_s=0.4,
     )
-    recorder.finish(
-        success=True,
-        token_usage={"prompt_tokens": 99, "completion_tokens": 88, "total_tokens": 187},
-    )
+    recorder.finish(success=True)
 
-    assert recorder.metrics_path is not None
-    metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
-    assert metrics["token_usage"] == {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
-    assert metrics["total_token_usage"] == metrics["token_usage"]
+    assert recorder.path is not None
+    result = json.loads((recorder.path.parent / "result.json").read_text(encoding="utf-8"))
+    assert result["run"]["token_usage"] == {
+        "prompt_tokens": 2,
+        "completion_tokens": 1,
+        "total_tokens": 3,
+    }
 
 
 @pytest.mark.asyncio
@@ -2326,9 +2323,9 @@ def test_agent_builds_history_turn_from_step_result(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_records_completed_step_to_both_trajectory_outputs(tmp_path: Path) -> None:
+async def test_agent_records_only_compact_completed_step(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
-    screenshot = run_dir / "screenshots" / "step_001.png"
+    screenshot = run_dir / "screenshots" / "001_tap.png"
     _write_test_png(screenshot)
     observation = Observation(
         screenshot_path=str(screenshot),
@@ -2368,16 +2365,14 @@ async def test_agent_records_completed_step_to_both_trajectory_outputs(tmp_path:
         result=result,
     )
 
-    trace_event = json.loads((run_dir / "trace.jsonl").read_text(encoding="utf-8"))
-    assert trace_event["event"] == "step"
-    assert trace_event["action"]["action_type"] == "tap"
+    assert not (run_dir / "trace.jsonl").exists()
     assert recorder.path is not None
-    recorder_events = [
-        json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()
-    ]
-    assert recorder_events[-1]["type"] == "step"
-    assert recorder_events[-1]["action"]["action_type"] == "tap"
-    assert recorder_events[-1]["token_usage"] == {"total_tokens": 4}
+    trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
+    assert trajectory["steps"][-1]["action"]["action_type"] == "tap"
+    assert trajectory["steps"][-1]["model_output"] == "raw model response"
+    assert trajectory["steps"][-1]["token_usage"] == {"total_tokens": 4}
+    assert "prompt" not in trajectory["steps"][-1]
+    assert "execution" not in trajectory["steps"][-1]
 
 
 def test_agent_finalizes_step_result_with_shared_metrics(tmp_path: Path) -> None:
@@ -2628,7 +2623,7 @@ async def test_agent_done_without_status_with_failure_text_marks_failure(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> None:
+async def test_agent_trajectory_records_only_compact_step_details(tmp_path: Path) -> None:
     llm = _RecordingLLM(
         [
             LLMResponse(
@@ -2658,44 +2653,27 @@ async def test_agent_trace_records_prompt_and_model_details(tmp_path: Path) -> N
 
     assert result.success
     assert result.trace_path is not None
-
-    trace_path = Path(result.trace_path) / "trace.jsonl"
-    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
-    step_event = next(event for event in events if event["event"] == "step")
-
-    assert step_event["prompt"]["task"] == "Open Settings"
-    assert step_event["prompt"]["messages"][0]["role"] == "system"
-    assert step_event["prompt"]["current_observation"]["foreground_app"] == "DryRun"
-    assert step_event["model_output"]["raw_content"] == (
+    assert recorder.path is not None
+    trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
+    assert trajectory["instruction"] == "Open Settings"
+    assert len(trajectory["steps"]) == 2
+    step = trajectory["steps"][0]
+    assert "prompt" not in step
+    assert "messages" not in step
+    assert step["model_output"] == (
         'Thought: Action: wait briefly\nAction: {"action_type": "wait"}'
     )
-    assert step_event["model_output"]["tool_calls"][0]["arguments"]["action_type"] == "wait"
-    assert step_event["model_output"]["parsed_action"]["action_type"] == "wait"
-    assert step_event["execution"]["tool_result"] == "[dry-run] wait"
-    assert recorder.metrics_path is not None
-    metrics = json.loads(recorder.metrics_path.read_text(encoding="utf-8"))
-    assert metrics["task"] == "Open Settings"
-    assert metrics["success"] is True
-    assert metrics["total_steps"] == 2
-    assert metrics["token_usage"] == {
+    assert step["action"]["action_type"] == "wait"
+    assert step["app"] == "DryRun"
+    assert step["token_usage"]["total_tokens"] == 12
+    result_payload = json.loads((recorder.path.parent / "result.json").read_text(encoding="utf-8"))
+    assert result_payload["run"]["success"] is True
+    assert result_payload["run"]["steps_taken"] == 2
+    assert result_payload["run"]["token_usage"] == {
         "prompt_tokens": 18,
         "completion_tokens": 3,
         "total_tokens": 21,
     }
-    assert metrics["total_token_usage"] == metrics["token_usage"]
-    assert metrics["total_duration_s"] == metrics["duration_s"]
-    assert metrics["total_recorded_steps"] == 2
-    assert metrics["steps"][0]["action_type"] == "wait"
-    assert metrics["steps"][0]["token_usage"]["total_tokens"] == 12
-    assert "duration_s" in metrics["steps"][0]
-    image_blocks = [
-        block
-        for message in step_event["prompt"]["messages"]
-        for block in (message.get("content") if isinstance(message.get("content"), list) else [])
-        if isinstance(block, dict) and block.get("type") == "image_url"
-    ]
-    assert image_blocks
-    assert image_blocks[0]["image_url"]["url"] == "<omitted:image-data-url>"
 
 
 @pytest.mark.asyncio
@@ -3619,7 +3597,12 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
             self.calls += 1
             return _mobileworld_response({"action_type": "wait"}, thought=f"wait {self.calls}")
 
-    recorder = _make_recorder(tmp_path, "stagnation retry short-circuit")
+    events: list[dict[str, Any]] = []
+    recorder = _make_recorder(
+        tmp_path,
+        "stagnation retry short-circuit",
+        events=events,
+    )
     llm = _InfiniteWaitLLM()
     agent = GuiAgent(
         llm,
@@ -3636,7 +3619,6 @@ async def test_stagnation_detection_short_circuits_retries(tmp_path: Path) -> No
     assert result.error == "stagnation_detected"
     assert llm.calls == 4
     assert recorder.path is not None
-    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     assert sum(1 for event in events if event["type"] == "attempt_start") == 1
     assert not any(event["type"] == "retry" for event in events)
 
@@ -3879,7 +3861,8 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
                 thought="finish task",
             )
 
-    recorder = _make_recorder(tmp_path, "retry task")
+    events: list[dict[str, Any]] = []
+    recorder = _make_recorder(tmp_path, "retry task", events=events)
     agent = GuiAgent(
         _FlakyLLM(),
         DryRunBackend(),
@@ -3893,7 +3876,6 @@ async def test_agent_records_attempt_exception_and_retry_events(tmp_path: Path) 
     assert result.success
     assert result.error is None
     assert recorder.path is not None
-    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     types = [event["type"] for event in events]
     assert "attempt_start" in types
     assert "attempt_exception" in types
@@ -3922,7 +3904,12 @@ async def test_agent_retries_profile_parse_error_three_times_within_step(tmp_pat
             )
 
     llm = _MalformedThenRecoverLLM()
-    recorder = _make_recorder(tmp_path, "retry malformed profile response")
+    events: list[dict[str, Any]] = []
+    recorder = _make_recorder(
+        tmp_path,
+        "retry malformed profile response",
+        events=events,
+    )
     agent = GuiAgent(
         llm,
         DryRunBackend(),
@@ -3936,7 +3923,6 @@ async def test_agent_retries_profile_parse_error_three_times_within_step(tmp_pat
     assert result.success
     assert llm.calls == 4
     assert recorder.path is not None
-    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     assert not any(event["type"] == "attempt_exception" for event in events)
 
 
@@ -3958,7 +3944,12 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
                 thought="finish task",
             )
 
-    recorder = _make_recorder(tmp_path, "retry malformed tool call")
+    events: list[dict[str, Any]] = []
+    recorder = _make_recorder(
+        tmp_path,
+        "retry malformed tool call",
+        events=events,
+    )
     llm = _MalformedToolCallLLM()
     agent = GuiAgent(
         llm,
@@ -3972,7 +3963,6 @@ async def test_agent_records_model_response_on_attempt_exception(tmp_path: Path)
 
     assert result.success
     assert recorder.path is not None
-    events = [json.loads(line) for line in recorder.path.read_text(encoding="utf-8").splitlines()]
     assert not any(event["type"] == "attempt_exception" for event in events)
     assert llm.calls == 6
 
@@ -4151,7 +4141,9 @@ async def test_agent_uses_history_summary_and_recent_image_window(tmp_path: Path
 
 
 @pytest.mark.asyncio
-async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_path: Path) -> None:
+async def test_agent_uses_mobileworld_raw_response_for_history_and_compact_trace(
+    tmp_path: Path,
+) -> None:
     llm = _RecordingLLM(
         [
             LLMResponse(
@@ -4168,10 +4160,11 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
             ),
         ]
     )
+    recorder = _make_recorder(tmp_path, "tool summary")
     agent = GuiAgent(
         llm,
         DryRunBackend(),
-        trajectory_recorder=_make_recorder(tmp_path, "tool summary"),
+        trajectory_recorder=recorder,
         artifacts_root=tmp_path / "runs",
         max_steps=2,
         history_image_window=1,
@@ -4189,20 +4182,10 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_trace(tmp_pat
         for block in second_call[3]["content"]
     )
 
-    trace_path = next((tmp_path / "runs").glob("*/trace.jsonl"))
-    step_events = [
-        json.loads(line)
-        for line in trace_path.read_text(encoding="utf-8").splitlines()
-        if '"event": "step"' in line
-    ]
-    assert step_events[0]["action_intent"].startswith("Thought: Action: Tap login button")
-    assert step_events[0]["state_summary"].startswith("Thought: Action: Tap login button")
-    assert step_events[1]["model_output"]["action_intent"].startswith(
-        "Thought: Action: Finish task"
-    )
-    assert step_events[1]["model_output"]["state_summary"].startswith(
-        "Thought: Action: Finish task"
-    )
+    assert not list((tmp_path / "runs").rglob("trace.jsonl"))
+    trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
+    assert trajectory["steps"][0]["model_output"].startswith("Thought: Action: Tap login button")
+    assert trajectory["steps"][1]["model_output"].startswith("Thought: Action: Finish task")
 
 
 @pytest.mark.asyncio
@@ -4306,10 +4289,10 @@ async def test_agent_waits_for_ui_to_settle_before_observing(
 
     assert result.success
     assert events[:4] == [
-        "observe:step_000.png",
+        "observe:000_initial.png",
         "execute:tap",
         "sleep:0.5",
-        "observe:step_001.png",
+        "observe:001_tap.png",
     ]
 
 

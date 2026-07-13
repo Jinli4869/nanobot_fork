@@ -10,7 +10,6 @@ related infrastructure — not by the main agent loop directly.
 from __future__ import annotations
 
 import logging
-import time
 from pathlib import Path
 
 from guiclaw.interfaces import DeviceBackend
@@ -27,11 +26,15 @@ class AgentScreenshotProvider:
         self._artifacts_root = Path(artifacts_root)
         self._counter = 0
 
+    def set_artifacts_root(self, artifacts_root: Path) -> None:
+        self._artifacts_root = Path(artifacts_root)
+        self._counter = 0
+
     async def get_observation(self) -> Observation | None:
         self._counter += 1
-        skill_dir = self._artifacts_root / "skill_screenshots"
+        skill_dir = self._artifacts_root / "screenshots"
         skill_dir.mkdir(parents=True, exist_ok=True)
-        path = skill_dir / f"skill_{int(time.time() * 1000)}_{self._counter}.png"
+        path = skill_dir / f"skill_{self._counter:03d}.png"
         try:
             return await self._backend.observe(path)
         except Exception as exc:

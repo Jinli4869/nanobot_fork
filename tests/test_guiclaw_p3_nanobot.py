@@ -3,6 +3,7 @@
 Wave 0 starts with xfail stubs for the full phase boundary, then later tasks in
 this plan promote the adapter/config coverage to real passing tests.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -131,21 +132,21 @@ def _install_code_skill_trace_run(monkeypatch: pytest.MonkeyPatch) -> None:
             action={"action_type": "tap", "x": 100, "y": 100, "text": "Menu"},
             model_output="tap menu",
             foreground_app="Settings",
-            screen_width=1080,
-            screen_height=1920,
-            platform="dry-run",
-            observation_extra={
-                "visible_text": ["Menu"],
-                "resource_ids": ["dryrun:id/menu"],
-                "ui_tree": [
-                    {
-                        "text": "Menu",
-                        "resource_id": "dryrun:id/menu",
-                        "clickable": True,
-                        "enabled": True,
-                        "bounds": "[0,0][200,200]",
-                    }
-                ],
+            interaction_target={
+                "selector": {"resource_id": "dryrun:id/menu"},
+                "state_contract": {
+                    "anchor": {"app_package": "Settings"},
+                    "signature": {
+                        "required": [
+                            {
+                                "selector": {"resource_id": "dryrun:id/menu"},
+                                "state": ["visible", "clickable"],
+                            }
+                        ],
+                        "forbidden": [],
+                    },
+                    "mask_rules": [],
+                },
             },
             token_usage={"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
         )
@@ -248,7 +249,10 @@ def test_gui_tool_registered(tmp_workspace: Path) -> None:
     assert any(defn["function"]["name"] == tool.name for defn in definitions)
     assert tool.description
     assert "do not invent low-level UI paths" in tool.description
-    assert "avoid speculative step-by-step UI navigation" in tool.parameters["properties"]["task"]["description"]
+    assert (
+        "avoid speculative step-by-step UI navigation"
+        in tool.parameters["properties"]["task"]["description"]
+    )
 
 
 def test_agent_loop_registers_gui_tool_with_gui_runtime_override(tmp_workspace: Path) -> None:
@@ -261,7 +265,9 @@ def test_agent_loop_registers_gui_tool_with_gui_runtime_override(tmp_workspace: 
     main_provider.generation = SimpleNamespace(max_tokens=4096)
     gui_provider = MagicMock()
 
-    with patch("nanobot.agent.tools.gui.GuiSubagentTool", return_value=MagicMock()) as mock_gui_tool:
+    with patch(
+        "nanobot.agent.tools.gui.GuiSubagentTool", return_value=MagicMock()
+    ) as mock_gui_tool:
         AgentLoop(
             bus=bus,
             provider=main_provider,
@@ -430,7 +436,9 @@ def test_gui_config_validation() -> None:
         == "mobileworld_general_e2e_compact_skill"
     )
     assert GuiConfig.model_validate({"agentProfile": "gelab"}).agent_profile == "gelab"
-    assert GuiConfig.model_validate({"imageScaleRatio": 0.25}).image_scale_ratio == pytest.approx(0.25)
+    assert GuiConfig.model_validate({"imageScaleRatio": 0.25}).image_scale_ratio == pytest.approx(
+        0.25
+    )
     assert GuiConfig.model_validate({"stagnationLimit": 3}).stagnation_limit == 3
     with pytest.raises(ValidationError):
         GuiConfig(backend="invalid")
@@ -492,7 +500,7 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     )
     result = json.loads(await tool.execute(task="Open Settings"))
 
-    traces = list((tmp_workspace / "gui_runs").glob("**/*.jsonl"))
+    run_dirs = list((tmp_workspace / "gui_runs").iterdir())
     assert set(result) == {
         "success",
         "summary",
@@ -501,11 +509,8 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
         "steps_taken",
         "error",
         "post_run_state",
-        "metrics_path",
         "duration_s",
         "token_usage",
-        "total_duration_s",
-        "total_token_usage",
         "workflow_mode",
     }
     assert result["success"] is True
@@ -514,15 +519,24 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     assert result["steps_taken"] == 2
     assert result["error"] is None
     assert Path(result["trace_path"]).is_file()
-    assert result["metrics_path"] is not None
-    assert Path(result["metrics_path"]).is_file()
     assert result["duration_s"] is not None
     assert isinstance(result["token_usage"], dict)
-    assert result["total_duration_s"] == result["duration_s"]
-    assert result["total_token_usage"] == result["token_usage"]
     assert result["workflow_mode"] == "single"
-    assert traces
-    assert any(path.name == "trace.jsonl" for path in traces)
+    assert len(run_dirs) == 1
+    run_dir = run_dirs[0]
+    trajectory = json.loads((run_dir / "traj.json").read_text(encoding="utf-8"))
+    compact_result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    assert trajectory["instruction"] == "Open Settings"
+    assert [step["action"]["action_type"] for step in trajectory["steps"]] == [
+        "wait",
+        "done",
+    ]
+    assert compact_result["run"]["success"] is True
+    assert set(compact_result) >= {"run", "subtasks"}
+    screenshots = run_dir / "subtasks" / "01_Open_Settings" / "attempt_01" / "screenshots"
+    assert (screenshots / "000_initial.png").is_file()
+    assert (screenshots / "001_wait.png").is_file()
+    assert not list(run_dir.rglob("*.jsonl"))
 
 
 @pytest.mark.asyncio
@@ -568,7 +582,11 @@ async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
     plan_workflow.assert_awaited_once()
     assert plan_workflow.await_args.args == ("Open Settings",)
     assert plan_workflow.await_args.kwargs["router_context"] is None
-    run_task.assert_awaited_once_with(tool._backend, "Open Settings")
+    run_task.assert_awaited_once()
+    assert run_task.await_args.args == (tool._backend, "Open Settings")
+    assert run_task.await_args.kwargs["original_task"] == "Open Settings"
+    assert run_task.await_args.kwargs["subtask_index"] == 1
+    assert run_task.await_args.kwargs["run_root"].parent == tmp_workspace / "gui_runs"
     assert result["success"] is True
     assert result["summary"] == "done"
     assert result["workflow_mode"] == "single"
@@ -781,14 +799,20 @@ async def test_gui_task_multi_app_workflow_injects_blackboard_values(
         AsyncMock(return_value={"code": "1234"}),
     )
 
+    run_roots: list[Path] = []
+    subtask_indexes: list[int] = []
+
     async def fake_run_task(active_backend: Any, task: str, **kwargs: Any) -> str:
-        del active_backend, kwargs
+        del active_backend
+        run_root = kwargs["run_root"]
+        run_roots.append(run_root)
+        subtask_indexes.append(kwargs["subtask_index"])
         return json.dumps(
             {
                 "success": True,
                 "summary": f"completed: {task}",
                 "model_summary": None,
-                "trace_path": None,
+                "trace_path": str(run_root / "traj.json"),
                 "steps_taken": 1,
                 "error": None,
             }
@@ -805,11 +829,25 @@ async def test_gui_task_multi_app_workflow_injects_blackboard_values(
     assert "You must use these known values if relevant: code=1234" in second_task
     assert run_task.await_args_list[0].kwargs["app_hint"] == "messages"
     assert run_task.await_args_list[1].kwargs["app_hint"] == "browser"
+    assert run_roots[0] == run_roots[1]
+    assert run_roots[0].parent == tmp_workspace / "gui_runs"
+    assert subtask_indexes == [1, 2]
+    assert all(
+        call.kwargs["original_task"] == "Copy a code from Messages into Browser"
+        for call in run_task.await_args_list
+    )
+    assert len(list((tmp_workspace / "gui_runs").iterdir())) == 1
     assert result["success"] is True
+    assert result["trace_path"] == str(run_roots[0] / "traj.json")
     assert result["workflow_mode"] == "multi_app"
     assert result["blackboard"] == {"code": "1234"}
     assert result["subtasks"][0]["app_hint"] == "messages"
     assert result["subtasks"][1]["app_hint"] == "browser"
+    saved_result = json.loads((run_roots[0] / "result.json").read_text(encoding="utf-8"))
+    assert saved_result["run"]["success"] is True
+    assert saved_result["run"]["workflow_mode"] == "multi_app"
+    assert saved_result["blackboard"] == {"code": "1234"}
+    assert len(saved_result["subtasks"]) == 2
 
 
 @pytest.mark.asyncio
@@ -949,7 +987,9 @@ async def test_gui_task_returns_state_note_for_partial_run(
 
     original_run = GUIClawAgent.run
 
-    async def _single_attempt_run(self, task: str, *, max_retries: int = 3, app_hint: str | None = None):
+    async def _single_attempt_run(
+        self, task: str, *, max_retries: int = 3, app_hint: str | None = None
+    ):
         del max_retries
         return await original_run(self, task, max_retries=1, app_hint=app_hint)
 
@@ -985,11 +1025,8 @@ async def test_gui_task_returns_state_note_for_partial_run(
         "steps_taken",
         "error",
         "post_run_state",
-        "metrics_path",
         "duration_s",
         "token_usage",
-        "total_duration_s",
-        "total_token_usage",
         "workflow_mode",
     }
     assert result["success"] is False
@@ -1000,12 +1037,11 @@ async def test_gui_task_returns_state_note_for_partial_run(
     assert "Resume:" in result["summary"]
     assert result["post_run_state"]["current_state"] == result["summary"]
     assert result["error"] == "max_steps_exceeded"
-    assert result["metrics_path"] is not None
-    assert Path(result["metrics_path"]).is_file()
+    trace_path = Path(result["trace_path"])
+    assert trace_path.name == "traj.json"
+    assert (trace_path.parent / "result.json").is_file()
     assert result["duration_s"] is not None
     assert isinstance(result["token_usage"], dict)
-    assert result["total_duration_s"] == result["duration_s"]
-    assert result["total_token_usage"] == result["token_usage"]
     assert result["workflow_mode"] == "single"
 
 
@@ -1021,19 +1057,23 @@ async def test_auto_skill_extraction(tmp_workspace: Path, monkeypatch: pytest.Mo
         trace_path: Path,
         *,
         is_success: bool,
+        subtask_index: int,
     ):
         del self
         extract_calls.append(
             {
                 "trace_path": trace_path,
                 "is_success": is_success,
+                "subtask_index": subtask_index,
             }
         )
         return [_skill_candidate()]
 
     _install_code_skill_trace_run(monkeypatch)
     monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_from_file_multi)
-    monkeypatch.setattr("guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
+    monkeypatch.setattr(
+        "guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value="")
+    )
 
     provider = _MockNanobotProvider([])
     tool = GuiSubagentTool(
@@ -1055,25 +1095,29 @@ async def test_auto_skill_extraction(tmp_workspace: Path, monkeypatch: pytest.Mo
     assert len(extract_calls) == 1
     assert extract_calls[0]["is_success"] is True
     assert extract_calls[0]["trace_path"] == Path(result["trace_path"])
-    extraction_result = json.loads(
-        (Path(result["trace_path"]).parent / "extraction_result.json").read_text(encoding="utf-8")
+    run_result = json.loads(
+        (Path(result["trace_path"]).parent / "result.json").read_text(encoding="utf-8")
     )
+    extraction_result = run_result["extraction"]["1"]
     assert extraction_result["status"] == "processed_code"
-    assert extraction_result["platform"] == "dry-run"
-    assert extraction_result["task"] == "Open calculator"
+    assert run_result["subtasks"][0]["task"] == "Open calculator"
     assert "open_settings" in extraction_result["updated_functions"]
     assert (tmp_workspace / "gui_skills" / "skills.py").is_file()
 
 
 @pytest.mark.asyncio
-async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_auto_skill_extraction_none_is_graceful(
+    tmp_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
     from guiclaw.skills.extractor import SkillExtractor
 
     extract = AsyncMock(return_value=[])
     _install_code_skill_trace_run(monkeypatch)
     monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", extract)
-    monkeypatch.setattr("guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
+    monkeypatch.setattr(
+        "guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value="")
+    )
 
     provider = _MockNanobotProvider([])
     tool = GuiSubagentTool(
@@ -1094,9 +1138,10 @@ async def test_auto_skill_extraction_none_is_graceful(tmp_workspace: Path, monke
 
     assert result["success"] is True
     extract.assert_awaited_once()
-    extraction_result = json.loads(
-        (Path(result["trace_path"]).parent / "extraction_result.json").read_text(encoding="utf-8")
+    run_result = json.loads(
+        (Path(result["trace_path"]).parent / "result.json").read_text(encoding="utf-8")
     )
+    extraction_result = run_result["extraction"]["1"]
     assert extraction_result["status"] == "no_candidate"
 
 
@@ -1114,7 +1159,9 @@ async def test_auto_skill_extraction_persists_to_normalized_bucket(
 
     _install_code_skill_trace_run(monkeypatch)
     monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_multi)
-    monkeypatch.setattr("guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value=""))
+    monkeypatch.setattr(
+        "guiclaw.postprocessing.PostRunProcessor._summarize_trajectory", AsyncMock(return_value="")
+    )
 
     provider = _MockNanobotProvider([])
     tool = GuiSubagentTool(

@@ -75,6 +75,10 @@ class SubgoalRunner:
         self._step_timeout = step_timeout
         self._image_scale_ratio = image_scale_ratio
 
+    def set_artifacts_root(self, artifacts_root: Path) -> None:
+        self._artifacts_root = Path(artifacts_root)
+        self._step_counter = 0
+
     async def run_subgoal(
         self,
         goal: str,
@@ -200,9 +204,9 @@ class SubgoalRunner:
                 await asyncio.sleep(settle)
 
             self._step_counter += 1
-            subgoal_dir = self._artifacts_root / "subgoal_screenshots"
+            subgoal_dir = self._artifacts_root / "screenshots"
             subgoal_dir.mkdir(parents=True, exist_ok=True)
-            next_path = subgoal_dir / f"subgoal_{int(time.time() * 1000)}_{self._step_counter}.png"
+            next_path = subgoal_dir / f"subgoal_{self._step_counter:03d}_{action.action_type}.png"
             screenshot_path: str | None = None
             try:
                 obs = await self._backend.observe(next_path, timeout=self._step_timeout)
@@ -335,9 +339,9 @@ class SubgoalRunner:
     def _ensure_screenshot_path(self, screenshot: Path | bytes) -> Path:
         if isinstance(screenshot, Path):
             return screenshot
-        subgoal_dir = self._artifacts_root / "subgoal_screenshots"
+        subgoal_dir = self._artifacts_root / "screenshots"
         subgoal_dir.mkdir(parents=True, exist_ok=True)
-        path = subgoal_dir / f"subgoal_input_{int(time.time() * 1000)}_{self._step_counter}.png"
+        path = subgoal_dir / f"subgoal_input_{self._step_counter:03d}.png"
         path.write_bytes(screenshot)
         return path
 

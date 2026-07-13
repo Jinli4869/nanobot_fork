@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -40,7 +41,7 @@ def _require_imports() -> None:
 def _make_artifacts(workspace: Path, run_id: str) -> tuple[Path, Path]:
     run_dir = workspace / "gui_runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir / "trace.jsonl", run_dir / "log.jsonl"
+    return run_dir / "traj.json", run_dir / "log.jsonl"
 
 
 def _make_app(workspace: Path, run_id: str) -> TestClient:
@@ -72,19 +73,36 @@ def test_trace_endpoint_returns_filtered_events_for_browser_consumers(tmp_path: 
 
     trace_path, _ = _make_artifacts(tmp_path, "run-trace-001")
     trace_path.write_text(
-        "\n".join(
-            [
-                '{"type":"metadata","timestamp_iso":"2026-03-21T12:00:00Z","task":"Open URL https://example.com/docs","trace_path":"/tmp/hidden","summary":"'
-                + ("metadata summary " * 30)
-                + '"}',
-                '{"type":"step","event_id":"evt-step-1","timestamp_iso":"2026-03-21T12:00:10Z","step_index":1,"status":"running","summary":"'
-                + ("step summary " * 30)
-                + '","prompt":{"task":"secret"},"model_output":{"raw_content":"hidden"},"screenshot":"frame-001.png"}',
-                '{"type":"attempt_result","event_id":"evt-result-1","timestamp_iso":"2026-03-21T12:00:20Z","success":true,"status":"succeeded","summary":"'
-                + ("done summary " * 30)
-                + '","steps_taken":3,"trace_path":"/tmp/secret/trace.jsonl"}',
-            ]
+        json.dumps(
+            {
+                "instruction": "Open URL https://example.com/docs",
+                "platform": "desktop",
+                "subtasks": [{"subtask": 1, "task": "Open URL https://example.com/docs"}],
+                "steps": [
+                    {
+                        "step": 1,
+                        "subtask": 1,
+                        "attempt": 1,
+                        "phase": "agent",
+                        "model_output": "hidden model reasoning",
+                        "action": {"action_type": "tap"},
+                        "screenshot": "frame-001.png",
+                    }
+                ],
+                "screenshots": [],
+            }
         ),
+        encoding="utf-8",
+    )
+    subtask = {
+        "subtask": 1,
+        "task": "Open URL https://example.com/docs",
+        "success": True,
+        "summary": "done summary " * 30,
+        "steps_taken": 1,
+    }
+    (trace_path.parent / "result.json").write_text(
+        json.dumps({"run": subtask, "subtasks": [subtask]}),
         encoding="utf-8",
     )
 
@@ -98,7 +116,7 @@ def test_trace_endpoint_returns_filtered_events_for_browser_consumers(tmp_path: 
     assert [event["event_type"] for event in payload["events"]] == [
         "metadata",
         "step",
-        "attempt_result",
+        "result",
     ]
     assert set(payload["events"][1]) <= {
         "event_id",
@@ -115,8 +133,7 @@ def test_trace_endpoint_returns_filtered_events_for_browser_consumers(tmp_path: 
     assert "model_output" not in response.text
     assert "trace_path" not in response.text
     assert "screenshot" not in response.text
-    assert len(payload["events"][0]["summary"]) == 240
-    assert len(payload["events"][1]["summary"]) == 240
+    assert len(payload["events"][2]["summary"]) == 240
 
 
 def test_log_endpoint_returns_filtered_lines_without_raw_paths_or_prompts(tmp_path: Path) -> None:
@@ -124,15 +141,14 @@ def test_log_endpoint_returns_filtered_lines_without_raw_paths_or_prompts(tmp_pa
 
     trace_path, log_path = _make_artifacts(tmp_path, "run-trace-002")
     trace_path.write_text(
-        "\n".join(
-            [
-                '{"type":"attempt_exception","timestamp_iso":"2026-03-21T12:01:00Z","error_message":"'
-                + ("settings panel timed out " * 20)
-                + '","error_type":"RuntimeError","prompt":{"task":"hidden"}}',
-                '{"type":"result","timestamp_iso":"2026-03-21T12:01:10Z","success":false,"error":"'
-                + ("backend failed " * 30)
-                + '","trace_path":"/tmp/secret/run"}',
-            ]
+        json.dumps(
+            {
+                "instruction": "Open settings",
+                "platform": "desktop",
+                "subtasks": [{"subtask": 1, "task": "Open settings"}],
+                "steps": [],
+                "screenshots": [],
+            }
         ),
         encoding="utf-8",
     )
