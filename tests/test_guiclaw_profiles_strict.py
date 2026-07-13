@@ -102,6 +102,20 @@ def test_default_messages_use_native_opencua_contract(tmp_path: Path) -> None:
     assert messages[1]["content"][-1]["type"] == "image_url"
 
 
+def test_default_qwen_prompt_describes_relative_grid(tmp_path: Path) -> None:
+    messages = build_profile_messages(
+        "default",
+        task="Open Settings",
+        current_observation=_observation(tmp_path / "relative.png"),
+        history=[],
+        model_name="qwen-vl-max",
+        history_image_window=3,
+    )
+
+    assert "1000x1000 relative coordinate grid" in messages[0]["content"]
+    assert "relative=true" in messages[0]["content"]
+
+
 def test_default_normalization_preserves_native_call_with_text() -> None:
     response = LLMResponse(
         content="Action: Tap Settings",

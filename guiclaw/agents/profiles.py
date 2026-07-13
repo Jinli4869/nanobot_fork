@@ -166,6 +166,7 @@ def build_profile_messages(
             task=task,
             current_observation=current_observation,
             history=history,
+            model_name=model_name,
         )
     if _is_general_e2e_profile(profile):
         return _build_general_e2e_messages(
@@ -350,9 +351,20 @@ def _build_default_messages(
     task: str,
     current_observation: Observation,
     history: list[Any],
+    model_name: str,
 ) -> list[dict[str, Any]]:
     contract = prompt_contract_for_profile("default")
     tool_schema = json.dumps(COMPUTER_USE_TOOL, ensure_ascii=False)
+    if coordinate_mode_for_profile("default", model_name) == "relative_999":
+        coordinate_rules = (
+            "- The screen uses a 1000x1000 relative coordinate grid.",
+            "- For coordinate-based actions, use values in [0, 999] and set `relative=true`.",
+        )
+    else:
+        coordinate_rules = (
+            "- Use absolute pixel coordinates based on the current screenshot and screen metadata.",
+            "- Only use `relative=true` when the host explicitly requests relative coordinates.",
+        )
     system_lines = [
         "# Tools",
         "",
@@ -369,7 +381,13 @@ def _build_default_messages(
         "- Some actions may take time to complete, so you may need to wait and observe again.",
         "- Use the latest screenshot as the source of truth.",
         "- Click the center of the intended UI element unless the task clearly requires an edge.",
-        "- After opening an app, verify that the foreground page belongs to the target app.",
+        "- When opening apps from home screen, do not rely on icon color alone; prefer exact text labels or app search.",
+        "- After opening an app, verify the foreground page belongs to the target app before continuing.",
+        "- Treat user constraints as tiered constraints: key constraints (date/time/location/price cap/model) must be exact.",
+        "- For size/quantity constraints, prefer exact match; small near-matches may be used only with explicit disclosure in the final response.",
+        "- If only a far mismatch is available, do not substitute silently; ask for confirmation via request_intervention or report failure.",
+        "- Do not call done(status=\"success\") unless key constraints are satisfied and any near-match is clearly disclosed.",
+        *coordinate_rules,
         "",
         "# Response format",
         "",
@@ -379,9 +397,9 @@ def _build_default_messages(
         *contract["rules"],
     ]
     progress = [
-        turn.action_summary.strip()
+        text
         for turn in history[-3:]
-        if str(getattr(turn, "action_summary", "")).strip()
+        if (text := str(getattr(turn, "action_summary", "")).strip())
     ]
     user_lines = [f"Instruction: {task}"]
     if progress:
