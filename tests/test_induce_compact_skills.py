@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from guiclaw.skills.data import Skill, SkillStep, collect_placeholder_names
 from guiclaw.skills.flat import C, R
-from scripts.induce_compact_skills import (
-    _has_terminal_action,
-    cluster_compact_skills,
+from guiclaw.skills.induction import (
     compactify_skill,
-    merge_into_output,
 )
+from guiclaw.skills.induction import (
+    has_terminal_action as _has_terminal_action,
+)
+from scripts.induce_compact_skills import cluster_compact_skills, merge_into_output
 
 
 def _step(
@@ -268,3 +271,66 @@ class TestMergeOutput:
         assert not compiled.errors
         assert len(compiled.skills) == 1
         assert compiled.skills[0].success_count == 2
+
+
+class TestPackagedCompactInduction:
+    def test_success_source_is_compact_and_contributes_support(self) -> None:
+        from guiclaw.skills.induction import compactify_skill as compactify_online
+
+        candidate = compactify_online(
+            _skill(_step("tap", "Search"), _step("input_text", "{{query}}")),
+            is_success=True,
+        )
+
+        assert candidate is not None
+        assert candidate.tags == ("compact", "compact_extracted")
+        assert candidate.skill_id == "compact:com.gmailclone:fill_form"
+        assert candidate.success_count == 1
+
+    def test_failure_terminal_action_is_rejected(self) -> None:
+        from guiclaw.skills.induction import compactify_skill as compactify_online
+
+        candidate = compactify_online(
+            _skill(_step("tap", "Message"), _step("tap", "send_button")),
+            is_success=False,
+        )
+
+        assert candidate is None
+
+    @pytest.mark.asyncio
+    async def test_trace_entry_uses_codegen_result_for_single_app(self, tmp_path: Path) -> None:
+        from guiclaw.skills import induction
+
+        codegen_result = type("Codegen", (), {"steps": [object()]})()
+        extracted = _skill(_step("tap", "Search"), _step("input_text", "{{query}}"))
+
+        class Extractor:
+            def __init__(self) -> None:
+                self.seen_result = None
+
+            async def extract_from_codegen_result_multi(
+                self,
+                result: object,
+                *,
+                is_success: bool,
+            ) -> list[Skill]:
+                assert is_success is True
+                self.seen_result = result
+                return [extracted]
+
+        extractor = Extractor()
+        original = induction.codegen_trajectory
+        induction.codegen_trajectory = lambda path, subtask_index=1: codegen_result
+        try:
+            skills = await induction.induce_compact_skills_from_trace(
+                extractor,
+                tmp_path / "traj.json",
+                is_success=True,
+                subtask_index=2,
+            )
+        finally:
+            induction.codegen_trajectory = original
+
+        assert extractor.seen_result is codegen_result
+        assert len(skills) == 1
+        assert skills[0].success_count == 1

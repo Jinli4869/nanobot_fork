@@ -58,6 +58,9 @@ from guiclaw.interfaces import LLMResponse
 from guiclaw.skills.data import Skill, collect_placeholder_names
 from guiclaw.skills.extractor import SkillExtractor
 from guiclaw.skills.flat import compile_flat_skills, export_skills_to_source
+from guiclaw.skills.induction import (
+    induce_compact_skills_from_trace,
+)
 from guiclaw.skills.state_contract import state_contract_fingerprint
 from guiclaw.skills.trajectory_codegen import codegen_to_extraction_text, codegen_trajectory
 from guiclaw.trajectory.recorder import trajectory_subtask_indices
@@ -71,40 +74,8 @@ from scripts.induce_gui_memory import (
     trace_is_abnormal,
 )
 
-_COMPACT_TAGS: tuple[str, ...] = ("compact", "compact_extracted")
 _FROM_FAILURE_TAG = "from_failure"
-_SCROLL_ACTIONS = frozenset({"scroll", "swipe", "drag"})
 _PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
-#: Irreversible / terminal action labels. A skill mined from a FAILED trajectory
-#: that still contains one of these is rejected — the extractor's prompt forbids
-#: fixing them, but this is the deterministic backstop so a failed terminal suffix
-#: can never leak into a compact skill via ``--include-failures``.
-_TERMINAL_TARGET_WORDS = frozenset({
-    "send", "publish", "post", "purchase", "checkout", "pay", "submit",
-    "delete", "unfollow", "buy", "order", "confirm",
-})
-_TERMINAL_TARGET_RE = re.compile(
-    r"\b(?:" + "|".join(re.escape(w) for w in sorted(_TERMINAL_TARGET_WORDS)) + r")\b"
-)
-_CAMEL_BOUNDARY_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-
-
-def _normalize_target_text(text: str) -> str:
-    """Lowercase, splitting snake_case / camelCase so word boundaries are reliable.
-
-    ``send_button`` and ``submitOrder`` become ``send button`` / ``submit order``
-    so identifier-style targets cannot evade the terminal-action backstop.
-    """
-    spaced = _CAMEL_BOUNDARY_RE.sub(" ", str(text or "")).replace("_", " ")
-    return spaced.lower()
-
-
-def _has_terminal_action(skill: Skill) -> bool:
-    """True if any step targets an irreversible / terminal action."""
-    return any(
-        _TERMINAL_TARGET_RE.search(_normalize_target_text(getattr(step, "target", "")))
-        for step in skill.steps
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -156,54 +127,6 @@ class _OpenAICompatLLM:
             raw=response,
             usage=usage_dict,
         )
-
-
-# ---------------------------------------------------------------------------
-# Compact post-process
-# ---------------------------------------------------------------------------
-
-
-def compactify_skill(
-    skill: Skill,
-    *,
-    max_steps: int,
-    max_scroll_steps: int,
-) -> Skill | None:
-    """Return a compact-tagged copy of *skill*, or ``None`` if it does not fit.
-
-    A skill fits the compact envelope when it has 2..``max_steps`` steps, uses
-    ``open_app`` only as the first step, and scrolls at most ``max_scroll_steps``
-    times.
-
-    Step guards (``valid_state`` and ``state_contract``) are preserved verbatim.
-    Whether to *skip* small-model NL ``valid_state`` validation for compact skills
-    is a runtime policy (tag-based tiering in the executor), not something baked
-    into the skill definition — rewriting ``valid_state`` here would strip the only
-    guard from uncontracted and ``optional=True`` (transient popup) steps and make
-    them execute unconditionally.
-    """
-    steps = tuple(getattr(skill, "steps", ()) or ())
-    if not 2 <= len(steps) <= max_steps:
-        return None
-
-    scroll_count = 0
-    for index, step in enumerate(steps):
-        action_type = normalize_action_type(step.action_type)
-        if action_type == "open_app" and index != 0:
-            return None
-        if action_type in _SCROLL_ACTIONS:
-            scroll_count += 1
-            if scroll_count > max_scroll_steps:
-                return None
-
-    name = str(getattr(skill, "name", "") or "skill")
-    app = str(getattr(skill, "app", "") or "")
-    return replace(
-        skill,
-        skill_id=f"compact:{app}:{name}",
-        name=name,
-        tags=_COMPACT_TAGS,
-    )
 
 
 def _literal_target(text: str) -> str:
@@ -362,28 +285,14 @@ async def induce_from_trace(
     *prefix* of a failed trajectory (its ``_FAILURE_NOTE`` forbids fixing terminal
     actions such as send/pay/delete).
     """
-    result = codegen_trajectory(trace_path, subtask_index=subtask_index)
-    if result is None or not result.steps:
-        return []
-    extracted = await extractor.extract_from_codegen_result_multi(
-        result, is_success=is_success
+    return await induce_compact_skills_from_trace(
+        extractor,
+        trace_path,
+        max_steps=max_steps,
+        max_scroll_steps=max_scroll_steps,
+        is_success=is_success,
+        subtask_index=subtask_index,
     )
-    compact: list[Skill] = []
-    for skill in extracted:
-        candidate = compactify_skill(
-            skill,
-            max_steps=max_steps,
-            max_scroll_steps=max_scroll_steps,
-        )
-        if candidate is None:
-            continue
-        # Deterministic backstop: a skill mined from a failed trajectory must not
-        # carry a terminal/irreversible suffix action (only the succeeded prefix
-        # is reusable). Success traces may legitimately end on such actions.
-        if not is_success and _has_terminal_action(candidate):
-            continue
-        compact.append(candidate)
-    return compact
 
 
 def _discover_task_dirs(args: argparse.Namespace) -> list[Path]:

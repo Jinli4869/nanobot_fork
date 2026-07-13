@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from guiclaw.skills.induction import induce_compact_skills_from_trace
 from guiclaw.trajectory.recorder import load_trajectory_events, update_result_section
 
 logger = logging.getLogger(__name__)
@@ -368,7 +369,8 @@ class PostRunProcessor:
             from guiclaw.skills.extractor import SkillExtractor
 
             extractor = SkillExtractor(llm=self._llm)
-            skills = await extractor.extract_from_file_multi(
+            skills = await induce_compact_skills_from_trace(
+                extractor,
                 trace_path,
                 is_success=is_success,
                 subtask_index=subtask_index,

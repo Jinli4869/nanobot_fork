@@ -977,7 +977,6 @@ async def test_postprocessor_uses_add_or_merge_for_extracted_flat_skills(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from guiclaw.postprocessing import PostRunProcessor
-    from guiclaw.skills.extractor import SkillExtractor
 
     store = tmp_path / "skills"
     existing = _make_skill(
@@ -998,17 +997,20 @@ async def test_postprocessor_uses_add_or_merge_for_extracted_flat_skills(
     )
     FlatSkillLibrary(store_dir=store).add(existing)
 
-    async def fake_extract_from_file_multi(
-        self: SkillExtractor,
-        trajectory_path: Path,
+    async def fake_induce_compact_skills_from_trace(
+        extractor: object,
+        trace_path: Path,
         *,
         is_success: bool = True,
         subtask_index: int = 1,
     ) -> list[Skill]:
-        del self, trajectory_path, is_success, subtask_index
+        del extractor, trace_path, is_success, subtask_index
         return [incoming]
 
-    monkeypatch.setattr(SkillExtractor, "extract_from_file_multi", fake_extract_from_file_multi)
+    monkeypatch.setattr(
+        "guiclaw.postprocessing.induce_compact_skills_from_trace",
+        fake_induce_compact_skills_from_trace,
+    )
     recorder = TrajectoryRecorder(output_dir=tmp_path, task="Open settings", platform="android")
     trace_path = recorder.start()
     recorder.record_step(action={"action_type": "tap"})
