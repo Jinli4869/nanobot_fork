@@ -19,6 +19,7 @@ import numpy as np
 
 from guiclaw.agent import GuiAgent
 from guiclaw.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
+from guiclaw.paths import resolve_guiclaw_data_dir
 from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
 from guiclaw.skills.normalization import (
     annotate_android_apps,
@@ -1622,7 +1623,7 @@ class GuiSubagentTool(Tool):
                 valid_state_mode=self._gui_config.skill_valid_state_mode,
             )
 
-        sc_dir = Path(self._workspace) / "shortcut_cache"
+        sc_dir = resolve_guiclaw_data_dir(self._gui_config.shortcut_cache_dir)
         sc_dir.mkdir(parents=True, exist_ok=True)
 
         shortcut_backend = self._shortcut_discovery_backend(active_backend)
@@ -2139,7 +2140,7 @@ class GuiSubagentTool(Tool):
                 refresh_if_stale()
 
     def _make_run_dir(self) -> Path:
-        runs_root = self._workspace / self._gui_config.artifacts_dir
+        runs_root = resolve_guiclaw_data_dir(self._gui_config.artifacts_dir)
         while True:
             run_dir = runs_root / datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
             try:

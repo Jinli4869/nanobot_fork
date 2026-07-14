@@ -43,6 +43,7 @@ from guiclaw.interfaces import (
     ToolCall,
 )
 from guiclaw.observation import Observation
+from guiclaw.paths import DEFAULT_GUI_RUNS_DIR, DEFAULT_SHORTCUT_CACHE_DIR
 from guiclaw.skills.compact_prompt import (
     ALWAYS_ON_SKILL_TAG,
     COMPOSITE_ACTION_DEFINITIONS,
@@ -357,7 +358,7 @@ class GuiAgent:
         backend: DeviceBackend,
         trajectory_recorder: TrajectoryRecorder,
         model: str = "",
-        artifacts_root: Path | str = ".guiclaw/runs",
+        artifacts_root: Path | str = DEFAULT_GUI_RUNS_DIR,
         max_steps: int = 15,
         step_timeout: float = 90.0,
         history_image_window: int = 3,
@@ -367,7 +368,7 @@ class GuiAgent:
         skill_executor: Any = None,
         memory_top_k: int = 5,
         shortcut_backend: DeviceBackend | None = None,
-        shortcut_cache_dir: Path | str | None = None,
+        shortcut_cache_dir: Path | str | None = DEFAULT_SHORTCUT_CACHE_DIR,
         intervention_handler: InterventionHandler | None = None,
         policy_context: str | None = None,
         agent_profile: str | None = None,

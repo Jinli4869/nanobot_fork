@@ -321,7 +321,7 @@ def test_cli_runs_dry_run_agent_loop(
     assert "steps_taken: 2" in captured.out
     assert recorder_state["task"] == "Open Settings"
     assert recorder_state["platform"] == "dry-run"
-    assert recorder_state["output_dir"].parent == cli.DEFAULT_RUNS_DIR
+    assert recorder_state["output_dir"].parent == cli.DEFAULT_GUI_RUNS_DIR
     assert agent_state["backend"] is backend
     assert agent_state["model"] == "qwen-gui"
     assert agent_state["agent_profile"] == "seed"
@@ -1813,7 +1813,7 @@ def test_run_cli_intervention_flow_resumes_after_confirmation(
     )
     monkeypatch.setattr(cli, "build_backend", lambda backend_name, loaded_config: backend)
     monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
-    monkeypatch.setattr(cli, "DEFAULT_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(cli, "DEFAULT_GUI_RUNS_DIR", tmp_path / "runs")
     monkeypatch.setattr("builtins.input", lambda prompt="": "resume")
 
     result = asyncio.run(cli.run_cli(cli.parse_args(["--task", "Complete payroll login"])))
@@ -1871,7 +1871,7 @@ def test_run_cli_intervention_logs_are_scrubbed(
     )
     monkeypatch.setattr(cli, "build_backend", lambda backend_name, loaded_config: backend)
     monkeypatch.setattr(cli, "build_optional_components", fake_build_optional_components)
-    monkeypatch.setattr(cli, "DEFAULT_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(cli, "DEFAULT_GUI_RUNS_DIR", tmp_path / "runs")
     monkeypatch.setattr("builtins.input", lambda prompt="": "cancel")
 
     result = asyncio.run(cli.run_cli(cli.parse_args(["--task", "Handle OTP"])))

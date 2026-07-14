@@ -6,11 +6,10 @@ import argparse
 import json
 from pathlib import Path
 
+from guiclaw.paths import DEFAULT_SHORTCUT_CACHE_DIR
 from guiclaw.shortcut_validation import add_validation_arguments
 from guiclaw.skills.deeplink import AppShortcutProfile, extract_shortcuts_from_manifest
 from guiclaw.skills.flat import DEFAULT_SKILLS_STORE_DIR
-
-DEFAULT_SHORTCUT_CACHE_DIR = Path.home() / ".nanobot" / "workspace" / "shortcut_cache"
 
 
 def infer_and_record_shortcuts(source: Path | str, output_dir: Path | str) -> list[Path]:

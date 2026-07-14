@@ -41,6 +41,7 @@
     "model": "gpt-4.1",
     "agentProfile": "default",
     "artifactsDir": "gui_runs",
+    "shortcutCacheDir": "shortcut_cache",
     "maxSteps": 15,
     "embeddingModel": null,
     "enableSkillExecution": false,
@@ -79,7 +80,9 @@
 - `agentProfile`
   - 统一映射到 GUIClaw 的 `agent_profile`
 - `artifactsDir`
-  - GUI 运行产物目录，建议固定为 workspace 下相对路径
+  - GUI 运行产物目录；相对路径统一解析到 `~/.guiclaw`
+- `shortcutCacheDir`
+  - Android shortcut 发现缓存；相对路径统一解析到 `~/.guiclaw`
 - `enablePostRunSummary`
   - 宿主层开关，控制是否在 GUI 任务结束后读取轨迹并做总结
 - `enableEvaluation`
@@ -157,12 +160,12 @@
   "success": true,
   "summary": "Task completed after 3 step(s).",
   "model_summary": "Opened Settings and enabled Wi-Fi.",
-  "trace_path": "/workspace/gui_runs/2026-04-07_120000/traj.json",
+  "trace_path": "/home/user/.guiclaw/gui_runs/2026-04-07_120000/traj.json",
   "steps_taken": 3,
   "error": null,
   "post_run_state": {
     "trace_read": true,
-    "latest_screenshot_path": "/workspace/gui_runs/2026-04-07_120000/attempt_01/screenshots/002_done.png",
+    "latest_screenshot_path": "/home/user/.guiclaw/gui_runs/2026-04-07_120000/attempt_01/screenshots/002_done.png",
     "last_action": {
       "action_type": "done",
       "status": "success"
@@ -257,8 +260,8 @@ class HostLLMAdapter:
         return resp
 
 
-async def run_gui_task(provider, model: str, workspace: Path, task: str) -> dict:
-    run_dir = workspace / "gui_runs" / "demo_run"
+async def run_gui_task(provider, model: str, task: str) -> dict:
+    run_dir = Path.home() / ".guiclaw" / "gui_runs" / "demo_run"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     llm = HostLLMAdapter(provider, model)
@@ -298,6 +301,7 @@ async def run_gui_task(provider, model: str, workspace: Path, task: str) -> dict
 | `gui.agentProfile` | `agent_profile` | 非原生 tool-calling 模型时使用 |
 | `gui.maxSteps` | `max_steps` | GUI 最大步数 |
 | `gui.artifactsDir` | run root | 截图和轨迹输出目录 |
+| `gui.shortcutCacheDir` | shortcut cache root | Android shortcut 发现缓存目录 |
 | `gui.embeddingModel` | embedding adapter | 可选技能检索 |
 | `gui.enableSkillExecution` | skill executor wiring | 是否启用技能执行 |
 | `gui.enablePromptSkillSelection` | prompt skill catalog | 是否将检索技能暴露给 GUI 模型 |

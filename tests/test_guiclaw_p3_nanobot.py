@@ -216,9 +216,11 @@ else:
 
 
 @pytest.fixture
-def tmp_workspace(tmp_path: Path) -> Path:
-    (tmp_path / "gui_runs").mkdir()
+def tmp_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    guiclaw_home = tmp_path / ".guiclaw"
+    (guiclaw_home / "gui_runs").mkdir(parents=True)
     (tmp_path / "gui_skills").mkdir()
+    monkeypatch.setattr("guiclaw.paths.DEFAULT_GUICLAW_HOME", guiclaw_home)
     return tmp_path
 
 
@@ -419,6 +421,7 @@ def test_gui_config_defaults() -> None:
     assert config.adb.serial is None
     assert config.ios.wda_url == "http://localhost:8100"
     assert config.artifacts_dir == "gui_runs"
+    assert config.shortcut_cache_dir == "shortcut_cache"
     assert config.max_steps == 15
     assert config.stagnation_limit == 0
     assert config.image_scale_ratio == pytest.approx(0.5)
@@ -464,6 +467,7 @@ def test_gui_config_nested_aliases() -> None:
             "backend": "ios",
             "ios": {"wdaUrl": "http://127.0.0.1:18100"},
             "artifactsDir": "custom_runs",
+            "shortcutCacheDir": "custom_shortcuts",
         }
     )
 
@@ -471,10 +475,11 @@ def test_gui_config_nested_aliases() -> None:
     assert config.gui.backend == "ios"
     assert config.gui.ios.wda_url == "http://127.0.0.1:18100"
     assert config.gui.artifacts_dir == "custom_runs"
+    assert config.gui.shortcut_cache_dir == "custom_shortcuts"
 
 
 @pytest.mark.asyncio
-async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
+async def test_trajectory_saved_to_guiclaw_home(tmp_workspace: Path) -> None:
     from nanobot.agent.tools.gui import GuiSubagentTool
 
     provider = _MockNanobotProvider(
@@ -500,7 +505,7 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     )
     result = json.loads(await tool.execute(task="Open Settings"))
 
-    run_dirs = list((tmp_workspace / "gui_runs").iterdir())
+    run_dirs = list((tmp_workspace / ".guiclaw" / "gui_runs").iterdir())
     assert set(result) == {
         "success",
         "summary",
@@ -523,6 +528,8 @@ async def test_trajectory_saved_to_workspace(tmp_workspace: Path) -> None:
     assert isinstance(result["token_usage"], dict)
     assert result["workflow_mode"] == "single"
     assert len(run_dirs) == 1
+    assert (tmp_workspace / ".guiclaw" / "shortcut_cache").is_dir()
+    assert not (tmp_workspace / "shortcut_cache").exists()
     run_dir = run_dirs[0]
     trajectory = json.loads((run_dir / "traj.json").read_text(encoding="utf-8"))
     compact_result = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
@@ -586,7 +593,9 @@ async def test_gui_task_workflow_planner_single_falls_back_to_one_agent_run(
     assert run_task.await_args.args == (tool._backend, "Open Settings")
     assert run_task.await_args.kwargs["original_task"] == "Open Settings"
     assert run_task.await_args.kwargs["subtask_index"] == 1
-    assert run_task.await_args.kwargs["run_root"].parent == tmp_workspace / "gui_runs"
+    assert run_task.await_args.kwargs["run_root"].parent == (
+        tmp_workspace / ".guiclaw" / "gui_runs"
+    )
     assert result["success"] is True
     assert result["summary"] == "done"
     assert result["workflow_mode"] == "single"
@@ -830,13 +839,13 @@ async def test_gui_task_multi_app_workflow_injects_blackboard_values(
     assert run_task.await_args_list[0].kwargs["app_hint"] == "messages"
     assert run_task.await_args_list[1].kwargs["app_hint"] == "browser"
     assert run_roots[0] == run_roots[1]
-    assert run_roots[0].parent == tmp_workspace / "gui_runs"
+    assert run_roots[0].parent == tmp_workspace / ".guiclaw" / "gui_runs"
     assert subtask_indexes == [1, 2]
     assert all(
         call.kwargs["original_task"] == "Copy a code from Messages into Browser"
         for call in run_task.await_args_list
     )
-    assert len(list((tmp_workspace / "gui_runs").iterdir())) == 1
+    assert len(list((tmp_workspace / ".guiclaw" / "gui_runs").iterdir())) == 1
     assert result["success"] is True
     assert result["trace_path"] == str(run_roots[0] / "traj.json")
     assert result["workflow_mode"] == "multi_app"

@@ -32,6 +32,7 @@ from guiclaw.interfaces import (
 )
 from guiclaw.memory.retrieval import MemoryRetriever
 from guiclaw.memory.store import MemoryStore
+from guiclaw.paths import DEFAULT_GUI_RUNS_DIR
 from guiclaw.skills.action_grounder import ActionGrounder as _AgentActionGrounder
 from guiclaw.skills.executor import LLMStateValidator, SkillExecutor
 from guiclaw.skills.flat import DEFAULT_SKILLS_STORE_DIR, FlatSkillLibrary
@@ -54,7 +55,6 @@ _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
 DEFAULT_CONFIG_PATH = Path.home() / ".guiclaw" / "config.yaml"
 DEFAULT_MEMORY_DIR = Path.home() / ".guiclaw" / "memory"
 DEFAULT_SKILLS_DIR = DEFAULT_SKILLS_STORE_DIR
-DEFAULT_RUNS_DIR = Path("guiclaw_runs")
 _EMBEDDING_BATCH_SIZE = 10
 WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
 
@@ -506,7 +506,7 @@ async def _execute_agent(
     task: str,
 ) -> AgentResult:
     """Assemble and run the GUI agent with the given backend and provider."""
-    run_root = DEFAULT_RUNS_DIR / datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
+    run_root = DEFAULT_GUI_RUNS_DIR / datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S_%f")
     memory_retriever, skill_library, skill_executor = await build_optional_components(
         config,
         provider=provider,

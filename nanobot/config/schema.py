@@ -448,6 +448,7 @@ class GuiConfig(Base):
     ios: IosConfig = Field(default_factory=IosConfig)
     hdc: HdcConfig = Field(default_factory=HdcConfig)
     artifacts_dir: str = "gui_runs"
+    shortcut_cache_dir: str = "shortcut_cache"
     max_steps: int = 15
     stagnation_limit: int = 0
     embedding_model: str | None = None

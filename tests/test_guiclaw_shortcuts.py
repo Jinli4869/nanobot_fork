@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
@@ -147,6 +148,32 @@ def test_shortcut_and_extraction_share_default_skills_file() -> None:
     assert cli.DEFAULT_SKILLS_DIR / "skills.py" == DEFAULT_SKILLS_SOURCE_PATH
     assert validation_args.skill_store_root / "skills.py" == DEFAULT_SKILLS_SOURCE_PATH
     assert extraction_args.output == DEFAULT_SKILLS_SOURCE_PATH
+
+
+def test_default_runtime_storage_uses_guiclaw_home() -> None:
+    from guiclaw import cli, shortcuts
+    from guiclaw.agent import GuiAgent
+
+    guiclaw_home = Path.home() / ".guiclaw"
+    parameters = inspect.signature(GuiAgent).parameters
+
+    assert cli.DEFAULT_GUI_RUNS_DIR == guiclaw_home / "gui_runs"
+    assert shortcuts.DEFAULT_SHORTCUT_CACHE_DIR == guiclaw_home / "shortcut_cache"
+    assert parameters["artifacts_root"].default == guiclaw_home / "gui_runs"
+    assert parameters["shortcut_cache_dir"].default == guiclaw_home / "shortcut_cache"
+
+
+def test_guiclaw_data_dirs_support_relative_and_absolute_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from guiclaw import paths
+
+    guiclaw_home = tmp_path / ".guiclaw"
+    absolute = tmp_path / "external-runs"
+    monkeypatch.setattr(paths, "DEFAULT_GUICLAW_HOME", guiclaw_home)
+
+    assert paths.resolve_guiclaw_data_dir("custom-runs") == guiclaw_home / "custom-runs"
+    assert paths.resolve_guiclaw_data_dir(absolute) == absolute
 
 
 def test_default_nanobot_workspace_uses_shared_guiclaw_skills_file(tmp_path: Path) -> None:

@@ -459,7 +459,8 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `adb.serial` | `string \| null` | `null` | ADB device serial; `null` = auto-detect |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent server URL |
 | `hdc.serial` | `string \| null` | `null` | HDC device serial; `null` = auto-detect |
-| `artifactsDir` | `string` | `"gui_runs"` | Directory for screenshots and run logs (relative to workspace) |
+| `artifactsDir` | `string` | `"gui_runs"` | Screenshots and run logs; relative paths resolve under `~/.guiclaw` |
+| `shortcutCacheDir` | `string` | `"shortcut_cache"` | Android shortcut discovery cache; relative paths resolve under `~/.guiclaw` |
 | `maxSteps` | `int` | `15` | Maximum actions per task before giving up |
 | `embeddingModel` | `string \| null` | `null` | Embedding model for semantic skill search (e.g. `"text-embedding-v4"`) |
 | `background` | `bool` | `false` | Use isolated virtual display (Linux only; requires `backend: "local"`) |
@@ -475,6 +476,11 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `evaluation.judgeModel` | `string` | `"qwen3-vl-plus"` | Judge model used for evaluation only |
 | `evaluation.apiKey` | `string` | `""` | API key for the judge endpoint; falls back to `OPENAI_API_KEY` when empty |
 | `evaluation.apiBase` | `string \| null` | `"https://dashscope.aliyuncs.com/compatible-mode/v1"` | OpenAI-compatible base URL for the judge endpoint |
+
+GUIClaw owns its runtime data independently of the host agent workspace. The default layout is
+`~/.guiclaw/gui_runs/`, `~/.guiclaw/shortcut_cache/`, `~/.guiclaw/skill/`, and
+`~/.guiclaw/memory/`. Set an absolute `artifactsDir` or `shortcutCacheDir` to override either
+location; relative overrides remain rooted at `~/.guiclaw`.
 
 ### Switching backends
 

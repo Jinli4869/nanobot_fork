@@ -8,16 +8,16 @@ from typing import Any
 
 from fastapi import Request
 
+from guiclaw.paths import resolve_guiclaw_data_dir
 from nanobot.agent.loop import AgentLoop
 from nanobot.agent.tools.gui import GuiSubagentTool
 from nanobot.bus.queue import MessageBus
+from nanobot.cli.commands import _load_runtime_config, _make_provider, _resolve_gui_runtime
 from nanobot.config.loader import load_config
-from nanobot.config.schema import Config
 from nanobot.config.paths import get_cron_dir
+from nanobot.config.schema import Config
 from nanobot.cron.service import CronService
 from nanobot.session.manager import SessionManager
-
-from nanobot.cli.commands import _load_runtime_config, _make_provider, _resolve_gui_runtime
 from nanobot.tui.contracts import (
     RuntimeInspectionContract,
     SessionContract,
@@ -32,7 +32,7 @@ from nanobot.tui.services import (
     TaskLaunchService,
     TraceInspectionService,
 )
-from nanobot.tui.services.tasks import run_nanobot_launch, run_guiclaw_launch
+from nanobot.tui.services.tasks import run_guiclaw_launch, run_nanobot_launch
 
 
 def _resolve_workspace_path(
@@ -128,7 +128,7 @@ def _build_runtime_service(
     registry: OperationsRegistry,
 ) -> RuntimeService:
     session_contract = get_session_contract(workspace=config.workspace_path)
-    artifacts_root = session_contract.workspace_path / config.gui.artifacts_dir
+    artifacts_root = resolve_guiclaw_data_dir(config.gui.artifacts_dir)
     return RuntimeService(
         session_contract,
         registry,
@@ -150,7 +150,7 @@ def get_trace_inspection_service(request: Request) -> TraceInspectionService:
 
     config = _resolve_runtime_config(request)
     registry = get_operations_registry(request)
-    artifacts_root = config.workspace_path / config.gui.artifacts_dir
+    artifacts_root = resolve_guiclaw_data_dir(config.gui.artifacts_dir)
     return TraceInspectionService(
         registry=registry,
         artifacts_root=artifacts_root,

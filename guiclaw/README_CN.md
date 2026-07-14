@@ -459,7 +459,8 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `adb.serial` | `string \| null` | `null` | ADB 设备序列号；`null` = 自动检测 |
 | `ios.wdaUrl` | `string` | `"http://localhost:8100"` | WebDriverAgent 服务器地址 |
 | `hdc.serial` | `string \| null` | `null` | HDC 设备序列号；`null` = 自动检测 |
-| `artifactsDir` | `string` | `"gui_runs"` | 截图和运行日志目录（相对于 workspace） |
+| `artifactsDir` | `string` | `"gui_runs"` | 截图和运行日志目录；相对路径以 `~/.guiclaw` 为根目录 |
+| `shortcutCacheDir` | `string` | `"shortcut_cache"` | Android shortcut 发现缓存；相对路径以 `~/.guiclaw` 为根目录 |
 | `maxSteps` | `int` | `15` | 单次任务最大操作步数 |
 | `embeddingModel` | `string \| null` | `null` | 语义技能检索的 Embedding 模型（如 `"text-embedding-v4"`） |
 | `background` | `bool` | `false` | 使用虚拟显示隔离运行（仅 Linux；需 `backend: "local"`） |
@@ -475,6 +476,11 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `evaluation.judgeModel` | `string` | `"qwen3-vl-plus"` | 仅用于评测的 judge 模型 |
 | `evaluation.apiKey` | `string` | `""` | judge 接口的 API Key；为空时回退到 `OPENAI_API_KEY` |
 | `evaluation.apiBase` | `string \| null` | `"https://dashscope.aliyuncs.com/compatible-mode/v1"` | judge 接口的 OpenAI-compatible base URL |
+
+GUIClaw 的运行数据独立于宿主 agent 的 workspace。默认目录依次为
+`~/.guiclaw/gui_runs/`、`~/.guiclaw/shortcut_cache/`、`~/.guiclaw/skill/` 和
+`~/.guiclaw/memory/`。可通过绝对路径覆盖 `artifactsDir` 或 `shortcutCacheDir`；相对路径
+仍统一解析到 `~/.guiclaw` 下。
 
 ### 切换后端
 
