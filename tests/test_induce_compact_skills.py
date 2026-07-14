@@ -167,9 +167,15 @@ class TestClustering:
     def test_distinct_structures_do_not_cluster(self):
         a = compactify_skill(self._email_skill("flat:a"), max_steps=7, max_scroll_steps=1)
         b = compactify_skill(
-            _skill(_step("tap", "search"), _step("input_text", "{{q}}"), _step("tap", "go"),
-                   name="search_flow", skill_id="flat:c"),
-            max_steps=7, max_scroll_steps=1,
+            _skill(
+                _step("tap", "search"),
+                _step("input_text", "{{q}}"),
+                _step("tap", "go"),
+                name="search_flow",
+                skill_id="flat:c",
+            ),
+            max_steps=7,
+            max_scroll_steps=1,
         )
         clustered = cluster_compact_skills(_succ(a, b), min_support=1)
         assert len(clustered) == 2
@@ -178,14 +184,24 @@ class TestClustering:
         # Same app, same action sequence and placeholder name, but different
         # literal controls must NOT collapse (would inflate success_count).
         to_field = compactify_skill(
-            _skill(_step("tap", "To", valid_state=None), _step("input_text", "{{value}}"),
-                   name="fill_to", skill_id="flat:a"),
-            max_steps=7, max_scroll_steps=1,
+            _skill(
+                _step("tap", "To", valid_state=None),
+                _step("input_text", "{{value}}"),
+                name="fill_to",
+                skill_id="flat:a",
+            ),
+            max_steps=7,
+            max_scroll_steps=1,
         )
         search = compactify_skill(
-            _skill(_step("tap", "Search", valid_state=None), _step("input_text", "{{value}}"),
-                   name="fill_search", skill_id="flat:b"),
-            max_steps=7, max_scroll_steps=1,
+            _skill(
+                _step("tap", "Search", valid_state=None),
+                _step("input_text", "{{value}}"),
+                name="fill_search",
+                skill_id="flat:b",
+            ),
+            max_steps=7,
+            max_scroll_steps=1,
         )
         clustered = cluster_compact_skills(_succ(to_field, search), min_support=1)
         assert len(clustered) == 2
@@ -213,9 +229,14 @@ class TestTerminalActionBackstop:
 class TestFailureProvenance:
     def _email(self, skill_id: str) -> Skill:
         return compactify_skill(
-            _skill(_step("tap", "To"), _step("input_text", "{{to_email}}"),
-                   name="fill_email", skill_id=skill_id),
-            max_steps=7, max_scroll_steps=1,
+            _skill(
+                _step("tap", "To"),
+                _step("input_text", "{{to_email}}"),
+                name="fill_email",
+                skill_id=skill_id,
+            ),
+            max_steps=7,
+            max_scroll_steps=1,
         )
 
     def test_failure_only_cluster_dropped(self):
@@ -254,7 +275,8 @@ class TestMergeOutput:
         out = tmp_path / "compact_skills.py"
         skill = compactify_skill(
             _skill(_step("tap", "To"), _step("input_text", "{{to_email}}"), name="fill_email"),
-            max_steps=7, max_scroll_steps=1,
+            max_steps=7,
+            max_scroll_steps=1,
         )
         clustered = cluster_compact_skills(_succ(skill, skill), min_support=1)  # support=2
         added = merge_into_output(clustered, out)
@@ -271,6 +293,35 @@ class TestMergeOutput:
         assert not compiled.errors
         assert len(compiled.skills) == 1
         assert compiled.skills[0].success_count == 2
+
+    def test_keeps_shortcuts_before_extracted_skills(self, tmp_path: Path):
+        from guiclaw.skills.flat import export_skills_to_source
+
+        shortcut = Skill(
+            skill_id="shortcut:dl:com.gmailclone:compose",
+            name="open_compose",
+            description="Open compose",
+            app="com.gmailclone",
+            platform="android",
+            tags=("shortcut", "deeplink", "validated"),
+        )
+        out = tmp_path / "skills.py"
+        out.write_text(export_skills_to_source([shortcut]), encoding="utf-8")
+        extracted = compactify_skill(
+            _skill(_step("tap", "To"), _step("input_text", "{{to_email}}")),
+            max_steps=7,
+            max_scroll_steps=1,
+        )
+
+        merge_into_output([extracted], out)
+
+        from guiclaw.skills.flat import compile_flat_skills
+
+        compiled = compile_flat_skills(out.read_text(encoding="utf-8"))
+        assert [skill.skill_id for skill in compiled.skills] == [
+            shortcut.skill_id,
+            extracted.skill_id,
+        ]
 
 
 class TestPackagedCompactInduction:

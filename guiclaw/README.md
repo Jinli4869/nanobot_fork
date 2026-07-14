@@ -113,7 +113,7 @@ max_steps: 15
 
 # Persistent storage (defaults shown)
 memory_dir: "~/.guiclaw/memory"
-skills_dir: "~/.guiclaw/skills"
+skills_dir: "~/.guiclaw/skill"
 
 # Headless virtual display (Linux only; requires Xvfb)
 background: false
@@ -924,12 +924,20 @@ To delete an entry, simply remove its entire `##` section from the file.
 
 GUIClaw learns from successful task runs. After each task it extracts a reusable **skill** — a named, parameterised sequence of steps — and stores it in the skill library. On subsequent tasks it retrieves the top-k relevant skills and exposes them in the GUI prompt; the GUI model may execute one by emitting a `use_skill` action, or continue with ordinary GUI actions.
 
-**Skill storage locations:**
+**Default skill source:** `~/.guiclaw/skill/skills.py`
 
-| Mode | Location |
-|------|----------|
-| CLI (guiclaw) | `~/.guiclaw/skills/<platform>/` |
-| nanobot | `<workspace>/gui_skills/<platform>/` |
+Online extraction, `induce_compact_skills.py`, and validated shortcut promotion share this
+canonical file by default. Every write orders validated shortcut skills first and
+trajectory-extracted skills after them. A custom nanobot workspace continues to use its own
+`gui_skills/skills.py` so explicitly isolated workspaces remain isolated.
+
+```bash
+# Static manifest discovery only
+guiclaw shortcuts ./AndroidManifest.xml
+
+# Validate and promote shortcuts into the shared skills.py
+guiclaw shortcuts ./AndroidManifest.xml --validate --promote
+```
 
 ### Enabling skill and memory extraction
 

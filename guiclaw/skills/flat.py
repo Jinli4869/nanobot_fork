@@ -28,6 +28,7 @@ import guiclaw.skills._merger as _merger
 from guiclaw.action import normalize_action_type
 from guiclaw.skills.data import Skill, SkillStep, collect_placeholder_names
 from guiclaw.skills.normalization import (
+    DEFAULT_GUI_SKILL_STORE_ROOT,
     annotate_android_apps,
     is_unknown_app_identifier,
     normalize_app_filter,
@@ -41,6 +42,8 @@ _STORE_LOCKS: dict[Path, threading.RLock] = {}
 _STORE_LOCKS_GUARD = threading.Lock()
 
 CANONICAL_SKILLS_FILENAME = "skills.py"
+DEFAULT_SKILLS_STORE_DIR = DEFAULT_GUI_SKILL_STORE_ROOT
+DEFAULT_SKILLS_SOURCE_PATH = DEFAULT_SKILLS_STORE_DIR / CANONICAL_SKILLS_FILENAME
 SKILL_EMBEDDINGS_FILENAME = "skills_embeddings.npy"
 SKILL_EMBEDDINGS_META_FILENAME = "skills_embeddings_meta.json"
 SKILL_EMBEDDINGS_CACHE_VERSION = 1
@@ -864,6 +867,7 @@ class FlatSkillLibrary:
 
 
 def export_skills_to_source(skills: list[Skill] | tuple[Skill, ...]) -> str:
+    skills = order_skills_for_source(skills)
     lines: list[str] = [CODE_HEADER, "", ""]
     names = _stable_function_names(skills)
     for skill_obj in skills:
@@ -894,6 +898,23 @@ def export_skills_to_source(skills: list[Skill] | tuple[Skill, ...]) -> str:
             lines.append("    pass")
         lines.extend(["", ""])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def order_skills_for_source(skills: list[Skill] | tuple[Skill, ...]) -> list[Skill]:
+    """Return deterministic source order with shortcuts before extracted skills."""
+
+    def sort_key(skill_obj: Skill) -> tuple[Any, ...]:
+        tags = {str(tag).casefold() for tag in skill_obj.tags}
+        is_shortcut = "shortcut" in tags or skill_obj.skill_id.casefold().startswith("shortcut:")
+        return (
+            0 if is_shortcut else 1,
+            -skill_obj.success_count,
+            skill_obj.app.casefold(),
+            skill_obj.name.casefold(),
+            skill_obj.skill_id.casefold(),
+        )
+
+    return sorted(skills, key=sort_key)
 
 
 def _validate_source_ast(tree: ast.Module) -> list[str]:
@@ -1423,9 +1444,12 @@ __all__ = [
     "FlatCompileResult",
     "FlatSkillLibrary",
     "FlatSkillRepository",
+    "DEFAULT_SKILLS_SOURCE_PATH",
+    "DEFAULT_SKILLS_STORE_DIR",
     "R",
     "action",
     "compile_flat_skills",
     "export_skills_to_source",
+    "order_skills_for_source",
     "skill",
 ]

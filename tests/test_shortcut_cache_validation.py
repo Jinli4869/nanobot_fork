@@ -1,26 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+from guiclaw import shortcut_validation as validator
 from guiclaw.skills.deeplink import AppShortcutProfile, DeepIntent, DeepLink
-
-
-def _load_validator_module():
-    path = Path(__file__).resolve().parents[1] / "scripts" / "validate_shortcut_cache.py"
-    spec = importlib.util.spec_from_file_location("validate_shortcut_cache", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-validator = _load_validator_module()
 
 
 def test_candidate_records_prioritize_search_and_skip_risky() -> None:
@@ -178,7 +165,9 @@ def test_build_probe_plans_covers_bilibili_route_domains() -> None:
             ),
         ),
     )
-    args = SimpleNamespace(task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=8)
+    args = SimpleNamespace(
+        task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=8
+    )
 
     plans = validator.build_probe_plans(profile, args)
     capabilities = {plan.capability for plan in plans}
@@ -202,7 +191,9 @@ def test_build_probe_plans_covers_intent_heavy_settings_cache() -> None:
             ),
         ),
     )
-    args = SimpleNamespace(task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=8)
+    args = SimpleNamespace(
+        task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=8
+    )
 
     plans = validator.build_probe_plans(profile, args)
 
@@ -242,7 +233,9 @@ def test_build_probe_plans_keeps_specific_capabilities_with_small_counts() -> No
             ),
         ),
     )
-    args = SimpleNamespace(task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=3)
+    args = SimpleNamespace(
+        task="", query="", include_risky=False, max_candidates=5, max_try=4, max_probe_plans=3
+    )
 
     plans = validator.build_probe_plans(profile, args)
     capabilities = [plan.capability for plan in plans]
@@ -429,7 +422,9 @@ def test_infer_candidate_capabilities_covers_web_publish_camera_poi_widget() -> 
         ),
     ]
 
-    capabilities = set().union(*(set(validator.infer_candidate_capabilities(candidate)) for candidate in candidates))
+    capabilities = set().union(
+        *(set(validator.infer_candidate_capabilities(candidate)) for candidate in candidates)
+    )
 
     assert {
         "browser_web",
@@ -575,7 +570,9 @@ def test_auto_probe_plans_skip_debug_remote_and_transit_noise() -> None:
         uri_template="googlechrome://navigate?url=https://example.com",
     )
 
-    assert all(validator.candidate_matches_plan(candidate, plan) is False for candidate in noise_candidates)
+    assert all(
+        validator.candidate_matches_plan(candidate, plan) is False for candidate in noise_candidates
+    )
     assert validator.candidates_for_plan([*noise_candidates, valid], plan) == [valid]
 
 
@@ -593,7 +590,10 @@ def test_deeplink_variants_include_encoded_chinese_query() -> None:
 
     assert variants[0].label == "raw_package"
     assert variants[1].label == "raw_component"
-    assert any("%E6%95%A2%E6%9D%80%E6%88%91%E7%9A%84%E9%A9%AC" in (variant.uri or "") for variant in variants)
+    assert any(
+        "%E6%95%A2%E6%9D%80%E6%88%91%E7%9A%84%E9%A9%AC" in (variant.uri or "")
+        for variant in variants
+    )
     assert all(variant.package == "tv.danmaku.bili" for variant in variants)
 
 
@@ -656,7 +656,9 @@ def test_upload_intent_variants_include_probe_media_payload() -> None:
     )
 
     variants = validator.variants_for_intent(candidate, query="", max_try=8)
-    stream_variant = next(variant for variant in variants if variant.label == "component_probe_media_stream")
+    stream_variant = next(
+        variant for variant in variants if variant.label == "component_probe_media_stream"
+    )
     args = validator.build_launch_args(stream_variant)
 
     assert stream_variant.mime_type == "image/*"
@@ -671,14 +673,17 @@ def test_chrome_candidate_records_add_synthetic_browser_and_search_urls() -> Non
 
     records = validator.candidate_records(profile, include_risky=False)
     uris = {record.uri_template for record in records}
-    plans = validator.build_probe_plans(profile, SimpleNamespace(
-        task="",
-        query="",
-        include_risky=False,
-        max_candidates=8,
-        max_try=5,
-        max_probe_plans=4,
-    ))
+    plans = validator.build_probe_plans(
+        profile,
+        SimpleNamespace(
+            task="",
+            query="",
+            include_risky=False,
+            max_candidates=8,
+            max_try=5,
+            max_probe_plans=4,
+        ),
+    )
 
     assert "https://example.com" in uris
     assert "https://www.google.com/search" in uris
@@ -832,7 +837,9 @@ def test_promote_results_forces_shortcut_valid_state(monkeypatch, tmp_path: Path
         calls.append(dict(record))
         return "added", "shortcut:di:pkg:test"
 
-    monkeypatch.setattr(validator, "add_validated_shortcut_skill", fake_add_validated_shortcut_skill)
+    monkeypatch.setattr(
+        validator, "add_validated_shortcut_skill", fake_add_validated_shortcut_skill
+    )
     args = SimpleNamespace(
         promote=True,
         skill_store_root=tmp_path,
@@ -907,7 +914,10 @@ def test_write_sidecar_records_probe_plan(tmp_path: Path) -> None:
     assert data["probe_plans"] == [validator.probe_plan_to_dict(plan)]
     assert data["stopped_early"] is None
     assert data["results"][0]["probe_plan"] == validator.probe_plan_to_dict(plan)
-    assert data["results"][0]["validation_record"]["uri_template"] == "bilibili://search?keyword={{query}}"
+    assert (
+        data["results"][0]["validation_record"]["uri_template"]
+        == "bilibili://search?keyword={{query}}"
+    )
 
 
 def test_launch_variant_skips_evidence_capture_when_disabled(monkeypatch, tmp_path: Path) -> None:
@@ -918,9 +928,17 @@ def test_launch_variant_skips_evidence_capture_when_disabled(monkeypatch, tmp_pa
             calls.append(" ".join(args))
             return 0, "Status: ok", False
 
-    monkeypatch.setattr(validator, "foreground_activity", lambda adb: "tv.danmaku.bili/.SearchActivity")
-    monkeypatch.setattr(validator, "capture_screenshot", lambda adb, path: (_ for _ in ()).throw(AssertionError("screenshot")))
-    monkeypatch.setattr(validator, "capture_ui_tree", lambda adb: (_ for _ in ()).throw(AssertionError("ui tree")))
+    monkeypatch.setattr(
+        validator, "foreground_activity", lambda adb: "tv.danmaku.bili/.SearchActivity"
+    )
+    monkeypatch.setattr(
+        validator,
+        "capture_screenshot",
+        lambda adb, path: (_ for _ in ()).throw(AssertionError("screenshot")),
+    )
+    monkeypatch.setattr(
+        validator, "capture_ui_tree", lambda adb: (_ for _ in ()).throw(AssertionError("ui tree"))
+    )
 
     result = validator.launch_variant(
         FakeAdb(),
@@ -950,7 +968,9 @@ def test_launch_variant_prepares_probe_media_payload(monkeypatch, tmp_path: Path
             calls.append(tuple(args))
             return 0, "Status: ok", False
 
-    monkeypatch.setattr(validator, "foreground_activity", lambda adb: "com.google.android.youtube/.UploadActivity")
+    monkeypatch.setattr(
+        validator, "foreground_activity", lambda adb: "com.google.android.youtube/.UploadActivity"
+    )
 
     result = validator.launch_variant(
         FakeAdb(),
@@ -971,10 +991,14 @@ def test_launch_variant_prepares_probe_media_payload(monkeypatch, tmp_path: Path
     )
 
     assert result["target_package"] is True
-    assert any(call[:1] == ("push",) and call[-1] == validator.PROBE_UPLOAD_REMOTE_PATH for call in calls)
+    assert any(
+        call[:1] == ("push",) and call[-1] == validator.PROBE_UPLOAD_REMOTE_PATH for call in calls
+    )
 
 
-def test_validate_candidate_breaks_after_launchable_without_verifier(monkeypatch, tmp_path: Path) -> None:
+def test_validate_candidate_breaks_after_launchable_without_verifier(
+    monkeypatch, tmp_path: Path
+) -> None:
     candidate = validator.Candidate(
         index=0,
         kind="deeplink",
@@ -993,7 +1017,9 @@ def test_validate_candidate_breaks_after_launchable_without_verifier(monkeypatch
 
     monkeypatch.setattr(validator, "resolve_variant", lambda adb, variant: {"ok": True})
 
-    def fake_launch(adb, variant, *, artifacts_dir, index, capture_evidence=False, settle_seconds=2.0):
+    def fake_launch(
+        adb, variant, *, artifacts_dir, index, capture_evidence=False, settle_seconds=2.0
+    ):
         launched.append(variant.label)
         assert capture_evidence is False
         return {"target_package": True, "foreground": "tv.danmaku.bili/.SearchActivity"}
@@ -1006,7 +1032,9 @@ def test_validate_candidate_breaks_after_launchable_without_verifier(monkeypatch
     assert launched == ["raw_package"]
 
 
-def test_validate_candidate_normalizes_usable_launchable_to_page_validated(monkeypatch, tmp_path: Path) -> None:
+def test_validate_candidate_normalizes_usable_launchable_to_page_validated(
+    monkeypatch, tmp_path: Path
+) -> None:
     candidate = validator.Candidate(
         index=0,
         kind="deeplink",
@@ -1077,7 +1105,9 @@ def test_validate_candidate_stops_on_verifier_error(monkeypatch, tmp_path: Path)
 
     monkeypatch.setattr(validator, "resolve_variant", lambda adb, variant: {"ok": True})
 
-    def fake_launch(adb, variant, *, artifacts_dir, index, capture_evidence=False, settle_seconds=2.0):
+    def fake_launch(
+        adb, variant, *, artifacts_dir, index, capture_evidence=False, settle_seconds=2.0
+    ):
         launched.append(variant.label)
         return {"target_package": True, "foreground": "tv.danmaku.bili/.SearchActivity"}
 
@@ -1095,13 +1125,17 @@ def test_validate_candidate_stops_on_verifier_error(monkeypatch, tmp_path: Path)
     assert launched == ["raw_package"]
 
 
-def test_plan_satisfied_stops_per_capability_on_page_validated_or_launchable_without_verifier() -> None:
+def test_plan_satisfied_stops_per_capability_on_page_validated_or_launchable_without_verifier() -> (
+    None
+):
     candidate = validator.Candidate(index=0, kind="deeplink", package="pkg", description="desc")
     page_validated = validator.ProbeResult(candidate=candidate, status="page_validated")
     launchable = validator.ProbeResult(candidate=candidate, status="launchable")
 
     no_verifier_args = SimpleNamespace(execute=True, llm_base_url="", llm_model="")
-    verifier_args = SimpleNamespace(execute=True, llm_base_url="http://example.test/v1", llm_model="qwen-vl")
+    verifier_args = SimpleNamespace(
+        execute=True, llm_base_url="http://example.test/v1", llm_model="qwen-vl"
+    )
 
     assert validator.plan_satisfied(page_validated, verifier_args) is True
     assert validator.plan_satisfied(launchable, no_verifier_args) is True

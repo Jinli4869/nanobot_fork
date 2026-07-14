@@ -167,22 +167,54 @@ async def extract_app_shortcuts(backend: Any, package: str) -> AppShortcutProfil
     Path(apk_path).unlink(missing_ok=True)
     manifest_package = _clean_text(manifest_root.get("package")) or app
     filters = _extract_all_filters(manifest_root, manifest_package)
+    return _profile_from_manifest(
+        manifest_root,
+        manifest_package,
+        manifest_meta={"apk_path": apk_path, "filter_count": len(filters)},
+        filters=filters,
+    )
+
+
+def extract_shortcuts_from_manifest(manifest_path: Path | str) -> AppShortcutProfile:
+    """Extract static shortcut candidates from a decoded AndroidManifest.xml file."""
+    path = Path(manifest_path).expanduser()
+    manifest_root = ET.parse(path).getroot()
+    package = _clean_text(manifest_root.get("package"))
+    if not package:
+        raise ValueError(f"manifest has no package: {path}")
+    filters = _extract_all_filters(manifest_root, package)
+    return _profile_from_manifest(
+        manifest_root,
+        package,
+        manifest_meta={"manifest_path": str(path), "filter_count": len(filters)},
+        filters=filters,
+    )
+
+
+def _profile_from_manifest(
+    manifest_root: ET.Element,
+    package: str,
+    *,
+    manifest_meta: dict[str, Any],
+    filters: list[ManifestIntentFilter] | None = None,
+) -> AppShortcutProfile:
+    filters = filters if filters is not None else _extract_all_filters(manifest_root, package)
 
     aliases: list[tuple[str, str]] = []
     for alias in _find_elements(manifest_root, "activity-alias"):
-        alias_component = _normalize_component_name(manifest_package, _android_attr(alias, "name"))
+        alias_component = _normalize_component_name(package, _android_attr(alias, "name"))
         target_component = _normalize_component_name(
-            manifest_package, _android_attr(alias, "targetActivity")
+            package, _android_attr(alias, "targetActivity")
         )
         if alias_component and target_component:
             aliases.append((alias_component, target_component))
 
     return AppShortcutProfile(
-        package=manifest_package,
+        package=package,
         deep_links=tuple(_classify_deep_links(filters)),
         deep_intents=tuple(_classify_deep_intents(filters)),
         activity_aliases=tuple(dict.fromkeys(aliases)),
-        manifest_meta={"apk_path": apk_path, "filter_count": len(filters)},
+        manifest_meta=manifest_meta,
     )
 
 

@@ -12,7 +12,6 @@ SCRIPTS = ROOT / "scripts"
 EXPECTED_SCRIPTS = {
     "induce_compact_skills.py",
     "induce_gui_memory.py",
-    "validate_shortcut_cache.py",
     "install.ps1",
     "install.sh",
 }
@@ -25,7 +24,7 @@ def test_repository_scripts_match_supported_whitelist() -> None:
 
 @pytest.mark.parametrize(
     "script_name",
-    ("induce_compact_skills.py", "induce_gui_memory.py", "validate_shortcut_cache.py"),
+    ("induce_compact_skills.py", "induce_gui_memory.py"),
 )
 def test_retained_python_script_help(script_name: str) -> None:
     completed = subprocess.run(

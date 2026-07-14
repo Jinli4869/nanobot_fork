@@ -35,7 +35,7 @@ Usage::
     # Batch-extract from all successful tasks under a trace root
     python scripts/induce_compact_skills.py \\
         --trace-root ~/Project/MobileWorld_fork/traj_logs/v2 \\
-        --output compact_skills.py \\
+        --output ~/.guiclaw/skill/skills.py \\
         --model deepseek-v4-pro --base-url https://...
 
 Note: the extractor sends screenshots alongside the structured trajectory, so the
@@ -67,7 +67,11 @@ from guiclaw.memory.induction import (
 )
 from guiclaw.skills.data import Skill, collect_placeholder_names
 from guiclaw.skills.extractor import SkillExtractor
-from guiclaw.skills.flat import compile_flat_skills, export_skills_to_source
+from guiclaw.skills.flat import (
+    DEFAULT_SKILLS_SOURCE_PATH,
+    compile_flat_skills,
+    export_skills_to_source,
+)
 from guiclaw.skills.induction import (
     induce_compact_skills_from_trace,
 )
@@ -424,14 +428,18 @@ async def main_async(args: argparse.Namespace) -> int:
     return 0
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     src = p.add_mutually_exclusive_group()
     src.add_argument("--trace-dir", type=Path, help="Single task trace directory")
     src.add_argument("--trace-root", type=Path, help="Root directory with task subdirs")
 
-    p.add_argument("--output", type=Path, default=Path("compact_skills.py"),
-                   help="Output skills file (default: compact_skills.py)")
+    p.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_SKILLS_SOURCE_PATH,
+        help=f"Output skills file (default: {DEFAULT_SKILLS_SOURCE_PATH})",
+    )
     p.add_argument("--model", default=os.getenv("SKILL_INDUCE_MODEL", "deepseek-v4-pro"))
     p.add_argument("--base-url", default=os.getenv("SKILL_INDUCE_BASE_URL", ""))
     p.add_argument("--api-key-env", default="OPENAI_API_KEY")
@@ -454,7 +462,7 @@ def parse_args() -> argparse.Namespace:
                         "Failure-derived skills never count toward success_count and are "
                         "kept only when the same skill also appears in a success trace; "
                         "such clusters are tagged 'from_failure'.")
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 def main() -> None:

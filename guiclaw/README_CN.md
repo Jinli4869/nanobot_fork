@@ -113,7 +113,7 @@ max_steps: 15
 
 # 持久化存储路径（默认值如下）
 memory_dir: "~/.guiclaw/memory"
-skills_dir: "~/.guiclaw/skills"
+skills_dir: "~/.guiclaw/skill"
 
 # 无头虚拟显示（仅 Linux；需安装 Xvfb）
 background: false
@@ -915,12 +915,19 @@ access_count: 0
 
 GUIClaw 从成功的任务中学习。每次任务完成后，系统会提取一个可复用的**技能**——带参数的具名步骤序列——并存入技能库。下次执行相似任务时，系统检索 top-k 相关技能并暴露在 GUI prompt 中；GUI 模型可以输出 `use_skill` 动作执行其中一个技能，也可以继续使用普通 GUI 动作。
 
-**技能存储路径：**
+**默认技能文件：** `~/.guiclaw/skill/skills.py`
 
-| 模式 | 路径 |
-|------|------|
-| CLI（guiclaw） | `~/.guiclaw/skills/<platform>/` |
-| nanobot | `<workspace>/gui_skills/<platform>/` |
+在线技能提取、`induce_compact_skills.py` 和验证后的 shortcut promotion 默认共享这个规范文件。
+每次写入都会自动把已验证的 shortcut 技能排列在前，轨迹提取的技能排列在后。显式指定的自定义
+nanobot workspace 仍使用其自身的 `gui_skills/skills.py`，从而保持隔离。
+
+```bash
+# 仅从 Manifest 静态推导
+guiclaw shortcuts ./AndroidManifest.xml
+
+# 验证 shortcut 并提升到共享 skills.py
+guiclaw shortcuts ./AndroidManifest.xml --validate --promote
+```
 
 ### 开启技能和记忆提取
 

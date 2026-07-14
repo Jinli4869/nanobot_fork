@@ -9,6 +9,8 @@ from pathlib import Path
 from guiclaw.skills.data import Skill
 
 GUI_SKILLS_DIRNAME = "gui_skills"
+DEFAULT_GUI_SKILL_STORE_ROOT = Path.home() / ".guiclaw" / "skill"
+DEFAULT_NANOBOT_WORKSPACE = Path.home() / ".nanobot" / "workspace"
 
 # ---------------------------------------------------------------------------
 # Package name <-> display name mapping for Android
@@ -449,7 +451,7 @@ def _lookup_android_alias_from(lowered: str, aliases: dict[str, str]) -> str | N
     candidates = [lowered]
     for prefix in _ANDROID_ALIAS_PREFIXES:
         if lowered.startswith(prefix) and len(lowered) > len(prefix):
-            candidates.append(lowered[len(prefix):].strip())
+            candidates.append(lowered[len(prefix) :].strip())
     for candidate in candidates:
         package = aliases.get(candidate)
         if package:
@@ -477,8 +479,13 @@ def _lookup_android_adb_alias(lowered: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def get_gui_skill_store_root(workspace: Path) -> Path:
-    return Path(workspace) / GUI_SKILLS_DIRNAME
+def get_gui_skill_store_root(workspace: Path | None = None) -> Path:
+    if workspace is None:
+        return DEFAULT_GUI_SKILL_STORE_ROOT
+    workspace_path = Path(workspace).expanduser()
+    if workspace_path == DEFAULT_NANOBOT_WORKSPACE:
+        return DEFAULT_GUI_SKILL_STORE_ROOT
+    return workspace_path / GUI_SKILLS_DIRNAME
 
 
 def annotate_android_apps(packages: list[str]) -> list[str]:

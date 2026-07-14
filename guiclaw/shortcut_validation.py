@@ -1,10 +1,9 @@
-#!/usr/bin/env python3
 """Validate Android shortcut cache entries on a connected device.
 
-The script keeps shortcut discovery and validation separate:
+The module keeps shortcut discovery and validation separate:
 
 * ``shortcut_cache/*.json`` remains the static discovery artifact.
-* this script writes device-specific validation sidecars.
+* runtime validation writes device-specific sidecars.
 * only page-validated records are promoted to ``skills.py`` by default.
 """
 
@@ -29,7 +28,7 @@ from guiclaw.skills.deeplink import (
     AppShortcutProfile,
     add_validated_shortcut_skill,
 )
-from guiclaw.skills.flat import FlatSkillLibrary
+from guiclaw.skills.flat import DEFAULT_SKILLS_STORE_DIR, FlatSkillLibrary
 
 VIEW_ACTION = "android.intent.action.VIEW"
 BROWSABLE_CATEGORY = "android.intent.category.BROWSABLE"
@@ -425,21 +424,41 @@ class ShortcutPostprocessItem:
     plan: ProbePlan
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cache", type=Path, required=True, help="Path to shortcut_cache/<package>.json")
-    parser.add_argument("--serial", default="", help="ADB device serial. Defaults to adb's selected device.")
-    parser.add_argument("--task", default="", help="Optional target task, e.g. '在B站搜索敢杀我的马'.")
-    parser.add_argument("--query", default="", help="Optional payload text used to test search/text variants.")
+def add_validation_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    include_cache: bool = True,
+    include_execute: bool = True,
+) -> None:
+    if include_cache:
+        parser.add_argument(
+            "--cache", type=Path, required=True, help="Path to shortcut_cache/<package>.json"
+        )
+    if include_execute:
+        parser.add_argument(
+            "--execute", action="store_true", help="Actually launch resolved variants."
+        )
+    parser.add_argument(
+        "--serial", default="", help="ADB device serial. Defaults to adb's selected device."
+    )
+    parser.add_argument(
+        "--task", default="", help="Optional target task, e.g. '在B站搜索敢杀我的马'."
+    )
+    parser.add_argument(
+        "--query", default="", help="Optional payload text used to test search/text variants."
+    )
     parser.add_argument("--max-candidates", type=int, default=20)
     parser.add_argument("--max-probe-plans", type=int, default=DEFAULT_MAX_PROBE_PLANS)
     parser.add_argument("--max-try", type=int, default=5)
-    parser.add_argument("--execute", action="store_true", help="Actually launch resolved variants.")
-    parser.add_argument("--include-risky", action="store_true", help="Do not skip pay/share/push/auth candidates.")
+    parser.add_argument(
+        "--include-risky", action="store_true", help="Do not skip pay/share/push/auth candidates."
+    )
     parser.add_argument("--validation-root", type=Path, default=None)
-    parser.add_argument("--promote", action="store_true", help="Promote page-validated shortcuts into skills.py.")
+    parser.add_argument(
+        "--promote", action="store_true", help="Promote page-validated shortcuts into skills.py."
+    )
     parser.add_argument("--allow-launchable-promote", action="store_true")
-    parser.add_argument("--skill-store-root", type=Path, default=None)
+    parser.add_argument("--skill-store-root", type=Path, default=DEFAULT_SKILLS_STORE_DIR)
     parser.add_argument("--llm-base-url", default="")
     parser.add_argument("--llm-model", default="")
     parser.add_argument("--llm-api-key", default="")
@@ -455,7 +474,12 @@ def parse_args() -> argparse.Namespace:
             "'llm' also asks the verifier LLM to refine names/descriptions."
         ),
     )
-    return parser.parse_args()
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    add_validation_arguments(parser)
+    return parser.parse_args(argv)
 
 
 def load_profile(cache_path: Path) -> AppShortcutProfile:
@@ -504,7 +528,9 @@ def candidate_records(profile: AppShortcutProfile, *, include_risky: bool) -> li
     return sorted(unique_records.values(), key=candidate_priority, reverse=True)
 
 
-def synthetic_candidate_records(profile: AppShortcutProfile, existing: list[Candidate]) -> list[Candidate]:
+def synthetic_candidate_records(
+    profile: AppShortcutProfile, existing: list[Candidate]
+) -> list[Candidate]:
     if profile.package not in BROWSER_PACKAGES:
         return []
     existing_keys = {candidate_key(candidate) for candidate in existing}
@@ -775,7 +801,8 @@ def candidates_for_plan(
     matched = [
         candidate
         for candidate in candidates
-        if candidate_key(candidate) not in skip_candidate_keys and candidate_matches_plan(candidate, plan)
+        if candidate_key(candidate) not in skip_candidate_keys
+        and candidate_matches_plan(candidate, plan)
     ]
     return sorted(
         matched,
@@ -803,7 +830,10 @@ def looks_open_page_candidate(candidate: Candidate) -> bool:
 
 def looks_open_page_like(candidate: Candidate) -> bool:
     text = candidate_search_text(candidate)
-    return any(token in text for token in ("view", "open", "detail", "watch", "play", "video", "home", "首页", "详情"))
+    return any(
+        token in text
+        for token in ("view", "open", "detail", "watch", "play", "video", "home", "首页", "详情")
+    )
 
 
 def candidate_search_text(candidate: Candidate) -> str:
@@ -908,7 +938,9 @@ def candidate_priority(candidate: Candidate) -> tuple[int, int]:
     score = 0
     if is_probe_noise_candidate(candidate):
         score -= 200
-    if candidate.kind == "deeplink" and has_route_word(uri_and_description, ("search", "query", "keyword", "搜索")):
+    if candidate.kind == "deeplink" and has_route_word(
+        uri_and_description, ("search", "query", "keyword", "搜索")
+    ):
         score += 120
     elif action == "android.intent.action.search":
         score += 90
@@ -1023,20 +1055,34 @@ def variants_for_intent(candidate: Candidate, *, query: str, max_try: int) -> li
 
 def looks_query_like(candidate: Candidate) -> bool:
     text = candidate_search_text(candidate)
-    return any(token in text for token in ("search", "query", "keyword", "media_search", "media_play_from_search", "搜索"))
+    return any(
+        token in text
+        for token in (
+            "search",
+            "query",
+            "keyword",
+            "media_search",
+            "media_play_from_search",
+            "搜索",
+        )
+    )
 
 
 def needs_probe_media_payload(candidate: Candidate) -> bool:
     action = (candidate.action or "").lower()
     text = candidate_search_text(candidate)
-    return action in PUBLISH_UPLOAD_ACTIONS or any(token in text for token in ("upload", "internal_upload"))
+    return action in PUBLISH_UPLOAD_ACTIONS or any(
+        token in text for token in ("upload", "internal_upload")
+    )
 
 
 def uri_with_query(uri: str, key: str, value: str) -> str:
     parsed = urlparse(uri)
     sep = "&" if parsed.query else ""
     query = f"{parsed.query}{sep}{key}={value}"
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment))
+    return urlunparse(
+        (parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, parsed.fragment)
+    )
 
 
 class Adb:
@@ -1049,7 +1095,9 @@ class Adb:
             command.extend(["-s", self.serial])
         command.extend(args)
         try:
-            completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False)
+            completed = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout, check=False
+            )
             return completed.returncode, (completed.stdout + completed.stderr).strip(), False
         except subprocess.TimeoutExpired as exc:
             output = (exc.stdout or "") + (exc.stderr or "")
@@ -1208,14 +1256,16 @@ def variant_uses_probe_upload_media(variant: Variant | dict[str, Any]) -> bool:
         extras = variant.extras
     else:
         extras = variant.get("extras") or []
-    return any(len(item) == 2 and item[0] == ANDROID_EXTRA_STREAM and item[1] == PROBE_UPLOAD_URI for item in extras)
+    return any(
+        len(item) == 2 and item[0] == ANDROID_EXTRA_STREAM and item[1] == PROBE_UPLOAD_URI
+        for item in extras
+    )
 
 
 def foreground_activity(adb: Adb) -> str:
     _, output, _ = adb.run("shell", "dumpsys", "window", "windows", timeout=5.0)
-    match = (
-        re.search(r"mCurrentFocus=Window\{[^ ]+ [^ ]+ ([^/ ]+)/([^}\s]+)", output)
-        or re.search(r"mFocusedApp=.* ([^/ ]+)/([^\s}]+)", output)
+    match = re.search(r"mCurrentFocus=Window\{[^ ]+ [^ ]+ ([^/ ]+)/([^}\s]+)", output) or re.search(
+        r"mFocusedApp=.* ([^/ ]+)/([^\s}]+)", output
     )
     if match:
         return f"{match.group(1)}/{match.group(2)}"
@@ -1266,25 +1316,34 @@ def verify_with_llm(
     variant: Variant,
     launch: dict[str, Any],
 ) -> dict[str, Any]:
-    content: list[dict[str, Any]] = [{
-        "type": "text",
-        "text": json.dumps({
-            "task": task,
-            "candidate": candidate_to_dict(candidate),
-            "variant": variant_to_dict(variant),
-            "foreground": launch.get("foreground"),
-            "adb_output": summarize_text(str(launch.get("output") or ""), 1200),
-            "ui_sample": launch.get("ui_sample") or [],
-            "ui_tree_excerpt": summarize_text(str(launch.get("ui_tree") or ""), 4000),
-        }, ensure_ascii=False),
-    }]
+    content: list[dict[str, Any]] = [
+        {
+            "type": "text",
+            "text": json.dumps(
+                {
+                    "task": task,
+                    "candidate": candidate_to_dict(candidate),
+                    "variant": variant_to_dict(variant),
+                    "foreground": launch.get("foreground"),
+                    "adb_output": summarize_text(str(launch.get("output") or ""), 1200),
+                    "ui_sample": launch.get("ui_sample") or [],
+                    "ui_tree_excerpt": summarize_text(str(launch.get("ui_tree") or ""), 4000),
+                },
+                ensure_ascii=False,
+            ),
+        }
+    ]
     screenshot = launch.get("screenshot_path")
     if screenshot:
         image_data = Path(screenshot).read_bytes()
-        content.append({
-            "type": "image_url",
-            "image_url": {"url": "data:image/png;base64," + base64.b64encode(image_data).decode("ascii")},
-        })
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64," + base64.b64encode(image_data).decode("ascii")
+                },
+            }
+        )
     messages = [
         {
             "role": "system",
@@ -1593,7 +1652,9 @@ def placeholder_names(value: Any) -> set[str]:
 def variant_contains_query(variant: Variant, query: str) -> bool:
     if not query:
         return False
-    return "{{query}}" in json.dumps(template_query_payload(variant_to_dict(variant), query=query), ensure_ascii=False)
+    return "{{query}}" in json.dumps(
+        template_query_payload(variant_to_dict(variant), query=query), ensure_ascii=False
+    )
 
 
 def dedupe_validation_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1621,12 +1682,13 @@ def validation_record_key(record: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-async def promote_results(args: argparse.Namespace, records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def promote_results(
+    args: argparse.Namespace, records: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     if not args.promote or not records:
         return []
-    if args.skill_store_root is None:
-        raise SystemExit("--promote requires --skill-store-root")
-    library = FlatSkillLibrary(store_dir=args.skill_store_root.expanduser())
+    store_root = args.skill_store_root or DEFAULT_SKILLS_STORE_DIR
+    library = FlatSkillLibrary(store_dir=store_root.expanduser())
     outcomes: list[dict[str, Any]] = []
     for record in force_shortcut_skip_valid_state(records):
         decision, skill_id = await add_validated_shortcut_skill(
@@ -1709,7 +1771,9 @@ def write_sidecar(
                 "reason": result.reason,
                 "probe_plan": result.probe_plan,
                 "variants": result.variants,
-                "validation_record": result_to_validation_record(result, query=result_probe_query(result, args)),
+                "validation_record": result_to_validation_record(
+                    result, query=result_probe_query(result, args)
+                ),
             }
             for result in results
         ],
@@ -1958,8 +2022,8 @@ def refine_shortcut_records_with_llm(
     prompt = {
         "task": (
             "Refine Android shortcut skill metadata after validation. "
-            "Return JSON only: {\"records\":[{\"index\":0,\"name\":\"...\","
-            "\"description\":\"...\"}]}. "
+            'Return JSON only: {"records":[{"index":0,"name":"...",'
+            '"description":"..."}]}. '
             "Do not change payload fields, packages, status, parameters, valid_state, or indices. "
             f"All promoted shortcut records must keep valid_state={SHORTCUT_SKIP_VALID_STATE!r}. "
             "Prefer concise distinct names and descriptions that help an agent choose the right shortcut."
@@ -2128,7 +2192,9 @@ def _normalized_result_parameters(result: ProbeResult) -> set[str]:
     return output
 
 
-def _postprocess_change(change_type: str, before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
+def _postprocess_change(
+    change_type: str, before: dict[str, Any], after: dict[str, Any]
+) -> dict[str, Any]:
     return {
         "type": change_type,
         "before": _compact_record_for_report(before),
@@ -2160,8 +2226,8 @@ def _safe_skill_name(value: str) -> str:
     return text[:60]
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     validate_verifier_config(args)
     args.cache = args.cache.expanduser()
     profile = load_profile(args.cache)
@@ -2179,7 +2245,9 @@ def main() -> None:
     stopped_early: str | None = None
     for plan in probe_plans:
         plan_args = args_for_probe_plan(args, plan)
-        plan_candidates = candidates_for_plan(candidates, plan, skip_candidate_keys=validated_candidate_keys)
+        plan_candidates = candidates_for_plan(
+            candidates, plan, skip_candidate_keys=validated_candidate_keys
+        )
         for candidate in plan_candidates:
             result = validate_candidate(adb, candidate, args=plan_args, artifacts_dir=artifacts_dir)
             result.probe_plan = probe_plan_to_dict(plan)
@@ -2222,15 +2290,21 @@ def main() -> None:
     print(f"cache: {args.cache}")
     print(f"package: {profile.package}")
     print(f"candidates_tested: {len(results)}")
-    print("probe_plans:", json.dumps([probe_plan_to_dict(plan) for plan in probe_plans], ensure_ascii=False))
+    print(
+        "probe_plans:",
+        json.dumps([probe_plan_to_dict(plan) for plan in probe_plans], ensure_ascii=False),
+    )
     print(f"sidecar: {sidecar_path}")
     print("status_counts:", status_counts(results))
     if stopped_early:
         print(f"stopped_early: {stopped_early}")
     if postprocess_report.get("mode") != "off":
-        print(f"postprocess: input={postprocess_report.get('input_count')} output={postprocess_report.get('output_count')}")
+        print(
+            f"postprocess: input={postprocess_report.get('input_count')} output={postprocess_report.get('output_count')}"
+        )
     if promotions:
         print("promotions:", json.dumps(promotions, ensure_ascii=False, indent=2))
+    return 0
 
 
 def status_counts(results: list[ProbeResult]) -> dict[str, int]:
@@ -2241,4 +2315,4 @@ def status_counts(results: list[ProbeResult]) -> dict[str, int]:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

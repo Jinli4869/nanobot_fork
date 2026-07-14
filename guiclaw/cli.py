@@ -34,7 +34,7 @@ from guiclaw.memory.retrieval import MemoryRetriever
 from guiclaw.memory.store import MemoryStore
 from guiclaw.skills.action_grounder import ActionGrounder as _AgentActionGrounder
 from guiclaw.skills.executor import LLMStateValidator, SkillExecutor
-from guiclaw.skills.flat import FlatSkillLibrary
+from guiclaw.skills.flat import DEFAULT_SKILLS_STORE_DIR, FlatSkillLibrary
 from guiclaw.skills.observation_provider import AgentScreenshotProvider as _AgentScreenshotProvider
 from guiclaw.skills.subgoal_runner import SubgoalRunner as _AgentSubgoalRunner
 from guiclaw.trajectory.recorder import TrajectoryRecorder
@@ -53,7 +53,7 @@ _SAFE_INTERVENTION_TARGET_KEYS = frozenset(
 
 DEFAULT_CONFIG_PATH = Path.home() / ".guiclaw" / "config.yaml"
 DEFAULT_MEMORY_DIR = Path.home() / ".guiclaw" / "memory"
-DEFAULT_SKILLS_DIR = Path.home() / ".guiclaw" / "skills"
+DEFAULT_SKILLS_DIR = DEFAULT_SKILLS_STORE_DIR
 DEFAULT_RUNS_DIR = Path("guiclaw_runs")
 _EMBEDDING_BATCH_SIZE = 10
 WINDOWS_TARGET_APP_CLASSES = ("classic-win32", "uwp", "directx", "gpu-heavy", "electron-gpu")
@@ -622,7 +622,12 @@ async def run_cli(args: argparse.Namespace) -> AgentResult:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
+    command_args = list(sys.argv[1:] if argv is None else argv)
+    if command_args and command_args[0] == "shortcuts":
+        from guiclaw.shortcuts import main as shortcuts_main
+
+        return shortcuts_main(command_args[1:])
+    args = parse_args(command_args)
     try:
         result = asyncio.run(run_cli(args))
     except Exception as exc:
