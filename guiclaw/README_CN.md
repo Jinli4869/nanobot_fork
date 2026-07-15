@@ -24,10 +24,9 @@ GUIClaw 有两种使用方式：
    - [切换后端](#切换后端)
    - [各平台配置示例](#各平台配置示例)
 4. [实时 Demo](#实时-demo)
-5. [Planner / Router 路由集成](#planner--router-路由集成)
-6. [记忆库](#记忆库)
-7. [后端](#后端)
-8. [技能系统](#技能系统)
+5. [记忆库](#记忆库)
+6. [后端](#后端)
+7. [技能系统](#技能系统)
 
 ---
 
@@ -67,6 +66,14 @@ uv pip install -e ".[web,demo-live]"
 ### 配置文件（`~/.guiclaw/config.yaml`）
 
 CLI 默认读取 `~/.guiclaw/config.yaml`，可通过 `--config <路径>` 覆盖。
+
+首次执行 GUI 任务时，如果 memory store 中没有 `POLICY` 条目，GUIClaw 会在
+`~/.guiclaw/memory/policy.md` 中写入一条保守的默认策略：除非任务明确需要并授权相关
+权限，否则模型应选择“拒绝”“取消”或“暂不”。已有策略不会被覆盖；用户可以按照
+[记忆库](#记忆库)中说明的格式编辑该文件，补充适合自己环境的操作偏好。
+
+`POLICY` memory 只会作为提示词中的引导信息注入，不能强制或保证模型遵守。需要硬性
+控制时，仍应使用系统权限、backend 限制、宿主侧人工确认或沙箱。
 
 **最简配置（阿里云百炼/通义 DashScope）：**
 
@@ -115,6 +122,11 @@ max_steps: 15
 memory_dir: "~/.guiclaw/memory"
 skills_dir: "~/.guiclaw/skill"
 
+# 技能复用与任务后提取（默认均关闭）
+enable_skill_execution: false
+enable_skill_extraction: false
+enable_memory_extraction: false
+
 # 无头虚拟显示（仅 Linux；需安装 Xvfb）
 background: false
 background_config:
@@ -122,6 +134,12 @@ background_config:
   width: 1280
   height: 720
 ```
+
+`enable_skill_execution` 会向 GUI agent 提供检索到的技能；未配置 `embedding` 时使用
+BM25，配置后增加语义检索。两个 extraction 开关会在每次任务结束后分别把技能写入
+`~/.guiclaw/skill/skills.py`、把记忆写入
+`~/.guiclaw/memory/gui_memory_bank.jsonl`。standalone 命令会等待已启用的提取任务完成后
+再退出。
 
 > **获取 DashScope API Key：** 登录[阿里云控制台](https://dashscope.console.aliyun.com/) → API Key 管理 → 创建 API Key。
 
@@ -729,51 +747,6 @@ curl http://127.0.0.1:9100
 
 如果 MJPEG 地址或等待超时不同于默认值，启动 demo server 时传入
 `--ios-mjpeg-url` 和 `--ios-mjpeg-frame-timeout-ms`。
-
----
-
-## Planner / Router 路由集成
-
-nanobot 将多步骤任务分解为计划时，需要为每个 GUI 子任务分配正确的路由标识（route sentinel）。GUIClaw 针对每种后端暴露一个路由哨兵，planner 用它来生成类型正确的计划节点。
-
-### 路由哨兵对照表
-
-| 后端 | 路由哨兵 | 生效条件 |
-|------|---------|---------|
-| `local` 或 `dry-run` | `gui.desktop` | 默认；本地桌面控制 |
-| `adb` | `gui.adb` | Android 设备（scrcpy 观察 + ADB 兼容控制） |
-| `ios` | `gui.ios` | iOS 设备（WebDriverAgent） |
-| `hdc` | `gui.hdc` | 鸿蒙 OS 设备（HDC） |
-
-活跃哨兵由配置中的 `gui.backend` 字段决定：
-
-```
-"backend": "adb"   →  planner 生成  route_id = "gui.adb"
-"backend": "ios"   →  planner 生成  route_id = "gui.ios"
-"backend": "hdc"   →  planner 生成  route_id = "gui.hdc"
-"backend": "local" →  planner 生成  route_id = "gui.desktop"
-```
-
-Router 将 `gui.desktop`、`gui.adb`、`gui.ios`、`gui.hdc` 均分发到同一个 GUI 子智能体工具——路由哨兵的意义在于让 planner（以及查看计划 trace 的开发者）能清晰看到每个子任务所指向的物理设备。
-
-### Planner 如何感知当前后端
-
-规划阶段，nanobot 通过 `PlanningContext` 的 `active_gui_route` 字段将当前后端告知 planner。Planner 指令会向 LLM 说明：
-
-> *"当前 GUI 后端为 'gui.hdc'，所有 GUI 子任务必须使用 route_id='gui.hdc'，不得使用 'gui.desktop' 或其他 GUI 路由标识。"*
-
-因此，当你在 Android 手机、iPhone 和鸿蒙设备之间切换时，planner 会自动生成正确的 route_id，无需任何手动干预。
-
-### 能力目录（Capability Catalog）
-
-Planner 看到的能力目录摘要也会随后端动态变化：
-
-| `gui.backend` | Planner 看到的摘要 |
-|---------------|-------------------|
-| `adb` | "使用 GUI 子智能体操作已连接的 Android 设备上的应用" |
-| `ios` | "使用 GUI 子智能体操作已连接的 iOS 设备上的应用" |
-| `hdc` | "使用 GUI 子智能体操作已连接的鸿蒙 OS 设备上的应用" |
-| `local` | "使用 GUI 子智能体操作本地桌面上的应用" |
 
 ---
 

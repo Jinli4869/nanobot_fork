@@ -24,10 +24,9 @@ GUIClaw can be used in two ways:
    - [Switching backends](#switching-backends)
    - [Platform-specific examples](#platform-specific-examples)
 4. [Live Demo](#live-demo)
-5. [Planner / Router Integration](#planner--router-integration)
-6. [Memory Store](#memory-store)
-7. [Backends](#backends)
-8. [Skills System](#skills-system)
+5. [Memory Store](#memory-store)
+6. [Backends](#backends)
+7. [Skills System](#skills-system)
 
 ---
 
@@ -67,6 +66,16 @@ The `guiclaw` command drives a single GUI task without any nanobot runtime.
 ### Config file (`~/.guiclaw/config.yaml`)
 
 The CLI reads configuration from `~/.guiclaw/config.yaml` by default (override with `--config <path>`).
+
+On the first GUI task, if the memory store has no `POLICY` entries, GUIClaw creates
+a conservative default entry in `~/.guiclaw/memory/policy.md`. It tells the model
+to deny, cancel, or defer permission requests unless the task explicitly authorizes
+the permission. Existing policy entries are never replaced, and you may edit the
+memory file using the format documented in [Memory Store](#memory-store).
+
+`POLICY` memory is injected as an advisory prompt hint. It can guide model
+decisions, but it does not enforce or guarantee them. Use OS permissions, backend
+restrictions, host-side intervention approval, or sandboxing for hard controls.
 
 **Minimal config (Alibaba Cloud DashScope):**
 
@@ -115,6 +124,11 @@ max_steps: 15
 memory_dir: "~/.guiclaw/memory"
 skills_dir: "~/.guiclaw/skill"
 
+# Skill reuse and post-run learning (all disabled by default)
+enable_skill_execution: false
+enable_skill_extraction: false
+enable_memory_extraction: false
+
 # Headless virtual display (Linux only; requires Xvfb)
 background: false
 background_config:
@@ -122,6 +136,13 @@ background_config:
   width: 1280
   height: 720
 ```
+
+`enable_skill_execution` exposes retrieved skills to the GUI agent. It uses BM25
+without `embedding` and adds semantic retrieval when an embedding provider is
+configured. After each task, the two extraction switches write skills to
+`~/.guiclaw/skill/skills.py` and memory to
+`~/.guiclaw/memory/gui_memory_bank.jsonl`. The standalone command waits for the
+enabled extraction jobs before it exits.
 
 > **Get your DashScope API Key:** Log in to [Alibaba Cloud Console](https://dashscope.console.aliyun.com/) → API Keys → Create API Key.
 
@@ -732,52 +753,6 @@ curl http://127.0.0.1:9100
 
 Use `--ios-mjpeg-url` and `--ios-mjpeg-frame-timeout-ms` when starting the demo
 server if its MJPEG endpoint or timeout differs from the defaults.
-
----
-
-## Planner / Router Integration
-
-When nanobot decomposes a multi-step task into a plan, it needs to know which GUI route to assign to each GUI subtask. GUIClaw exposes a **route sentinel** per backend that the planner uses to emit correctly-typed plan nodes.
-
-### Route sentinels
-
-| Backend | Route sentinel | When it is active |
-|---------|---------------|-------------------|
-| `local` or `dry-run` | `gui.desktop` | Default; local desktop control |
-| `adb` or `scrcpy-adb` | `gui.adb` | Android device via ADB-compatible control |
-| `ios` | `gui.ios` | iOS device via WebDriverAgent |
-| `hdc` | `gui.hdc` | HarmonyOS device via HDC |
-
-The active sentinel is derived from `gui.backend` in your config:
-
-```
-"backend": "adb"   →  planner emits  route_id = "gui.adb"
-"backend": "scrcpy-adb" → planner emits route_id = "gui.adb"
-"backend": "ios"   →  planner emits  route_id = "gui.ios"
-"backend": "hdc"   →  planner emits  route_id = "gui.hdc"
-"backend": "local" →  planner emits  route_id = "gui.desktop"
-```
-
-The router dispatches any of `gui.desktop`, `gui.adb`, `gui.ios`, and `gui.hdc` to the same underlying GUI subagent tool — the sentinel exists only so the planner (and human readers of plan traces) can see which physical device a subtask targets.
-
-### How the planner learns the active backend
-
-At planning time, nanobot passes the current backend as `active_gui_route` inside `PlanningContext`. The planner directive instructs the LLM:
-
-> *"The current GUI backend is 'gui.hdc'. Use route_id='gui.hdc' for ALL GUI subtasks — do not use 'gui.desktop' or other GUI route IDs."*
-
-This ensures that when you switch between an Android phone, an iPhone, and a HarmonyOS device, the planner automatically generates the correct route IDs without any manual intervention.
-
-### Capability catalog
-
-The capability catalog shown to the planner also reflects the active backend:
-
-| `gui.backend` | Catalog summary shown to planner |
-|---------------|----------------------------------|
-| `adb` | "Use the GUI subagent to operate apps on the connected Android device" |
-| `ios` | "Use the GUI subagent to operate apps on the connected iOS device" |
-| `hdc` | "Use the GUI subagent to operate apps on the connected HarmonyOS device" |
-| `local` | "Use the GUI subagent to operate apps on the local desktop" |
 
 ---
 
