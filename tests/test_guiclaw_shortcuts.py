@@ -126,6 +126,27 @@ def test_shortcuts_cli_validate_routes_generated_cache(tmp_path: Path, monkeypat
     ]
 
 
+def test_shortcuts_cli_validate_routes_existing_json_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from guiclaw import shortcuts
+
+    cache_path = tmp_path / "com.example.reader.json"
+    cache_path.write_text(json.dumps({"package": "com.example.reader"}), encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def unexpected_inference(*args) -> list[Path]:
+        raise AssertionError(f"manifest inference unexpectedly called with {args}")
+
+    monkeypatch.setattr(shortcuts, "infer_and_record_shortcuts", unexpected_inference)
+    monkeypatch.setattr(shortcuts, "run_shortcut_validation", lambda argv: calls.append(argv) or 0)
+
+    exit_code = shortcuts.main([str(cache_path), "--validate", "--promote"])
+
+    assert exit_code == 0
+    assert calls == [["--cache", str(cache_path), "--execute", "--promote"]]
+
+
 def test_guiclaw_cli_dispatches_shortcuts_subcommand(monkeypatch) -> None:
     from guiclaw import cli, shortcuts
 

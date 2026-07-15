@@ -52,9 +52,13 @@ def _manifest_paths(source: Path) -> list[Path]:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="guiclaw shortcuts",
-        description="Infer and record Android shortcuts from decoded manifest files.",
+        description="Infer Android shortcuts from manifests or validate an existing cache JSON.",
     )
-    parser.add_argument("source", type=Path, help="AndroidManifest.xml file or directory")
+    parser.add_argument(
+        "source",
+        type=Path,
+        help="AndroidManifest.xml file, manifest directory, or shortcut cache JSON",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -64,7 +68,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--validate",
         action="store_true",
-        help="Resolve, launch, and validate generated shortcut candidates on an ADB device.",
+        help="Resolve, launch, and validate shortcut candidates on an ADB device.",
     )
     add_validation_arguments(parser, include_cache=False, include_execute=False)
     return parser.parse_args(argv)
@@ -108,7 +112,12 @@ def _validation_argv(args: argparse.Namespace, cache_path: Path) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    cache_paths = infer_and_record_shortcuts(args.source, args.output)
+    source = args.source.expanduser()
+    cache_paths = (
+        [source]
+        if source.is_file() and source.suffix.lower() == ".json"
+        else infer_and_record_shortcuts(source, args.output)
+    )
     for cache_path in cache_paths:
         print(f"shortcut_cache: {cache_path}")
     if not args.validate:
