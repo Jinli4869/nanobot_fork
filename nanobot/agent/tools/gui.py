@@ -1862,21 +1862,15 @@ class GuiSubagentTool(Tool):
             return None
 
     def _load_policy_context(self) -> str | None:
-        """Load all POLICY entries as raw text for direct injection into the GUI agent system prompt.
+        """Load POLICY memory for direct GUI prompt injection.
 
         Policies must always be present regardless of task relevance, so they are loaded
         in full without embedding-based search filtering.
         """
-        from guiclaw.memory.store import MemoryStore
-        from guiclaw.memory.types import MemoryType
+        from guiclaw.memory.policy import load_policy_context
 
         try:
-            memory_store = MemoryStore(DEFAULT_GUICLAW_MEMORY_DIR)
-            policy_entries = memory_store.list_all(memory_type=MemoryType.POLICY)
-            if not policy_entries:
-                return None
-            lines = [f"- {entry.content}" for entry in policy_entries]
-            return "\n".join(lines)
+            return load_policy_context(DEFAULT_GUICLAW_MEMORY_DIR)
         except Exception:
             logger.warning("Failed to load GUI policy memory", exc_info=True)
             return None

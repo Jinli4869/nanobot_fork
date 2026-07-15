@@ -530,6 +530,8 @@ class GuiAgent:
 
         # 2. Retrieve memory context (once)
         memory_context = await self._retrieve_memory(task)
+        if self._policy_context:
+            self._log_policy_injection(self._policy_context)
 
         skill_app_filter = self._skill_app_filter(task, app_hint)
         prompt_skill_parts: CompactPromptParts | None = None
@@ -2192,6 +2194,14 @@ class GuiAgent:
         prompt_skill_parts: CompactPromptParts | None = None,
     ) -> list[dict[str, Any]]:
         task_context: list[str] = [task]
+        if self._policy_context:
+            task_context.extend(
+                [
+                    "",
+                    "Advisory Policy Hints (guidance only; not guaranteed enforcement):",
+                    self._policy_context,
+                ]
+            )
         if memory_context:
             task_context.extend(["", "Relevant Knowledge:", memory_context])
         return build_profile_messages(
@@ -2713,19 +2723,7 @@ class GuiAgent:
     # ------------------------------------------------------------------
 
     async def _retrieve_memory(self, task: str) -> str | None:
-        """Return memory context for the current task.
-
-        When ``_policy_context`` is set (nanobot path), policy entries are injected
-        directly without embedding search — guaranteeing full policy coverage.  The
-        legacy ``_memory_retriever`` path (guiclaw CLI) is preserved for backward
-        compatibility when ``_policy_context`` is not provided.
-        """
-        if self._policy_context is not None:
-            self._log_policy_injection(self._policy_context)
-            return self._policy_context
-
-        # Existing retriever-based path — used by the guiclaw CLI and any callers that
-        # construct GuiAgent directly with a memory_retriever.
+        """Return retrieved knowledge without replacing the independent policy hint."""
         if self._memory_retriever is None:
             return None
         from guiclaw.memory.types import MemoryType

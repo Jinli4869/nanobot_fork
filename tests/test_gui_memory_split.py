@@ -123,19 +123,18 @@ def test_gui_tool_load_policy_context(tmp_path: Path, monkeypatch: pytest.Monkey
     assert result is not None, "Expected non-None policy context"
     assert "Never accept calls without user permission." in result
     assert "Do not send messages to unknown contacts." in result
-    # Each entry is prefixed with "- "
-    for line in result.splitlines():
-        assert line.startswith("- "), f"Expected '- ' prefix, got: {line!r}"
+    assert "- Never accept calls without user permission." in result
+    assert "- Do not send messages to unknown contacts." in result
 
 
 # ---------------------------------------------------------------------------
-# Test 5: GuiAgent uses policy_context directly (no retriever search)
+# Test 5: GuiAgent keeps policy context separate from memory retrieval
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_gui_agent_uses_policy_context_directly(tmp_path: Path) -> None:
-    """GuiAgent._retrieve_memory returns policy_context directly without calling the retriever."""
+async def test_gui_agent_policy_does_not_replace_memory_retrieval(tmp_path: Path) -> None:
+    """A policy hint must not suppress task-relevant memory retrieval."""
     from guiclaw.agent import GuiAgent
     from guiclaw.backends.dry_run import DryRunBackend
     from guiclaw.trajectory.recorder import TrajectoryRecorder
@@ -143,9 +142,9 @@ async def test_gui_agent_uses_policy_context_directly(tmp_path: Path) -> None:
     recorder = TrajectoryRecorder(output_dir=tmp_path / "traj", task="test task")
     recorder.start()
 
-    # Provide a mock retriever — it must NOT be called
+    # Provide a mock retriever with no hits.
     mock_retriever = MagicMock()
-    mock_retriever.search = AsyncMock(side_effect=AssertionError("retriever.search must not be called"))
+    mock_retriever.search = AsyncMock(return_value=[])
 
     agent = GuiAgent(
         llm=MagicMock(),
@@ -157,8 +156,8 @@ async def test_gui_agent_uses_policy_context_directly(tmp_path: Path) -> None:
 
     result = await agent._retrieve_memory("any task")
 
-    assert result == "test policy line", f"Expected direct policy context, got: {result!r}"
-    mock_retriever.search.assert_not_called()
+    assert result is None
+    mock_retriever.search.assert_called()
 
 
 # ---------------------------------------------------------------------------
@@ -193,5 +192,3 @@ async def test_gui_agent_falls_back_to_retriever_when_no_policy_context(tmp_path
     # With no hits, result should be None and the retriever should have been called
     assert result is None, f"Expected None for no search hits, got: {result!r}"
     mock_retriever.search.assert_called()
-
-
