@@ -29,6 +29,7 @@ def _make_loop(tmp_path):
         loop = AgentLoop(bus=bus, provider=provider, workspace=tmp_path)
     return loop
 
+
 @pytest.mark.asyncio
 async def test_loop_max_iterations_message_stays_stable(tmp_path):
     loop = _make_loop(tmp_path)

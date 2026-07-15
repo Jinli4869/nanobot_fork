@@ -340,7 +340,6 @@ class LiveRunManager:
             update={
                 "backend": gui_backend,
                 "adb": adb,
-                "enable_planner": False,
             },
         )
         return config.model_copy(deep=True, update={"gui": gui, "agents": agents})

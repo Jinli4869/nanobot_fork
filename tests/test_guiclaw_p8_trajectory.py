@@ -116,6 +116,12 @@ def tmp_workspace(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def test_gui_subagent_run_storage_is_isolated_from_user_home(tmp_path: Path) -> None:
+    from guiclaw.paths import resolve_guiclaw_data_dir
+
+    assert resolve_guiclaw_data_dir("gui_runs") == tmp_path / ".guiclaw" / "gui_runs"
+
+
 def _dry_run_tool(
     tmp_workspace: Path,
     extra_responses: list[Any] | None = None,
@@ -376,19 +382,6 @@ async def test_summarizer_skipped_when_no_trace(
 
     mock_summarize.assert_not_awaited()
     promote_mock.assert_not_awaited()
-
-
-# ---------------------------------------------------------------------------
-# Task 2 test: nanobot.agent public API exports
-# ---------------------------------------------------------------------------
-
-
-def test_planner_router_exported_from_agent_package() -> None:
-    """TaskPlanner, PlanNode, TreeRouter, NodeResult, RouterContext must be importable from nanobot.agent."""
-    from nanobot.agent import NodeResult, PlanNode, RouterContext, TaskPlanner, TreeRouter
-
-    for cls in (TaskPlanner, PlanNode, TreeRouter, NodeResult, RouterContext):
-        assert isinstance(cls, type), f"{cls!r} is not a class"
 
 
 def test_evaluate_gui_trajectory_counts_only_step_rows(
