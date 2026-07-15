@@ -16,33 +16,33 @@ ALWAYS_ON_SKILL_TAG = "compact_action"
 ACTION_ALIAS_TAG_PREFIXES = ("action_alias:", "alias:")
 
 COMPACT_SKILL_INSTRUCTIONS = """\
-# Optional Compact GUI Skills
-Optionally pick ONE listed compact skill as a single action when it clearly matches
-the task. If none clearly matches, keep using the normal GUI actions above.
+# Reusable Compact GUI Skills
+A listed skill may complete the whole task, a useful prefix, or an intermediate subgoal; it
+does not need to match the entire task. Use `use_skill` for any matching next part, then
+continue the remaining GUI steps normally.
 
 Skill action format:
 `{{"action_type":"use_skill","skill_id":"listed_skill_id","arguments":{{"param":"value"}}}}`
 
 Rules:
-- Prefer `use_skill` over manual navigation when a listed skill clearly matches the
-  requested app/workflow; copy its `skill_id` exactly.
-- A skill may open/navigate the target app internally, so the target app need not
-  already be on screen.
-- Fill `arguments` only with values the task makes obvious; otherwise use `{{}}`.
+- If a listed skill matches the task's named app and next part,
+  you MUST call `use_skill` before `open_app` or manual navigation; copy its `skill_id` exactly.
+- A skill may open or navigate the target app internally.
+- Pass only task-provided `arguments`; otherwise use `{{}}`.
 
 Compact skills:
 {catalog}
 """.strip()
 
 USE_SKILL_ACTION_ROW = (
-    '| `use_skill`     | Run a listed compact GUI skill prefix when it clearly matches the task | '
+    '| `use_skill`     | Run a listed skill for a matching task prefix or intermediate subgoal | '
     '`{"action_type":"use_skill","skill_id":"listed_skill_id","arguments":{}}` |'
 )
 
 USE_SKILL_DECISION_RULE = (
-    "0. Before a manual GUI action, check the compact skill list; if one clearly "
-    "matches the requested app/workflow, choose `use_skill` (it may open the target "
-    "app internally, so do not open it manually first)."
+    "0. Before a manual GUI action, check the compact skill list. Choose `use_skill` "
+    "when one can complete the next useful task part, even if it is only a prefix or "
+    "intermediate subgoal; continue the remaining steps afterward."
 )
 
 # Seed-family models use XML-style function calls instead of the general_e2e JSON

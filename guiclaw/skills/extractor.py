@@ -37,7 +37,10 @@ _TRANSIENT_APP_IDS = frozenset({
 _NO_VERIFY_VALID_STATE = "No need to verify"
 
 _EXTRACT_PROMPT = """\
-Extract a reusable GUI skill as Python code from this trajectory.
+Return executable Python immediately. Do not analyze, explain, or use markdown fences.
+The first line must be the import header shown below.
+
+Extract one reusable GUI skill from this trajectory.
 
 Target format:
 {code_header}
@@ -64,7 +67,7 @@ Rules:
 - target: Every required interactive step must have a natural-language target and valid_state. Use a concise natural-language grounding hint, e.g. "search button", "search input field", "matching video result", "skip ad button". Do not use raw class/resource_id as target unless it is also visible user-facing text.
 - Collapse all app-launch steps into ONE open_app as the first step. For open_app, prefer the trajectory app package for both target and fixed_values.text when available, and always use valid_state="No need to verify".
 - valid_state: Every required interactive step must have a specific present-tense valid_state, e.g. "search field is visible and enabled". For input_text, use "input field is focused" if no better state is available. If a required step has no verifiable state, remove or regenerate that step instead of leaving valid_state empty.
-- state_contract: do not invent selectors. Copy only the exact contract provided by trajectory/codegen for the matched step; omit if no contract is provided. The extractor postprocess will align contracts from codegen.
+- state_contract: do not invent selectors. Copy only the exact contract provided by trajectory/codegen for the matched step; omit if no contract is provided. If an exact contract contains task-specific dynamic text such as a person, query, or result name, omit state_contract from the generated code instead of debating or generalizing it. The extractor postprocess will align contracts from codegen.
 - R(...) supports resource_id, text, content_desc, class_, xpath, visible, clickable, enabled, focused, and scrollable only. Do not use class_name.
 - Drop duplicate/redundant clicks, exploratory taps, and pointless scrolls.
 - Transient popups (ads, permissions, consent): keep as optional=True step. Executor skips them when absent.
@@ -216,7 +219,10 @@ class SkillExtractor:
             failure_note=_FAILURE_NOTE if not is_success else "",
             code_text=code_text,
         )
-        response = await self._llm.chat(_build_messages(prompt, result.screenshots_b64))
+        response = await self._llm.chat(
+            _build_messages(prompt, result.screenshots_b64),
+            max_tokens=8192,
+        )
         self._accumulate_usage(response.usage)
         compile_start = len(self._last_diagnostics)
         skills = _postprocess_skills(self._compile_all(response.content, result), result)
@@ -227,7 +233,10 @@ class SkillExtractor:
                 "errors": list(compile_errors),
             })
             retry_prompt = f"{prompt}\n\n{_RETRY_COMPILE_NOTE.format(issues=_format_quality_issues(compile_errors))}"
-            response = await self._llm.chat(_build_messages(retry_prompt, result.screenshots_b64))
+            response = await self._llm.chat(
+                _build_messages(retry_prompt, result.screenshots_b64),
+                max_tokens=8192,
+            )
             self._accumulate_usage(response.usage)
             compile_start = len(self._last_diagnostics)
             skills = _postprocess_skills(self._compile_all(response.content, result), result)
@@ -242,7 +251,10 @@ class SkillExtractor:
         if issues:
             self._last_diagnostics.append({"phase": "quality_retry", "issues": list(issues)})
             retry_prompt = f"{prompt}\n\n{_RETRY_QUALITY_NOTE.format(issues=_format_quality_issues(issues))}"
-            response = await self._llm.chat(_build_messages(retry_prompt, result.screenshots_b64))
+            response = await self._llm.chat(
+                _build_messages(retry_prompt, result.screenshots_b64),
+                max_tokens=8192,
+            )
             self._accumulate_usage(response.usage)
             skills = _postprocess_skills(self._compile_all(response.content, result), result)
             issues = _skill_quality_issues(skills)
@@ -316,13 +328,22 @@ def _build_messages(prompt: str, screenshots_b64: list[str]) -> list[dict[str, A
 
 def _clean_code_block(text: str) -> str:
     t = text.strip()
-    if t.startswith("```"):
-        lines = t.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        t = "\n".join(lines).strip()
+    fenced_blocks: list[str] = []
+    block: list[str] | None = None
+    for line in t.splitlines():
+        if line.strip().startswith("```"):
+            if block is None:
+                block = []
+            else:
+                fenced_blocks.append("\n".join(block).strip())
+                block = None
+            continue
+        if block is not None:
+            block.append(line)
+    for candidate in fenced_blocks:
+        if "@skill(" in candidate or "from guiclaw.skills.flat import" in candidate:
+            t = candidate
+            break
     if not t.startswith("from guiclaw"):
         t = f"{CODE_HEADER}\n\n{t}"
     return t.rstrip() + "\n"

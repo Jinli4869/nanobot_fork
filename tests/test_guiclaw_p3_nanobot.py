@@ -317,6 +317,7 @@ async def test_llm_adapter_maps_response() -> None:
         name="computer_use",
         arguments={"action_type": "tap", "x": 100, "y": 200},
     )
+    assert provider.calls[0]["max_tokens"] == 2048
 
 
 @pytest.mark.asyncio

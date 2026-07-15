@@ -9,6 +9,7 @@ import logging
 import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -429,6 +430,10 @@ async def test_default_prompt_skill_selection_dispatches_native_use_skill(
     first_call = llm.calls[0]
     first_prompt = _messages_text(first_call["messages"])
     assert skill_id in first_prompt
+    assert "does not need to match the entire task" in first_prompt
+    assert "a useful prefix, or an intermediate subgoal" in first_prompt
+    assert "continue the remaining GUI steps" in first_prompt
+    assert "MUST call `use_skill` before `open_app`" in first_prompt
     parameters = first_call["tools"][0]["function"]["parameters"]
     assert "use_skill" in parameters["properties"]["action_type"]["enum"]
     assert "skill_id" in parameters["properties"]
@@ -2428,7 +2433,7 @@ def test_agent_builds_history_turn_from_step_result(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_records_only_compact_completed_step(tmp_path: Path) -> None:
+async def test_agent_records_complete_model_output_without_prompt(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     screenshot = run_dir / "screenshots" / "001_tap.png"
     _write_test_png(screenshot)
@@ -2457,7 +2462,19 @@ async def test_agent_records_only_compact_completed_step(tmp_path: Path) -> None
         state_summary="Settings visible",
         next_observation=observation,
         prompt_snapshot={"step_index": 1},
-        model_snapshot={"raw_content": "raw model response"},
+        model_snapshot={
+            "raw_content": "raw model response",
+            "reasoning_content": "inspect the visible Settings control",
+            "thinking_blocks": [{"type": "thinking", "thinking": "locate Settings"}],
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "name": "computer_use",
+                    "arguments": {"action_type": "tap", "x": 10, "y": 20},
+                }
+            ],
+            "finish_reason": "tool_calls",
+        },
         execution_snapshot={"tool_result": "tap complete", "done": False},
         step_usage={"total_tokens": 4},
         duration_s=0.25,
@@ -2474,10 +2491,60 @@ async def test_agent_records_only_compact_completed_step(tmp_path: Path) -> None
     assert recorder.path is not None
     trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
     assert trajectory["steps"][-1]["action"]["action_type"] == "tap"
-    assert trajectory["steps"][-1]["model_output"] == "raw model response"
+    assert trajectory["steps"][-1]["model_output"] == {
+        "content": "raw model response",
+        "reasoning_content": "inspect the visible Settings control",
+        "thinking_blocks": [{"type": "thinking", "thinking": "locate Settings"}],
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "name": "computer_use",
+                "arguments": {"action_type": "tap", "x": 10, "y": 20},
+            }
+        ],
+        "finish_reason": "tool_calls",
+    }
     assert trajectory["steps"][-1]["token_usage"] == {"total_tokens": 4}
     assert "prompt" not in trajectory["steps"][-1]
     assert "execution" not in trajectory["steps"][-1]
+
+
+def test_agent_snapshot_preserves_provider_reasoning_and_finish_reason(tmp_path: Path) -> None:
+    agent = GuiAgent(
+        _ScriptedLLM([]),
+        DryRunBackend(),
+        trajectory_recorder=_make_recorder(tmp_path, "model snapshot"),
+    )
+    action = Action(action_type="wait")
+    response = LLMResponse(
+        content="wait for the page",
+        tool_calls=[
+            ToolCall(
+                id="call-1",
+                name="computer_use",
+                arguments={"action_type": "wait", "duration_ms": 500},
+            )
+        ],
+        raw=SimpleNamespace(
+            reasoning_content="the page is still loading",
+            thinking_blocks=[{"type": "thinking", "thinking": "observe loading state"}],
+            finish_reason="tool_calls",
+        ),
+    )
+    assistant_message = agent._build_assistant_message(response)
+
+    snapshot = agent._snapshot_model_response(
+        response=response,
+        action=action,
+        assistant_message=assistant_message,
+        action_text="Action: wait",
+    )
+
+    assert snapshot["reasoning_content"] == "the page is still loading"
+    assert snapshot["thinking_blocks"] == [
+        {"type": "thinking", "thinking": "observe loading state"}
+    ]
+    assert snapshot["finish_reason"] == "tool_calls"
 
 
 def test_agent_finalizes_step_result_with_shared_metrics(tmp_path: Path) -> None:
@@ -2769,9 +2836,10 @@ async def test_agent_trajectory_records_only_compact_step_details(tmp_path: Path
     step = trajectory["steps"][0]
     assert "prompt" not in step
     assert "messages" not in step
-    assert step["model_output"] == (
+    assert step["model_output"]["content"] == (
         'Thought: Action: wait briefly\nAction: {"action_type": "wait"}'
     )
+    assert step["model_output"]["tool_calls"][0]["name"] == "computer_use"
     assert step["action"]["action_type"] == "wait"
     assert step["app"] == "DryRun"
     assert step["token_usage"]["total_tokens"] == 12
@@ -4281,8 +4349,12 @@ async def test_agent_uses_mobileworld_raw_response_for_history_and_compact_trace
 
     assert not list((tmp_path / "runs").rglob("trace.jsonl"))
     trajectory = json.loads(recorder.path.read_text(encoding="utf-8"))
-    assert trajectory["steps"][0]["model_output"].startswith("Thought: Action: Tap login button")
-    assert trajectory["steps"][1]["model_output"].startswith("Thought: Action: Finish task")
+    assert trajectory["steps"][0]["model_output"]["content"].startswith(
+        "Thought: Action: Tap login button"
+    )
+    assert trajectory["steps"][1]["model_output"]["content"].startswith(
+        "Thought: Action: Finish task"
+    )
 
 
 @pytest.mark.asyncio

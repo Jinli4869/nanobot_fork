@@ -369,8 +369,11 @@ def _split_camel_case(text: str) -> str:
 def _step_intent(event: dict[str, Any], action_type: str) -> str:
     if event.get("action_intent"):
         return str(event["action_intent"])
-    if event.get("model_output"):
-        return str(event["model_output"])[:200]
+    model_output = event.get("model_output")
+    if isinstance(model_output, dict):
+        model_output = model_output.get("content") or model_output.get("reasoning_content")
+    if model_output:
+        return str(model_output)[:200]
     if event.get("action_summary"):
         return str(event["action_summary"])
     return action_type

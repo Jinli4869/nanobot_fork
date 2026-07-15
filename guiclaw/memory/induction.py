@@ -421,7 +421,8 @@ def _find_result(events: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _extract_thought(model_output: Any) -> str:
     if isinstance(model_output, dict):
         text = str(
-            model_output.get("raw_content")
+            model_output.get("content")
+            or model_output.get("raw_content")
             or model_output.get("action_text")
             or model_output.get("action_summary")
             or model_output.get("state_summary")

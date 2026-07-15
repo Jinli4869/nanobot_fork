@@ -150,7 +150,7 @@ class TrajectoryRecorder:
         self,
         *,
         action: dict[str, Any],
-        model_output: str = "",
+        model_output: Any = "",
         screenshot_path: str | None = None,
         foreground_app: str | None = None,
         interaction_target: dict[str, Any] | None = None,
@@ -170,7 +170,9 @@ class TrajectoryRecorder:
             "subtask": self.subtask_index,
             "attempt": self._attempt,
             "phase": (phase or self._current_phase).value,
-            "model_output": str(model_output or ""),
+            "model_output": (
+                model_output if isinstance(model_output, (dict, list)) else str(model_output or "")
+            ),
             "action": dict(action),
         }
         if screenshot:

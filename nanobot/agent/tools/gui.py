@@ -1714,7 +1714,10 @@ class GuiSubagentTool(Tool):
         last_action_summary = None
         latest_screenshot_path = None
         if isinstance(step_event, dict):
-            last_action_summary = self._string_or_none(step_event.get("model_output"))
+            model_output = step_event.get("model_output")
+            if isinstance(model_output, dict):
+                model_output = model_output.get("content") or model_output.get("reasoning_content")
+            last_action_summary = self._string_or_none(model_output)
             latest_screenshot_path = self._string_or_none(step_event.get("screenshot_path"))
         if latest_screenshot_path is None and observation:
             latest_screenshot_path = self._string_or_none(observation.get("screenshot_path"))

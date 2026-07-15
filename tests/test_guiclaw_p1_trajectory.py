@@ -123,6 +123,29 @@ def test_trajectory_recorder_writes_compact_json_artifacts(tmp_path: Path) -> No
     assert "total_token_usage" not in result["run"]
 
 
+def test_trajectory_recorder_preserves_structured_model_output(tmp_path: Path) -> None:
+    rec = TrajectoryRecorder(output_dir=tmp_path, task="open settings", platform="android")
+    path = rec.start()
+    model_output = {
+        "content": "Open Settings",
+        "reasoning_content": "The Settings icon is visible.",
+        "thinking_blocks": [{"type": "thinking", "thinking": "tap the icon"}],
+        "tool_calls": [
+            {
+                "id": "call-1",
+                "name": "computer_use",
+                "arguments": {"action_type": "tap", "x": 100, "y": 200},
+            }
+        ],
+        "finish_reason": "tool_calls",
+    }
+
+    rec.record_step(action={"action_type": "tap", "x": 100, "y": 200}, model_output=model_output)
+
+    trajectory = json.loads(path.read_text(encoding="utf-8"))
+    assert trajectory["steps"][0]["model_output"] == model_output
+
+
 def test_trajectory_recorder_keeps_global_steps_across_subtasks(tmp_path: Path) -> None:
     first = TrajectoryRecorder(
         output_dir=tmp_path,
@@ -284,6 +307,56 @@ async def test_trajectory_summarizer_returns_string() -> None:
     assert isinstance(summary, str)
     assert summary == canned
     assert summary.startswith("Status: completed")
+
+
+async def test_trajectory_summarizer_compacts_structured_model_output() -> None:
+    canned = (
+        "Status: completed\n"
+        "Done: Opened settings.\n"
+        "Remaining: none\n"
+        "Current: Settings screen\n"
+        "Resume: No further action needed."
+    )
+    llm = _ScriptedLLM(canned)
+    summarizer = TrajectorySummarizer(llm)
+    events = [
+        {"type": "metadata", "task": "open settings", "platform": "android"},
+        {
+            "type": "step",
+            "step_index": 1,
+            "action": {"action_type": "tap"},
+            "model_output": {
+                "content": "Open Settings",
+                "reasoning_content": "The Settings icon is visible.",
+                "tool_calls": [],
+            },
+        },
+        {"type": "result", "success": True, "duration_s": 1.2, "error": None},
+    ]
+
+    summary = await summarizer.summarize_events(events)
+
+    assert summary == canned
+
+
+async def test_trajectory_summarizer_accepts_fenced_state_note() -> None:
+    state_note = (
+        "Status: completed\n"
+        "Done: Opened Contacts and viewed John Steven.\n"
+        "Remaining: none\n"
+        "Current: Contact details screen\n"
+        "Resume: No further action needed."
+    )
+    llm = _ScriptedLLM(f"Here is the state note:\n```text\n{state_note}\n```")
+    summarizer = TrajectorySummarizer(llm)
+    events = [
+        {"type": "metadata", "task": "view John", "platform": "android"},
+        {"type": "result", "success": True, "duration_s": 1.2, "error": None},
+    ]
+
+    summary = await summarizer.summarize_events(events)
+
+    assert summary == state_note
 
 
 async def test_trajectory_summarizer_empty_events_returns_empty_string() -> None:

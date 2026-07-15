@@ -67,6 +67,16 @@ def is_state_note(text: str) -> bool:
     return True
 
 
+def _extract_state_note(text: str) -> str | None:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    note_size = len(_STATE_NOTE_LABELS)
+    for start in range(len(lines) - note_size + 1):
+        candidate = "\n".join(lines[start : start + note_size])
+        if is_state_note(candidate):
+            return candidate
+    return None
+
+
 def _normalize_note_value(value: Any, *, default: str) -> str:
     if value is None:
         return default
@@ -74,6 +84,19 @@ def _normalize_note_value(value: Any, *, default: str) -> str:
     if not text:
         return default
     return " ".join(text.split())
+
+
+def _model_output_text(value: Any) -> str:
+    if isinstance(value, dict):
+        value = (
+            value.get("content")
+            or value.get("raw_content")
+            or value.get("action_text")
+            or value.get("action_summary")
+            or value.get("state_summary")
+            or ""
+        )
+    return str(value or "").strip()
 
 
 def _derive_state_note_from_events(events: list[dict[str, Any]]) -> str:
@@ -111,8 +134,8 @@ def _summarize_step_progress(steps: list[dict[str, Any]]) -> str:
         return "No GUI actions were completed."
     summaries: list[str] = []
     for event in steps[-3:]:
-        summary = event.get("model_output")
-        if summary is None:
+        summary = _model_output_text(event.get("model_output"))
+        if not summary:
             action = event.get("action") if isinstance(event.get("action"), dict) else {}
             action_type = action.get("action_type", "step")
             text = action.get("text")
@@ -215,10 +238,10 @@ class TrajectorySummarizer:
         messages = [{"role": "user", "content": prompt}]
         try:
             response = await self._llm.chat(messages)
-            text = response.content.strip()
-            if text and is_state_note(text):
-                return text
-            logger.warning("Trajectory summary did not match the state-note contract; using fallback.")
+            state_note = _extract_state_note(response.content)
+            if state_note is not None:
+                return state_note
+            logger.debug("Trajectory summary did not match the state-note contract; using fallback.")
         except Exception:
             logger.warning("Trajectory summarization failed; using fallback state note.", exc_info=True)
 
@@ -239,7 +262,7 @@ class TrajectorySummarizer:
                 action = event.get("action", {})
                 action_type = action.get("action_type", "unknown")
                 text = action.get("text", "")
-                model_out = event.get("model_output", "")
+                model_out = _model_output_text(event.get("model_output"))
                 line = f"Step {idx}: {action_type}"
                 if text:
                     line += f' text="{text}"'

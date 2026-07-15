@@ -28,6 +28,7 @@ class _ScriptedLLM:
     def __init__(self, responses: list[str]) -> None:
         self._responses = [LLMResponse(content=r) for r in responses]
         self.messages: list[list[dict[str, Any]]] = []
+        self.max_tokens: list[int | None] = []
 
     async def chat(
         self,
@@ -37,8 +38,9 @@ class _ScriptedLLM:
         model: str | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse:
-        del tools, tool_choice, model, max_tokens
+        del tools, tool_choice, model
         self.messages.append(messages)
+        self.max_tokens.append(max_tokens)
         if not self._responses:
             raise AssertionError("_ScriptedLLM has no remaining responses.")
         return self._responses.pop(0)
@@ -1769,6 +1771,39 @@ async def open_settings(device):
 
 
 @pytest.mark.asyncio
+async def test_skill_extractor_accepts_python_fence_after_explanation() -> None:
+    response = """I will extract the reusable interaction as one compact skill.
+
+```python
+from guiclaw.skills.flat import C, R, action, skill
+
+@skill(app="com.android.settings", platform="android", name="open_settings", description="Open settings")
+async def open_settings(device):
+    await action("open_app", target="Settings", fixed=True, fixed_values={"text": "com.android.settings"}, valid_state="No need to verify")
+```
+"""
+    llm = _ScriptedLLM([response])
+    extractor = SkillExtractor(llm)
+
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "open_app", "text": "com.android.settings"},
+                "observation": {
+                    "platform": "android",
+                    "foreground_app": "com.android.settings",
+                },
+            },
+        ],
+    )
+
+    assert skill is not None
+    assert skill.name == "open_settings"
+    assert len(llm.messages) == 1
+
+
+@pytest.mark.asyncio
 async def test_skill_extractor_prompt_requests_stable_targets_and_generic_description() -> None:
     response = """from guiclaw.skills.flat import C, R, action, skill
 
@@ -1796,6 +1831,9 @@ async def search_bilibili(device, query):
     )
 
     prompt = llm.messages[0][0]["content"][0]["text"]
+    assert prompt.startswith("Return executable Python immediately.")
+    assert "contains task-specific dynamic text" in prompt
+    assert "omit state_contract from the generated code" in prompt
     assert "MUST be generic and reusable" in prompt
     assert "app name, capability, and broad feature-level route" in prompt
     assert "Use parameter roles" in prompt
@@ -1972,6 +2010,43 @@ async def open_details(device, item_name):
     assert "did not compile as a flat GUI skill" in retry_prompt
     assert "Do not use f-strings" in retry_prompt
     assert skill.steps[0].target == "{{item_name}} details"
+
+
+@pytest.mark.asyncio
+async def test_skill_extractor_uses_8192_tokens_for_initial_and_retry_calls() -> None:
+    compile_error = """from guiclaw.skills.flat import C, R, action, skill
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device, item_name):
+    await action("tap", target=f"{item_name} details", valid_state="details button is visible")
+"""
+    quality_error = """from guiclaw.skills.flat import C, R, action, skill
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device):
+    await action("tap", fixed=True, fixed_values={"x": 150, "y": 230})
+"""
+    valid_response = """from guiclaw.skills.flat import C, R, action, skill
+
+@skill(app="com.example", platform="android", name="open_details", description="Open details")
+async def open_details(device):
+    await action("tap", target="Details", fixed=True, fixed_values={"x": 150, "y": 230}, valid_state="Details is visible and enabled")
+"""
+    llm = _ScriptedLLM([compile_error, quality_error, valid_response])
+    extractor = SkillExtractor(llm)
+
+    skill = await _extract_from_steps(
+        extractor,
+        [
+            {
+                "action": {"action_type": "tap", "x": 150, "y": 230},
+                "observation": {"platform": "android", "foreground_app": "com.example"},
+            }
+        ],
+    )
+
+    assert skill is not None
+    assert llm.max_tokens == [8192, 8192, 8192]
 
 
 @pytest.mark.asyncio

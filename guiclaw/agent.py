@@ -1053,20 +1053,28 @@ class GuiAgent:
             if result.next_observation and result.next_observation.screenshot_path
             else current_observation.screenshot_path
         )
-        raw_model_output = (
-            result.model_snapshot.get("raw_content")
-            if isinstance(result.model_snapshot, dict)
-            else None
-        )
-        self._trajectory_recorder.record_step(
-            action=self._scrub_for_artifact(self._serialize_action(result.action)),
-            model_output=(
+        model_snapshot = result.model_snapshot if isinstance(result.model_snapshot, dict) else {}
+        if model_snapshot:
+            model_output: Any = {
+                "content": model_snapshot.get("raw_content") or "",
+            }
+            for field in ("reasoning_content", "thinking_blocks"):
+                if model_snapshot.get(field) not in (None, "", []):
+                    model_output[field] = model_snapshot[field]
+            model_output["tool_calls"] = model_snapshot.get("tool_calls") or []
+            if model_snapshot.get("finish_reason") not in (None, ""):
+                model_output["finish_reason"] = model_snapshot["finish_reason"]
+        else:
+            model_output = (
                 self._scrub_text_for_artifact_action(
-                    raw_model_output or result.action_intent or result.action_summary,
+                    result.action_intent or result.action_summary,
                     result.action,
                 )
                 or ""
-            ),
+            )
+        self._trajectory_recorder.record_step(
+            action=self._scrub_for_artifact(self._serialize_action(result.action)),
+            model_output=model_output,
             screenshot_path=str(screenshot_path) if screenshot_path else None,
             foreground_app=recorded_observation.foreground_app,
             interaction_target=self._scrub_for_artifact(result.interaction_target),
@@ -2420,7 +2428,7 @@ class GuiAgent:
         action_intent: str | None = None,
         state_summary: str | None = None,
     ) -> dict[str, Any]:
-        return {
+        snapshot = {
             "raw_content": self._scrub_text_for_artifact_action(response.content, action),
             "tool_calls": [
                 {
@@ -2441,6 +2449,8 @@ class GuiAgent:
             "action_intent": self._scrub_text_for_artifact_action(action_intent, action),
             "state_summary": self._scrub_text_for_artifact_action(state_summary, action),
         }
+        self._add_provider_response_fields(snapshot, response, action=action)
+        return snapshot
 
     def _snapshot_failed_model_response(
         self,
@@ -2461,7 +2471,34 @@ class GuiAgent:
         }
         if assistant_message is not None:
             snapshot["assistant_message"] = self._scrub_for_artifact(assistant_message)
+        self._add_provider_response_fields(snapshot, response, action=None)
         return snapshot
+
+    def _add_provider_response_fields(
+        self,
+        snapshot: dict[str, Any],
+        response: LLMResponse,
+        *,
+        action: Action | None,
+    ) -> None:
+        raw = response.raw
+
+        def get_field(name: str) -> Any:
+            if isinstance(raw, dict):
+                return raw.get(name)
+            return getattr(raw, name, None)
+
+        reasoning_content = get_field("reasoning_content")
+        if reasoning_content:
+            snapshot["reasoning_content"] = self._scrub_text_for_artifact_action(
+                str(reasoning_content), action
+            )
+        thinking_blocks = get_field("thinking_blocks")
+        if thinking_blocks:
+            snapshot["thinking_blocks"] = self._scrub_for_artifact(thinking_blocks)
+        finish_reason = get_field("finish_reason")
+        if finish_reason:
+            snapshot["finish_reason"] = str(finish_reason)
 
     @staticmethod
     def _normalize_action_text(
