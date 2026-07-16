@@ -127,6 +127,7 @@ skills_dir: "~/.guiclaw/skill"
 # Skill reuse and post-run learning (all disabled by default)
 enable_skill_execution: false
 enable_skill_extraction: false
+enable_desktop_skills: false
 enable_memory_extraction: false
 
 # Headless virtual display (Linux only; requires Xvfb)
@@ -142,7 +143,9 @@ without `embedding` and adds semantic retrieval when an embedding provider is
 configured. After each task, the two extraction switches write skills to
 `~/.guiclaw/skill/skills.py` and memory to
 `~/.guiclaw/memory/gui_memory_bank.jsonl`. The standalone command waits for the
-enabled extraction jobs before it exits.
+enabled extraction jobs before it exits. Skill execution and extraction remain
+disabled on macOS, Linux, and Windows unless `enable_desktop_skills` is also set
+to `true`.
 
 > **Get your DashScope API Key:** Log in to [Alibaba Cloud Console](https://dashscope.console.aliyun.com/) → API Keys → Create API Key.
 
@@ -491,6 +494,7 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `enableSkillExtraction` | `bool` | `false` | Extract and store learned skills after GUI runs |
 | `enableMemoryExtraction` | `bool` | `false` | Extract deduplicated GUI memory after eligible runs |
 | `enableSkillExecution` | `bool` | `false` | Wire the skill executor for model-selected `use_skill` actions |
+| `enableDesktopSkills` | `bool` | `false` | Allow skill retrieval, execution, and extraction on desktop platforms |
 | `enablePromptSkillSelection` | `bool` | `false` | Retrieve relevant skills and expose them in the GUI prompt |
 | `promptSkillTopK` | `int` | `5` | Maximum retrieved skills shown to the GUI model |
 | `evaluation.enabled` | `bool` | `false` | Run post-task evaluation for successful GUI runs |
@@ -942,6 +946,8 @@ With `enableMemoryExtraction: true`, eligible trajectories with more than two st
 With `enableSkillExecution: false` (default), GUIClaw rejects `use_skill` actions because no skill executor is wired.
 
 With `enablePromptSkillSelection: false` (default), GUIClaw does not expose retrieved skills in the GUI prompt.
+
+On macOS, Linux, and Windows, skill retrieval, prompt injection, execution, and extraction stay disabled unless `enableDesktopSkills: true` is also set. Memory extraction remains independent.
 
 ### Tuning `promptSkillTopK`
 

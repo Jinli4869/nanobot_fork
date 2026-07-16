@@ -70,6 +70,18 @@ class TestGuiConfigSkillExtractionField:
         assert config.enable_skill_extraction is True
 
 
+class TestGuiConfigDesktopSkillsField:
+    """Desktop skill features must require an explicit opt-in."""
+
+    def test_defaults_to_false(self) -> None:
+        config = GuiConfig()
+        assert config.enable_desktop_skills is False
+
+    def test_accepts_camel_case_key(self) -> None:
+        config = GuiConfig.model_validate({"enableDesktopSkills": True})
+        assert config.enable_desktop_skills is True
+
+
 class TestGuiConfigMemoryExtractionField:
     """GuiConfig.enable_memory_extraction must be independently opt-in."""
 
@@ -116,6 +128,78 @@ def _make_tool(gui_config: GuiConfig) -> "GuiSubagentTool":
         model="test/model",
         workspace=Path("/tmp/test_workspace"),
     )
+
+
+class TestDesktopSkillGate:
+    def test_host_disables_desktop_skill_runtime_and_extraction_by_default(self) -> None:
+        from nanobot.agent.tools.gui import GuiSubagentTool
+
+        backend = MagicMock(platform="macos")
+        captured_kwargs: dict = {}
+        config = GuiConfig(
+            backend="local",
+            enable_skill_execution=True,
+            enable_prompt_skill_selection=True,
+            enable_skill_extraction=True,
+        )
+        with (
+            patch.object(GuiSubagentTool, "_build_backend", return_value=backend),
+            patch.object(GuiSubagentTool, "_get_skill_library") as get_library,
+        ):
+            tool = _make_tool(config)
+
+            async def _run() -> None:
+                with (
+                    patch(
+                        "nanobot.agent.tools.gui.GuiAgent.__init__", return_value=None
+                    ) as mock_init,
+                    patch(
+                        "nanobot.agent.tools.gui.TrajectoryRecorder",
+                        return_value=MagicMock(path=None),
+                    ),
+                    patch("guiclaw.agent.GuiAgent.run", new_callable=AsyncMock) as mock_run,
+                ):
+                    mock_init.side_effect = lambda *a, **kw: captured_kwargs.update(kw)
+                    mock_run.return_value = MagicMock(
+                        success=True,
+                        summary="ok",
+                        model_summary="",
+                        trace_path=None,
+                        steps_taken=0,
+                        error=None,
+                    )
+                    try:
+                        await tool._run_task(backend, "open notes")
+                    except (TypeError, ValueError):
+                        pass
+
+            asyncio.run(_run())
+
+        get_library.assert_not_called()
+        assert tool._skill_library is None
+        assert tool._postprocessor._enable_skill_extraction is False
+        assert captured_kwargs["skill_executor"] is None
+        assert captured_kwargs["enable_prompt_skill_selection"] is False
+
+    def test_host_allows_explicit_desktop_skill_opt_in(self) -> None:
+        from nanobot.agent.tools.gui import GuiSubagentTool
+
+        backend = MagicMock(platform="windows")
+        library = object()
+        config = GuiConfig(
+            backend="local",
+            enable_skill_execution=True,
+            enable_skill_extraction=True,
+            enable_desktop_skills=True,
+        )
+        with (
+            patch.object(GuiSubagentTool, "_build_backend", return_value=backend),
+            patch.object(GuiSubagentTool, "_get_skill_library", return_value=library),
+        ):
+            tool = _make_tool(config)
+
+        assert tool._skill_library is library
+        assert tool._postprocessor._enable_skill_extraction is True
 
 
 class TestSkillExecutorWiringDisabled:

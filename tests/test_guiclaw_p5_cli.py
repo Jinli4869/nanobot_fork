@@ -197,6 +197,7 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert cfg.stagnation_limit == 0
     assert cfg.enable_skill_execution is False
     assert cfg.enable_skill_extraction is False
+    assert cfg.enable_desktop_skills is False
     assert cfg.enable_memory_extraction is False
 
     custom_config = _write_config(
@@ -228,6 +229,7 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         stagnation_limit: 3
         enable_skill_execution: true
         enable_skill_extraction: true
+        enable_desktop_skills: true
         enable_memory_extraction: true
         """,
     )
@@ -236,6 +238,7 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert scaled.stagnation_limit == 3
     assert scaled.enable_skill_execution is True
     assert scaled.enable_skill_extraction is True
+    assert scaled.enable_desktop_skills is True
     assert scaled.enable_memory_extraction is True
 
 
@@ -453,6 +456,74 @@ def test_standalone_cli_runs_enabled_postprocessing_before_return(
         "platform": "android",
         "task": "Open Contacts",
     }
+    assert postprocess_state["drained"] is True
+
+
+def test_standalone_desktop_disables_skills_but_keeps_memory_postprocessing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import guiclaw.cli as cli
+    from guiclaw.agent import AgentResult
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        ),
+        memory_dir=tmp_path / "memory",
+        skills_dir=tmp_path / "skill",
+        enable_skill_execution=True,
+        enable_skill_extraction=True,
+        enable_memory_extraction=True,
+    )
+    backend = _FakeBackend(platform="macos")
+    trace_path = tmp_path / "gui_runs" / "run" / "traj.json"
+    agent_state: dict[str, Any] = {}
+    postprocess_state: dict[str, Any] = {}
+
+    class FakeRecorder:
+        def __init__(self, **_: Any) -> None:
+            pass
+
+    class FakeGuiAgent:
+        def __init__(self, **kwargs: Any) -> None:
+            agent_state.update(kwargs)
+
+        async def run(self, task: str, **_: Any) -> AgentResult:
+            return AgentResult(
+                success=True,
+                summary=f"Completed {task}",
+                model_summary=None,
+                trace_path=str(trace_path),
+                steps_taken=1,
+                error=None,
+            )
+
+    class FakePostRunProcessor:
+        def __init__(self, **kwargs: Any) -> None:
+            postprocess_state["init"] = kwargs
+
+        def schedule(self, path: Path | None, **kwargs: Any) -> None:
+            postprocess_state["schedule"] = {"trace_path": path, **kwargs}
+
+        async def drain(self) -> None:
+            postprocess_state["drained"] = True
+
+    args = cli.parse_args(["--backend", "local", "--task", "Open Notes"])
+    monkeypatch.setattr(cli, "TrajectoryRecorder", FakeRecorder)
+    monkeypatch.setattr(cli, "GuiAgent", FakeGuiAgent)
+    monkeypatch.setattr(cli, "PostRunProcessor", FakePostRunProcessor)
+
+    result = asyncio.run(cli._execute_agent(args, config, backend, object(), "Open Notes"))
+
+    assert result.success is True
+    assert agent_state["skill_library"] is None
+    assert agent_state["skill_executor"] is None
+    assert agent_state["enable_prompt_skill_selection"] is False
+    assert postprocess_state["init"]["enable_skill_extraction"] is False
+    assert postprocess_state["init"]["enable_memory_extraction"] is True
     assert postprocess_state["drained"] is True
 
 
@@ -694,6 +765,7 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             api_key="embed-key",
         ),
         enable_skill_execution=True,
+        enable_desktop_skills=True,
         agent_profile="qwen3vl",
     )
     artifacts_root = Path("/tmp/guiclaw-skill-artifacts")
@@ -746,6 +818,7 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             api_key="test-key",
         ),
         enable_skill_execution=True,
+        enable_desktop_skills=True,
     )
 
     no_memory_retriever, bm25_library, bm25_executor = asyncio.run(
@@ -761,6 +834,33 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
     assert no_memory_retriever is None
     assert bm25_library is not None
     assert bm25_executor is not None
+
+
+def test_cli_disables_desktop_skill_bundle_without_explicit_opt_in() -> None:
+    import guiclaw.cli as cli
+
+    config = cli.CliConfig(
+        provider=cli.ProviderConfig(
+            base_url="http://localhost:1234/v1",
+            model="qwen-gui",
+            api_key="test-key",
+        ),
+        enable_skill_execution=True,
+    )
+
+    memory_retriever, skill_library, skill_executor = asyncio.run(
+        cli.build_optional_components(
+            config,
+            provider=object(),
+            backend=_FakeBackend(platform="macos"),
+            model_name=config.provider.model,
+            artifacts_root=Path("/tmp/guiclaw-desktop-skill-gate"),
+        )
+    )
+
+    assert memory_retriever is None
+    assert skill_library is None
+    assert skill_executor is None
 
 
 # ---------------------------------------------------------------------------
@@ -1059,7 +1159,6 @@ def test_run_cli_background_wraps_backend(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(xvfb_mod, "XvfbDisplayManager", FakeXvfbDisplayManager)
 
     # Also patch the xvfb import inside run_cli's local scope by patching the module reference
-    import importlib
     import guiclaw.backends.displays.xvfb as _xvfb
 
     monkeypatch.setattr(_xvfb, "XvfbDisplayManager", FakeXvfbDisplayManager)
