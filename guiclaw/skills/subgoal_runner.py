@@ -30,7 +30,7 @@ from guiclaw.agent_profiles import (
 from guiclaw.interfaces import DeviceBackend, LLMProvider
 from guiclaw.observation import Observation
 from guiclaw.skills.executor import SubgoalResult
-from guiclaw.tool_schemas import COMPUTER_USE_TOOL, image_dimensions
+from guiclaw.tool_schemas import build_computer_use_tool, image_dimensions
 
 if TYPE_CHECKING:
     from guiclaw.trajectory.recorder import TrajectoryRecorder
@@ -74,6 +74,7 @@ class SubgoalRunner:
         self._agent_profile = canonicalize_agent_profile(agent_profile)
         self._step_timeout = step_timeout
         self._image_scale_ratio = image_scale_ratio
+        self._available_apps: tuple[str, ...] | None = None
 
     def set_artifacts_root(self, artifacts_root: Path) -> None:
         self._artifacts_root = Path(artifacts_root)
@@ -94,6 +95,7 @@ class SubgoalRunner:
             screenshot,
             current_observation,
         )
+        await self._load_available_apps()
         task = self._subgoal_task(goal)
 
         if self._trajectory_recorder is not None:
@@ -110,6 +112,7 @@ class SubgoalRunner:
                 history=history,
                 model_name=self._model,
                 history_image_window=self._HISTORY_IMAGE_WINDOW,
+                available_apps=self._available_apps or (),
             )
             parsed = await self._next_action(
                 messages=messages,
@@ -269,7 +272,16 @@ class SubgoalRunner:
             try:
                 response = await self._llm.chat(
                     messages=messages,
-                    tools=[COMPUTER_USE_TOOL] if native_tools_enabled else None,
+                    tools=(
+                        [
+                            build_computer_use_tool(
+                                platform=self._backend.platform,
+                                available_apps=self._available_apps or (),
+                            )
+                        ]
+                        if native_tools_enabled
+                        else None
+                    ),
                     tool_choice="required" if native_tools_enabled else None,
                     model=self._model or None,
                 )
@@ -304,6 +316,24 @@ class SubgoalRunner:
                     }
                 messages.append(self._format_error_message(exc))
         return {"error": "profile/action parse error after retries", "response_content": last_response_content}
+
+    async def _load_available_apps(self) -> None:
+        if self._available_apps is not None:
+            return
+        if str(self._backend.platform).lower() not in {"macos", "windows"}:
+            self._available_apps = ()
+            return
+        try:
+            apps = await self._backend.list_apps()
+        except Exception as exc:
+            logger.warning("Unable to list %s applications: %s", self._backend.platform, exc)
+            apps = []
+        self._available_apps = tuple(
+            sorted(
+                {" ".join(str(name).split()) for name in apps if str(name).strip()},
+                key=str.casefold,
+            )
+        )
 
     def _format_error_message(self, exc: Exception) -> dict[str, Any]:
         return {

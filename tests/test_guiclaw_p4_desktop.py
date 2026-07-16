@@ -5,18 +5,16 @@ environments that have no display.
 
 Each test corresponds to exactly one behaviour from the BACK-03 specification.
 """
+
 from __future__ import annotations
 
-import asyncio
-import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
 from guiclaw.backends.virtual_display import DisplayInfo
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -32,8 +30,11 @@ def _make_backend(platform_name: str = "macos") -> Any:
     # and without triggering lazy pyautogui import.
     backend._screen_width = 1440
     backend._screen_height = 900
+    backend._monitor_left = 0
+    backend._monitor_top = 0
     backend._platform = platform_name
     backend._target_display = None
+    backend._windows_app_ids = {}
     return backend
 
 
@@ -538,10 +539,108 @@ async def test_execute_open_app_macos() -> None:
     backend = _make_backend("macos")
     action = Action(action_type="open_app", text="Safari")
 
-    with patch.object(backend, "_run_cmd", AsyncMock(return_value="")) as mock_run:
+    with (
+        patch.object(backend, "list_apps", AsyncMock(return_value=["Safari"])),
+        patch.object(backend, "_run_cmd", AsyncMock(return_value="")) as mock_run,
+    ):
         await backend.execute(action)
 
-    mock_run.assert_called_once_with("open", "-a", "Safari", timeout=5.0)
+    mock_run.assert_called_once_with("open", "-a", "Safari", timeout=5.0, check=True)
+
+
+@pytest.mark.asyncio
+async def test_execute_open_app_reports_exit_code_and_stderr() -> None:
+    """A missing desktop app is reported to the agent instead of silently ignored."""
+    from guiclaw.action import Action
+
+    backend = _make_backend("macos")
+    action = Action(action_type="open_app", text="Safari")
+    process = MagicMock()
+    process.returncode = 1
+    process.communicate = AsyncMock(
+        return_value=(b"", b"Unable to find application named 'youtube'")
+    )
+
+    with (
+        patch.object(backend, "list_apps", AsyncMock(return_value=["Safari"])),
+        patch(
+            "guiclaw.backends.desktop.asyncio.create_subprocess_exec",
+            AsyncMock(return_value=process),
+        ),
+    ):
+        with pytest.raises(RuntimeError) as exc_info:
+            await backend.execute(action)
+
+    error = str(exc_info.value)
+    assert "exit code 1" in error
+    assert "Unable to find application named 'youtube'" in error
+
+
+@pytest.mark.asyncio
+async def test_execute_open_app_rejects_unknown_macos_name() -> None:
+    from guiclaw.action import Action
+
+    backend = _make_backend("macos")
+    action = Action(action_type="open_app", text="Chrome")
+
+    with patch.object(
+        backend,
+        "list_apps",
+        AsyncMock(return_value=["Google Chrome", "Safari"]),
+    ):
+        with pytest.raises(ValueError, match="Google Chrome"):
+            await backend.execute(action)
+
+
+@pytest.mark.asyncio
+async def test_execute_open_app_is_disabled_on_linux() -> None:
+    from guiclaw.action import Action
+
+    backend = _make_backend("linux")
+
+    with pytest.raises(ValueError, match="disabled on Linux"):
+        await backend.execute(Action(action_type="open_app", text="Firefox"))
+
+
+@pytest.mark.asyncio
+async def test_list_apps_windows_records_launch_ids() -> None:
+    backend = _make_backend("windows")
+    payload = (
+        '[{"Name":"Notepad","AppID":"Microsoft.WindowsNotepad_8wekyb3d8bbwe!App"},'
+        '{"Name":"Google Chrome","AppID":"Chrome"}]'
+    )
+
+    with patch.object(backend, "_run_cmd", AsyncMock(return_value=payload)) as mock_run:
+        apps = await backend.list_apps()
+
+    assert apps == ["Google Chrome", "Notepad"]
+    assert backend._windows_app_ids["Google Chrome"] == "Chrome"
+    assert "Get-StartApps" in " ".join(mock_run.call_args.args)
+
+
+@pytest.mark.asyncio
+async def test_execute_open_app_windows_uses_app_id() -> None:
+    from guiclaw.action import Action
+
+    backend = _make_backend("windows")
+    backend._windows_app_ids = {"Google Chrome": "Chrome"}
+
+    with (
+        patch.object(
+            backend,
+            "list_apps",
+            AsyncMock(return_value=["Google Chrome"]),
+        ),
+        patch.object(backend, "_run_cmd", AsyncMock(return_value="")) as mock_run,
+    ):
+        await backend.execute(Action(action_type="open_app", text="Google Chrome"))
+
+    mock_run.assert_awaited_once_with(
+        "explorer.exe",
+        "shell:AppsFolder\\Chrome",
+        timeout=5.0,
+        check=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -653,9 +752,9 @@ async def test_foreground_app_returns_unknown_on_error() -> None:
 
 def test_gui_tool_builds_local_backend(tmp_path: Path) -> None:
     """GuiSubagentTool._build_backend('local') returns a LocalDesktopBackend instance."""
+    from guiclaw.backends.desktop import LocalDesktopBackend
     from nanobot.agent.tools.gui import GuiSubagentTool
     from nanobot.config.schema import Config
-    from guiclaw.backends.desktop import LocalDesktopBackend
 
     # Build tool with dry-run so __init__ doesn't fail, then test _build_backend directly.
     class _FakeProvider:
