@@ -21,7 +21,7 @@ from guiclaw.agent import GuiAgent
 from guiclaw.interfaces import InterventionHandler, InterventionRequest, InterventionResolution
 from guiclaw.paths import resolve_guiclaw_data_dir
 from guiclaw.postprocessing import EvaluationConfig, PostRunProcessor
-from guiclaw.skills import skills_enabled_for_platform
+from guiclaw.skills import skills_supported_for_platform
 from guiclaw.skills.normalization import (
     annotate_android_apps,
     find_android_apps_in_text,
@@ -1273,10 +1273,7 @@ class GuiSubagentTool(Tool):
         self._skill_libraries: dict[str, Any] = {}
 
         self._backend = self._build_backend(gui_config.backend)
-        platform_skills_enabled = skills_enabled_for_platform(
-            self._backend.platform,
-            enable_desktop_skills=gui_config.enable_desktop_skills,
-        )
+        platform_skills_enabled = skills_supported_for_platform(self._backend.platform)
         skill_runtime_enabled = platform_skills_enabled and (
             gui_config.enable_skill_execution or gui_config.enable_prompt_skill_selection
         )
@@ -1548,10 +1545,7 @@ class GuiSubagentTool(Tool):
             max_steps = self._gui_config.max_steps
         policy_context = self._load_policy_context()
         skill_library = None
-        platform_skills_enabled = skills_enabled_for_platform(
-            active_backend.platform,
-            enable_desktop_skills=self._gui_config.enable_desktop_skills,
-        )
+        platform_skills_enabled = skills_supported_for_platform(active_backend.platform)
         skill_runtime_enabled = platform_skills_enabled and (
             self._gui_config.enable_skill_execution
             or self._gui_config.enable_prompt_skill_selection

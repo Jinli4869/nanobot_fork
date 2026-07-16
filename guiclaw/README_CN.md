@@ -125,7 +125,6 @@ skills_dir: "~/.guiclaw/skill"
 # 技能复用与任务后提取（默认均关闭）
 enable_skill_execution: false
 enable_skill_extraction: false
-enable_desktop_skills: false
 enable_memory_extraction: false
 
 # 无头虚拟显示（仅 Linux；需安装 Xvfb）
@@ -140,8 +139,8 @@ background_config:
 BM25，配置后增加语义检索。两个 extraction 开关会在每次任务结束后分别把技能写入
 `~/.guiclaw/skill/skills.py`、把记忆写入
 `~/.guiclaw/memory/gui_memory_bank.jsonl`。standalone 命令会等待已启用的提取任务完成后
-再退出。macOS、Linux 与 Windows 默认不执行或提取技能；只有同时将
-`enable_desktop_skills` 设置为 `true` 才会启用这些能力。
+再退出。macOS、Linux 与 Windows 不支持技能检索、prompt 注入、执行、提取和演化；
+桌面端仍可独立使用记忆提取。
 
 > **获取 DashScope API Key：** 登录[阿里云控制台](https://dashscope.console.aliyun.com/) → API Key 管理 → 创建 API Key。
 
@@ -490,7 +489,6 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `enableSkillExtraction` | `bool` | `false` | 是否在 GUI 任务后提取并存储技能 |
 | `enableMemoryExtraction` | `bool` | `false` | 是否在有效 GUI 任务后提取并去重存储记忆 |
 | `enableSkillExecution` | `bool` | `false` | 为模型选择的 `use_skill` 动作接入技能执行器 |
-| `enableDesktopSkills` | `bool` | `false` | 是否允许桌面端检索、执行和提取技能 |
 | `enablePromptSkillSelection` | `bool` | `false` | 检索相关技能并暴露在 GUI prompt 中 |
 | `promptSkillTopK` | `int` | `5` | 展示给 GUI 模型的最多检索技能数 |
 | `evaluation.enabled` | `bool` | `false` | 是否对成功的 GUI 任务执行任务后评测 |
@@ -934,7 +932,7 @@ guiclaw shortcuts ./AndroidManifest.xml --validate --promote
 
 `enablePromptSkillSelection: false`（默认）时，GUIClaw 不会把检索到的技能暴露给 GUI 模型。
 
-macOS、Linux 与 Windows 上的技能检索、prompt 注入、执行和提取还需要显式设置 `enableDesktopSkills: true`；记忆提取不受该开关影响。
+macOS、Linux 与 Windows 上的技能检索、prompt 注入、执行、提取和演化始终关闭。桌面窗口几何与无障碍状态不够稳定，无法可靠地固定化复用和校验；记忆提取不受影响。
 
 ### 调整 `promptSkillTopK`
 

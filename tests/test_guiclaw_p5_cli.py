@@ -197,7 +197,6 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert cfg.stagnation_limit == 0
     assert cfg.enable_skill_execution is False
     assert cfg.enable_skill_extraction is False
-    assert cfg.enable_desktop_skills is False
     assert cfg.enable_memory_extraction is False
 
     custom_config = _write_config(
@@ -229,7 +228,6 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         stagnation_limit: 3
         enable_skill_execution: true
         enable_skill_extraction: true
-        enable_desktop_skills: true
         enable_memory_extraction: true
         """,
     )
@@ -238,7 +236,6 @@ def test_load_config_env_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     assert scaled.stagnation_limit == 3
     assert scaled.enable_skill_execution is True
     assert scaled.enable_skill_extraction is True
-    assert scaled.enable_desktop_skills is True
     assert scaled.enable_memory_extraction is True
 
 
@@ -752,7 +749,7 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
     monkeypatch.setattr(cli, "SkillExecutor", FakeSkillExecutor)
 
     provider = object()
-    backend = _FakeBackend(platform="macos")
+    backend = _FakeBackend(platform="android")
     with_embedding = cli.CliConfig(
         provider=cli.ProviderConfig(
             base_url="http://localhost:1234/v1",
@@ -765,7 +762,6 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             api_key="embed-key",
         ),
         enable_skill_execution=True,
-        enable_desktop_skills=True,
         agent_profile="qwen3vl",
     )
     artifacts_root = Path("/tmp/guiclaw-skill-artifacts")
@@ -818,7 +814,6 @@ def test_cli_enables_memory_and_skill_bundle_when_embedding_config_present(
             api_key="test-key",
         ),
         enable_skill_execution=True,
-        enable_desktop_skills=True,
     )
 
     no_memory_retriever, bm25_library, bm25_executor = asyncio.run(
@@ -861,6 +856,13 @@ def test_cli_disables_desktop_skill_bundle_without_explicit_opt_in() -> None:
     assert memory_retriever is None
     assert skill_library is None
     assert skill_executor is None
+
+
+@pytest.mark.parametrize("platform", ["macos", "linux", "windows"])
+def test_skill_support_permanently_excludes_desktop(platform: str) -> None:
+    from guiclaw.skills import skills_supported_for_platform
+
+    assert skills_supported_for_platform(platform) is False
 
 
 # ---------------------------------------------------------------------------

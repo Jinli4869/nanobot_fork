@@ -45,7 +45,6 @@
     "maxSteps": 15,
     "embeddingModel": null,
     "enableSkillExecution": false,
-    "enableDesktopSkills": false,
     "enablePromptSkillSelection": false,
     "promptSkillTopK": 5,
     "background": false,
@@ -74,6 +73,9 @@
 
 说明：
 
+- desktop skills
+  - `enableSkillExecution`、`enablePromptSkillSelection` 与技能提取仅适用于移动端
+  - macOS、Linux 和 Windows 始终关闭技能检索、执行、提取与演化；桌面端仍可使用记忆提取
 - `backend`
   - `adb` / `ios` / `hdc` / `local` / `dry-run`
 - `provider` / `model`
@@ -305,7 +307,6 @@ async def run_gui_task(provider, model: str, task: str) -> dict:
 | `gui.shortcutCacheDir` | shortcut cache root | Android shortcut 发现缓存目录 |
 | `gui.embeddingModel` | embedding adapter | 可选技能检索 |
 | `gui.enableSkillExecution` | skill executor wiring | 是否启用技能执行 |
-| `gui.enableDesktopSkills` | desktop skill gate | 是否允许桌面端检索、执行和提取技能 |
 | `gui.enablePromptSkillSelection` | prompt skill catalog | 是否将检索技能暴露给 GUI 模型 |
 | `gui.promptSkillTopK` | `prompt_skill_top_k` | 暴露给 GUI 模型的技能候选数 |
 | `gui.background` | background runtime | 本地桌面隔离运行 |

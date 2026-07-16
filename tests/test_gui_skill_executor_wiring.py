@@ -70,16 +70,15 @@ class TestGuiConfigSkillExtractionField:
         assert config.enable_skill_extraction is True
 
 
-class TestGuiConfigDesktopSkillsField:
-    """Desktop skill features must require an explicit opt-in."""
+class TestGuiConfigHasNoDesktopSkillOverride:
+    """Desktop skill support is a platform constraint, not a user switch."""
 
-    def test_defaults_to_false(self) -> None:
-        config = GuiConfig()
-        assert config.enable_desktop_skills is False
+    def test_schema_has_no_desktop_skill_override(self) -> None:
+        assert "enable_desktop_skills" not in GuiConfig.model_fields
 
-    def test_accepts_camel_case_key(self) -> None:
+    def test_legacy_camel_case_key_is_ignored(self) -> None:
         config = GuiConfig.model_validate({"enableDesktopSkills": True})
-        assert config.enable_desktop_skills is True
+        assert not hasattr(config, "enable_desktop_skills")
 
 
 class TestGuiConfigMemoryExtractionField:
@@ -181,25 +180,27 @@ class TestDesktopSkillGate:
         assert captured_kwargs["skill_executor"] is None
         assert captured_kwargs["enable_prompt_skill_selection"] is False
 
-    def test_host_allows_explicit_desktop_skill_opt_in(self) -> None:
+    def test_legacy_desktop_skill_opt_in_cannot_enable_host_skills(self) -> None:
         from nanobot.agent.tools.gui import GuiSubagentTool
 
         backend = MagicMock(platform="windows")
-        library = object()
-        config = GuiConfig(
-            backend="local",
-            enable_skill_execution=True,
-            enable_skill_extraction=True,
-            enable_desktop_skills=True,
+        config = GuiConfig.model_validate(
+            {
+                "backend": "local",
+                "enableSkillExecution": True,
+                "enableSkillExtraction": True,
+                "enableDesktopSkills": True,
+            }
         )
         with (
             patch.object(GuiSubagentTool, "_build_backend", return_value=backend),
-            patch.object(GuiSubagentTool, "_get_skill_library", return_value=library),
+            patch.object(GuiSubagentTool, "_get_skill_library") as get_library,
         ):
             tool = _make_tool(config)
 
-        assert tool._skill_library is library
-        assert tool._postprocessor._enable_skill_extraction is True
+        get_library.assert_not_called()
+        assert tool._skill_library is None
+        assert tool._postprocessor._enable_skill_extraction is False
 
 
 class TestSkillExecutorWiringDisabled:
