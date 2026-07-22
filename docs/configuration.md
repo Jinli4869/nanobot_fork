@@ -1045,7 +1045,7 @@ Some OpenAI-compatible gateways expose request-body extensions such as vLLM guid
 }
 ```
 
-If a custom OpenAI-compatible endpoint exposes a provider-specific thinking toggle, set `thinkingStyle` so nanobot can translate `reasoningEffort` into the right request body. Supported styles are `thinking_type` (`{"thinking":{"type":"enabled"}}`), `enable_thinking` (`{"enable_thinking": true}`), and `reasoning_split` (`{"reasoning_split": true}`):
+If a custom OpenAI-compatible endpoint exposes a provider-specific thinking toggle, set `thinkingStyle` so nanobot can translate `reasoningEffort` into the right request body. Supported styles are `thinking_type` (`{"thinking":{"type":"enabled"}}`), `enable_thinking` (`{"enable_thinking": true}`), `reasoning_split` (`{"reasoning_split": true}`), and `chat_template_kwargs` (`{"chat_template_kwargs":{"enable_thinking": true}}`):
 
 ```json
 {

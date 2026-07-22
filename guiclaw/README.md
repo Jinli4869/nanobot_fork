@@ -84,6 +84,7 @@ provider:
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen3.5-plus"
   api_key: "sk-..."          # DashScope API Key from console.aliyun.com
+  reasoning_effort: "none"   # disable model thinking; omit to keep provider default
 ```
 
 **Full config with all options:**
@@ -95,6 +96,8 @@ provider:
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen3.5-plus"
   api_key: "sk-..."
+  reasoning_effort: "none"   # none/minimal disables thinking; other values enable it
+  extra_body: {}              # optional provider-specific request fields
 
 # Embedding provider for semantic skill retrieval (optional)
 # When omitted, skill search falls back to BM25 keyword matching
@@ -136,6 +139,12 @@ background_config:
   width: 1280
   height: 720
 ```
+
+For DashScope, `reasoning_effort` is translated to the OpenAI-compatible
+`enable_thinking` field. For a local vLLM endpoint, it is translated to
+`chat_template_kwargs.enable_thinking`. Leaving it unset preserves the model
+server's default. `extra_body` is merged last and can override the automatic
+mapping for another OpenAI-compatible service.
 
 `enable_skill_execution` exposes retrieved skills to the GUI agent. It uses BM25
 without `embedding` and adds semantic retrieval when an embedding provider is

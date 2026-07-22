@@ -82,6 +82,7 @@ provider:
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen3.5-plus"
   api_key: "sk-..."          # 在 console.aliyun.com 创建 API Key
+  reasoning_effort: "none"   # 关闭模型 thinking；不填则沿用服务端默认值
 ```
 
 **完整配置（含所有选项）：**
@@ -93,6 +94,8 @@ provider:
   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   model: "qwen3.5-plus"
   api_key: "sk-..."
+  reasoning_effort: "none"   # none/minimal 关闭 thinking，其他值开启
+  extra_body: {}              # 可选：提供商特有的请求字段
 
 # Embedding 提供商（可选）
 # 不填则技能检索降级为 BM25 关键词匹配
@@ -134,6 +137,11 @@ background_config:
   width: 1280
   height: 720
 ```
+
+对于 DashScope，`reasoning_effort` 会转换为 OpenAI-compatible 请求中的
+`enable_thinking`；对于本地 vLLM 端点，会转换为
+`chat_template_kwargs.enable_thinking`。不配置时保留模型服务端的默认行为。
+`extra_body` 最后合并，可用于覆盖自动映射或适配其他 OpenAI-compatible 服务。
 
 `enable_skill_execution` 会向 GUI agent 提供检索到的技能；未配置 `embedding` 时使用
 BM25，配置后增加语义检索。两个 extraction 开关会在每次任务结束后分别把技能写入
