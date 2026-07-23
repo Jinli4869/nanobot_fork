@@ -120,6 +120,8 @@ hdc:
 
 # 执行步数限制
 max_steps: 15
+image_scale_ratio: 0.5    # GUI-Owl factor-28 smart resize 前的缩放比例
+history_image_window: 1   # 含当前帧的图片总数；不填则使用 profile 默认值
 
 # 持久化存储路径（默认值如下）
 memory_dir: "~/.guiclaw/memory"
@@ -142,6 +144,10 @@ background_config:
 `enable_thinking`；对于本地 vLLM 端点，会转换为
 `chat_template_kwargs.enable_thinking`。不配置时保留模型服务端的默认行为。
 `extra_body` 最后合并，可用于覆盖自动映射或适配其他 OpenAI-compatible 服务。
+
+`history_image_window` 控制发送给模型的截图总数（包含当前帧）。不配置时，GUI-Owl
+默认使用 5 张图片，其他 profile 默认使用 1 张。`image_scale_ratio` 会在 GUI-Owl 的
+factor-28 smart resize 前生效；小型 UI 元素丢失时可以适当调高。
 
 `enable_skill_execution` 会向 GUI agent 提供检索到的技能；未配置 `embedding` 时使用
 BM25，配置后增加语义检索。两个 extraction 开关会在每次任务结束后分别把技能写入
@@ -489,6 +495,8 @@ nanobot 读取单个 JSON 配置文件，所有字段同时支持 `camelCase` �
 | `artifactsDir` | `string` | `"gui_runs"` | 截图和运行日志目录；相对路径以 `~/.guiclaw` 为根目录 |
 | `shortcutCacheDir` | `string` | `"shortcut_cache"` | Android shortcut 发现缓存；相对路径以 `~/.guiclaw` 为根目录 |
 | `maxSteps` | `int` | `15` | 单次任务最大操作步数 |
+| `imageScaleRatio` | `float` | `0.5` | 截图缩放比例；GUI-Owl 会在 factor-28 smart resize 前应用 |
+| `historyImageWindow` | `int \| null` | `null` | 含当前帧的截图总数；GUI-Owl 默认 `5`，其他 profile 默认 `1` |
 | `embeddingModel` | `string \| null` | `null` | 语义技能检索的 Embedding 模型（如 `"text-embedding-v4"`） |
 | `background` | `bool` | `false` | 使用虚拟显示隔离运行（仅 Linux；需 `backend: "local"`） |
 | `displayNum` | `int \| null` | `null` | Xvfb 显示编号 |

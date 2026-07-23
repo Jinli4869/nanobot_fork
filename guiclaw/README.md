@@ -122,6 +122,8 @@ hdc:
 
 # Execution limits
 max_steps: 15
+image_scale_ratio: 0.5    # applied before GUI-Owl factor-28 smart resize
+history_image_window: 1   # total images including current; omit for profile default
 
 # Persistent storage (defaults shown)
 memory_dir: "~/.guiclaw/memory"
@@ -145,6 +147,11 @@ For DashScope, `reasoning_effort` is translated to the OpenAI-compatible
 `chat_template_kwargs.enable_thinking`. Leaving it unset preserves the model
 server's default. `extra_body` is merged last and can override the automatic
 mapping for another OpenAI-compatible service.
+
+`history_image_window` controls the total screenshot count sent to the model,
+including the current frame. When omitted, GUI-Owl uses five images and other
+profiles use one. `image_scale_ratio` is applied before GUI-Owl's factor-28
+smart resize; increase it when small UI details are lost.
 
 `enable_skill_execution` exposes retrieved skills to the GUI agent. It uses BM25
 without `embedding` and adds semantic retrieval when an embedding provider is
@@ -494,6 +501,8 @@ The `gui` section activates the GUI subagent tool. If omitted, nanobot has no GU
 | `artifactsDir` | `string` | `"gui_runs"` | Screenshots and run logs; relative paths resolve under `~/.guiclaw` |
 | `shortcutCacheDir` | `string` | `"shortcut_cache"` | Android shortcut discovery cache; relative paths resolve under `~/.guiclaw` |
 | `maxSteps` | `int` | `15` | Maximum actions per task before giving up |
+| `imageScaleRatio` | `float` | `0.5` | Screenshot scale; GUI-Owl applies it before factor-28 smart resize |
+| `historyImageWindow` | `int \| null` | `null` | Total screenshots including the current frame; GUI-Owl defaults to `5`, other profiles to `1` |
 | `embeddingModel` | `string \| null` | `null` | Embedding model for semantic skill search (e.g. `"text-embedding-v4"`) |
 | `background` | `bool` | `false` | Use isolated virtual display (Linux only; requires `backend: "local"`) |
 | `displayNum` | `int \| null` | `null` | Xvfb display number |

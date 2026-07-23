@@ -63,6 +63,7 @@ class SubgoalRunner:
         agent_profile: str | None = None,
         step_timeout: float = 30.0,
         image_scale_ratio: float = 0.5,
+        history_image_window: int | None = None,
     ) -> None:
         self._llm = llm
         self._backend = backend
@@ -74,6 +75,11 @@ class SubgoalRunner:
         self._agent_profile = canonicalize_agent_profile(agent_profile)
         self._step_timeout = step_timeout
         self._image_scale_ratio = image_scale_ratio
+        self._history_image_window = (
+            self._HISTORY_IMAGE_WINDOW
+            if history_image_window is None
+            else max(1, history_image_window)
+        )
         self._available_apps: tuple[str, ...] | None = None
 
     def set_artifacts_root(self, artifacts_root: Path) -> None:
@@ -111,8 +117,9 @@ class SubgoalRunner:
                 current_observation=current_observation,
                 history=history,
                 model_name=self._model,
-                history_image_window=self._HISTORY_IMAGE_WINDOW,
+                history_image_window=self._history_image_window,
                 available_apps=self._available_apps or (),
+                image_scale_ratio=self._image_scale_ratio,
             )
             parsed = await self._next_action(
                 messages=messages,
@@ -296,6 +303,7 @@ class SubgoalRunner:
                     response,
                     current_observation,
                     model_name=self._model,
+                    image_scale_ratio=self._image_scale_ratio,
                 )
                 if not response.tool_calls:
                     raise ValueError("no valid action returned")
